@@ -82,6 +82,15 @@ class BacktestConfigSchema(BaseModel):
     initial_cash: float = Field(default=1_000_000, gt=0, allow_inf_nan=False)
     fundamental_fields: Optional[Dict[str, List[str]]] = None
     event_feeds: Optional[List[Dict[str, Any]]] = None
+    # An indicator with a long lookback needs bars from before the period the
+    # user asked about. Declaring the boundary keeps those bars out of the
+    # performance: either as a bar count, or as the date evaluation starts.
+    # Only the shapes are checked here -- whether the boundary leaves anything
+    # to evaluate depends on the loaded calendar, so the one rule that decides
+    # it lives in `engines.base.evaluation_start_index`, which every engine and
+    # every direct-API caller passes through.
+    warmup_bars: Optional[int] = Field(default=None, ge=0)
+    evaluation_start_date: Optional[str] = None
 
     @field_validator("codes")
     @classmethod
@@ -99,6 +108,19 @@ class BacktestConfigSchema(BaseModel):
             pd.Timestamp(v)
         except Exception:
             raise ValueError(f"invalid date format: {v!r} (expected YYYY-MM-DD)")
+        return v
+
+    @field_validator("evaluation_start_date")
+    @classmethod
+    def valid_evaluation_start(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        try:
+            pd.Timestamp(v)
+        except Exception:
+            raise ValueError(
+                f"invalid evaluation_start_date: {v!r} (expected YYYY-MM-DD)"
+            ) from None
         return v
 
     @field_validator("interval")

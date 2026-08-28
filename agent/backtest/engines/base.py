@@ -132,6 +132,76 @@ def _ffill_2d(arr: np.ndarray, limit: int = 5) -> np.ndarray:
 # ─── Signal alignment (reused from daily_portfolio logic) ───
 
 
+def evaluation_start_index(config: Dict[str, Any], dates: pd.DatetimeIndex) -> int:
+    """Return the first bar index that counts as performance.
+
+    A long-lookback indicator needs history before the period the user asked
+    about — an MA200 strategy over ten years needs bars from before those ten
+    years. Loading that history is correct; *grading* it is not. Without a
+    declared boundary the extra bars silently join the evaluation: trades fire
+    in them, the equity curve starts in them, and CAGR and the benchmark are
+    computed over a window longer than the one that was requested. The run
+    still succeeds and its metrics are still internally consistent, which is
+    what makes it dangerous.
+
+    Two spellings, because a strategy author knows one or the other: the number
+    of warm-up bars the indicator needs, or the date the evaluation should
+    start. Declaring both is refused rather than resolved — the two can
+    disagree, and picking a winner would silently discard the author's other
+    instruction.
+
+    Args:
+        config: Backtest configuration. Reads ``warmup_bars`` (int >= 0) and
+            ``evaluation_start_date`` (``YYYY-MM-DD``); absent means the whole
+            loaded window is evaluated, which is the historical behaviour.
+        dates: The aligned bar index the backtest would otherwise run over.
+
+    Returns:
+        Index into ``dates`` of the first evaluated bar; ``0`` when nothing is
+        declared.
+
+    Raises:
+        ValueError: Both keys declared, a malformed value, or a boundary that
+            leaves fewer than two bars to evaluate.
+    """
+    warmup = config.get("warmup_bars")
+    eval_start = config.get("evaluation_start_date")
+    if warmup in (None, 0) and not eval_start:
+        return 0
+    if warmup not in (None, 0) and eval_start:
+        raise ValueError(
+            "declare warmup_bars or evaluation_start_date, not both — they can "
+            "disagree, and resolving that silently would discard one of them"
+        )
+
+    if eval_start:
+        boundary = pd.Timestamp(eval_start)
+        if boundary.tz is None and dates.tz is not None:
+            boundary = boundary.tz_localize(dates.tz)
+        elif boundary.tz is not None and dates.tz is None:
+            boundary = boundary.tz_localize(None)
+        start = int(np.searchsorted(dates.values, boundary.to_datetime64(), side="left"))
+        if start >= len(dates):
+            raise ValueError(
+                f"evaluation_start_date {eval_start} is after the last loaded bar "
+                f"({dates[-1].date()}); nothing would be evaluated"
+            )
+    else:
+        try:
+            start = int(warmup)
+        except (TypeError, ValueError):
+            raise ValueError(f"warmup_bars must be an integer, got {warmup!r}") from None
+        if start < 0:
+            raise ValueError(f"warmup_bars must be non-negative, got {start}")
+
+    if len(dates) - start < 2:
+        raise ValueError(
+            f"the evaluation window would hold {max(0, len(dates) - start)} bar(s) of "
+            f"{len(dates)} loaded; widen start_date or shorten the warm-up"
+        )
+    return start
+
+
 def _align(
     data_map: Dict[str, pd.DataFrame],
     signal_map: Dict[str, pd.Series],
@@ -680,6 +750,18 @@ class BaseEngine(ABC):
 
         # Sync codes after _align may have dropped all-NaN symbols
         valid_codes = [c for c in valid_codes if c in target_pos.columns]
+
+        # 3b. Drop the warm-up prefix from the evaluation window. Signals were
+        # generated over the whole loaded panel above, so the first evaluated
+        # bar already carries an indicator that saw its full lookback; from here
+        # on the warm-up bars simply do not exist, so no trade, no equity point,
+        # no benchmark return and no metric can come from them.
+        warmup_end = evaluation_start_index(config, dates)
+        if warmup_end:
+            dates = dates[warmup_end:]
+            close_df = close_df.iloc[warmup_end:]
+            target_pos = target_pos.iloc[warmup_end:]
+            ret_df = ret_df.iloc[warmup_end:]
 
         # 4. Bar-by-bar execution
         self._execute_bars(dates, data_map, close_df, target_pos, valid_codes)
