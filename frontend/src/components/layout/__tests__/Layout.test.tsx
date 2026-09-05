@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { Layout } from "../Layout";
 
@@ -17,6 +17,7 @@ vi.mock("react-i18next", () => ({
       "layout.alphaZoo": "Alpha Zoo",
       "layout.cancel": "Cancel",
       "layout.collapse": "Collapse",
+      "layout.close": "Close",
       "layout.confirm": "Confirm",
       "layout.correlation": "Correlation Matrix",
       "layout.dark": "Dark",
@@ -131,6 +132,53 @@ describe("Layout accessibility", () => {
     const languageButton = screen.getByRole("button", { name: "Language" });
     expect(languageButton).toHaveAttribute("aria-expanded", "false");
     expect(languageButton).not.toHaveAttribute("aria-haspopup");
+  });
+
+  it("opens the sessions list as a dismissible drawer from the mobile-only trigger", async () => {
+    renderLayout();
+    await screen.findByText(sessions[0].title);
+
+    expect(screen.queryByRole("dialog", { name: "Sessions" })).not.toBeInTheDocument();
+
+    // There are two "Sessions" affordances: the always-present desktop-inline
+    // label (a <span>, not a button) and this mobile-only trigger button —
+    // the sidebar itself decides via CSS breakpoints which one is visible.
+    fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Sessions" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    // The drawer's own copy of the session list, not the desktop-inline one.
+    expect(within(dialog).getByText(sessions[0].title)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog", { name: "Sessions" })).not.toBeInTheDocument();
+  });
+
+  it("closes the mobile drawer via Escape and via clicking the backdrop", async () => {
+    renderLayout();
+    await screen.findByText(sessions[0].title);
+    const trigger = screen.getByRole("button", { name: "Sessions" });
+
+    fireEvent.click(trigger);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Sessions" })).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Sessions" });
+    // The backdrop is the dialog's own positioning parent, one level up.
+    fireEvent.click(dialog.parentElement!);
+    expect(screen.queryByRole("dialog", { name: "Sessions" })).not.toBeInTheDocument();
+  });
+
+  it("closes the mobile drawer after navigating to a session from it", async () => {
+    renderLayout();
+    await screen.findByText(sessions[0].title);
+
+    fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    const dialog = screen.getByRole("dialog", { name: "Sessions" });
+    fireEvent.click(within(dialog).getByText(sessions[0].title));
+
+    expect(screen.queryByRole("dialog", { name: "Sessions" })).not.toBeInTheDocument();
   });
 
   it("synchronizes the sidebar preference from another tab", () => {
