@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { Layout } from "../Layout";
 
@@ -149,9 +149,18 @@ describe("Layout accessibility", () => {
     expect(dialog).toHaveAttribute("aria-modal", "true");
     // The drawer's own copy of the session list, not the desktop-inline one.
     expect(within(dialog).getByText(sessions[0].title)).toBeInTheDocument();
+    // Slides/fades in rather than appearing instantly — mounts off-screen
+    // (translate-x-full) and transparent, then the open handler's rAF flips
+    // it to the visible transform/opacity a frame later.
+    expect(dialog.className).toContain("transition-transform");
+    await waitFor(() => expect(dialog.className).toContain("translate-x-0"));
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    expect(screen.queryByRole("dialog", { name: "Sessions" })).not.toBeInTheDocument();
+    // The drawer plays a slide/fade-out transition before unmounting —
+    // see MOBILE_SESSIONS_TRANSITION_MS — so this is async, not immediate.
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Sessions" })).not.toBeInTheDocument();
+    });
   });
 
   it("closes the mobile drawer via Escape and via clicking the backdrop", async () => {
@@ -161,13 +170,17 @@ describe("Layout accessibility", () => {
 
     fireEvent.click(trigger);
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "Sessions" })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Sessions" })).not.toBeInTheDocument();
+    });
 
     fireEvent.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "Sessions" });
     // The backdrop is the dialog's own positioning parent, one level up.
     fireEvent.click(dialog.parentElement!);
-    expect(screen.queryByRole("dialog", { name: "Sessions" })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Sessions" })).not.toBeInTheDocument();
+    });
   });
 
   it("closes the mobile drawer after navigating to a session from it", async () => {
@@ -178,7 +191,9 @@ describe("Layout accessibility", () => {
     const dialog = screen.getByRole("dialog", { name: "Sessions" });
     fireEvent.click(within(dialog).getByText(sessions[0].title));
 
-    expect(screen.queryByRole("dialog", { name: "Sessions" })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Sessions" })).not.toBeInTheDocument();
+    });
   });
 
   it("synchronizes the sidebar preference from another tab", () => {

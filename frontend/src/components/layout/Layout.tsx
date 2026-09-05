@@ -15,6 +15,11 @@ import { SUPPORTED_LANGUAGES } from "@/i18n";
 // APP_VERSION is sourced from i18n locale files (app.version key) to keep a
 // single source of truth across the footer and every localised README.
 
+// Kept in one place because it has to match the drawer's own
+// `duration-200` transition classes below — the close timer just waits
+// this long before unmounting, it doesn't listen for `transitionend`.
+const MOBILE_SESSIONS_TRANSITION_MS = 200;
+
 export function Layout() {
   const { t } = useTranslation();
 
@@ -41,7 +46,37 @@ export function Layout() {
   // (see the `max-md:w-12`/`max-md:hidden` classes below), independent of
   // `collapsed` — there's no room for the full Sessions list inline, so it
   // opens as a slide-in drawer instead, triggered from the icon rail.
+  //
+  // Two states instead of one so the drawer can animate out instead of
+  // vanishing: `mobileSessionsOpen` mounts/unmounts it, `mobileSessionsVisible`
+  // drives the transform/opacity transition. Opening sets both (one frame
+  // apart, so the browser paints the off-screen position first and has
+  // something to transition *from*); closing clears `visible` immediately
+  // and only unmounts once the exit transition has had time to finish.
   const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
+  const [mobileSessionsVisible, setMobileSessionsVisible] = useState(false);
+  const mobileSessionsCloseTimer = useRef<number | null>(null);
+
+  const openMobileSessions = () => {
+    if (mobileSessionsCloseTimer.current !== null) {
+      window.clearTimeout(mobileSessionsCloseTimer.current);
+      mobileSessionsCloseTimer.current = null;
+    }
+    setMobileSessionsOpen(true);
+    requestAnimationFrame(() => setMobileSessionsVisible(true));
+  };
+
+  const closeMobileSessions = () => {
+    setMobileSessionsVisible(false);
+    mobileSessionsCloseTimer.current = window.setTimeout(() => {
+      setMobileSessionsOpen(false);
+      mobileSessionsCloseTimer.current = null;
+    }, MOBILE_SESSIONS_TRANSITION_MS);
+  };
+
+  useEffect(() => () => {
+    if (mobileSessionsCloseTimer.current !== null) window.clearTimeout(mobileSessionsCloseTimer.current);
+  }, []);
 
   const activeSessionId = searchParams.get("session");
   const streamingSessionId = useAgentStore(s => s.streamingSessionId);
@@ -62,7 +97,7 @@ export function Layout() {
   useEffect(() => {
     if (!mobileSessionsOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMobileSessionsOpen(false);
+      if (e.key === "Escape") closeMobileSessions();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
@@ -73,7 +108,7 @@ export function Layout() {
   // with no way to see the trigger that closes it.
   useEffect(() => {
     const onResize = () => {
-      if (window.innerWidth >= 768) setMobileSessionsOpen(false);
+      if (window.innerWidth >= 768) closeMobileSessions();
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
@@ -264,16 +299,21 @@ export function Layout() {
           })}
         </nav>
 
-        {/* Sessions trigger — mobile only. Below `md` the rail is always
-            icon-only (see `max-md:w-12`/`max-md:hidden` throughout this
-            file), so the inline Sessions panel below never shows on phones;
-            this opens it as a drawer instead. */}
+        {/* Sessions trigger — mobile only (`hidden max-md:flex`: invisible
+            at/above the `md` breakpoint, a flex item below it — desktop
+            keeps the inline Sessions panel and never needs this). Below
+            `md` the rail is always icon-only (see `max-md:w-12`/
+            `max-md:hidden` throughout this file), so the inline Sessions
+            panel below never shows on phones; this opens it as a drawer
+            instead. Styled as a filled circle (not the plain nav-link look
+            above) so it doesn't get lost among the nav icons — that was
+            the actual bug report, not just "add a mobile trigger". */}
         <button
           type="button"
-          onClick={() => setMobileSessionsOpen(true)}
+          onClick={openMobileSessions}
           aria-label={t('layout.sessions')}
           title={t('layout.sessions')}
-          className="hidden max-md:flex items-center justify-center mx-1 rounded-md px-2 py-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          className="hidden max-md:flex items-center justify-center mx-auto my-1 h-9 w-9 shrink-0 rounded-full bg-primary/10 text-primary transition-all duration-150 hover:bg-primary/20 active:scale-90"
         >
           <MessageSquare className="h-4 w-4 shrink-0" aria-hidden="true" />
         </button>
@@ -358,14 +398,23 @@ export function Layout() {
       {mobileSessionsOpen && createPortal(
         <div
           className="fixed inset-0 z-50 hidden max-md:block"
-          onClick={() => setMobileSessionsOpen(false)}
+          onClick={closeMobileSessions}
         >
-          <div className="absolute inset-0 bg-black/50" aria-hidden="true" />
+          <div
+            className={cn(
+              "absolute inset-0 bg-black/50 transition-opacity duration-200",
+              mobileSessionsVisible ? "opacity-100" : "opacity-0"
+            )}
+            aria-hidden="true"
+          />
           <div
             role="dialog"
             aria-modal="true"
             aria-label={t('layout.sessions')}
-            className="absolute inset-y-0 start-0 flex w-72 max-w-[85vw] flex-col bg-card shadow-lg"
+            className={cn(
+              "absolute inset-y-0 start-0 flex w-72 max-w-[85vw] flex-col bg-card shadow-lg transition-transform duration-200 ease-out",
+              mobileSessionsVisible ? "translate-x-0" : "-translate-x-full rtl:translate-x-full"
+            )}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
@@ -376,7 +425,7 @@ export function Layout() {
               <div className="flex items-center gap-0.5">
                 <Link
                   to="/agent"
-                  onClick={() => setMobileSessionsOpen(false)}
+                  onClick={closeMobileSessions}
                   aria-label={t('layout.newChat')}
                   className="flex items-center gap-1 p-1.5 text-muted-foreground hover:text-foreground transition-colors"
                   title={t('layout.newChat')}
@@ -385,7 +434,7 @@ export function Layout() {
                 </Link>
                 <button
                   type="button"
-                  onClick={() => setMobileSessionsOpen(false)}
+                  onClick={closeMobileSessions}
                   aria-label={t('layout.close')}
                   className="p-1.5 text-muted-foreground hover:text-foreground rounded transition-colors"
                 >
@@ -394,7 +443,7 @@ export function Layout() {
               </div>
             </div>
 
-            {renderSessionsList(() => setMobileSessionsOpen(false))}
+            {renderSessionsList(closeMobileSessions)}
           </div>
         </div>,
         document.body,
