@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, Outlet, useLocation, useSearchParams } from "react-router";
-import { Activity, BarChart3, Bot, CalendarClock, Check, ChevronDown, FileText, Languages, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight, Settings, Layers, Loader2, X } from "lucide-react";
+import { Activity, BarChart3, Bot, CalendarClock, Check, ChevronDown, FileText, Languages, Menu, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight, Settings, Layers, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { api, type SessionItem } from "@/lib/api";
@@ -18,7 +18,7 @@ import { SUPPORTED_LANGUAGES } from "@/i18n";
 // Kept in one place because it has to match the drawer's own
 // `duration-200` transition classes below — the close timer just waits
 // this long before unmounting, it doesn't listen for `transitionend`.
-const MOBILE_SESSIONS_TRANSITION_MS = 200;
+const MOBILE_SIDEBAR_TRANSITION_MS = 200;
 
 export function Layout() {
   const { t } = useTranslation();
@@ -42,40 +42,41 @@ export function Layout() {
   const sseStatus = useAgentStore(s => s.sseStatus);
   const sseRetryAttempt = useAgentStore(s => s.sseRetryAttempt);
   const [collapsed, setCollapsed] = useState(() => safeGet("qa-sidebar") === "collapsed");
-  // The sidebar is forced to an icon-only rail below the `md` breakpoint
-  // (see the `max-md:w-12`/`max-md:hidden` classes below), independent of
-  // `collapsed` — there's no room for the full Sessions list inline, so it
-  // opens as a slide-in drawer instead, triggered from the icon rail.
+  // The sidebar is hidden entirely below the `md` breakpoint (`max-md:hidden`
+  // on the <aside> below) — there's no room for it inline on a phone, full
+  // stop — and reappears as a slide-in drawer with its own copy of the brand,
+  // nav, sessions, and footer, opened from the hamburger button in the
+  // mobile-only header bar next to <main>.
   //
   // Two states instead of one so the drawer can animate out instead of
-  // vanishing: `mobileSessionsOpen` mounts/unmounts it, `mobileSessionsVisible`
+  // vanishing: `mobileSidebarOpen` mounts/unmounts it, `mobileSidebarVisible`
   // drives the transform/opacity transition. Opening sets both (one frame
   // apart, so the browser paints the off-screen position first and has
   // something to transition *from*); closing clears `visible` immediately
   // and only unmounts once the exit transition has had time to finish.
-  const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
-  const [mobileSessionsVisible, setMobileSessionsVisible] = useState(false);
-  const mobileSessionsCloseTimer = useRef<number | null>(null);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [mobileSidebarVisible, setMobileSidebarVisible] = useState(false);
+  const mobileSidebarCloseTimer = useRef<number | null>(null);
 
-  const openMobileSessions = () => {
-    if (mobileSessionsCloseTimer.current !== null) {
-      window.clearTimeout(mobileSessionsCloseTimer.current);
-      mobileSessionsCloseTimer.current = null;
+  const openMobileSidebar = () => {
+    if (mobileSidebarCloseTimer.current !== null) {
+      window.clearTimeout(mobileSidebarCloseTimer.current);
+      mobileSidebarCloseTimer.current = null;
     }
-    setMobileSessionsOpen(true);
-    requestAnimationFrame(() => setMobileSessionsVisible(true));
+    setMobileSidebarOpen(true);
+    requestAnimationFrame(() => setMobileSidebarVisible(true));
   };
 
-  const closeMobileSessions = () => {
-    setMobileSessionsVisible(false);
-    mobileSessionsCloseTimer.current = window.setTimeout(() => {
-      setMobileSessionsOpen(false);
-      mobileSessionsCloseTimer.current = null;
-    }, MOBILE_SESSIONS_TRANSITION_MS);
+  const closeMobileSidebar = () => {
+    setMobileSidebarVisible(false);
+    mobileSidebarCloseTimer.current = window.setTimeout(() => {
+      setMobileSidebarOpen(false);
+      mobileSidebarCloseTimer.current = null;
+    }, MOBILE_SIDEBAR_TRANSITION_MS);
   };
 
   useEffect(() => () => {
-    if (mobileSessionsCloseTimer.current !== null) window.clearTimeout(mobileSessionsCloseTimer.current);
+    if (mobileSidebarCloseTimer.current !== null) window.clearTimeout(mobileSidebarCloseTimer.current);
   }, []);
 
   const activeSessionId = searchParams.get("session");
@@ -95,20 +96,20 @@ export function Layout() {
   }, []);
 
   useEffect(() => {
-    if (!mobileSessionsOpen) return;
+    if (!mobileSidebarOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeMobileSessions();
+      if (e.key === "Escape") closeMobileSidebar();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [mobileSessionsOpen]);
+  }, [mobileSidebarOpen]);
 
-  // The drawer only ever opens on mobile (the trigger button is `md:hidden`),
-  // but a desktop window resized narrower afterwards shouldn't strand it open
-  // with no way to see the trigger that closes it.
+  // The drawer only ever opens on mobile (its hamburger trigger is
+  // `md:hidden`), but a desktop window resized narrower afterwards shouldn't
+  // strand it open with no way to see the trigger that closes it.
   useEffect(() => {
     const onResize = () => {
-      if (window.innerWidth >= 768) closeMobileSessions();
+      if (window.innerWidth >= 768) closeMobileSidebar();
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
@@ -249,11 +250,13 @@ export function Layout() {
       >
         {t('layout.skipToMain', { defaultValue: 'Skip to main content' })}
       </a>
-      {/* Sidebar */}
+      {/* Sidebar — hidden entirely below `md`; the mobile drawer (rendered
+          further down, portaled to <body>) is a separate, self-contained
+          copy of this content, not a responsive reshuffling of it. */}
       <aside
         aria-label={t('layout.sidebar', { defaultValue: 'Vibe-Trading sidebar' })}
         className={cn(
-          "max-md:w-12 border-e border-border/60 bg-card flex flex-col shrink-0 transition-all duration-200 overflow-visible",
+          "max-md:hidden border-e border-border/60 bg-card flex flex-col shrink-0 transition-all duration-200 overflow-visible",
           collapsed ? "w-12" : "w-64"
         )}
       >
@@ -299,29 +302,11 @@ export function Layout() {
           })}
         </nav>
 
-        {/* Sessions trigger — mobile only (`hidden max-md:flex`: invisible
-            at/above the `md` breakpoint, a flex item below it — desktop
-            keeps the inline Sessions panel and never needs this). Below
-            `md` the rail is always icon-only (see `max-md:w-12`/
-            `max-md:hidden` throughout this file), so the inline Sessions
-            panel below never shows on phones; this opens it as a drawer
-            instead. Styled as a filled circle (not the plain nav-link look
-            above) so it doesn't get lost among the nav icons — that was
-            the actual bug report, not just "add a mobile trigger". */}
-        <button
-          type="button"
-          onClick={openMobileSessions}
-          aria-label={t('layout.sessions')}
-          title={t('layout.sessions')}
-          className="hidden max-md:flex items-center justify-center mx-auto my-1 h-9 w-9 shrink-0 rounded-full bg-primary/10 text-primary transition-all duration-150 hover:bg-primary/20 active:scale-90"
-        >
-          <MessageSquare className="h-4 w-4 shrink-0" aria-hidden="true" />
-        </button>
-
-        {/* Sessions — hidden when collapsed, and always hidden below `md`
-            (the mobile drawer above covers that case instead) */}
+        {/* Sessions — hidden when collapsed (the mobile drawer has its own
+            unconditional copy, since the drawer doesn't have a "collapsed"
+            state — it's either open, full content, or closed) */}
         {!collapsed && (
-          <div className="flex-1 overflow-auto border-t border-border/60 mt-2 flex flex-col max-md:hidden">
+          <div className="flex-1 overflow-auto border-t border-border/60 mt-2 flex flex-col">
             <div className="flex items-center justify-between px-4 py-2">
               <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                 <MessageSquare className="h-3.5 w-3.5" />
@@ -392,58 +377,119 @@ export function Layout() {
         </div>
       </aside>
 
-      {/* Sessions drawer — mobile only, opened by the trigger in the icon
-          rail above. Portaled to <body> so it isn't clipped by the sidebar's
-          own layout/overflow. */}
-      {mobileSessionsOpen && createPortal(
+      {/* Sidebar drawer — mobile only, opened by the hamburger button in the
+          mobile header bar below. Portaled to <body> so it isn't clipped by
+          <main>'s own layout/overflow. A full, self-contained copy of the
+          desktop sidebar's content (brand, nav, sessions, footer) — not a
+          responsive reshuffling of the <aside> above, which is simply
+          `max-md:hidden` and otherwise untouched. */}
+      {mobileSidebarOpen && createPortal(
         <div
           className="fixed inset-0 z-50 hidden max-md:block"
-          onClick={closeMobileSessions}
+          onClick={closeMobileSidebar}
         >
           <div
             className={cn(
               "absolute inset-0 bg-black/50 transition-opacity duration-200",
-              mobileSessionsVisible ? "opacity-100" : "opacity-0"
+              mobileSidebarVisible ? "opacity-100" : "opacity-0"
             )}
             aria-hidden="true"
           />
           <div
             role="dialog"
             aria-modal="true"
-            aria-label={t('layout.sessions')}
+            aria-label={t('layout.sidebar', { defaultValue: 'Vibe-Trading sidebar' })}
             className={cn(
               "absolute inset-y-0 start-0 flex w-72 max-w-[85vw] flex-col bg-card shadow-lg transition-transform duration-200 ease-out",
-              mobileSessionsVisible ? "translate-x-0" : "-translate-x-full rtl:translate-x-full"
+              mobileSidebarVisible ? "translate-x-0" : "-translate-x-full rtl:translate-x-full"
             )}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
-              <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-                <MessageSquare className="h-4 w-4" />
-                {t('layout.sessions')}
-              </span>
-              <div className="flex items-center gap-0.5">
-                <Link
-                  to="/agent"
-                  onClick={closeMobileSessions}
-                  aria-label={t('layout.newChat')}
-                  className="flex items-center gap-1 p-1.5 text-muted-foreground hover:text-foreground transition-colors"
-                  title={t('layout.newChat')}
-                >
-                  <Plus className="h-4 w-4" aria-hidden="true" />
-                </Link>
-                <button
-                  type="button"
-                  onClick={closeMobileSessions}
-                  aria-label={t('layout.close')}
-                  className="p-1.5 text-muted-foreground hover:text-foreground rounded transition-colors"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
+            {/* Brand */}
+            <div className="flex items-center justify-between border-b border-border/60 p-4">
+              <Link
+                to="/"
+                onClick={closeMobileSidebar}
+                aria-label="Vibe-Trading"
+                className="flex items-center gap-2"
+              >
+                <BrandMark className="h-6 w-6 shrink-0" />
+                <span className="text-[15px] font-semibold tracking-tight">Vibe-Trading</span>
+              </Link>
+              <button
+                type="button"
+                onClick={closeMobileSidebar}
+                aria-label={t('layout.close')}
+                className="p-1.5 text-muted-foreground hover:text-foreground rounded transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
 
-            {renderSessionsList(closeMobileSessions)}
+            {/* Nav */}
+            <nav
+              aria-label={t('layout.mainNavigation', { defaultValue: 'Main navigation' })}
+              className="space-y-0.5 p-2"
+            >
+              {NAV.map(({ to, icon: Icon, label }) => (
+                <Link
+                  key={to}
+                  to={to}
+                  onClick={closeMobileSidebar}
+                  className={cn(
+                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+                    (to === "/" ? pathname === "/" || pathname.startsWith("/agent") : pathname.startsWith(to))
+                      ? "bg-primary/10 text-primary font-medium"
+                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  {label}
+                </Link>
+              ))}
+            </nav>
+
+            {/* Sessions */}
+            <div className="flex-1 overflow-auto border-t border-border/60 mt-2 flex flex-col min-h-0">
+              <div className="flex items-center justify-between px-4 py-2">
+                <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  {t('layout.sessions')}
+                </span>
+                <Link
+                  to="/agent"
+                  onClick={closeMobileSidebar}
+                  aria-label={t('layout.newChat')}
+                  className="flex items-center gap-1 p-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  title={t('layout.newChat')}
+                >
+                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                </Link>
+              </div>
+
+              {renderSessionsList(closeMobileSidebar)}
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-border/60 p-3 space-y-2">
+              <button
+                onClick={toggle}
+                className="flex items-center gap-1.5 p-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+                <span>{dark ? t('layout.light') : t('layout.dark')}</span>
+              </button>
+              <div className="flex items-center justify-between">
+                <LanguageSwitcher />
+                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60">
+                  <span>{t('app.version')}</span>
+                  <span aria-hidden="true">·</span>
+                  <Link to="/about" onClick={closeMobileSidebar} className="transition-colors hover:text-foreground">
+                    {t('layout.about')}
+                  </Link>
+                </div>
+              </div>
+            </div>
           </div>
         </div>,
         document.body,
@@ -451,6 +497,22 @@ export function Layout() {
 
       {/* Main */}
       <div className="relative flex-1 flex flex-col overflow-hidden">
+        {/* Mobile-only header bar: the sidebar is `max-md:hidden` (see the
+            <aside> above), so this is the only nav entry point on a phone. */}
+        <div className="hidden max-md:flex items-center gap-1 border-b border-border/60 px-2 py-2 shrink-0">
+          <button
+            type="button"
+            onClick={openMobileSidebar}
+            aria-label={t('layout.menu', { defaultValue: 'Menu' })}
+            className="p-2 text-muted-foreground hover:text-foreground rounded-md transition-colors"
+          >
+            <Menu className="h-5 w-5" aria-hidden="true" />
+          </button>
+          <Link to="/" aria-label="Vibe-Trading" className="flex items-center gap-2 px-1">
+            <BrandMark className="h-5 w-5 shrink-0" />
+            <span className="text-sm font-semibold tracking-tight">Vibe-Trading</span>
+          </Link>
+        </div>
         <ConnectionBanner status={sseStatus} retryAttempt={sseRetryAttempt} />
         <main id="main" className="flex-1 overflow-auto overscroll-contain">
           <Outlet />
