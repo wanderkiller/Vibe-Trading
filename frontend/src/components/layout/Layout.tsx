@@ -452,7 +452,7 @@ export function Layout() {
       {/* Main */}
       <div className="relative flex-1 flex flex-col overflow-hidden">
         <ConnectionBanner status={sseStatus} retryAttempt={sseRetryAttempt} />
-        <main id="main" className="flex-1 overflow-auto">
+        <main id="main" className="flex-1 overflow-auto overscroll-contain">
           <Outlet />
         </main>
       </div>

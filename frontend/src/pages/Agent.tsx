@@ -1617,7 +1617,7 @@ export function Agent() {
       <div
         ref={listRef}
         data-streaming={status === "streaming" ? "true" : undefined}
-        className="chat-scroll-container flex-1 overflow-auto p-6 relative"
+        className="chat-scroll-container flex-1 overflow-auto overscroll-contain p-6 relative"
       >
         <div
           className={[
