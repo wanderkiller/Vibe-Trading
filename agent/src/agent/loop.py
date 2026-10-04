@@ -14,6 +14,7 @@ Tool execution:
 from __future__ import annotations
 
 import concurrent.futures
+import contextvars
 import copy
 import json
 import logging
@@ -29,9 +30,19 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from src.agent.context import ContextBuilder
 from src.agent.grounding import GroundingLedger
+from src.agent.grounding.evidence import ARCHIVE_MANIFEST as _ARCHIVE_MANIFEST
+from src.agent.grounding.release import MAX_GROUNDING_REVISIONS
 from src.agent.memory import WorkspaceMemory
 from src.agent.progress import HeartbeatTimer, ProgressEvent, _set_emitter
-from src.agent.tool_progress import RECOVERY_MESSAGE, ToolProgress
+from src.agent.context_budget import (
+    MIN_CONVERSATION_TOKENS,
+    CompactionBudget,
+    ContextMeter,
+    is_context_overflow,
+    parse_context_limit,
+    resolve_window,
+)
+from src.agent.tool_progress import ToolProgress
 from src.agent.tools import ToolRegistry
 from src.agent.trace import TraceWriter
 from src.core.state import RunStateStore
@@ -42,6 +53,7 @@ from src.goal.context import (
     goal_progress_tuple,
 )
 from src.providers.chat import ChatLLM, LLMRuntimeSnapshot, ProviderStreamError
+from src.providers.session_context import bind_llm_session_id, reset_llm_session_id
 from src.providers.content_filter import (
     CONTENT_FILTER_SKIP_MESSAGE,
     MAX_CONSECUTIVE_CONTENT_FILTER_SKIPS,
@@ -76,6 +88,21 @@ SUMMARY_CHUNK_CHARS = 80_000
 # An LLM may return a transient empty completion (no text, no tool calls);
 # retry once with a nudge before failing the run on a second consecutive one.
 MAX_CONSECUTIVE_EMPTY_RESPONSE_SKIPS = 1
+
+# Compaction recovery is a bounded reliability aid, not an alternate research
+# loop: a run restores at most this many lost readonly payloads from its replay
+# cache. Past the cap a lost call runs again as it does without replay, so the
+# model is never told to use a result it can no longer see, and a loop of
+# identical re-runs still ends at the no-progress limit.
+MAX_READONLY_REPLAY_RECOVERIES = 6
+
+
+#: Test hook only: set it (monkeypatch) to run the three compaction layers on
+#: the pre-2026-09-29 estimated-token thresholds. A real attribute on purpose:
+#: while it was resolved lazily by the module ``__getattr__``, monkeypatch read
+#: the lazy 40000 before patching and wrote it back as a real attribute on
+#: undo, silently switching every later test in the process to the old path.
+TOKEN_THRESHOLD: Optional[int] = None
 
 
 def _override(name: str):
@@ -466,7 +493,8 @@ def _cleared_text(original_len: int) -> str:
         f"{_CLEARED_PREFIX} this tool call SUCCEEDED and returned "
         f"{original_len} characters, which were removed to free context "
         "space. This is NOT a tool failure and NOT an empty result. If you "
-        "need these values, call the tool again with the same arguments.]"
+        "need these values, request the same tool call again; the loop may "
+        "restore the prior successful result without refetching it.]"
     )
 
 
@@ -475,11 +503,51 @@ def _is_cleared(content: Any) -> bool:
     return isinstance(content, str) and content.startswith(_CLEARED_PREFIX)
 
 
-def _microcompact(messages: list) -> list:
-    """Layer 1: silently prune old tool results, keeping the most recent N intact.
+def _replay_context_result(result: str) -> str:
+    """Annotate a restored readonly result with planner guidance.
+
+    Replay exists to recover evidence that context compaction removed, not to
+    trigger another fetch under slightly different freshness arguments. Keep
+    the original payload intact and add a reserved metadata field when the
+    result is a JSON object; non-JSON results get a short textual suffix.
+    """
+    notice = (
+        "Exact prior successful result restored after context compaction. "
+        "Treat this payload as available evidence and continue the analysis. "
+        "Do not change cache/freshness arguments merely to bypass replay; "
+        "request a fresh fetch only when the evidence itself is stale/cached "
+        "or the task genuinely requires newer data."
+    )
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError):
+        return f"{result}\n\n[Replay notice: {notice}]"
+    if not isinstance(payload, dict):
+        return f"{result}\n\n[Replay notice: {notice}]"
+    replay_payload = dict(payload)
+    replay_payload["_vibe_replay"] = {
+        "restored": True,
+        "notice": notice,
+    }
+    return json.dumps(replay_payload, ensure_ascii=False)
+
+
+def _microcompact(
+    messages: list,
+    *,
+    target_tokens: Optional[int] = None,
+    measure: Optional[Callable[[list], int]] = None,
+) -> list:
+    """Layer 1: prune old tool results, keeping the most recent N intact.
 
     Args:
         messages: Message list (mutated in place).
+        target_tokens: Stop clearing, oldest first, once ``measure(messages)``
+            is at or below this. ``None`` clears every result but the last
+            ``KEEP_RECENT`` — clearing everything a cross-sectional question
+            still needs is what made it re-fetch its evidence until
+            ``no_progress``, so the loop passes a target.
+        measure: Prompt-size function for ``target_tokens``.
 
     Returns:
         Names of tools whose every result just became unreadable (legacy
@@ -491,6 +559,8 @@ def _microcompact(messages: list) -> list:
         return []
     newly_cleared = []
     for msg in tool_msgs[:-KEEP_RECENT]:
+        if target_tokens is not None and measure is not None and measure(messages) <= target_tokens:
+            break
         content = msg.get("content", "")
         # Skip a result already cleared: the marker is itself >100 chars, so
         # re-clearing it would rewrite the recorded original size with the
@@ -573,12 +643,19 @@ def _context_collapse(messages: list) -> None:
 def _msg_estimate_chars(msg: dict) -> int:
     """Rough character size of a message for token budgeting.
 
-    Sizes ``content`` plus every tool-call ``arguments`` payload. Assistant
-    tool-call messages carry their payload in ``tool_calls[].function.
-    arguments`` with empty ``content``; sizing them by content alone made the
-    layer-3 tail budget count a 100 KB arguments blob as ~10 tokens.
+    Sizes ``content`` plus ``reasoning_content`` plus every tool-call
+    ``arguments`` payload. Assistant tool-call messages carry their payload in
+    ``tool_calls[].function.arguments`` with empty ``content``; sizing them by
+    content alone made the layer-3 tail budget count a 100 KB arguments blob
+    as ~10 tokens. A thinking-model turn's ``reasoning_content`` (Kimi K2.5,
+    DeepSeek reasoner, Qwen thinking) is the same failure mode: ``estimate_tokens``
+    counts it via full JSON serialization, so leaving it out here undercounts
+    the tail relative to the trigger that decided compaction was needed.
     """
     size = len(str(msg.get("content", "")))
+    reasoning_content = msg.get("reasoning_content")
+    if reasoning_content is not None:
+        size += len(str(reasoning_content))
     for tc in msg.get("tool_calls") or []:
         fn = tc.get("function")
         if isinstance(fn, dict) and fn.get("arguments") is not None:
@@ -808,6 +885,17 @@ Rules:
 {focus_section}"""
 
 
+def _failure_code(result: str) -> str:
+    """The ``error_code`` (else error text) of a refused call, for the stop message."""
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("error_code") or payload.get("reason") or payload.get("error") or "")[:120]
+
+
 def _is_tool_success(result: str) -> bool:
     """Return True if the tool result does not look like an error response."""
     try:
@@ -826,13 +914,15 @@ def _is_tool_success(result: str) -> bool:
 # Provider tool-call markup that a model can emit as plain text on the
 # forced-text final iteration, where tool definitions are withheld. Releasing
 # it verbatim hands the user mojibake instead of an answer. Both DSML bar
-# spellings are covered: ASCII double bars and fullwidth double bars.
+# spellings are covered: ASCII double bars and fullwidth double bars, opening
+# and closing tags (a draft ending in "</｜｜DSML｜｜invoke>" once reached the
+# grounding gate as three unreadable figures-block lines).
 _FORCED_TEXT_TOOL_CALL_RE = re.compile(
     r"<\s*/?\s*(?:invoke|parameter|tool_calls|dsml)\b",
     re.IGNORECASE,
 )
 _DSML_BAR_TOOL_CALL_RE = re.compile(
-    r"<\s*[|\u2502\uFF5C]{2}\s*(?:dsml|tool_calls|invoke)\b",
+    r"<\s*/?\s*[|\u2502\uFF5C]{2}\s*(?:dsml|tool_calls|invoke)\b",
     re.IGNORECASE,
 )
 
@@ -918,9 +1008,9 @@ def _normalize_tool_run_dir(args: dict[str, Any], memory_run_dir: str | None) ->
     return normalized
 
 
-#: Names the backtest an archived run currently describes, and the files that
-#: archive placed there, so the next one can replace exactly its own output.
-_ARCHIVE_MANIFEST = ".archived_backtest.json"
+# ``_ARCHIVE_MANIFEST`` names the backtest an archived run currently describes,
+# and the files that archive placed there, so the next one can replace exactly
+# its own output. The grounding ledger reads it to tell whose copy it is.
 
 
 def _previously_archived(target: Path) -> set[str]:
@@ -1110,7 +1200,19 @@ class AgentLoop:
         # 5-9x each (2026-08-20 INTC run) because it could no longer see its
         # own verification records.
         self._called_identical: dict[tuple[str, str], str] = {}
+        # Successful readonly results are retained only for this run. If
+        # compaction removes the visible result, an exact repeat can restore it
+        # without hitting the external source again. Repeatable tools require an
+        # explicit replay policy for persistent post-compaction replay.
+        self._readonly_replay_cache: dict[tuple[str, str], str] = {}
+        self._readonly_replay_ready: set[tuple[str, str]] = set()
+        self._readonly_replay_protected: set[tuple[str, str]] = set()
+        self._readonly_replay_recoveries = 0
         self._tool_progress = ToolProgress()
+        self._context_meter = ContextMeter()
+        self._learned_context_window: int | None = None
+        self._compacted_to_tokens: int | None = None
+        self._tool_schema_tokens = 0
 
     def cancel(self) -> None:
         """Cancel the current loop.
@@ -1181,6 +1283,27 @@ class AgentLoop:
     def run(self, user_message: str, history: Optional[List[Dict[str, Any]]] = None, session_id: str = "") -> Dict[str, Any]:
         """Run the ReAct loop synchronously.
 
+        Binds ``session_id`` as the active LLM session for the whole run so
+        provider adapters that need a stable per-conversation identity
+        (OpenCode Go's ``x-opencode-session``) can read it at request time.
+
+        Args:
+            user_message: User message.
+            history: Prior conversation messages.
+            session_id: Session ID.
+
+        Returns:
+            Execution result dict.
+        """
+        token = bind_llm_session_id(session_id)
+        try:
+            return self._run_bound(user_message, history, session_id)
+        finally:
+            reset_llm_session_id(token)
+
+    def _run_bound(self, user_message: str, history: Optional[List[Dict[str, Any]]] = None, session_id: str = "") -> Dict[str, Any]:
+        """Run the ReAct loop with the LLM session already bound.
+
         Args:
             user_message: User message.
             history: Prior conversation messages.
@@ -1206,7 +1329,18 @@ class AgentLoop:
         self._last_activity_wall = _time.time()
         self._run_done = threading.Event()
         self._called_identical = {}
+        self._readonly_replay_cache = {}
+        self._readonly_replay_ready = set()
+        self._readonly_replay_protected = set()
+        self._readonly_replay_recoveries = 0
         self._tool_progress = ToolProgress()
+        self._context_meter = ContextMeter()
+        self._learned_context_window: int | None = None
+        self._compacted_to_tokens: int | None = None
+        # Sent with every request and never compacted, so they count against
+        # the window exactly like the system prompt.
+        definitions = getattr(self.registry, "get_definitions", None)
+        self._tool_schema_tokens = estimate_tokens(definitions()) if callable(definitions) else 0
         run_started_wall = _time.time()
 
         state_store = RunStateStore()
@@ -1272,6 +1406,12 @@ class AgentLoop:
         content_filter_circuit_breaker = False
         empty_model_response_iter: int | None = None
         consecutive_empty_responses = 0
+        grounding_revisions = 0
+        # A normal grounding correction is a text revision, not a new research
+        # turn. Explicit grounding recovery (identity / missing price evidence)
+        # keeps tools available; ordinary correction turns do not.
+        grounding_correction_text_only = False
+        pending_grounding_draft = ""
         llm_usage_summary = _new_llm_usage_summary(self.llm)
         last_response_model: str | None = None
         goal_continuations = 0
@@ -1311,28 +1451,23 @@ class AgentLoop:
                     notif_text = "\n".join(f"[bg:{n['task_id']}] {n['status']}: {n['result']}" for n in notifs)
                     messages.append({"role": "user", "content": f"<background-results>\n{notif_text}\n</background-results>\n\n<system>Continue processing with the background results above.</system>"})
 
-                # Estimate transcript size once; each compaction layer below
-                # escalates only when its own token threshold is crossed.
-                tokens = estimate_tokens(messages)
-
-                # Layer 1: microcompact — prune old tool results only under
-                # memory pressure, so short, low-pressure runs keep their full
-                # tool history available for the model to reference instead of
-                # having every result past the most recent few cleared.
-                if tokens > int(_token_threshold() * 0.5):
-                    self._microcompact_and_unblock(messages, trace, iteration)
+                if _override("TOKEN_THRESHOLD") is not None:
+                    # Test hook: a monkeypatched module-level TOKEN_THRESHOLD
+                    # keeps the old estimate-based layers so compaction tests
+                    # can force each layer with a tiny number.
                     tokens = estimate_tokens(messages)
-
-                # Layer 2: context collapse (fold long text, zero API cost)
-                if tokens > int(_token_threshold() * 0.7):
-                    _context_collapse(messages)
-                    tokens = estimate_tokens(messages)
-
-                # Layer 3: auto_compact (token threshold exceeded)
-                _tok_threshold = _token_threshold()
-                if tokens > _tok_threshold:
-                    logger.info(f"Auto compact triggered: {tokens} tokens > {_tok_threshold}")
-                    self._auto_compact(messages, run_dir, trace, iteration=current_iter)
+                    if tokens > int(_token_threshold() * 0.5):
+                        self._microcompact_and_unblock(messages, trace, iteration)
+                        tokens = estimate_tokens(messages)
+                    if tokens > int(_token_threshold() * 0.7):
+                        _context_collapse(messages)
+                        tokens = estimate_tokens(messages)
+                    _tok_threshold = _token_threshold()
+                    if tokens > _tok_threshold:
+                        logger.info(f"Auto compact triggered: {tokens} tokens > {_tok_threshold}")
+                        self._auto_compact(messages, run_dir, trace, iteration=current_iter)
+                else:
+                    self._compact_to_budget(messages, run_dir, trace, iteration, current_iter)
 
                 logger.info(f"ReAct iteration {iteration}/{self.max_iterations}")
 
@@ -1392,10 +1527,41 @@ class AgentLoop:
                     self._grounding and self._grounding.should_buffer_output
                 )
 
+                streamed_chars = 0
+                stream_total = 0
+                stream_frozen = False
+
                 def _on_text_chunk(delta: str) -> None:
+                    nonlocal streamed_chars, stream_total, stream_frozen
                     thinking_chunks.append(delta)
-                    if not buffer_text_output:
+                    stream_total += len(delta)
+                    if buffer_text_output or stream_frozen:
+                        return
+                    # Neither the figures block nor an unchecked measurement streams
+                    # (see streamable_length). Only a fence character or a digit
+                    # can hold text back, so any other chunk is emitted as it
+                    # arrives instead of re-parsing the whole answer.
+                    if streamed_chars + len(delta) == stream_total and not any(
+                        char in "`~" or char.isdigit() for char in delta
+                    ):
                         self._emit("text_delta", {"delta": delta, "iter": current_iter})
+                        streamed_chars = stream_total
+                        return
+                    text = "".join(thinking_chunks)
+                    safe = (
+                        self._grounding.streamable_length(text)
+                        if self._grounding is not None
+                        else len(text)
+                    )
+                    if self._grounding is not None and safe < len(text):
+                        # Held at a measurement: nothing after it streams this turn.
+                        stream_frozen = self._grounding.measurement_start(text) == safe
+                    if safe > streamed_chars:
+                        self._emit(
+                            "text_delta",
+                            {"delta": text[streamed_chars:safe], "iter": current_iter},
+                        )
+                        streamed_chars = safe
 
                 def _on_reasoning_chunk(delta: str) -> None:
                     # Throttled: long reasoning streams produce hundreds of
@@ -1424,11 +1590,26 @@ class AgentLoop:
                         reasoning_event["tail"] = reasoning_tail
                     self._emit("reasoning_delta", reasoning_event)
 
-                # On last iteration, drop tool definitions to force text output
+                # The final iteration is always text-only. A grounding correction
+                # whose validator requested no explicit recovery is text-only too:
+                # the model must revise from evidence already gathered instead of
+                # starting another research/refetch loop merely to reformat a draft.
                 is_last_iteration = (iteration == self.max_iterations)
-                tool_defs = None if is_last_iteration else self.registry.get_definitions()
+                correction_text_only = grounding_correction_text_only
+                tool_defs = (
+                    None
+                    if is_last_iteration or correction_text_only
+                    else self.registry.get_definitions()
+                )
                 if is_last_iteration:
                     trace.write({"type": "forced_text_only", "iter": current_iter})
+                elif correction_text_only:
+                    trace.write(
+                        {
+                            "type": "grounding_correction_text_only",
+                            "iter": current_iter,
+                        }
+                    )
 
                 _llm_timeout_s = _llm_timeout_seconds()
                 llm_timeout = _llm_timeout_s if _llm_timeout_s > 0 else None
@@ -1453,14 +1634,23 @@ class AgentLoop:
                     # provider's Retry-After header (bounded by the configured
                     # cap) when present. A successful retry does not reset the
                     # streak — only a clean first-attempt success does.
-                    if not exc.retryable:
+                    context_overflow = is_context_overflow(str(exc))
+                    if not exc.retryable and not context_overflow:
                         raise
-                    stream_failure_streak += 1
-                    retry_delay_s = (
-                        min(exc.retry_after_s, _stream_retry_max_delay_s())
-                        if exc.retry_after_s is not None
-                        else _stream_retry_backoff_s(stream_failure_streak)
-                    )
+                    if context_overflow:
+                        # Deterministic, so no backoff: shrink to the limit the
+                        # provider reported and send once more.
+                        self._recover_context_overflow(
+                            exc, messages, run_dir, trace, iteration, current_iter
+                        )
+                        retry_delay_s = 0.0
+                    else:
+                        stream_failure_streak += 1
+                        retry_delay_s = (
+                            min(exc.retry_after_s, _stream_retry_max_delay_s())
+                            if exc.retry_after_s is not None
+                            else _stream_retry_backoff_s(stream_failure_streak)
+                        )
                     logger.warning(
                         "Provider stream failed (iter %s), retrying once in %.2fs: %s",
                         current_iter,
@@ -1471,13 +1661,16 @@ class AgentLoop:
                         "stream_reset",
                         {
                             "iter": current_iter,
-                            "reason": "provider_stream_retry",
+                            "reason": "context_overflow" if context_overflow else "provider_stream_retry",
                             "provider": exc.provider,
                             "model": exc.model,
                             "retry_delay_s": retry_delay_s,
                         },
                     )
                     thinking_chunks.clear()
+                    streamed_chars = 0
+                    stream_total = 0
+                    stream_frozen = False
                     reasoning_chars = 0
                     last_reasoning_emit = None
                     # Wait on the cancel event, not time.sleep: the delay now
@@ -1509,6 +1702,11 @@ class AgentLoop:
                 self._last_activity_wall = _time.time()
 
                 usage = getattr(response, "usage_metadata", None)
+                # `messages` is still exactly what this request sent.
+                self._context_meter.observe(
+                    usage.get("input_tokens") if isinstance(usage, dict) else None,
+                    messages,
+                )
                 if getattr(response, "response_model", None):
                     last_response_model = response.response_model
                 usage_delta = _record_llm_usage(
@@ -1562,7 +1760,14 @@ class AgentLoop:
                     if not buffer_text_output:
                         self._emit(
                             "thinking_done",
-                            {"iter": current_iter, "content": thinking_text[:500]},
+                            {
+                                "iter": current_iter,
+                                "content": (
+                                    thinking_text[: self._grounding.streamable_length(thinking_text)]
+                                    if self._grounding is not None
+                                    else thinking_text
+                                )[:500],
+                            },
                         )
 
                 # Content-filter skip: provider blocked the response — continue
@@ -1591,8 +1796,47 @@ class AgentLoop:
                 # Not filtered — reset the consecutive-skip counter.
                 consecutive_content_filter_count = 0
 
-                if not response.has_tool_calls:
-                    final_content = response.content or ""
+                forced_grounding_release = False
+                if correction_text_only and response.has_tool_calls:
+                    # An unoffered call consumes the same bounded correction
+                    # budget as an invalid revised draft, but is never executed
+                    # or inserted into the transcript as an unanswered tool call.
+                    grounding_revisions += 1
+                    trace.write(
+                        {
+                            "type": "grounding_correction_tool_call_blocked",
+                            "iter": current_iter,
+                            "round": grounding_revisions,
+                        }
+                    )
+                    if streamed_chars:
+                        self._emit(
+                            "stream_reset",
+                            {"iter": current_iter, "reason": "grounding_tool_call_blocked"},
+                        )
+                    forced_grounding_release = (
+                        grounding_revisions >= MAX_GROUNDING_REVISIONS
+                        or iteration == self.max_iterations
+                    )
+                    if not forced_grounding_release:
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "<system>This is a grounding correction turn. "
+                                    "Do not call tools. Revise the previous draft using "
+                                    "the evidence already gathered, or remove claims "
+                                    "that cannot be supported.</system>"
+                                ),
+                            }
+                        )
+                        continue
+
+                if forced_grounding_release or not response.has_tool_calls:
+                    # At the cap, release the last actual draft through the
+                    # existing gate. The forbidden call's text is not an answer.
+                    final_content = pending_grounding_draft if forced_grounding_release else response.content or ""
+                    syntax_fallback_emitted = False
                     if not final_content:
                         empty_model_response_iter = iteration
                         trace.write(
@@ -1669,30 +1913,75 @@ class AgentLoop:
                             "text_delta",
                             {"delta": final_content, "iter": current_iter},
                         )
+                        syntax_fallback_emitted = True
                     if self._grounding is not None:
-                        validation = self._grounding.validate_final_answer(final_content)
+                        validation = (
+                            self._grounding.revalidate(final_content)
+                            if forced_grounding_release
+                            else self._grounding.validate_final_answer(final_content)
+                        )
                         if not validation.valid:
-                            trace.write_text_entry(
-                                {
-                                    "type": "answer_rejected",
-                                    "iter": current_iter,
-                                    "issues": validation.issues,
-                                },
-                                field="content",
-                                value=final_content,
-                                offload_kind=f"answer-rejected-{current_iter}",
+                            # A draft whose only defect is a missing provenance
+                            # word (source / currency / symbol suffix) gets the
+                            # word appended, not another multi-minute model round.
+                            repaired = self._grounding.repair_provenance(
+                                final_content, validation
                             )
-                            react_trace.append(
-                                {
-                                    "type": "answer_rejected",
-                                    "issues": validation.issues,
-                                }
-                            )
-                            messages.append(
-                                {"role": "assistant", "content": final_content}
-                            )
+                            if repaired is not None:
+                                # Non-recording: no model round produced this
+                                # text, and ``validation_count`` is the
+                                # rejected-draft number the user is shown.
+                                recheck = self._grounding.revalidate(repaired)
+                                if recheck.valid:
+                                    trace.write(
+                                        {
+                                            "type": "answer_repaired",
+                                            "iter": current_iter,
+                                            "issues": validation.issues,
+                                        }
+                                    )
+                                    react_trace.append(
+                                        {"type": "answer_repaired", "issues": validation.issues}
+                                    )
+                                    final_content = repaired
+                                    validation = recheck
+                        if validation.valid:
+                            # The figures block is the model's declaration to
+                            # the gate, not answer text.
+                            final_content = validation.released_text
+                        if not validation.valid:
+                            if not forced_grounding_release:
+                                trace.write_text_entry(
+                                    {
+                                        "type": "answer_rejected",
+                                        "iter": current_iter,
+                                        "issues": validation.issues,
+                                    },
+                                    field="content",
+                                    value=final_content,
+                                    offload_kind=f"answer-rejected-{current_iter}",
+                                )
+                                if not buffer_text_output and streamed_chars:
+                                    # The stream showed this draft up to its first unchecked
+                                    # number; the next draft or the released answer replaces it.
+                                    self._emit(
+                                        "stream_reset",
+                                        {"iter": current_iter, "reason": "grounding_rejected"},
+                                    )
+                                react_trace.append(
+                                    {
+                                        "type": "answer_rejected",
+                                        "issues": validation.issues,
+                                    }
+                                )
+                                messages.append(
+                                    {"role": "assistant", "content": final_content}
+                                )
                             recovery = self._grounding.recovery_action(validation)
-                            if recovery is not None and iteration < self.max_iterations:
+                            if not forced_grounding_release and recovery is not None and iteration < self.max_iterations:
+                                # Explicit bounded recovery is the one case where
+                                # the next turn is allowed to research again.
+                                grounding_correction_text_only = False
                                 self._grounding.record_recovery(recovery)
                                 trace.write(
                                     {
@@ -1710,39 +1999,131 @@ class AgentLoop:
                                         "content": f"<system>{self._grounding.recovery_prompt(recovery, validation)}</system>",
                                     }
                                 )
+                                self._emit(
+                                    "grounding_status",
+                                    {
+                                        "stage": "revising",
+                                        "round": self._grounding.validation_count,
+                                        "issues": len(validation.issues),
+                                    },
+                                )
                                 final_content = ""
                                 continue
-                            messages.append(
-                                {
-                                    "role": "user",
-                                    "content": f"<system>{self._grounding.correction_prompt(validation)}</system>",
-                                }
-                            )
+                            if not forced_grounding_release:
+                                messages.append(
+                                    {
+                                        "role": "user",
+                                        "content": f"<system>{self._grounding.correction_prompt(validation)}</system>",
+                                    }
+                                )
+                            rejected_draft = final_content
+                            pending_grounding_draft = rejected_draft
                             final_content = ""
-                            # One extra revision when real iteration budget remains;
-                            # each revision costs one iteration, so without budget the
-                            # run must stop revising and release the safe fallback.
-                            revision_cap = 4 if self.max_iterations - iteration >= 3 else 3
+                            # The budget counts drafts rejected on this
+                            # correction path; the last one is released with
+                            # its figures cut. A draft that triggered bounded
+                            # recovery is not counted (it re-fetches evidence
+                            # rather than rewording), so a run that had to
+                            # resolve its symbol first still gets a corrected
+                            # draft.
+                            if not forced_grounding_release:
+                                grounding_revisions += 1
                             if (
-                                iteration < self.max_iterations
-                                and self._grounding.validation_count < revision_cap
+                                not forced_grounding_release
+                                and iteration < self.max_iterations
+                                and grounding_revisions < MAX_GROUNDING_REVISIONS
                             ):
+                                grounding_correction_text_only = True
+                                self._emit(
+                                    "grounding_status",
+                                    {
+                                        "stage": "revising",
+                                        "round": self._grounding.validation_count,
+                                        "issues": len(validation.issues),
+                                    },
+                                )
                                 continue
-                            final_content = self._grounding.safe_fallback()
+                            # Out of revisions. The last draft is still the
+                            # analysis the user waited minutes for; release it
+                            # with the rejected figures cut out and re-checked
+                            # by the same gate. The canned refusal is only for
+                            # what cannot be cut: an identity finding, a run
+                            # that never observed a price, or a cut that still
+                            # fails validation.
+                            rejected_drafts = self._grounding.validation_count
+                            released = self._grounding.redacted_release(
+                                rejected_draft, validation
+                            )
+                            if released is not None:
+                                trace.write(
+                                    {
+                                        "type": "answer_released_redacted",
+                                        "iter": current_iter,
+                                        "issues": validation.issues,
+                                    }
+                                )
+                                react_trace.append(
+                                    {
+                                        "type": "answer_released_redacted",
+                                        "issues": validation.issues,
+                                    }
+                                )
+                                final_content = released
+                                self._emit(
+                                    "grounding_status",
+                                    {
+                                        "stage": "released_redacted",
+                                        "removed": self._grounding.figures_removed,
+                                    },
+                                )
+                                self._released_fallback_reason = (
+                                    "final answer released with unverified figures "
+                                    f"redacted after {rejected_drafts} rejected drafts"
+                                )
+                            else:
+                                final_content = self._grounding.safe_fallback()
+                                # Captured HERE, beside the redacted branch's
+                                # own count. Left unset, the reason was built
+                                # lazily at the end of the run from a
+                                # ``validation_count`` the release path's
+                                # rechecks had already moved.
+                                self._released_fallback_reason = (
+                                    "final answer degraded to the deterministic "
+                                    f"fallback after {rejected_drafts} rejected "
+                                    "drafts could not be corrected within the "
+                                    "iteration budget"
+                                )
                             self._released_fallback = True
                             self._emit(
                                 "text_delta",
                                 {"delta": final_content, "iter": current_iter},
                             )
-                        elif buffer_text_output:
+                        elif buffer_text_output and not syntax_fallback_emitted:
                             self._emit(
                                 "text_delta",
                                 {"delta": final_content, "iter": current_iter},
                             )
+                        elif not self._released_fallback and not syntax_fallback_emitted:
+                            # Flush a held-back last line that never became a
+                            # figures fence; a stripped block leaves nothing.
+                            shown = "".join(thinking_chunks)[:streamed_chars]
+                            if not final_content.startswith(shown):
+                                # Stripping the block also trims the blank lines
+                                # the stream already showed before its fence.
+                                shown = shown.rstrip()
+                            if final_content.startswith(shown) and len(final_content) > len(shown):
+                                self._emit(
+                                    "text_delta",
+                                    {"delta": final_content[len(shown):], "iter": current_iter},
+                                )
+                    # The correction has ended. A goal continuation is a new
+                    # research turn and must regain its normal tool access.
+                    grounding_correction_text_only = False
+                    pending_grounding_draft = ""
                     should_continue_goal = False
                     continuation_snapshot = None
                     _max_cont = _goal_max_continuations()
-                    if active_goal_id and session_id and _max_cont > 0:
+                    if not forced_grounding_release and active_goal_id and session_id and _max_cont > 0:
                         try:
                             if goal_store is None:
                                 from src.goal import GoalStore
@@ -1824,10 +2205,22 @@ class AgentLoop:
                     react_trace.append({"type": "answer", "content": final_content[:500]})
                     break
 
+                if not buffer_text_output and self._grounding is not None:
+                    # The turn is over, so a held-back last line is complete: it is
+                    # shown unless it opens a figures block.
+                    turn_text = "".join(thinking_chunks)
+                    safe = min(len(turn_text), self._grounding.streamable_length(turn_text + "\n"))
+                    if safe > streamed_chars:
+                        self._emit(
+                            "text_delta",
+                            {"delta": turn_text[streamed_chars:safe], "iter": current_iter},
+                        )
+                        streamed_chars = safe
                 assistant_message = context.format_assistant_tool_calls(
                     response.tool_calls,
                     content=response.content,
                     reasoning_content=response.reasoning_content or thinking_text or None,
+                    provider_items=getattr(response, "provider_items", None),
                 )
                 _attach_tool_call_thought_signatures(assistant_message, response.tool_calls)
                 messages.append(assistant_message)
@@ -1841,8 +2234,8 @@ class AgentLoop:
                     not self._cancel_event.is_set()
                     and self._tool_progress.finish_iteration()
                 ):
-                    no_progress_reason = "no_progress: " + RECOVERY_MESSAGE
-                    final_content = RECOVERY_MESSAGE
+                    final_content = self._tool_progress.recovery_message()
+                    no_progress_reason = "no_progress: " + final_content
                     trace.write(
                         {
                             "type": "no_progress",
@@ -2112,10 +2505,36 @@ class AgentLoop:
         for tc in tool_calls:
             # Layer 4: compact tool — mark then defer execution
             if tc.name == "compact":
-                compact_requested = True
-                focus_topic = tc.arguments.get("focus_topic", "")
-                messages.append(context.format_tool_result(tc.id, "compact", '{"status":"ok","message":"Compressing..."}'))
-                trace.write({"type": "compact_requested", "iter": iteration})
+                self._tool_progress.note("compact", "compact")
+                self._emit(
+                    "tool_call",
+                    {"tool": "compact", "arguments": {}, "iter": iteration, "call_id": tc.id},
+                )
+                budget = None if _override("TOKEN_THRESHOLD") is not None else self._context_budget(messages)
+                tokens = self._prompt_tokens(messages) if budget is not None else 0
+                if budget is not None and tokens <= budget.micro_at:
+                    # Summarising a prompt this small only destroys evidence the
+                    # model will then fetch again: decline, and say why.
+                    declined = json.dumps({
+                        "status": "ok",
+                        "skipped": True,
+                        "message": (
+                            f"Compaction not needed: the prompt is {tokens} tokens, "
+                            f"under the {budget.micro_at}-token threshold. Earlier "
+                            "tool results are still in context; keep using them."
+                        ),
+                    })
+                    messages.append(context.format_tool_result(tc.id, "compact", declined))
+                    trace.write({"type": "compact_declined", "iter": iteration, "prompt_tokens": tokens})
+                else:
+                    compact_requested = True
+                    focus_topic = tc.arguments.get("focus_topic", "")
+                    messages.append(context.format_tool_result(tc.id, "compact", '{"status":"ok","message":"Compressing..."}'))
+                    trace.write({"type": "compact_requested", "iter": iteration})
+                self._emit(
+                    "tool_result",
+                    {"tool": "compact", "status": "ok", "elapsed_ms": 0, "call_id": tc.id},
+                )
                 continue
 
             tool_def = self.registry.get(tc.name)
@@ -2144,18 +2563,6 @@ class AgentLoop:
                     iteration,
                 )
                 continue
-            if (
-                dedup_key is not None
-                and dedup_key in self._called_ok
-                and not is_repeatable
-            ):
-                logger.warning(f"Blocked duplicate call: {tc.name} (already succeeded)")
-                skip_msg = json.dumps({"skipped": True, "reason": f"{tc.name} already completed successfully. Use the previous result."})
-                messages.append(context.format_tool_result(tc.id, tc.name, skip_msg))
-                trace.write({"type": "tool_skipped", "iter": iteration, "tool": tc.name})
-                react_trace.append({"type": "tool_skipped", "tool": tc.name})
-                continue
-
             if self._grounding is not None:
                 authorization = self._grounding.authorize_tool_call(
                     tc.name,
@@ -2175,6 +2582,86 @@ class AgentLoop:
                         )
                     )
                     continue
+
+            # A successful readonly call whose visible result was removed by
+            # micro/auto-compaction can be replayed from this run's memory. This
+            # extends the existing deterministic-cache pattern without declaring
+            # mutable web resources deterministic. Fresh/no-cache calls bypass
+            # this path, while repeatable calls must explicitly opt in.
+            if (
+                dedup_key is not None
+                and dedup_key in self._readonly_replay_ready
+                and self._readonly_replay_recoveries < MAX_READONLY_REPLAY_RECOVERIES
+                and self._readonly_replay_allowed(tool_def, tc.arguments)
+                and dedup_key in self._readonly_replay_cache
+            ):
+                cached = self._readonly_replay_cache[dedup_key]
+                restored = _replay_context_result(cached)
+                messages.append(
+                    context.format_tool_result(
+                        tc.id, tc.name, truncate_tool_result(restored)
+                    )
+                )
+                self._successful_call_keys[tc.id] = dedup_key
+                self._called_ok.add(dedup_key)
+                self._readonly_replay_ready.discard(dedup_key)
+                self._readonly_replay_recoveries += 1
+                # A repeatable tool would otherwise re-fetch on the very next
+                # identical call; the restored payload is visible now, so that
+                # call is refused until compaction removes it again.
+                if getattr(tool_def, "repeatable", False):
+                    self._readonly_replay_protected.add(dedup_key)
+                # Restoring data that compaction removed is forward progress for
+                # the working context, but not a new external observation.
+                self._tool_progress.mark_context_restored()
+                trace.write({
+                    "type": "tool_result_replayed",
+                    "iter": iteration,
+                    "tool": tc.name,
+                    "call_id": tc.id,
+                    "recovery_count": self._readonly_replay_recoveries,
+                    "recovery_limit": MAX_READONLY_REPLAY_RECOVERIES,
+                })
+                react_trace.append({"type": "tool_result_replayed", "tool": tc.name})
+                self._tool_progress.note("replayed", tc.name)
+                self._emit(
+                    "tool_result",
+                    {
+                        "tool": tc.name,
+                        "status": "ok",
+                        "elapsed_ms": 0,
+                        "preview": redact_tool_result(cached)[:200],
+                        "call_id": tc.id,
+                        "cached": True,
+                        "replayed": True,
+                    },
+                )
+                continue
+
+            if (
+                dedup_key is not None
+                and dedup_key in self._called_ok
+                and (
+                    not is_repeatable
+                    or dedup_key in self._readonly_replay_protected
+                )
+            ):
+                logger.warning(f"Blocked duplicate call: {tc.name} (already succeeded)")
+                replay_restored = dedup_key in self._readonly_replay_protected
+                reason = (
+                    f"{tc.name} was just restored from the run-scoped replay cache after "
+                    "compaction. The payload is already visible in context; use that "
+                    "result and continue the analysis instead of requesting the same "
+                    "call again."
+                    if replay_restored
+                    else f"{tc.name} already completed successfully. Use the previous result."
+                )
+                skip_msg = json.dumps({"skipped": True, "reason": reason})
+                messages.append(context.format_tool_result(tc.id, tc.name, skip_msg))
+                trace.write({"type": "tool_skipped", "iter": iteration, "tool": tc.name})
+                self._tool_progress.note("skipped", tc.name)
+                react_trace.append({"type": "tool_skipped", "tool": tc.name})
+                continue
 
             # Deterministic tools (e.g. financial_rigor calc) return the same
             # result for the same args. Checked AFTER authorization above so a
@@ -2196,6 +2683,7 @@ class AgentLoop:
                         "call_id": tc.id,
                     })
                     react_trace.append({"type": "tool_result_cached", "tool": tc.name})
+                    self._tool_progress.note("cached", tc.name)
                     self._emit(
                         "tool_result",
                         {
@@ -2281,6 +2769,7 @@ class AgentLoop:
             react_trace: Compact returned trace.
             iteration: Current iteration.
         """
+        self._tool_progress.note("blocked", tc.name, _failure_code(result))
         args = _normalize_tool_run_dir(tc.arguments, self.memory.run_dir)
         redacted_args = redact_payload(args)
         event_args = {key: str(value)[:200] for key, value in redacted_args.items()}
@@ -2638,6 +3127,27 @@ class AgentLoop:
             return False
         return bool(tool_def and getattr(tool_def, "is_readonly", False))
 
+    def _readonly_replay_allowed(self, tool_def: Any, arguments: Mapping[str, Any]) -> bool:
+        """Whether an exact readonly result may be restored after compaction.
+
+        This is intentionally narrower than ``is_readonly``: deterministic
+        calls already use the existing cache, and ``no_cache=True`` explicitly
+        requests a fresh read. Repeatable calls require explicit opt-in because
+        they may otherwise be intentionally refreshed.
+        """
+        if tool_def is None or not getattr(tool_def, "is_readonly", False):
+            return False
+        if getattr(tool_def, "deterministic", False):
+            return False
+        try:
+            if bool((arguments or {}).get("no_cache")):
+                return False
+        except AttributeError:
+            return False
+        if getattr(tool_def, "repeatable", False):
+            return bool(getattr(tool_def, "replay_after_compaction", False))
+        return True
+
     def _record_written_target(self, arguments: Mapping[str, Any]) -> None:
         """Remember a file written by write_file/edit_file for completion checks."""
         raw = arguments.get("path") or arguments.get("file_path")
@@ -2710,7 +3220,126 @@ class AgentLoop:
             "file write is a failure."
         )
 
-    def _microcompact_and_unblock(self, messages: list, trace: TraceWriter, iteration: int) -> list[str]:
+    def _context_budget(self, messages: list) -> CompactionBudget:
+        """Compaction thresholds for the active model's real context window."""
+        cfg = get_env_config()
+        provider = (cfg.llm.langchain_provider or "").strip().lower().replace("_", "-")
+        model = getattr(self.llm, "model_name", "") or cfg.llm.langchain_model_name
+        window, source = resolve_window(
+            provider,
+            str(model or ""),
+            env_window=cfg.agent_tuning.vibe_trading_context_window,
+            learned_window=self._learned_context_window,
+        )
+        return CompactionBudget(
+            window=window,
+            source=source,
+            max_tokens=cfg.agent_tuning.vibe_trading_context_max_tokens,
+            static_tokens=self._context_meter.static(messages, self._tool_schema_tokens),
+        )
+
+    def _prompt_tokens(self, messages: list) -> int:
+        """Real-token size the next request would have."""
+        return self._context_meter.tokens(messages, self._tool_schema_tokens)
+
+    def _compact_to_budget(
+        self,
+        messages: list,
+        run_dir: Path,
+        trace: TraceWriter,
+        iteration: int,
+        current_iter: int,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Run the compaction layers the prompt has actually grown into.
+
+        Args:
+            messages: Message list, mutated in place.
+            run_dir: Active run directory.
+            trace: Run trace.
+            iteration: Loop-local iteration (the microcompact event's key).
+            current_iter: Session-wide iteration number.
+            force: Summarise even under budget (the provider said it overflowed).
+        """
+        budget = self._context_budget(messages)
+        tokens = self._prompt_tokens(messages)
+        if tokens > budget.micro_at:
+            # Oldest results first and only until the prompt fits again:
+            # clearing all but the last few is what sent a 12-company
+            # comparison back to re-fetch its own evidence.
+            self._microcompact_and_unblock(
+                messages,
+                trace,
+                iteration,
+                target_tokens=budget.micro_at,
+                measure=self._prompt_tokens,
+            )
+            tokens = self._prompt_tokens(messages)
+        if tokens > budget.collapse_at:
+            _context_collapse(messages)
+            tokens = self._prompt_tokens(messages)
+        # A summary keeps the static prompt plus a ~20K-token tail, so on a
+        # window that small the prompt stays over the line after compacting;
+        # without this every later iteration paid for another summary call.
+        regrown = (
+            self._compacted_to_tokens is None
+            or tokens > self._compacted_to_tokens + MIN_CONVERSATION_TOKENS
+        )
+        if force or (tokens > budget.compact_at and regrown):
+            logger.info(
+                "Auto compact triggered: %s real tokens > %s (window %s from %s)",
+                tokens, budget.compact_at, budget.window, budget.source,
+            )
+            self._auto_compact(messages, run_dir, trace, iteration=current_iter)
+            self._compacted_to_tokens = self._prompt_tokens(messages)
+
+    def _recover_context_overflow(
+        self,
+        exc: Exception,
+        messages: list,
+        run_dir: Path,
+        trace: TraceWriter,
+        iteration: int,
+        current_iter: int,
+    ) -> None:
+        """Learn the real window from a context-length error and compact to it.
+
+        A model missing from ``context_windows.json`` runs on the default
+        window; if that is larger than the real one the provider says so, and
+        the run shrinks to the limit instead of failing.
+
+        Args:
+            exc: The provider error that reported the overflow.
+            messages: Message list, mutated in place.
+            run_dir: Active run directory.
+            trace: Run trace.
+            iteration: Loop-local iteration.
+            current_iter: Session-wide iteration number.
+        """
+        sent = self._prompt_tokens(messages)
+        stated = parse_context_limit(str(exc))
+        # The provider's own number when it gives one; otherwise the prompt
+        # that did not fit, with a margin for our estimate of it.
+        self._learned_context_window = stated or int(sent * 0.9)
+        trace.write({
+            "type": "context_overflow",
+            "iter": current_iter,
+            "prompt_tokens": sent,
+            "stated_limit": stated,
+            "learned_window": self._learned_context_window,
+        })
+        self._compact_to_budget(messages, run_dir, trace, iteration, current_iter, force=True)
+
+    def _microcompact_and_unblock(
+        self,
+        messages: list,
+        trace: TraceWriter,
+        iteration: int,
+        *,
+        target_tokens: Optional[int] = None,
+        measure: Optional[Callable[[list], int]] = None,
+    ) -> list[str]:
         """Run layer-1 microcompact and re-open lost readonly call identities.
 
         A readable result for another argument variant, or a synthetic skip,
@@ -2724,12 +3353,14 @@ class AgentLoop:
                 whenever the ledger is re-opened, because this layer used to
                 act silently and left no evidence for diagnosis.
             iteration: Current ReAct iteration, recorded on the trace event.
+            target_tokens: Clear oldest-first only until the prompt fits.
+            measure: Prompt-size function for ``target_tokens``.
 
         Returns:
             The tool names re-opened, for callers and tests to assert on.
         """
         readable_before = self._readable_success_keys(messages)
-        _microcompact(messages)
+        _microcompact(messages, target_tokens=target_tokens, measure=measure)
         unreadable_tools = self._unblock_lost_readonly_results(messages, readable_before)
         if unreadable_tools:
             trace.write({
@@ -2758,6 +3389,12 @@ class AgentLoop:
             key for key in lost & self._called_ok if self._is_tool_readonly(key[0])
         }
         self._called_ok.difference_update(reopened)
+        # Every lost call reopens, as before replay existed; the replay budget
+        # only decides, at call time, whether it is restored or run again.
+        self._readonly_replay_protected.difference_update(reopened)
+        self._readonly_replay_ready.update(
+            key for key in reopened if key in self._readonly_replay_cache
+        )
         return sorted({key[0] for key in reopened})
 
     def _identical_call_key(self, tool_name: str, arguments: Mapping[str, Any]) -> tuple[str, str] | None:
@@ -2852,16 +3489,32 @@ class AgentLoop:
 
         # Cache successful deterministic results so an identical later call is
         # served without re-execution (regression: repeated financial_rigor
-        # calcs after compaction, 2026-08-20 INTC run).
+        # calcs after compaction, 2026-08-20 INTC run). Readonly results use a
+        # separate run-scoped replay cache: it is only consulted after
+        # compaction has made that exact result unreadable, and only for tools
+        # whose replay policy allows it.
         if success:
             try:
                 tool_def = self.registry.get(tc.name)
             except Exception:  # noqa: BLE001
                 tool_def = None
+            cache_key = self._identical_call_key(tc.name, tc.arguments)
             if tool_def is not None and getattr(tool_def, "deterministic", False):
-                cache_key = self._identical_call_key(tc.name, tc.arguments)
                 if cache_key is not None:
                     self._called_identical[cache_key] = result
+            elif (
+                cache_key is not None
+                and self._readonly_replay_allowed(tool_def, tc.arguments)
+            ):
+                self._readonly_replay_cache[cache_key] = result
+            # Its payload is visible again, so nothing is waiting to be restored.
+            self._readonly_replay_ready.discard(cache_key)
+            # A write can change what a readonly call reads (a factor file, a
+            # config), so no result cached before it may be replayed after it.
+            if update_memory and not self._is_tool_readonly(tc.name):
+                self._readonly_replay_cache.clear()
+                self._readonly_replay_ready.clear()
+                self._readonly_replay_protected.clear()
 
         status = "ok" if success else "error"
         truncated = truncate_tool_result(result)
@@ -2951,7 +3604,11 @@ class AgentLoop:
         # Fold every head chunk so no message falls between the summary prompt
         # and the preserved tail. The first fresh chunk gets the full
         # structured handoff; subsequent chunks incrementally update it.
-        chunks = _summary_chunks(head)
+        # Encrypted provider items are opaque to the summariser and only
+        # cost tokens there; the messages they belong to are being folded.
+        chunks = _summary_chunks(
+            [{k: v for k, v in m.items() if k != "provider_items"} for m in head]
+        )
         logger.info("Auto compact: folding %d summary chunks", len(chunks))
         summary = self._previous_summary or ""
         degraded_compact = False
@@ -2990,8 +3647,12 @@ class AgentLoop:
                     _compact_error.append(exc)
 
             if _compact_timeout > 0:
+                # A new thread starts with an empty context, so the session
+                # bound by run() (x-opencode-session, #1416) would not reach
+                # this call: run it inside a copy of the caller's context.
                 worker = threading.Thread(
-                    target=_run_compact_summary,
+                    target=contextvars.copy_context().run,
+                    args=(_run_compact_summary,),
                     name="compact-summary",
                     daemon=True,
                 )
@@ -3082,7 +3743,6 @@ class AgentLoop:
 
 
 _LEGACY_LAZY = {
-    "TOKEN_THRESHOLD": _token_threshold,
     "MICROCOMPACT_THRESHOLD": lambda: int(_token_threshold() * 0.5),
     "COLLAPSE_THRESHOLD": lambda: int(_token_threshold() * 0.7),
     "HEARTBEAT_INTERVAL_S": _heartbeat_interval_s,

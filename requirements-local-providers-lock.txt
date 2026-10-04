@@ -1,0 +1,34 @@
+# Local provider overlay for the 0.1.16 deployment.
+# Preserve the adapters used by the 0.1.15 service; no floating extras install.
+# langchain-anthropic 1.7.2 requires langchain-core >=1.6.2:
+# core 1.6.3 intentionally replaces the upstream base-lock pin 1.6.1.
+# Install after both upstream locks with --require-hashes --no-deps, then pip check.
+
+anthropic==1.5.0 \
+    --hash=sha256:b25f87f5758861f25993383a5c9bf274eb6e0f1b010c84019ad91854cb4e1bc6 \
+    --hash=sha256:d9ce04b29ad1f7025dda3e3bc478cde8d2924d2de5417d2d4a4bb0378ecbc2a6
+
+httpcore2==2.12.0 \
+    --hash=sha256:7e04258ce01013d7d615e5b910a3b27fac937d7a95038227e79652b4ba3b4ceb \
+    --hash=sha256:9293522bba0aa7c4c8e9e3f040c16575bd8868e155a77fa30c7a9085a5eae648
+
+httpx2==2.12.0 \
+    --hash=sha256:7631fe9887a8a2275f4a2540e053aa670fcc50742864a9ae7c66e609fdcf12cf \
+    --hash=sha256:cc8b6eecb8661c146b8f89a60e97456ee086e91a784ed31ac450c3a9e613dd36
+
+langchain-anthropic==1.7.2 \
+    --hash=sha256:0d39665211b3b40421de8be621536c4e32149500d20a75ee4338cac4ae97db19 \
+    --hash=sha256:9d114c3766f57bbffe8e84093efe396306520c51587263b96d00c055d3bb8370
+
+langchain-core==1.6.3 \
+    --hash=sha256:114fe1868c9ed60606662b9dd0074bf3152cc6b0b1522ba37cbd6b04f55ca77d \
+    --hash=sha256:88b430944fbd4d40fa98135d6c873581d497b6f33515d01962337548e918df2f
+
+langchain-deepseek==1.1.0 \
+    --hash=sha256:14813cb413a97a5cce95118da253cfd64dce50537b7381b7c5d0ecf11d2a7032 \
+    --hash=sha256:5ec8128cabae3d71366e2f297dea2153649be317a4be7f135cfcad1160523bf6
+
+truststore==0.10.4 \
+    --hash=sha256:9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301 \
+    --hash=sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981
+

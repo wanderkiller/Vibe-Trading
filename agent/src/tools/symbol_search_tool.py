@@ -113,6 +113,8 @@ def _metal_or_fx_legs(value: str) -> tuple[str, str] | None:
     clean = str(value or "").strip().upper()
     if clean.endswith("=X"):
         clean = clean[:-2]
+    if clean.endswith(".FX"):
+        clean = clean[:-3]
     if "-" in clean or "/" in clean:
         base, _, quote = (
             clean.partition("-") if "-" in clean else clean.partition("/")
@@ -142,13 +144,24 @@ _EASTMONEY_SUFFIX_BY_MARKET: Dict[str, str] = {
     "107": "US",  # AMEX
 }
 
-# Coarse market label for the candidate row, keyed by symbol suffix.
+# Coarse market label for the candidate row, keyed by symbol suffix. Every
+# market the data layer routes has a row, so none is labelled "global";
+# test_market_identity_parity derives that list from the backtest's table.
 _MARKET_BY_SUFFIX: Dict[str, str] = {
     "SH": "cn",
     "SZ": "cn",
     "BJ": "cn",
     "HK": "hk",
     "US": "us",
+    "NS": "in",
+    "BO": "in",
+    "KS": "kr",
+    "KQ": "kr",
+    "TO": "ca",
+    "V": "ca",
+    "BA": "ar",
+    "L": "uk",
+    "VN": "vn",
 }
 
 # Hard caps so a broad query cannot bloat the envelope.
@@ -241,6 +254,13 @@ class SymbolSearchTool(BaseTool):
         if connector_source is not None and connector_status is not None:
             sources[connector_source] = connector_status
             candidates.extend(connector_hits)
+        if connector_source == "mt5":
+            # Broker-native identities must never be substituted by web search.
+            return json.dumps({
+                "ok": True, "market": "multi", "source": "symbol_search",
+                "data": {"query": query, "count": len(connector_hits[:limit]),
+                         "candidates": connector_hits[:limit], "sources": sources},
+            }, ensure_ascii=False)
         if crypto_pair is not None and not connector_hits:
             # Resolving a pair must not require a broker account. The venue
             # catalogs are public, unauthenticated REST — the same connectivity
@@ -500,9 +520,8 @@ def _search_selected_connector(
     limit: int,
 ) -> tuple[List[Dict[str, Any]], str | None, str | None]:
     """Resolve an explicit pair against the active crypto connector, if supported."""
-    if _canonical_crypto_pair(query) is None:
-        return [], None, None
-
+    crypto_pair = _canonical_crypto_pair(query)
+    mt5_pair = _metal_or_fx_legs(query)
     # Lazy imports keep the generic symbol tool usable when optional connector
     # dependencies are absent and avoid loading broker configuration at import.
     from src.trading import profiles as trading_profiles
@@ -515,7 +534,9 @@ def _search_selected_connector(
         logger.debug("selected connector lookup failed for %r: %s", query, exc)
         return [], None, None
 
-    if profile.connector != "binance":
+    if profile.connector == "binance" and crypto_pair is None:
+        return [], None, None
+    if profile.connector not in {"binance", "mt5"}:
         return [], None, None
 
     source = profile.connector
@@ -526,8 +547,9 @@ def _search_selected_connector(
             limit=limit,
         )
     except Exception as exc:  # noqa: BLE001 - one search source is non-fatal
-        logger.debug("%s instrument search failed for %r: %s", source, query, exc)
-        return [], source, f"connector search failed: {exc}"
+        logger.debug("%s instrument search failed (%s)", source, type(exc).__name__)
+        message = "connector search failed" if source == "mt5" else f"connector search failed: {exc}"
+        return [], source, message
 
     if not isinstance(payload, dict) or str(payload.get("status")).casefold() != "ok":
         message = (
@@ -540,6 +562,36 @@ def _search_selected_connector(
     rows = payload.get("instruments")
     rows = rows if isinstance(rows, list) else []
     candidates: List[Dict[str, Any]] = []
+    if profile.connector == "mt5":
+        requested_base = "".join(mt5_pair) if mt5_pair else query.strip().upper()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            native_symbol = str(
+                row.get("native_symbol") or row.get("symbol") or ""
+            ).strip()
+            resolved_base = native_symbol.upper()
+            if resolved_base.endswith(".FX"):
+                resolved_base = resolved_base[:-3]
+            if not (resolved_base.startswith(requested_base) if mt5_pair else resolved_base == requested_base):
+                continue
+            candidates.append(
+                {
+                    "symbol": query.strip().upper() if mt5_pair else native_symbol,
+                    "name": str(row.get("name") or native_symbol).strip() or None,
+                    "market": str(row.get("market") or "mt5"),
+                    "type": str(row.get("type") or "cfd"),
+                    "exchange": str(row.get("exchange") or row.get("venue") or "MT5"),
+                    "venue": str(row.get("venue") or row.get("exchange") or "MT5"),
+                    "source": source,
+                    "profile_id": profile.id,
+                    "native_symbol": native_symbol,
+                }
+            )
+        if len({candidate["native_symbol"] for candidate in candidates}) > 1:
+            return [], source, "ambiguous broker symbol; specify an exact native symbol"
+        return candidates, source, "ok"
+
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -788,8 +840,6 @@ def _from_yahoo_symbol(raw_symbol: str, quote: Dict[str, Any]) -> tuple[str, str
     if upper.endswith(".HK"):
         base = raw_symbol[: -len(".HK")].lstrip("0") or "0"
         return f"{base.zfill(5)}.HK", "hk"
-    if upper.endswith((".TO", ".V")):
-        return upper, "ca"
     # Yahoo quotes Shanghai as ``.SS`` where this project (and Eastmoney) use
     # ``.SH``. Emitting both spellings published one listing as two rival
     # candidates, which the identity gate could not choose between, so every
@@ -797,8 +847,9 @@ def _from_yahoo_symbol(raw_symbol: str, quote: Dict[str, Any]) -> tuple[str, str
     # sources merge and corroborate each other via ``also_from``.
     if upper.endswith(".SS"):
         return f"{upper[: -len('.SS')]}.SH", "cn"
-    if upper.endswith((".SH", ".SZ", ".BJ")):
-        return upper, "cn"
+    suffix = upper.rsplit(".", 1)[-1] if "." in upper else ""
+    if suffix in _MARKET_BY_SUFFIX:
+        return upper, _MARKET_BY_SUFFIX[suffix]
     quote_type = str(quote.get("quoteType") or "").strip().upper()
     if quote_type == "CURRENCY":
         # FX pairs canonicalize to the ``XXXYYY=X`` form the fetch layer

@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import {
   useAgentStore,
@@ -93,6 +93,12 @@ interface RuntimeIdentity {
   provider?: string;
   model?: string;
   reasoningEffort?: string;
+}
+
+/** A final answer held back while the grounding gate re-checks a revised draft. */
+interface GroundingRevision {
+  attemptId: string;
+  round: number;
 }
 
 function toolProgressKey(callId: string | undefined, tool: string): string {
@@ -240,6 +246,7 @@ export function Agent() {
   const replayCheckTimerRef = useRef(0);
   const smoothScrollingRef = useRef(false);
   const smoothScrollTimerRef = useRef(0);
+  const historyScrollTimerRef = useRef(0);
   const titleBeforeCompletionRef = useRef<string | null>(null);
   const completedAttemptIdsRef = useRef<Set<string>>(new Set());
 
@@ -249,6 +256,7 @@ export function Agent() {
 
   /* Connector runtime channel state (SPEC Consent §1/§4/§5) */
   const [liveItems, setLiveItems] = useState<LiveItem[]>([]);
+  const [groundingRevision, setGroundingRevision] = useState<GroundingRevision | null>(null);
   const [visibleRowCount, setVisibleRowCount] = useState(TIMELINE_WINDOW_SIZE);
   const visibleRowsSessionRef = useRef<string | null>(null);
   const [llmSettings, setLlmSettings] = useState<LLMSettings | null>(null);
@@ -312,6 +320,14 @@ export function Agent() {
       }
     });
   }, [isNearBottom]);
+
+  const scheduleHistoryScroll = useCallback(() => {
+    window.clearTimeout(historyScrollTimerRef.current);
+    historyScrollTimerRef.current = window.setTimeout(() => {
+      historyScrollTimerRef.current = 0;
+      forceScrollToBottom();
+    }, 50);
+  }, [forceScrollToBottom]);
 
   const flushPendingStreamUpdate = useCallback(() => {
     window.clearTimeout(streamFlushTimerRef.current);
@@ -480,6 +496,7 @@ export function Agent() {
   const doDisconnect = useCallback(() => {
     cancelPendingStreamFlush();
     window.clearTimeout(replayCheckTimerRef.current);
+    window.clearTimeout(historyScrollTimerRef.current);
     disconnect();
     sseSessionRef.current = null;
   }, [cancelPendingStreamFlush, disconnect]);
@@ -649,13 +666,13 @@ export function Agent() {
       act().setSessionLoading(false);
       act().cacheSession(sid, agentMsgs);
       setRuntimeIdentity(latestRuntimeIdentity ?? {});
-      setTimeout(() => forceScrollToBottom(), 50);
+      scheduleHistoryScroll();
     } catch {
       if (genRef.current !== gen) return;
       setRuntimeIdentity({});
       act().setSessionLoading(false);
     }
-  }, [forceScrollToBottom]);
+  }, [scheduleHistoryScroll]);
 
   const refreshSessionMessages = useCallback(async (sid: string) => {
     const gen = genRef.current + 1;
@@ -737,6 +754,8 @@ export function Agent() {
       text_delta: (d) => {
         touch();
         replayAttemptSeenRef.current = true;
+        // Answer text only streams once the grounding gate has released it.
+        setGroundingRevision(null);
         if (!identifyActivity(d, "responding")) return;
         if (act().status !== "streaming") act().setStatus("streaming");
         queueStreamUpdate(String(d.delta || ""), false);
@@ -759,9 +778,32 @@ export function Agent() {
       },
       thinking_done: () => { touch(); /* don't flush — keep streaming text visible */ },
 
+      grounding_status: (d) => {
+        touch();
+        replayAttemptSeenRef.current = true;
+        if (d.stage !== "revising") {
+          // released_redacted: the cut answer (with its own footnote) follows
+          // as text_delta; the status line has nothing left to say.
+          setGroundingRevision(null);
+          return;
+        }
+        if (typeof d.round !== "number" || d.round < 1) return;
+        if (!identifyActivity(d, "thinking")) return;
+        if (act().status !== "streaming") act().setStatus("streaming");
+        const attemptId = act().activity?.attemptId;
+        if (!attemptId) return;
+        // Pinned to the attempt so a line from a run that ended without text
+        // (timeout, cancel, failure) never resurfaces on the next attempt.
+        setGroundingRevision({ attemptId, round: d.round });
+        scrollToBottom();
+      },
+
       tool_call: (d) => {
         touch();
         replayAttemptSeenRef.current = true;
+        // A recovery round fetches evidence before the next draft; the tool
+        // activity line says what is happening, so the status line steps aside.
+        setGroundingRevision(null);
         if (!identifyActivity(d, "working")) return;
         queueStreamUpdate("", false);
         const toolName = String(d.tool || "");
@@ -886,6 +928,7 @@ export function Agent() {
 
       "attempt.completed": async (d) => {
         touch();
+        setGroundingRevision(null);
         const attemptId = String(d.attempt_id || "");
         markBackgroundCompletion(sid, attemptId);
         if (act().sessionId !== sid) {
@@ -1025,6 +1068,7 @@ export function Agent() {
 
       "attempt.failed": (d) => {
         touch();
+        setGroundingRevision(null);
         const attemptId = String(d.attempt_id || "");
         if (act().sessionId !== sid) {
           act().clearStreamingSession(sid);
@@ -1066,6 +1110,7 @@ export function Agent() {
       // to avoid showing an error bubble.
       "attempt.cancelled": (d) => {
         touch();
+        setGroundingRevision(null);
         const attemptId = String(d.attempt_id || "");
         if (act().sessionId !== sid) {
           act().clearStreamingSession(sid);
@@ -1247,6 +1292,7 @@ export function Agent() {
       genRef.current = gen;
       doDisconnect();
       setRuntimeIdentity({});
+      setGroundingRevision(null);
       // Live-channel timeline items are per-session; clear on switch.
       setLiveItems([]);
       liveRuntimeRef.current?.resetSession();
@@ -1256,7 +1302,7 @@ export function Agent() {
       const cached = getCachedSession(urlSessionId);
       switchSession(urlSessionId, cached);
       if (cached) {
-        setTimeout(() => forceScrollToBottom(), 50);
+        scheduleHistoryScroll();
       }
       // Cached rows provide an instant shell; REST remains authoritative for a
       // turn that completed while this session was off-screen.
@@ -1274,6 +1320,7 @@ export function Agent() {
       const gen = genRef.current + 1;
       genRef.current = gen;
       setRuntimeIdentity({});
+      setGroundingRevision(null);
       const seed = curMsgs.length > 0 ? curMsgs : getCachedSession(urlSessionId);
       // switchSession() drops the live activity so replay can rebuild its
       // steps without duplicating them — but the attempt's start time is not
@@ -1293,12 +1340,13 @@ export function Agent() {
       genRef.current += 1;
       doDisconnect();
       setRuntimeIdentity({});
+      setGroundingRevision(null);
       setLiveItems([]);
       liveRuntimeRef.current?.resetSession();
       if (curSid && curMsgs.length > 0) cacheSession(curSid, curMsgs);
       reset();
     }
-  }, [urlSessionId, doDisconnect, loadSessionMessages, setupSSE, forceScrollToBottom]);
+  }, [urlSessionId, doDisconnect, loadSessionMessages, setupSSE, scheduleHistoryScroll]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -1313,6 +1361,8 @@ export function Agent() {
   }, [sessionId, loadGoalSnapshot]);
 
   useEffect(() => () => {
+    // Invalidate pending history loads before they can schedule another scroll.
+    genRef.current += 1;
     doDisconnect();
     cancelAnimationFrame(progressRafRef.current);
     pendingProgressRef.current.clear();
@@ -1714,6 +1764,14 @@ export function Agent() {
     });
   }, [timelineRows.length]);
 
+  const groundingRound = (
+    status === "streaming"
+    && groundingRevision
+    && activity?.attemptId === groundingRevision.attemptId
+  )
+    ? groundingRevision.round
+    : null;
+
   return (
     <div className="flex flex-col flex-1 min-w-0 overflow-hidden h-full">
       <ModelRuntimeBar
@@ -1844,6 +1902,16 @@ export function Agent() {
               <AgentAvatar />
               <div className="flex-1 min-w-0 space-y-2">
                 {activity && <ActivityLine activity={activity} reasoningTail={reasoningTail} />}
+                {groundingRound !== null && (
+                  <p
+                    role="status"
+                    aria-live="polite"
+                    className="flex items-center gap-2 px-3 text-xs text-muted-foreground"
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground/80" aria-hidden="true" />
+                    <span>{t("agent.activity.checkingFigures", { round: groundingRound })}</span>
+                  </p>
+                )}
                 {streamingText && (
                   <div aria-live="polite" aria-atomic="false">
                     <MarkdownContent content={streamingText} streaming showCursor />

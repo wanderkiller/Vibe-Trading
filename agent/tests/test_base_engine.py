@@ -916,13 +916,99 @@ def test_rebalance_scaled_away_sleeve_is_recorded_as_plan_rejection():
     """#1274: a sleeve rounded to zero by scaling leaves an audit record.
 
     A fills 9 of its 10 target shares; B's one-lot fill scales below one lot
-    and vanishes — run-card diagnostics must see it as a zero_size rejection,
-    not silence.
+    and vanishes — run-card diagnostics must see it as an insufficient_capital
+    rejection (#1470: it was a real order at full scale), not silence and not
+    a lot-rounding failure.
     """
     engine = _SymbolRulesAdjustmentEngine()
-    _run_adjustments(engine, {"A": [1.0], "B": [0.003]})
+    _run_adjustments(engine, {"A": [1.0], "B": [0.025]})  # B: exactly one 0.25 lot
 
     sizes = _sizes(engine.bar_positions[0])
     assert sizes == {"A": 9.0}  # scaled to fit; B's leg dropped entirely
+    assert engine.plan_rejections[("B", "insufficient_capital")] == 1
+    assert ("B", "zero_size") not in engine.plan_rejections
+
+
+def test_rebalance_sleeve_below_one_lot_at_full_scale_is_the_lot_rule():
+    """A target that never reached one lot is zero_size, not a cash finding."""
+    engine = _SymbolRulesAdjustmentEngine()
+    _run_adjustments(engine, {"A": [1.0], "B": [0.003]})  # B: 0.03 shares, lot 0.25
+
+    assert _sizes(engine.bar_positions[0]) == {"A": 9.0}
     assert engine.plan_rejections[("B", "zero_size")] == 1
+    assert ("B", "insufficient_capital") not in engine.plan_rejections
     assert engine.bar_capitals[0] >= 0.0
+
+
+class _FundingDebitAdjustmentEngine(_AdjustmentEngine):
+    """Debits a fee after every bar, as CompositeEngine's crypto funding does."""
+
+    def __init__(self, **overrides):
+        super().__init__(**overrides)
+        self.rejected: list[tuple[str, str]] = []
+
+    def after_rebalance_bar(self, timestamp, data_map, codes):
+        self.capital -= float(self.config.get("debit", 0.0))
+        return super().after_rebalance_bar(timestamp, data_map, codes)
+
+    def _on_plan_rejected(self, symbol, reason, timestamp):
+        self.rejected.append((symbol, reason))
+
+
+def test_rebalance_with_negative_cash_drops_the_opens_and_keeps_running():
+    """#1542's rebalance sibling: when even an empty open sleeve does not fit
+    (cash below zero, nothing reduced to release it), the run used to abort with
+    'insufficient capital for position rebalance'. The opens are dropped and
+    reported; the rest of the bar and the run go on.
+
+    A takes all 1,000 of cash on bar 0 and the debit leaves -30. A's weight on
+    the later bars keeps it at exactly 10 shares, so nothing is released.
+    """
+    engine = _FundingDebitAdjustmentEngine(debit=30.0)
+    keep_a = 1_000.0 / 970.0
+    _run_adjustments(engine, {"A": [1.0, keep_a, keep_a], "B": [0.0, 0.2, 0.2]})
+
+    assert engine.bar_capitals[0] == pytest.approx(-30.0)
+    assert _sizes(engine.bar_positions[1]) == {"A": 10.0}
+    assert ("B", "insufficient_capital") in engine.rejected
+    assert len(engine.bar_positions) == 3  # the run reached its last bar
+
+
+def test_rebalance_with_negative_cash_still_executes_its_reductions():
+    """Dropping the opens must not drop the reductions: they only release cash.
+
+    Cash is -300 after bar 0 (equity 700); trimming A to 9 shares releases 100,
+    not enough to bring cash to zero, so no open sleeve fits. The trim happens.
+    """
+    engine = _FundingDebitAdjustmentEngine(debit=300.0)
+    _run_adjustments(engine, {"A": [1.0, 900.0 / 700.0], "B": [0.0, 0.1]})
+
+    assert _sizes(engine.bar_positions[1]) == {"A": 9.0}
+    assert ("B", "insufficient_capital") in engine.rejected
+
+
+@pytest.mark.parametrize("units", [("us", "us"), ("ns", "us"), ("s", "ms")])
+def test_align_is_the_same_at_any_index_resolution(units: tuple[str, str]) -> None:
+    """_align works on int64 epochs; a duckdb local source arrives as datetime64[us].
+
+    Read as nanoseconds, a microsecond index put the whole run in 1970, and beside
+    a nanosecond source it matched none of that symbol's bars (an all-NaN column).
+    """
+    days = pd.bdate_range("2026-01-02", periods=5)
+    closes = np.array([10.0, 11.0, 12.0, 13.0, 14.0])
+
+    def run(unit_a: str, unit_b: str):
+        idx_a, idx_b = days.as_unit(unit_a), days.as_unit(unit_b)
+        data_map = {
+            "A": pd.DataFrame({"open": closes, "high": closes, "low": closes, "close": closes}, index=idx_a),
+            "B": pd.DataFrame({"open": closes, "high": closes, "low": closes, "close": closes * 2}, index=idx_b),
+        }
+        signal_map = {"A": pd.Series([1.0, 0, 1, 0, 1], index=idx_a), "B": pd.Series(0.5, index=idx_b)}
+        return _align(data_map, signal_map, ["A", "B"])
+
+    expected_dates, expected_close, _, expected_pos, _ = run("ns", "ns")
+    dates, close_df, _, pos_df, _ = run(*units)
+
+    assert list(dates) == list(expected_dates)
+    np.testing.assert_array_equal(close_df.to_numpy(), expected_close.to_numpy())
+    np.testing.assert_array_equal(pos_df.to_numpy(), expected_pos.to_numpy())

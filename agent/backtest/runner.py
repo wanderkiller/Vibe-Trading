@@ -1,7 +1,8 @@
 """Fixed backtest entrypoint: read config.json, select loader by source, import signal_engine, run engine.
 
 Supports ``source="auto"`` to route codes to loaders by symbol format.
-Supports ``interval`` for bar size (1m/5m/15m/30m/1H/4H/1D, default 1D).
+Supports ``interval`` for bar size (1m/5m/15m/30m/1H/4H/1D/1W/1M, default 1D;
+1W and 1M are built from daily bars, see ``loaders.base.resample_bars``).
 Supports ``engine`` for backtest engine (daily/options, default daily).
 
 Usage: ``python -m backtest.runner <run_dir>``
@@ -25,12 +26,19 @@ from backtest.loaders.registry import (
     FALLBACK_CHAINS,
     LOADER_REGISTRY,
     VALID_SOURCES,
+    additive_caliber_warning,
     get_loader_cls_with_fallback,
+    is_no_network_fallback_source,
     mixed_caliber_warning,
     price_caliber,
     resolve_loader,
 )
-from backtest.loaders.base import NoAvailableSourceError, validate_ohlc
+from backtest.loaders.base import (
+    NoAvailableSourceError,
+    resample_bars,
+    source_interval,
+    validate_ohlc,
+)
 # Symbol classification lives in ``_market_hooks`` so runner.py and
 # composite.py share a single source of truth (audit-2026-05-18 B1+C1+C2).
 # ``_detect_market`` is also re-exported here for back-compat with
@@ -40,12 +48,14 @@ from backtest.engines._market_hooks import (  # noqa: F401  (re-exported)
     _detect_market,
     _detect_submarket,
     _is_china_futures,
+    hk_counter_currency,
+    strip_local_prefix,
 )
 from backtest.rebalance_mask import RebalanceMask, validate_rebalance_mask
 
 logger = logging.getLogger(__name__)
 
-_VALID_INTERVALS = {"1m", "5m", "15m", "30m", "1H", "4H", "1D"}
+_VALID_INTERVALS = {"1m", "5m", "15m", "30m", "1H", "4H", "1D", "1W", "1M"}
 _VALID_ENGINES = {"daily", "options"}
 _PRICE_PANEL_COLUMNS = ("open", "high", "low", "close", "volume", "vwap", "amount")
 _FUND_PREFIX = "fund:"
@@ -840,6 +850,7 @@ _MARKET_TO_SOURCE = {
     "india_equity": "yahoo",
     "kr_equity": "pykrx",
     "ca_equity": "yahoo",
+    "ar_equity": "yahoo",
     "uk_equity": "yahoo",
     "vietnam_equity": "yahoo",
     "crypto": "okx",
@@ -1281,13 +1292,17 @@ def main(run_dir: Path) -> None:
 
     # Annualization bars
     effective_source = _detect_primary_source(codes, source)
-    from backtest.metrics import calc_bars_per_year
     # Cross-market: use calendar-day annualization (bars_per_year=None)
     market_types = {_detect_market(c) for c in codes}
     if len(market_types) > 1:
         bars_per_year = None
     else:
-        bars_per_year = calc_bars_per_year(interval, effective_source)
+        annualisation_warnings: list[str] = []
+        bars_per_year = _annualisation_bars(
+            interval, effective_source, data_map, codes, warnings=annualisation_warnings
+        )
+        if annualisation_warnings:
+            config["_run_card_annualisation_warning"] = annualisation_warnings[0]
 
     # Every source has already been fetched, sanitized, and enriched above.
     # Reuse that exact snapshot so provider costs and run-card provenance stay
@@ -1300,6 +1315,166 @@ def main(run_dir: Path) -> None:
     else:
         market_engine = _create_market_engine(effective_source, config, codes)
         market_engine.run_backtest(config, loader, signal_engine, run_dir, bars_per_year=bars_per_year)
+
+
+#: Bar spacing, in seconds, of every interval the runner accepts
+#: (:data:`_VALID_INTERVALS`). Seconds rather than ``Timedelta`` so the
+#: comparison below is a ratio of two numbers.
+_INTERVAL_SECONDS: dict[str, float] = {
+    "1m": 60.0,
+    "5m": 300.0,
+    "15m": 900.0,
+    "30m": 1_800.0,
+    "1H": 3_600.0,
+    "4H": 14_400.0,
+    "1D": 86_400.0,
+    "1W": 604_800.0,
+    # A mean month (365.25 / 12 days): a calendar month runs 28 to 31, so a
+    # monthly series' median spacing sits within 1.1x of it either way.
+    "1M": 2_629_800.0,
+}
+
+#: How far the served bar spacing may sit from the declared interval's spacing
+#: before the declaration is treated as wrong. The closest pair of intervals
+#: differs by 2x (``30m`` -> ``1H``), while a correctly served series measures
+#: its own spacing exactly, so 1.5 separates the two cases with room to spare.
+_SPACING_MISMATCH_RATIO = 1.5
+
+#: Fewest bars whose median spacing is trustworthy. Sessions leave gaps -- a
+#: daily series jumps three days over a weekend -- and the median only absorbs
+#: them once they are outnumbered. Three differences survive one gap
+#: (``[1, 1, 3]`` -> 1 day); two do not (``[1, 3]`` -> 2 days).
+_MIN_BARS_FOR_SPACING = 4
+
+#: Spacing at least this many times a day that matches no supported interval
+#: (a fortnightly or quarterly file) is a coarse series, not a daily one with
+#: gaps: a daily index over a holiday week measures a median of two or three
+#: days. Such a series has no trading-day table to look up and needs none --
+#: its bars per year is the calendar's.
+_WIDER_THAN_DAILY_RATIO = 4.0
+_CALENDAR_YEAR_SECONDS = 365.25 * 86_400.0
+
+
+def _observed_spacing(data_map: dict, codes: List[str]) -> float | None:
+    """Median spacing of the served price bars in seconds, or None when
+    unmeasurable.
+
+    The median, not the span: a session index is mostly regular with occasional
+    gaps (weekends, overnight, a trading halt), and the median reports the
+    regular part. Only the instrument codes are measured, so an injected
+    fundamental panel cannot decide the annualisation.
+    """
+    indexes = [
+        data_map[code].index
+        for code in codes
+        if code in data_map and len(data_map[code]) >= _MIN_BARS_FOR_SPACING
+    ]
+    if not indexes:
+        return None
+    index = max(indexes, key=len)
+    spacing = pd.Series(index).diff().dropna().median()
+    if pd.isna(spacing):
+        return None
+    seconds = spacing.total_seconds()
+    return seconds if seconds > 0 else None
+
+
+def _annualisation_bars(
+    interval: str,
+    source: str,
+    data_map: dict,
+    codes: List[str],
+    warnings: list[str] | None = None,
+) -> int:
+    """Bars per year for a single-market run, checked against the served bars.
+
+    ``interval`` is what the caller asked for, not a fact about what arrived. A
+    loader may legitimately serve coarser bars than requested -- the local
+    loader cannot upsample a daily file to ``1H`` and says so only in a log
+    warning -- and annualising at the declared rate then scales CAGR, Sharpe and
+    the annualised volatility by the ratio between the two.
+
+    The comparison is on bar **spacing**, not on bars per calendar year. A
+    calendar-year count is a property of the window as much as of the data:
+    weekends and overnight gaps dominate a short span, so five daily bars
+    starting on a Monday measure 456 against a declared 252 while the same five
+    bars starting on a Tuesday measure 304 -- one trips a 1.5 gate and the other
+    does not, for the same correctly served series. Median spacing is one day
+    for a daily series whether the window holds five bars or five years, and one
+    hour for hourly bars regardless of session length or 24x7 trading.
+
+    On a mismatch the count still comes from
+    :func:`~backtest.metrics.calc_bars_per_year` -- looked up with the interval
+    the spacing actually matches -- so the per-source trading-day table keeps
+    producing the number and a run card never picks up a window-dependent one.
+    A weekly or monthly file declared ``1D`` matches ``1W`` / ``1M`` (52 / 12).
+    Bars spaced wider than daily that match no supported interval (a quarterly
+    file) are annualised from the calendar instead, 4 for a quarterly series; a
+    spacing that matches nothing in either direction keeps the declaration.
+
+    Args:
+        interval: Bar size the caller declared.
+        source: Primary source name, for the per-source trading-day table.
+        data_map: Fetched ``code -> frame`` map.
+        codes: The instrument codes.
+        warnings: When given, a mismatch report is appended here as well as
+            logged, so the run card carries it next to the caliber warning.
+
+    Returns:
+        Bars per year for the declared interval; for the interval the served
+        spacing matches when the two disagree; or the calendar count of a
+        spacing wider than every supported interval.
+    """
+    from backtest.metrics import _normalize_interval, calc_bars_per_year
+
+    def _report(message: str) -> None:
+        logger.warning("%s", message)
+        if warnings is not None:
+            warnings.append(message)
+
+    declared = calc_bars_per_year(interval, source)
+    declared_spacing = _INTERVAL_SECONDS.get(_normalize_interval(interval))
+    observed = _observed_spacing(data_map, codes)
+    if declared_spacing is None or observed is None:
+        return declared
+    if max(declared_spacing, observed) / min(declared_spacing, observed) < _SPACING_MISMATCH_RATIO:
+        return declared
+
+    matched = min(
+        _INTERVAL_SECONDS,
+        key=lambda name: max(_INTERVAL_SECONDS[name], observed)
+        / min(_INTERVAL_SECONDS[name], observed),
+    )
+    matched_spacing = _INTERVAL_SECONDS[matched]
+    if max(matched_spacing, observed) / min(matched_spacing, observed) >= _SPACING_MISMATCH_RATIO:
+        if observed >= _WIDER_THAN_DAILY_RATIO * _INTERVAL_SECONDS["1D"]:
+            calendar_bars = max(1, round(_CALENDAR_YEAR_SECONDS / observed))
+            _report(
+                f"interval={interval} declares bars spaced {declared_spacing:.0f}s but the "
+                f"served data is spaced {observed:.0f}s, wider than any supported interval; "
+                f"annualising at {calendar_bars} bars/year from that spacing instead of "
+                f"{declared}."
+            )
+            return calendar_bars
+        # Between two supported intervals, or finer than a minute: no count to
+        # look up, so the declaration stands. A daily series over a holiday
+        # week lands here with a two-day median, so the report states the
+        # spacings and nothing more.
+        _report(
+            f"interval={interval} declares bars spaced {declared_spacing:.0f}s but the "
+            f"served data is spaced {observed:.0f}s, which matches no supported interval; "
+            f"annualising at the declared rate ({declared} bars/year)."
+        )
+        return declared
+
+    resolved = calc_bars_per_year(matched, source)
+    _report(
+        f"interval={interval} declares bars spaced {declared_spacing:.0f}s but the served "
+        f"data is spaced {observed:.0f}s; annualising as {matched} ({resolved} bars/year) "
+        f"instead of {declared}. The loader served bars coarser or finer than requested; "
+        f"set interval to the granularity the source has if that was not intended."
+    )
+    return resolved
 
 
 def _create_market_engine(source: str, config: dict, codes: List[str]):
@@ -1319,6 +1494,21 @@ def _create_market_engine(source: str, config: dict, codes: List[str]):
     """
     # Detect dominant market type from codes
     markets = {_detect_market(c) for c in codes} if codes else set()
+
+    # The Hong Kong pool books in HKD. HKEX numbers its RMB and USD counters
+    # in their own code ranges, and no source in the hk_equity chain but Yahoo
+    # declares a currency, so the code decides before any engine prices them.
+    foreign_counters = sorted(
+        f"{c} ({hk_counter_currency(c)})"
+        for c in codes
+        if _detect_market(c) == "hk_equity" and hk_counter_currency(c) not in (None, "HKD")
+    )
+    if foreign_counters:
+        raise ValueError(
+            "Hong Kong backtests book in HKD, but these codes are HKEX counters traded "
+            f"in another currency: {', '.join(foreign_counters)}. Use the HKD-traded "
+            "counter of the same security instead."
+        )
 
     # Cross-market -> CompositeEngine
     if len(markets) > 1:
@@ -1358,6 +1548,15 @@ def _create_market_engine(source: str, config: dict, codes: List[str]):
     if "vietnam_equity" in markets:
         from backtest.engines.vietnam_equity import VietnamEquityEngine
         return VietnamEquityEngine(config)
+    # Argentina market-data routing is supported, but BYMA execution rules
+    # are not modeled yet. Fail closed instead of silently applying US/crypto
+    # commissions, lot sizes, settlement, or short-selling assumptions.
+    if "ar_equity" in markets:
+        raise ValueError(
+            "Argentina .BA market data is supported, but Argentina backtest "
+            "execution rules are not modeled yet"
+        )
+
     # Index symbols (^SPX, ^FTSE, ...) — priced like a US/global-listed
     # instrument (GlobalEquityEngine, US rules) and never the China/crypto
     # default the source-based fallback would pick.
@@ -1389,13 +1588,22 @@ def _create_market_engine(source: str, config: dict, codes: List[str]):
         market = _detect_submarket(codes)
         return GlobalEquityEngine(config, market=market)
     else:
-        # Sources without a dedicated branch (local, stooq, ...): follow the
-        # instrument market rather than the loader name, so e.g. a local
-        # AAPL.US dataset gets US-equity execution rules instead of crypto.
+        # Sources without a dedicated branch (local, stooq, tencent, ...):
+        # follow the instrument market rather than the loader name, so e.g. a
+        # local AAPL.US dataset gets US-equity execution rules instead of crypto.
         if markets & {"us_equity", "hk_equity", "ca_equity", "uk_equity"}:
             from backtest.engines.global_equity import GlobalEquityEngine
             market = _detect_submarket(codes)
             return GlobalEquityEngine(config, market=market)
+        # A-shares need the same treatment. Every branchless source that serves
+        # them -- local, tencent, eastmoney, baostock, mootdx, sina -- used to
+        # land here and fall through to the crypto default, which applies none
+        # of the A-share rules (stamp tax, T+1, price limits, 100-share lots)
+        # and does charge an 8-hourly perpetual funding fee against the
+        # position. The run still succeeds, which is what makes it dangerous.
+        if "a_share" in markets:
+            from backtest.engines.china_a import ChinaAEngine
+            return ChinaAEngine(config)
         from backtest.engines.crypto import CryptoEngine
         return CryptoEngine(config)
 
@@ -1433,15 +1641,37 @@ def _fetch_auto(codes: List[str], config: dict, interval: str = "1D") -> dict:
         interval: Bar interval string.
 
     Returns:
-        Merged ``code -> DataFrame`` map.
+        Merged ``code -> DataFrame`` map, keyed by bare symbol: a ``local:``
+        code is served only by the local loader and keyed without the prefix.
     """
-    market_groups = _group_codes_by_market(codes)
     merged = {}
     served_by: set[str] = set()
     caliber_stamps: dict[str, tuple[str, str]] = {}
     start_date = config.get("start_date", "")
     end_date = config.get("end_date", "")
 
+    # A ``local:`` code names the user's own dataset. It is served by the local
+    # loader or not at all: routing it by market would send ``local:AAPL.US``
+    # down the US network chain, which the README promises never happens (#1467).
+    local_codes = [code for code in codes if strip_local_prefix(code) != code]
+    if local_codes:
+        # ``local`` never degrades to a network loader; an unconfigured Data
+        # Bridge raises here with its own hint.
+        local_loader = get_loader_cls_with_fallback("local")()
+        stripped = [strip_local_prefix(code) for code in local_codes]
+        local_result = local_loader.fetch(stripped, start_date, end_date, interval=interval)
+        missing_local = [code for code in local_codes if strip_local_prefix(code) not in local_result]
+        if missing_local:
+            raise NoAvailableSourceError(
+                f"incomplete data for source=local; missing symbols: {missing_local}"
+            )
+        local_name = str(getattr(local_loader, "name", "local") or "local")
+        served_by.add(local_name)
+        for code in local_result:
+            caliber_stamps[code] = (local_name, price_caliber(local_name, _detect_market(code), code))
+        merged.update(local_result)
+
+    market_groups = _group_codes_by_market([code for code in codes if code not in set(local_codes)])
     for market, market_codes in market_groups.items():
         try:
             loader = resolve_loader(market)
@@ -1468,7 +1698,7 @@ def _fetch_auto(codes: List[str], config: dict, interval: str = "1D") -> dict:
         if market_result:
             served_by.add(src_name)
             for code in market_result:
-                caliber_stamps[code] = (src_name, price_caliber(src_name, market))
+                caliber_stamps[code] = (src_name, price_caliber(src_name, market, code))
         missing = [code for code in market_codes if code not in market_result]
 
         # Retry only missing symbols so a partial primary response does not
@@ -1492,14 +1722,16 @@ def _fetch_auto(codes: List[str], config: dict, interval: str = "1D") -> dict:
                 fb_served_by = str(getattr(fb_loader, "name", fb_name) or fb_name)
                 served_by.add(fb_served_by)
                 for code in mapped:
-                    caliber_stamps[code] = (fb_served_by, price_caliber(fb_served_by, market))
+                    caliber_stamps[code] = (fb_served_by, price_caliber(fb_served_by, market, code))
                 logger.info(
                     "Runtime fallback: %s -> %s for %s", src_name, fb_name, market
                 )
 
         if missing:
+            served = sorted(set(merged) - set(missing))
             raise NoAvailableSourceError(
-                f"incomplete data for {market}; missing symbols: {missing}"
+                f"incomplete data for {market}; missing symbols: {missing}; "
+                f"served symbols: {served}"
             )
         merged.update(market_result)
 
@@ -1519,15 +1751,40 @@ def fetch_data_map(config: dict) -> DataFetchResult:
 
     Returns:
         Data and effective routing metadata. The input config is not mutated.
+        A ``local:`` code comes back as its bare symbol in both ``codes`` and
+        ``data_map``.
+
+    Raises:
+        ValueError: If a ``local:`` code is requested from a source other than
+            ``local`` / ``auto``, or one symbol is requested both with and
+            without the prefix.
+        NoAvailableSourceError: If a requested symbol cannot be served.
     """
     config = copy.deepcopy(config)
     source = str(config.get("source") or "tushare")
     codes = list(config.get("codes") or [])
-    interval = str(config.get("interval") or "1D")
+    # Weekly and monthly bars are built from daily ones after the fetch, so
+    # every loader below is asked for daily bars (#1479).
+    requested_interval = str(config.get("interval") or "1D")
+    interval = source_interval(requested_interval)
+
+    # ``local:`` picks the loader; the instrument is the bare symbol. Everything
+    # downstream (engine, signals, artifacts, run card) sees the bare symbol, so
+    # a contradictory request is refused here rather than half-served.
+    prefixed = [code for code in codes if strip_local_prefix(code) != code]
+    if prefixed and source not in ("local", "auto"):
+        raise ValueError(
+            f"local: codes need source='local' or 'auto', not {source!r}: {prefixed}"
+        )
+    bare = [strip_local_prefix(code) for code in codes]
+    repeated = sorted({symbol for symbol in bare if bare.count(symbol) > 1})
+    if repeated:
+        raise ValueError(f"symbols requested more than once (with and without local:): {repeated}")
 
     caliber_stamps: dict[str, tuple[str, str]] = {}
     if source == "auto":
         data_map = _fetch_auto(codes, config, interval)
+        codes = bare
         loader: Any = _AutoLoader(data_map)
         # Prefer the loaders that actually served rows; the symbol-pattern guess
         # is only a fallback for a stubbed/patched fetcher that recorded nothing.
@@ -1559,13 +1816,24 @@ def fetch_data_map(config: dict) -> DataFetchResult:
             fields=config.get("extra_fields") or None,
             interval=interval,
         )
+        # The local loader keys ``local:AAPL.US`` by ``AAPL.US``. Compare and
+        # continue with the bare symbol, or a served symbol is counted as
+        # missing and sent down a network chain (#1467).
+        codes = [strip_local_prefix(code) for code in codes]
         for code in data_map:
             caliber_stamps[code] = (
                 served_by,
-                price_caliber(served_by, _detect_market(code)),
+                price_caliber(served_by, _detect_market(code), code),
             )
         used_sources = [served_by] if data_map else []
         missing = [code for code in codes if code not in data_map]
+        # With the prefix stripped, a network chain could serve the bare symbol
+        # as if the dataset held it. A ``local:`` code is the dataset's or nothing.
+        unserved_local = [code for code in prefixed if strip_local_prefix(code) in missing]
+        if unserved_local:
+            raise NoAvailableSourceError(
+                f"incomplete data for source=local; missing symbols: {unserved_local}"
+            )
         if missing:
             logger.warning(
                 "source=%s returned data for %d/%d symbols; missing: %s",
@@ -1574,59 +1842,87 @@ def fetch_data_map(config: dict) -> DataFetchResult:
                 len(codes),
                 missing,
             )
-        if missing:
-            market = _detect_market(codes[0])
-            for fallback_source in FALLBACK_CHAINS.get(market, []):
-                if not missing:
-                    break
-                if (
-                    fallback_source == primary_source
-                    or fallback_source not in LOADER_REGISTRY
-                ):
-                    continue
-                fallback_loader = LOADER_REGISTRY[fallback_source]()
-                if not fallback_loader.is_available():
-                    continue
-                fallback_codes = _normalize_codes(missing, fallback_source)
-                fallback_result = fallback_loader.fetch(
-                    fallback_codes,
-                    config.get("start_date", ""),
-                    config.get("end_date", ""),
-                    interval=interval,
-                )
-                mapped = _restore_original_codes(
-                    fallback_result, missing, fallback_codes
-                )
-                if mapped:
-                    data_map.update(mapped)
-                    missing = [code for code in missing if code not in mapped]
-                    fb_served_by = str(
-                        getattr(fallback_loader, "name", fallback_source)
-                        or fallback_source
+        # ``is_no_network_fallback_source`` means "an explicit request for this
+        # source must never silently degrade." It used to be checked only when
+        # a loader was unavailable as a whole; per-symbol gaps still got filled
+        # from a network source — a source="local" request could return half
+        # its rows from a snapshot and half from Tencent, leaving only two log
+        # lines as a trace. Callers want snapshot provenance, not a padded row
+        # count.
+        if missing and not is_no_network_fallback_source(primary_source):
+            missing_by_market: dict[str, list[str]] = {}
+            for code in missing:
+                missing_by_market.setdefault(_detect_market(code), []).append(code)
+            for market, market_missing in missing_by_market.items():
+                for fallback_source in FALLBACK_CHAINS.get(market, []):
+                    if not market_missing:
+                        break
+                    if (
+                        fallback_source == primary_source
+                        or fallback_source not in LOADER_REGISTRY
+                    ):
+                        continue
+                    fallback_loader = LOADER_REGISTRY[fallback_source]()
+                    if not fallback_loader.is_available():
+                        continue
+                    fallback_codes = _normalize_codes(market_missing, fallback_source)
+                    fallback_result = fallback_loader.fetch(
+                        fallback_codes,
+                        config.get("start_date", ""),
+                        config.get("end_date", ""),
+                        interval=interval,
                     )
-                    for code in mapped:
-                        caliber_stamps[code] = (
-                            fb_served_by,
-                            price_caliber(fb_served_by, _detect_market(code)),
+                    mapped = _restore_original_codes(
+                        fallback_result, market_missing, fallback_codes
+                    )
+                    if mapped:
+                        data_map.update(mapped)
+                        market_missing = [code for code in market_missing if code not in mapped]
+                        fb_served_by = str(
+                            getattr(fallback_loader, "name", fallback_source)
+                            or fallback_source
                         )
-                    if not used_sources:
-                        source = fb_served_by
-                        loader = fallback_loader
-                    used_sources.append(fb_served_by)
-                    logger.info(
-                        "Runtime fallback: %s -> %s", primary_source, fb_served_by
-                    )
+                        for code in mapped:
+                            caliber_stamps[code] = (
+                                fb_served_by,
+                                price_caliber(fb_served_by, market, code),
+                            )
+                        if not used_sources:
+                            source = fb_served_by
+                            loader = fallback_loader
+                        used_sources.append(fb_served_by)
+                        logger.info(
+                            "Runtime fallback: %s -> %s", primary_source, fb_served_by
+                        )
+                missing = [code for code in missing if code not in data_map]
 
         if missing:
             raise NoAvailableSourceError(
-                f"incomplete data for source={primary_source}; missing symbols: {missing}"
+                f"incomplete data for source={primary_source}; missing symbols: {missing}; "
+                f"served symbols: {sorted(data_map)}"
             )
 
-    data_map = _sanitize_data_map(data_map)
+    data_map = {
+        code: resample_bars(frame, requested_interval)
+        for code, frame in _sanitize_data_map(data_map).items()
+    }
     caliber_stamps = {
         code: stamp for code, stamp in caliber_stamps.items() if code in data_map
     }
-    caliber_warning = mixed_caliber_warning(caliber_stamps)
+    # Both warnings can apply at once (a tencent+baostock basket mixes calibers
+    # *and* serves an additive one), and each says something the other does not,
+    # so they are reported together rather than one shadowing the other.
+    caliber_warning = (
+        "\n".join(
+            warning
+            for warning in (
+                mixed_caliber_warning(caliber_stamps),
+                additive_caliber_warning(caliber_stamps),
+            )
+            if warning
+        )
+        or None
+    )
     if caliber_warning:
         logger.warning("%s", caliber_warning)
     return DataFetchResult(

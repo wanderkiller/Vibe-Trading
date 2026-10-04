@@ -25,6 +25,9 @@ _SDK_CONNECTOR_MODULES = {
     "dhan": "src.trading.connectors.dhan.sdk",
     "shoonya": "src.trading.connectors.shoonya.sdk",
     "zerodha": "src.trading.connectors.zerodha.sdk",
+    "kis": "src.trading.connectors.kis.sdk",
+    "upbit": "src.trading.connectors.upbit.sdk",
+    "toss": "src.trading.connectors.toss.sdk",
     "trading212": "src.trading.connectors.trading212.sdk",
     "mt5": "src.trading.connectors.mt5.sdk",
     "etoro": "src.trading.connectors.etoro.sdk",
@@ -235,6 +238,31 @@ def get_account(profile_id: str | None = None, **overrides: Any) -> dict[str, An
     )
 
 
+def get_accounts(profile_id: str | None = None, **overrides: Any) -> dict[str, Any]:
+    """List the broker accounts a remote MCP profile can be scoped to.
+
+    Only remote MCP connectors whose account-scoped reads take an account
+    (Robinhood) map this operation; every other profile reports it unsupported.
+
+    Args:
+        profile_id: Connector profile to read through.
+        **overrides: ``interactive_oauth=False`` keeps an expired grant from
+            opening a browser.
+
+    Returns:
+        The remote envelope; a mapped connector adds an ``accounts`` list.
+    """
+    profile = profile_by_id(profile_id)
+    if profile.transport != "remote_mcp":
+        return _unsupported(profile, "accounts.read")
+    return _call_remote(
+        profile,
+        "accounts",
+        {},
+        interactive_oauth=bool(overrides.get("interactive_oauth", True)),
+    )
+
+
 def get_positions(profile_id: str | None = None, **overrides: Any) -> dict[str, Any]:
     """Read positions for a connector profile."""
     profile = profile_by_id(profile_id)
@@ -346,6 +374,18 @@ def search_instruments(
             module.search_instruments(
                 query,
                 config=module.build_config(profile.config, overrides),
+                limit=limit,
+            ),
+        )
+    if profile.connector == "mt5" and profile.transport == "broker_sdk":
+        if "terminal_path" in overrides:
+            return {"status": "error", "error": "MT5 search uses the configured terminal path", "instruments": []}
+        module = _sdk_module(profile.connector)
+        return _with_profile(
+            profile,
+            module.search_instruments(
+                query,
+                config=_sdk_config(profile, module, overrides),
                 limit=limit,
             ),
         )
@@ -1276,6 +1316,110 @@ def runner_tool_name(connector: str, operation: str) -> str | None:
     return None
 
 
+def runner_requires_account(connector: str) -> bool:
+    """Return whether a live runner broker's reads and orders must name an account.
+
+    Args:
+        connector: Broker key, e.g. ``"robinhood"``.
+
+    Returns:
+        True when the broker's live-runner profile declares
+        ``account_selection: required``. Such a broker never falls back to a
+        default account: a mandate without one cannot trade.
+    """
+    from src.trading.connections import requires_account_selection
+
+    profile = live_runner_profile_for_broker(connector)
+    return profile is not None and requires_account_selection(profile)
+
+
+def runner_arguments(connector: str, operation: str, account_ref: str = "", **arguments: Any) -> dict[str, Any]:
+    """Return the wire arguments for a live-path read, bound to one account.
+
+    Args:
+        connector: Broker key.
+        operation: Generic operation (``account``, ``positions``, ``orders``).
+        account_ref: The mandate's account; empty for a broker that takes none.
+        **arguments: Further generic arguments.
+
+    Returns:
+        The connector's wire arguments. A connector without a mapping gets
+        ``arguments`` unchanged, which is what the live path sent before.
+    """
+    if connector == "robinhood":
+        from src.trading.connectors.robinhood.mcp import remote_arguments
+
+        return remote_arguments(operation, {**arguments, "account": account_ref})
+    return dict(arguments)
+
+
+def runner_records(connector: str, operation: str, envelope: Any) -> list[dict[str, Any]] | None:
+    """Unwrap a live-path list read into complete broker records.
+
+    Args:
+        connector: Broker key.
+        operation: ``positions`` or ``orders``.
+        envelope: The adapter's call result.
+
+    Returns:
+        The records, or ``None`` when the connector has no mapped reply shape
+        (the caller keeps its generic unwrap).
+
+    Raises:
+        ValueError: If a mapped reply does not match its shape, is one page of
+            several, or is an error envelope.
+    """
+    if connector != "robinhood":
+        return None
+    from src.trading.connectors.robinhood import mcp
+
+    if operation == "positions":
+        return [{**row, "qty": row["quantity"]} for row in mcp.position_rows(envelope)]
+    if operation == "orders":
+        return mcp.records(envelope, "orders", "get_equity_orders")
+    raise ValueError(f"no record mapping for operation {operation!r}")
+
+
+def runner_account_summary(connector: str, envelope: Any) -> dict[str, Any] | None:
+    """Unwrap a live-path account read into the mapped summary.
+
+    Args:
+        connector: Broker key.
+        envelope: The adapter's call result.
+
+    Returns:
+        The summary, or ``None`` when the connector has no mapped reply shape.
+
+    Raises:
+        ValueError: If a mapped reply does not match its shape.
+    """
+    if connector != "robinhood":
+        return None
+    from src.trading.connectors.robinhood.mcp import portfolio_summary
+
+    return portfolio_summary(envelope)
+
+
+def runner_account_choices(connector: str, envelope: Any) -> list[dict[str, Any]] | None:
+    """Map a live-path account listing to picker rows.
+
+    Args:
+        connector: Broker key.
+        envelope: The adapter's ``accounts`` call result.
+
+    Returns:
+        The picker rows, or ``None`` when the connector lists no accounts.
+
+    Raises:
+        ValueError: If a mapped reply does not match its shape.
+    """
+    if connector != "robinhood":
+        return None
+    from src.trading.connectors.robinhood.mcp import account_choices
+
+    return account_choices(envelope)
+
+
 def _with_profile(profile: TradingProfile, payload: dict[str, Any]) -> dict[str, Any]:
     """Add connector profile metadata to an operation payload."""
     result = dict(payload)
@@ -1446,6 +1590,10 @@ def _remote_tool_name(connector: str, operation: str) -> str | None:
         from src.trading.connectors.robinhood.mcp import remote_tool_name
 
         return remote_tool_name(operation)
+    if connector == "scalable":
+        from src.trading.connectors.scalable.mcp import remote_tool_name
+
+        return remote_tool_name(operation)
     return None
 
 
@@ -1459,6 +1607,10 @@ def _remote_arguments(connector: str, operation: str, arguments: dict[str, Any])
         from src.trading.connectors.robinhood.mcp import remote_arguments
 
         return remote_arguments(operation, arguments)
+    if connector == "scalable":
+        from src.trading.connectors.scalable.mcp import remote_arguments
+
+        return remote_arguments(operation, arguments)
     return {}
 
 
@@ -1466,6 +1618,10 @@ def _normalize_remote_result(connector: str, operation: str, result: dict[str, A
     """Map connector-specific MCP envelopes into shared read payloads."""
     if connector == "ibkr":
         from src.trading.connectors.ibkr.mcp import normalize_result
+
+        return normalize_result(operation, result)
+    if connector == "robinhood":
+        from src.trading.connectors.robinhood.mcp import normalize_result
 
         return normalize_result(operation, result)
     return result

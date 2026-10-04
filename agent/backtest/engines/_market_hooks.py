@@ -63,6 +63,9 @@ _MARKET_PATTERNS = [
     # Canada equities: Toronto Stock Exchange (TD.TO) and TSX Venture
     # (PNG.V). Yahoo carries both suffixes verbatim.
     (re.compile(r"^[A-Z0-9&.\-]+\.(TO|V)$", re.I), "ca_equity"),
+    # Argentina: BYMA listings use Yahoo's canonical .BA suffix. Keep this
+    # as a distinct market so ARS can never be mixed with USD/CNY accounting.
+    (re.compile(r"^[A-Z0-9&.\-]+\.BA$", re.I), "ar_equity"),
     # UK equities: London Stock Exchange (VOD.L, SHEL.L). Yahoo carries the
     # suffix verbatim.
     (re.compile(r"^[A-Z0-9&.\-]+\.L$", re.I), "uk_equity"),
@@ -164,6 +167,7 @@ _MARKET_CURRENCY = {
     "india_equity": "INR",
     "kr_equity": "KRW",
     "ca_equity": "CAD",
+    "ar_equity": "ARS",
     "uk_equity": "GBP",
     "vietnam_equity": "VND",
     # Every crypto pattern in _MARKET_PATTERNS is USDT-quoted, and USDT is
@@ -181,6 +185,47 @@ _MARKET_CURRENCY = {
 _FUTURES_EXCHANGE_CURRENCY = {"EUREX": "EUR"}
 
 
+# HKEX's Stock Code Allocation Plan (updated 2026-03-12) assigns a trading
+# currency by code range: 80000-89999 are "Products traded in Renminbi" (the
+# RMB counters, 80700.HK beside 00700.HK), and these sub-ranges trade in USD.
+# Every other .HK code trades in HKD. The venue publishes the rule, so the
+# currency is known whichever source served the bars -- unlike BYMA's dollar
+# lines, where a trailing D is only a habit. Checked against the currency Yahoo
+# declares for 24 codes across the ranges on 2026-09-24 (6 CNY, 10 USD, 8 HKD).
+_HK_COUNTER_CURRENCY_RANGES: tuple[tuple[int, int, str], ...] = (
+    (80000, 89999, "CNY"),
+    (9000, 9199, "USD"),  # ETFs
+    (9200, 9399, "USD"),  # leveraged and inverse products
+    (9400, 9499, "USD"),  # ETFs
+    (9500, 9599, "USD"),  # leveraged and inverse products
+    (9700, 9799, "USD"),  # leveraged and inverse products
+    (9800, 9849, "USD"),  # ETFs
+    (10900, 10999, "USD"),  # derivative warrants
+    (41500, 41599, "USD"),  # ETFs
+)
+_HK_CODE = re.compile(r"^(\d{3,5})\.HK$", re.I)
+
+
+def hk_counter_currency(code: str) -> str | None:
+    """Return the currency HKEX's code allocation assigns to a ``.HK`` code.
+
+    Args:
+        code: Ticker / symbol string, optionally ``local:``-prefixed.
+
+    Returns:
+        ``"CNY"``, ``"USD"`` or ``"HKD"`` for a Hong Kong code, ``None`` for
+        anything else.
+    """
+    match = _HK_CODE.match(strip_local_prefix(code).strip())
+    if match is None:
+        return None
+    number = int(match.group(1))
+    return next(
+        (cur for low, high, cur in _HK_COUNTER_CURRENCY_RANGES if low <= number <= high),
+        "HKD",
+    )
+
+
 def code_currency(code: str) -> str:
     """Return the supported settlement-currency contract for a symbol.
 
@@ -194,7 +239,10 @@ def code_currency(code: str) -> str:
         than a guess, so a homogeneous set still compares equal while a mixed
         one cannot pass a same-currency check by accident.
     """
+    code = strip_local_prefix(code)
     market = _detect_market(code)
+    if market == "hk_equity":
+        return hk_counter_currency(code) or _MARKET_CURRENCY[market]
     if market in _MARKET_CURRENCY:
         return _MARKET_CURRENCY[market]
     if market == "forex":
@@ -211,6 +259,22 @@ def code_currency(code: str) -> str:
         return _FUTURES_EXCHANGE_CURRENCY.get(exchange, "USD")
     return f"UNKNOWN:{market}"
 
+def strip_local_prefix(code: str) -> str:
+    """Return the instrument symbol behind a ``local:`` routing prefix.
+
+    ``local:AAPL.US`` asks for the user's own ``AAPL.US`` dataset. The prefix
+    chooses the loader; it is not part of the instrument, so market rules,
+    price caliber and result keys must all see ``AAPL.US``.
+
+    Args:
+        code: Ticker / symbol string, optionally prefixed with ``local:``.
+
+    Returns:
+        The symbol without the prefix, or ``code`` unchanged.
+    """
+    return code.split(":", 1)[1] if code[:6].lower() == "local:" else code
+
+
 def _detect_market(code: str) -> str:
     """Infer market type from symbol format.
 
@@ -219,7 +283,7 @@ def _detect_market(code: str) -> str:
 
     Returns:
         Market type (a_share/us_equity/hk_equity/india_equity/kr_equity/
-        ca_equity/crypto/futures/forex).
+        ca_equity/ar_equity/crypto/futures/forex).
         Bare 1-5 letter alphabetic tickers resolve to ``us_equity``;
         bare 6-letter codes that start with a precious-metal or G10
         currency code (whitelist) resolve to ``forex``; concatenated
@@ -227,8 +291,9 @@ def _detect_market(code: str) -> str:
         ``=F`` (futures) and ``=X`` (forex) notations are recognized;
         any other unknown format defaults to ``a_share``.
     """
+    symbol = strip_local_prefix(code)
     for pattern, market in _MARKET_PATTERNS:
-        if pattern.match(code):
+        if pattern.match(symbol):
             return market
     return "a_share"
 
@@ -248,7 +313,7 @@ def _is_china_futures(code: str) -> bool:
     Returns:
         True if it looks like a Chinese futures contract.
     """
-    parts = code.upper().split(".")
+    parts = strip_local_prefix(code).upper().split(".")
     if len(parts) == 2:
         # Has an exchange suffix — trust it. CN exchange = True, anything
         # else = False. Without this guard the product-code heuristic below
@@ -298,13 +363,21 @@ _TIER_TABLE = [
 FUNDING_HOURS = {0, 8, 16}
 
 
+#: Spans of the calendar-period bars the runner builds from daily ones
+#: (#1479). A month is the mean one, 365.25 / 12 days, so a monthly bar settles
+#: 91 funding periods whether the month has 28 days or 31.
+_PERIOD_SPAN_HOURS = {"1W": 168.0, "1M": 730.5}
+
+
 def _interval_span_hours(interval: str) -> float | None:
     """Bar span in hours for a runner interval token, ``None`` when unknown.
 
-    The runner accepts only 1m/5m/15m/30m/1H/4H/1D, so ``m`` is minutes here
-    (there is no monthly token to confuse it with).
+    ``1M`` is a month and ``1m`` a minute; the period tokens are looked up
+    whole before any suffix is read, so the two never meet.
     """
     token = str(interval).strip()
+    if token in _PERIOD_SPAN_HOURS:
+        return _PERIOD_SPAN_HOURS[token]
     for suffix, scale in (("m", 1 / 60), ("H", 1.0), ("D", 24.0)):
         if token.endswith(suffix) and token[: -len(suffix)].isdigit():
             return int(token[: -len(suffix)]) * scale

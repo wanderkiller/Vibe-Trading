@@ -161,3 +161,39 @@ def test_fetch_declared_currency_failure_is_fail_closed(
     monkeypatch.setattr(yfl.yf, "Ticker", raise_offline)
 
     assert yfl._declared_currency("VOD.L") is None
+
+
+@pytest.mark.parametrize(
+    ("symbol", "declared", "admitted"),
+    [
+        ("GGALD.BA", "ARS", True),
+        ("GGALD.BA", "USD", False),
+        ("GGALD.BA", None, False),
+        ("DLR-U.TO", "USD", False),
+        ("DLR.TO", "CAD", True),
+    ],
+)
+def test_fetch_admits_a_byma_or_tsx_line_only_in_its_markets_currency(
+    monkeypatch: pytest.MonkeyPatch, symbol: str, declared: str | None, admitted: bool
+) -> None:
+    """BYMA and the TSX each list USD lines beside their ARS / CAD pools.
+
+    Yahoo declared USD for GGALD.BA (4.20) and DLR-U.TO (10.16) on 2026-09-24,
+    beside ARS for GGAL.BA and CAD for DLR.TO.
+    """
+    monkeypatch.delenv("VIBE_TRADING_DATA_CACHE", raising=False)
+    asked: list[str] = []
+
+    def declared_currency(requested: str) -> str | None:
+        asked.append(requested)
+        return declared
+
+    monkeypatch.setattr(yfl, "_download_history", lambda *args: _download_frame())
+    monkeypatch.setattr(yfl, "_declared_currency", declared_currency)
+
+    result = yfl.DataLoader().fetch([symbol], "2025-01-01", "2025-01-03")
+
+    assert asked == [symbol]
+    assert (symbol in result) is admitted
+    if admitted:
+        assert result[symbol].attrs["quote_currency"] == declared

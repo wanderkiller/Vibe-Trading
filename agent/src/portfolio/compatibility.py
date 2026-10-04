@@ -12,13 +12,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
+from src.portfolio.iso4217 import is_iso_currency
 from src.trading.types import TradingProfile
 
 CompatibilityLevel = Literal["native", "contract_tested", "experimental"]
-
-SUPPORTED_VALUE_CURRENCIES = frozenset({"USD", "HKD", "CNY"})
 _SYMBOL_FIELDS = ("symbol", "code", "ticker")
 _QUANTITY_FIELDS = (
     "quantity",
@@ -98,6 +97,18 @@ _CONNECTOR_COMPATIBILITY: dict[str, PortfolioCompatibility] = {
         "open_positions",
         "Account totals and instrument quote resolution require verification.",
     ),
+    "toss": PortfolioCompatibility("experimental", 1, "positions", "KRW valuation is not supported yet."),
+    "robinhood": PortfolioCompatibility(
+        "experimental",
+        1,
+        "stocks_etfs",
+        "Equity positions for one selected account, unpriced until the quote reply is mapped.",
+    ),
+    # No "scalable" entry: its profile does not declare account.read /
+    # positions.read, so it is not a portfolio-eligible connection. The
+    # holdings reply shape is unverified (no published tool argument schemas),
+    # so a portfolio read could not be mapped; add the entry with the
+    # normalisation once a live tools/list settles the shape (#1367).
 }
 
 _EXPERIMENTAL_DEFAULT = PortfolioCompatibility(
@@ -132,9 +143,17 @@ def adapt_and_validate_payloads(
     if not isinstance(positions_payload, dict):
         raise PortfolioContractError("positions read must return an object")
 
+    for label, payload in (("account", account_payload), ("positions", positions_payload)):
+        if payload.get("mapping_error"):
+            raise PortfolioContractError(f"{label} read could not be mapped: {payload['mapping_error']}")
     account = dict(account_payload)
     positions = dict(positions_payload)
-    raw_rows = positions.get("positions", [])
+    if connector == "robinhood":
+        _require_equity_only_robinhood_account(account)
+    # No default: a read that never produced a positions list (an unmapped MCP
+    # envelope, a text-only reply) is not an empty portfolio. Reading it as one
+    # would store a complete snapshot of a source that holds nothing.
+    raw_rows = positions.get("positions")
     if not isinstance(raw_rows, list):
         raise PortfolioContractError("positions payload must contain a list")
     rows = [dict(row) if isinstance(row, dict) else row for row in raw_rows]
@@ -158,19 +177,70 @@ def adapt_and_validate_payloads(
     return account, positions
 
 
-def ensure_supported_currencies(rows: list[dict[str, Any]], account_payload: dict[str, Any] | None = None) -> None:
-    """Fail closed when the current portfolio FX model cannot value a source.
+def _require_equity_only_robinhood_account(account_payload: dict[str, Any]) -> None:
+    """Refuse a Robinhood account whose holdings reach beyond equities.
 
-    Account currency is checked as well as position currency so a cash-only
-    account cannot accidentally be reported as USD.
+    ``get_equity_positions`` lists equities only, while ``get_portfolio`` reports
+    options, crypto, futures, event contracts, mutual funds and fixed income as
+    separate values. Showing the equity rows for an account that also holds any
+    of those would be a quietly shorter portfolio, so the source fails instead,
+    naming what it cannot list. An omitted value is unknown, not zero.
+
+    Args:
+        account_payload: The mapped ``get_portfolio`` read.
+
+    Raises:
+        PortfolioContractError: If the mapped summary is missing, or any
+            non-equity value is non-zero or not reported.
     """
-    currencies = {str(row.get("price_currency") or row.get("currency") or "USD").upper() for row in rows}
+    summary = account_payload.get("account")
+    values = summary.get("non_equity_values") if isinstance(summary, dict) else None
+    if not isinstance(values, dict):
+        raise PortfolioContractError("Robinhood account read carries no mapped portfolio summary")
+    unreported = sorted(field for field, value in values.items() if value is None)
+    held = sorted(field for field, value in values.items() if value is not None and _decimal(value) != 0)
+    if unreported:
+        raise PortfolioContractError(
+            "Robinhood did not report " + ", ".join(unreported) + ", so an equity-only view cannot be shown as complete"
+        )
+    if held:
+        raise PortfolioContractError(
+            "this Robinhood account holds " + ", ".join(held) + ", which equity positions do not cover; "
+            "an equity-only view would be incomplete"
+        )
+
+
+def ensure_supported_currencies(
+    rows: list[dict[str, Any]],
+    account_payload: dict[str, Any] | None = None,
+    rates: Mapping[str, Decimal] | None = None,
+) -> None:
+    """Validate currency identity separately from current FX availability.
+
+    A real ISO-4217 currency is valid portfolio metadata even when the current
+    rates map cannot convert it. Valuation callers pass a rates map to fail
+    closed on such gaps instead of silently assuming a 1:1 USD rate.
+    """
+    currencies = {
+        str(row.get("price_currency") or row.get("currency") or "USD").upper()
+        for row in rows
+    }
     account_currency = _account_currency(account_payload or {})
     if account_currency:
         currencies.add(account_currency)
-    unsupported = sorted(currencies - SUPPORTED_VALUE_CURRENCIES)
-    if unsupported:
-        raise PortfolioContractError("portfolio FX conversion is not available for: " + ", ".join(unsupported))
+
+    invalid = sorted(code for code in currencies if not is_iso_currency(code))
+    if invalid:
+        raise PortfolioContractError(
+            "portfolio currency is not a valid ISO-4217 code: " + ", ".join(invalid)
+        )
+
+    if rates is not None:
+        missing = sorted(code for code in currencies if rates.get(code) is None)
+        if missing:
+            raise PortfolioContractError(
+                "portfolio FX conversion is not available for: " + ", ".join(missing)
+            )
 
 
 def _account_currency(payload: dict[str, Any]) -> str | None:

@@ -26,8 +26,7 @@ import pandas as pd
 from backtest.loaders import yahoo_client
 from backtest.loaders.base import (
     cached_loader_fetch,
-    is_lse_symbol,
-    normalize_lse_quote_currency,
+    normalize_declared_quote_currency,
     validate_date_range,
 )
 from backtest.loaders.registry import register
@@ -64,7 +63,7 @@ def _is_supported(code: str) -> bool:
         return True
     return upper.endswith(
         (
-            ".US", ".HK", ".NS", ".BO", ".KS", ".KQ", ".TO", ".V", ".VN",
+            ".US", ".HK", ".NS", ".BO", ".KS", ".KQ", ".TO", ".V", ".VN", ".BA",
             ".L", "=F", "=X",
         )
     )
@@ -192,7 +191,7 @@ class DataLoader:
     name = "yahoo"
     markets = {
         "us_equity", "hk_equity", "india_equity", "kr_equity", "ca_equity",
-        "vietnam_equity", "uk_equity",
+        "vietnam_equity", "uk_equity", "ar_equity",
     }
     # Yahoo chart volume is single shares for US/HK equities
     # (HKUDS/Vibe-Trading#1062; HK verified 2026-08-11, 00700.HK ratio 1.00
@@ -287,6 +286,5 @@ class DataLoader:
             period2=period2,
         )
         frame = _rows_to_frame(rows, start_date, end_date, interval)
-        if is_lse_symbol(code):
-            frame = normalize_lse_quote_currency(frame, currency)
+        frame = normalize_declared_quote_currency(frame, code, currency)
         return frame if not frame.empty else None

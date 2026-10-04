@@ -24,6 +24,7 @@ from src.portfolio.compatibility import (
     ensure_supported_currencies,
     profile_compatibility,
 )
+from src.portfolio.fx import Rates, build_rates, from_usd
 from src.portfolio.normalization import (
     STABLECOINS,
     account_cash_usd,
@@ -33,6 +34,7 @@ from src.portfolio.normalization import (
     value_position,
 )
 from src.portfolio.store import PortfolioStore
+from src.trading.connections import requires_account_selection
 from src.trading.profiles import profile_by_id
 from src.trading.types import TradingProfile
 
@@ -40,7 +42,10 @@ from src.trading.types import TradingProfile
 # the market suffix: ``AAPL`` alone is read as an A-share code, ``AAPL.US`` is
 # not (see ``src.market_data._SOURCE_PATTERNS``).
 _RISK_XRAY_MAX_SYMBOLS = 50
-PORTFOLIO_VALUATION_VERSION = 2
+# Version 3 makes all valuation use an explicit FX rates map. Existing v2
+# snapshots/history are intentionally hidden after upgrade, including
+# USD/HKD/CNY snapshots whose numeric values would otherwise remain valid.
+PORTFOLIO_VALUATION_VERSION = 3
 _LOADER_MARKET_SUFFIXES = frozenset({"US", "HK", "SZ", "SH", "BJ", "KS", "KQ", "NS", "BO", "TO", "V"})
 _NON_EQUITY_ASSET_TYPES = frozenset({"crypto", "stablecoin", "cash"})
 
@@ -241,6 +246,8 @@ class PortfolioService:
         if not sources:
             raise RuntimeError("Add and enable at least one read-only account on the Portfolio page before refreshing")
         usd_cny, usd_hkd, fx_at, fx_stale = self._rates()
+        rates = build_rates(usd_cny, usd_hkd)
+        display_currency = settings.display_currency
         refreshed_at = _now()
         results: dict[str, dict[str, Any]] = {}
         # The Longbridge Python SDK wraps a native runtime whose contexts are
@@ -251,7 +258,7 @@ class PortfolioService:
             if self._progress_callback is not None:
                 self._progress_callback(source.id, "refreshing", None)
             try:
-                results[source.id] = self._collect_source(source)
+                results[source.id] = self._collect_source(source, rates)
                 if self._progress_callback is not None:
                     self._progress_callback(source.id, "ok", None)
             except Exception as exc:  # read failures are isolated per connector
@@ -281,29 +288,52 @@ class PortfolioService:
             if result["status"] != "ok":
                 accounts.append(self._failed_account(source, connection.profile_id, profile, result))
                 continue
-            broker_positions = [value_position(row, usd_hkd=usd_hkd, usd_cny=usd_cny) for row in result["positions"]]
-            priced_total = sum(
-                (_decimal(row.get("market_value_usd")) for row in broker_positions),
-                Decimal("0"),
-            )
-            account_total = account_total_usd(
-                broker,
-                result["account"],
-                usd_hkd,
-                usd_cny,
-                priced_total,
-            )
-            if broker == "binance":
-                account_total = priced_total
-            cash_total = min(
-                account_total,
-                account_cash_usd(broker, result["account"], usd_hkd, usd_cny),
-            )
-            if not source.include_cash:
-                account_total = max(Decimal("0"), account_total - cash_total)
-                cash_total = Decimal("0")
-            unpriced_or_other = max(Decimal("0"), account_total - priced_total - cash_total)
-            priced_count = sum(1 for row in broker_positions if row.get("priced"))
+            try:
+                broker_positions = [
+                    value_position(row, rates=rates) for row in result["positions"]
+                ]
+                priced_total = sum(
+                    (_decimal(row.get("market_value_usd")) for row in broker_positions),
+                    Decimal("0"),
+                )
+                account_total = account_total_usd(
+                    broker,
+                    result["account"],
+                    rates,
+                    priced_total,
+                )
+                if broker == "binance":
+                    account_total = priced_total
+                cash_total = min(
+                    account_total,
+                    account_cash_usd(broker, result["account"], rates),
+                )
+                if not source.include_cash:
+                    account_total = max(Decimal("0"), account_total - cash_total)
+                    cash_total = Decimal("0")
+                unpriced_or_other = max(
+                    Decimal("0"), account_total - priced_total - cash_total
+                )
+                priced_count = sum(
+                    1 for row in broker_positions if row.get("priced")
+                )
+            except Exception as exc:
+                failure = {
+                    "status": "error",
+                    "error_code": type(exc).__name__,
+                    "error": str(exc)[:300],
+                    "failure_kind": "transient",
+                    "reconnect_required": False,
+                }
+                accounts.append(
+                    self._failed_account(
+                        source, connection.profile_id, profile, failure
+                    )
+                )
+                if self._progress_callback is not None:
+                    self._progress_callback(source.id, "error", str(exc)[:160])
+                continue
+
             accounts.append(
                 {
                     "source_id": source.id,
@@ -313,7 +343,10 @@ class PortfolioService:
                     "status": "ok",
                     "last_success_at": refreshed_at,
                     "total_usd": _number(account_total),
-                    "total_cny": _number(account_total * usd_cny),
+                    "total_cny": _number(from_usd(account_total, "CNY", rates)),
+                    "total_display": _number(
+                        from_usd(account_total, display_currency, rates)
+                    ),
                     "priced_value_usd": _number(priced_total),
                     "cash_usd": _number(cash_total),
                     "unpriced_or_other_usd": _number(unpriced_or_other),
@@ -342,8 +375,12 @@ class PortfolioService:
             "valuation_version": PORTFOLIO_VALUATION_VERSION,
             "created_at": refreshed_at,
             "complete": complete,
-            "display_currency": settings.display_currency,
-            "totals": {"usd": _number(total_usd), "cny": _number(total_usd * usd_cny)},
+            "display_currency": display_currency,
+            "totals": {
+                "usd": _number(total_usd),
+                "cny": _number(from_usd(total_usd, "CNY", rates)),
+                "display": _number(from_usd(total_usd, display_currency, rates)),
+            },
             "valuation": {
                 "priced_usd": _number(priced_usd),
                 "cash_usd": _number(cash_usd),
@@ -353,6 +390,9 @@ class PortfolioService:
             "fx": {
                 "usd_cny": _number(usd_cny),
                 "usd_hkd": _number(usd_hkd),
+                "rates": {
+                    code: _number(rate) for code, rate in sorted(rates.items())
+                },
                 "fetched_at": fx_at,
                 "stale": fx_stale,
             },
@@ -405,6 +445,7 @@ class PortfolioService:
             "last_success_at": cached["created_at"] if cached is not None else None,
             "total_usd": None,
             "total_cny": None,
+            "total_display": None,
             "position_count": 0,
             "auth": auth_metadata(profile),
             "portfolio_compatibility": profile_compatibility(profile),
@@ -751,11 +792,14 @@ class PortfolioService:
             result.append(item)
         return sorted(result, key=lambda row: _decimal(row["market_value_usd"]), reverse=True)
 
-    def _collect_source(self, source: PortfolioSource) -> dict[str, Any]:
+    def _collect_source(
+        self, source: PortfolioSource, rates: Rates
+    ) -> dict[str, Any]:
         """Read one source's account and positions, pricing what the connector omits.
 
         Args:
             source: The enabled source to read.
+            rates: Currency units per USD available for this refresh.
 
         Returns:
             ``{"source_id", "profile_id", "label", "broker", "status",
@@ -782,6 +826,15 @@ class PortfolioService:
                 # A dashboard refresh must never open a browser. reconnect_source()
                 # is the one explicit interactive path.
                 read_options["interactive_oauth"] = False
+                if requires_account_selection(profile):
+                    # Checked before any call: one OAuth grant serves every
+                    # account, so a read without one must not fall back to the
+                    # broker's default account.
+                    if not connection.account_ref:
+                        raise RuntimeError(
+                            f"Select a {broker} account for this connection before refreshing"
+                        )
+                    read_options["account"] = connection.account_ref
             elif profile.transport in {"broker_sdk", "local_plugin"} and (
                 profile.transport == "local_plugin" or self._use_connection_scoped_reads
             ):
@@ -848,6 +901,10 @@ class PortfolioService:
                     )
                     if not price and longbridge_price_error:
                         normalized["price_error"] = longbridge_price_error
+                elif profile.transport == "remote_mcp" and "quotes.read" not in profile.capabilities:
+                    normalized["market_price"] = None
+                    normalized["price_currency"] = normalized["currency"]
+                    normalized["price_error"] = f"{broker} quotes are not mapped for this connection"
                 else:
                     quote_symbol = normalized["quote_symbol"]
                     quote = self._get_quote(
@@ -869,7 +926,7 @@ class PortfolioService:
             except Exception as exc:
                 normalized["price_error"] = str(exc)[:160]
             rows.append(normalized)
-        ensure_supported_currencies(rows, account)
+        ensure_supported_currencies(rows, account, rates)
         return {
             "source_id": source.id,
             "profile_id": connection.profile_id,
