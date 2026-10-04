@@ -109,7 +109,7 @@ Self-check after writing `signal_engine.py`:
 
 **`extra_fields` selection logic**: only China A-shares (`tushare`) support daily valuation fields. If the strategy needs `PE/PB/ROE` and similar daily_basic fields, specify them in `config.json.extra_fields` and `DataLoader` will retrieve them automatically. Hong Kong, US, Canadian stocks, and crypto do not support `extra_fields`.
 
-**`fundamental_fields` selection logic**: use this for China A-share financial statement pre-filters. The runner queries `income`, `balancesheet`, `cashflow`, and/or `fina_indicator` through the Tushare fundamental provider, then merges rows into daily bars only after their announcement/disclosure date. Output columns are prefixed by table name, for example `income_total_revenue`, `income_n_income`, `balancesheet_total_hldr_eqy_exc_min_int`, and `fina_indicator_roe`.
+**`fundamental_fields` selection logic**: use this for China A-share financial statement pre-filters. The runner queries `income`, `balancesheet`, `cashflow`, and/or `fina_indicator` through the Tushare fundamental provider, then merges rows into daily bars only after their announcement/disclosure date. Output columns are prefixed by table name, for example `income_total_revenue`, `income_n_income`, `balancesheet_total_hldr_eqy_exc_min_int`, and `fina_indicator_roe`. **Daily frames only**: an announcement date carries no time of day, so on an intraday frame a filing would be visible from the first bar of its own announcement day. A sub-daily interval plus `fundamental_fields` is rejected outright; set `"fundamental_subdaily": "next_day"` to run it anyway under the conservative rule that day D's announcement becomes visible at the first bar of D+1.
 
 ## `config.json` Format
 
@@ -138,7 +138,7 @@ Self-check after writing `signal_engine.py`:
 - `source`: `"auto"` (recommended, auto-select by code format) / `"tushare"` / `"yfinance"` / `"okx"` / `"akshare"` / `"ccxt"`
   - `"auto"` supports mixed instruments. For example, `["000001.SZ", "BTC-USDT"]` will be automatically routed to `tushare` and `okx`
   - Futures codes (e.g. `"IF2406.CFFEX"`, `"ESZ4"`) and forex pairs (e.g. `"EUR/USD"`) are also auto-routed
-- `interval`: candlestick interval, default `"1D"`. Supported values: `"1m"` / `"5m"` / `"15m"` / `"30m"` / `"1H"` / `"4H"` / `"1D"`
+- `interval`: candlestick interval, default `"1D"`. Supported values: `"1m"` / `"5m"` / `"15m"` / `"30m"` / `"1H"` / `"4H"` / `"1D"` / `"1W"` / `"1M"` (weekly and monthly bars are built from daily ones; `"1M"` is a month, `"1m"` a minute)
   - The annualization factor for minute backtests is inferred automatically from `source` (252 trading days for China A-shares, 365 calendar days for crypto)
   - Minute backtests can be very data-heavy. Recommended limits are no more than 30 days for `1m`, or 1 year for `1H`
 - `warmup_bars`: how many leading bars exist only to prime the indicators. They are loaded and fed to `SignalEngine.generate()`, then excluded from trades, the equity curve, the benchmark and every metric. Default `0` grades the whole loaded window.

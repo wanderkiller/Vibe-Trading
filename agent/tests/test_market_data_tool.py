@@ -463,3 +463,56 @@ def test_market_data_tool_accepts_minute_intervals():
             )
             assert json.loads(out) == {}
     assert [c["interval"] for c in calls] == ["1m", "5m", "15m", "30m", "30m", "1H", "1D"]
+
+
+def test_market_data_tool_serves_month_and_week_spellings():
+    """'1M' is one month and '1m' one minute; neither folds onto the other
+    (#1480), and weekly/monthly bars reach the fetch as 1W / 1M (#1479)."""
+    import src.tools.market_data_tool as mod
+    from unittest import mock
+
+    with mock.patch.object(mod, "fetch_market_data_json", return_value="{}") as fetch:
+        for interval, canonical in (
+            ("1M", "1M"), ("1mo", "1M"), ("1W", "1W"), ("1w", "1W"), ("1wk", "1W"), ("1m", "1m")
+        ):
+            fetch.reset_mock()
+            mod.MarketDataTool().execute(
+                codes=["AAPL.US"],
+                start_date="2026-08-20",
+                end_date="2026-08-21",
+                interval=interval,
+            )
+            assert fetch.call_args.kwargs["interval"] == canonical, interval
+
+
+def test_canonicalize_interval_keeps_minute_and_month_apart():
+    """_canonicalize_interval never maps '1m' and '1M' onto each other (#1480)."""
+    from src.tools.market_data_tool import _INTERVAL_CANON, _canonicalize_interval
+
+    assert _canonicalize_interval("1m") == "1m"
+    assert _canonicalize_interval("1M") == "1M"
+    assert _canonicalize_interval("1W") == "1W"
+    assert _canonicalize_interval("1d") == "1D"
+    assert _canonicalize_interval("30M") == "30m"
+    assert _canonicalize_interval("1h") == "1H"
+    assert _canonicalize_interval("2W") is None
+    assert _INTERVAL_CANON["1M"] == "1M"
+
+
+def test_market_data_tool_asks_only_a_us_equity_for_its_suffix():
+    """Bare ``AAPL`` returns empty frames from the US loaders, so auto asks for
+    ``AAPL.US``; a futures code or a joined crypto pair has the same shape and is
+    served as written, and must reach the loaders."""
+    import src.tools.market_data_tool as mod
+    from unittest import mock
+
+    with mock.patch.object(mod, "fetch_market_data_json", side_effect=lambda **kw: "{}"):
+        for code in ("RB0", "rb2501", "IF2412", "BTCUSDT"):
+            out = json.loads(
+                mod.MarketDataTool().execute(codes=[code], start_date="2026-08-20", end_date="2026-08-21")
+            )
+            assert out == {}, (code, out)
+        refused = json.loads(
+            mod.MarketDataTool().execute(codes=["AAPL"], start_date="2026-08-20", end_date="2026-08-21")
+        )
+    assert refused["ok"] is False and "AAPL.US" in refused["error"]

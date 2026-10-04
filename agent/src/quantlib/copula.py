@@ -10,7 +10,7 @@ import math
 from typing import Literal
 
 import numpy as np
-from scipy.stats import norm
+from scipy.stats import norm, rankdata
 
 __all__ = [
     "clayton_copula_cdf",
@@ -27,6 +27,9 @@ __all__ = [
 def pseudo_observations(data: np.ndarray) -> np.ndarray:
     """Transform empirical data to uniform [0, 1] pseudo-observations via rank transformation.
 
+    Tied observations receive their average rank, and NaNs remain missing rather
+    than being assigned an arbitrary order.
+
     Args:
         data: 1-D or 2-D array of observations.
 
@@ -34,15 +37,26 @@ def pseudo_observations(data: np.ndarray) -> np.ndarray:
         Array of normalized ranks in (0, 1), shape matching ``data``.
     """
     arr = np.asarray(data, dtype=float)
+    if arr.ndim not in (1, 2):
+        raise ValueError("data must be 1-D or 2-D")
+    if np.isinf(arr).any():
+        raise ValueError("data must not contain infinite values")
+
     if arr.ndim == 1:
-        n = len(arr)
-        ranks = np.argsort(np.argsort(arr)) + 1
-        return ranks / (n + 1.0)
-    elif arr.ndim == 2:
-        n = arr.shape[0]
-        ranks = np.argsort(np.argsort(arr, axis=0), axis=0) + 1
-        return ranks / (n + 1.0)
-    raise ValueError("data must be 1-D or 2-D")
+        result = np.full(arr.shape, np.nan, dtype=float)
+        valid = ~np.isnan(arr)
+        n = int(valid.sum())
+        if n:
+            result[valid] = rankdata(arr[valid], method="average") / (n + 1.0)
+        return result
+
+    result = np.full(arr.shape, np.nan, dtype=float)
+    for column in range(arr.shape[1]):
+        valid = ~np.isnan(arr[:, column])
+        n = int(valid.sum())
+        if n:
+            result[valid, column] = rankdata(arr[valid, column], method="average") / (n + 1.0)
+    return result
 
 
 def clayton_copula_cdf(u: float | np.ndarray, v: float | np.ndarray, theta: float) -> float | np.ndarray:
@@ -63,7 +77,13 @@ def clayton_copula_cdf(u: float | np.ndarray, v: float | np.ndarray, theta: floa
     if np.any((u_arr <= 0.0) | (u_arr > 1.0) | (v_arr <= 0.0) | (v_arr > 1.0)):
         raise ValueError("u and v marginals must be in (0, 1]")
 
-    val = np.maximum(0.0, u_arr ** (-theta) + v_arr ** (-theta) - 1.0) ** (-1.0 / theta)
+    # Compute in log space so u^{-theta} never overflows for large theta:
+    # log(u^{-theta} + v^{-theta} - 1) = logaddexp(a, b) + log1p(-exp(-logaddexp(a, b)))
+    a = -theta * np.log(u_arr)
+    b = -theta * np.log(v_arr)
+    lse = np.logaddexp(a, b)
+    log_inner = lse + np.log1p(-np.exp(-lse))
+    val = np.exp(-log_inner / theta)
     return float(val) if np.ndim(val) == 0 else val
 
 
@@ -95,8 +115,14 @@ def gumbel_copula_cdf(u: float | np.ndarray, v: float | np.ndarray, theta: float
     if np.any((u_arr <= 0.0) | (u_arr > 1.0) | (v_arr <= 0.0) | (v_arr > 1.0)):
         raise ValueError("u and v marginals must be in (0, 1]")
 
-    term = (-np.log(u_arr)) ** theta + (-np.log(v_arr)) ** theta
-    val = np.exp(-(term ** (1.0 / theta)))
+    # Compute in log space so (-ln u)^theta never underflows for large theta:
+    # log((-ln u)^theta + (-ln v)^theta) = logaddexp(theta*log(-log u), theta*log(-log v))
+    # A marginal of exactly 1.0 gives log(-log 1) = log(0) = -inf, which
+    # logaddexp handles correctly; silence the divide-by-zero warning.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        a = theta * np.log(-np.log(u_arr))
+        b = theta * np.log(-np.log(v_arr))
+    val = np.exp(-np.exp(np.logaddexp(a, b) / theta))
     return float(val) if np.ndim(val) == 0 else val
 
 
@@ -122,9 +148,43 @@ def frank_copula_cdf(u: float | np.ndarray, v: float | np.ndarray, theta: float)
     if np.any((u_arr <= 0.0) | (u_arr > 1.0) | (v_arr <= 0.0) | (v_arr > 1.0)):
         raise ValueError("u and v marginals must be in (0, 1]")
 
-    num = (np.exp(-theta * u_arr) - 1.0) * (np.exp(-theta * v_arr) - 1.0)
-    den = np.exp(-theta) - 1.0
-    val = -1.0 / theta * np.log(1.0 + num / den)
+    # The naive form breaks at both ends of the parameter range, so neither
+    # sign keeps it. For theta > 0 it cancels catastrophically (num/den -> -1,
+    # log(0) -> -inf); for theta < 0 every factor is positive but
+    # (e^{|theta|u} - 1)(e^{|theta|v} - 1) overflows to inf from
+    # |theta| ~ 355, which is the same failure the positive branch was fixed
+    # for and just as reachable (Kendall tau -> -1 is a real regime).
+    if theta > 0:
+        s = np.minimum(u_arr, v_arr)
+        t = np.maximum(u_arr, v_arr)
+        # inner = 1 + e^{-th(t-s)} - e^{-th t} - e^{-th(1-s)} written as a sum
+        # of two POSITIVE terms via expm1. Spelled with plain exp it is a
+        # 1+1-1-1 cancellation as theta -> 0: at theta=1e-6 it kept ~6 digits,
+        # and the 1/theta factor below multiplied that error by 1e6 (C(0.3,0.7)
+        # came out 0.20974 against the independence limit 0.21, breaking the
+        # Frechet lower bound).
+        inner = -(
+            np.expm1(-theta * t)
+            + np.exp(-theta * (t - s)) * np.expm1(-theta * (1.0 - t))
+        )
+        log_num = -theta * s + np.log(inner)
+        log_den = np.log(-np.expm1(-theta))
+        val = -(1.0 / theta) * (log_num - log_den)
+    else:
+        # phi = -theta > 0. Every term is positive here, so the ratio needs no
+        # cancellation guard — only its logarithm, computed with
+        # log(e^{phi x} - 1) = phi x + log1p(-e^{-phi x}):
+        #   log r = log(e^{phi u} - 1) + log(e^{phi v} - 1) - log(e^{phi} - 1)
+        #   C     = log(1 + r) / phi = logaddexp(0, log r) / phi
+        phi = -theta
+        log_num = (
+            phi * u_arr
+            + np.log(-np.expm1(-phi * u_arr))
+            + phi * v_arr
+            + np.log(-np.expm1(-phi * v_arr))
+        )
+        log_den = phi + np.log(-np.expm1(-phi))
+        val = np.logaddexp(0.0, log_num - log_den) / phi
     return float(val) if np.ndim(val) == 0 else val
 
 

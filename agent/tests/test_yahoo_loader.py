@@ -9,6 +9,7 @@ import datetime as dt
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 
 from backtest.loaders.yahoo_loader import (
     DataLoader,
@@ -249,6 +250,24 @@ class TestFetch:
         assert kwargs["period2"] == _epoch("2024-01-31") + 86400
         assert kwargs["interval"] == "1d"
 
+    def test_fetch_preserves_provider_quote_currency(self):
+        rows = [_row("2024-01-02", 10, 11, 9, 10.5, 1000)]
+        with patch(
+            "backtest.loaders.yahoo_loader.yahoo_client.get_chart",
+            return_value=(rows, "ARS"),
+        ):
+            out = DataLoader().fetch(["GGAL.BA"], "2024-01-01", "2024-01-31")
+        assert out["GGAL.BA"].attrs["quote_currency"] == "ARS"
+
+    def test_fetch_leaves_missing_quote_currency_absent(self):
+        rows = [_row("2024-01-02", 10, 11, 9, 10.5, 1000)]
+        with patch(
+            "backtest.loaders.yahoo_loader.yahoo_client.get_chart",
+            return_value=(rows, ""),
+        ):
+            out = DataLoader().fetch(["AAPL.US"], "2024-01-01", "2024-01-31")
+        assert "quote_currency" not in out["AAPL.US"].attrs
+
     def test_fetch_india_symbol(self):
         rows = [
             _row("2024-01-02", 10, 11, 9, 10.5, 1000),
@@ -390,7 +409,32 @@ class TestLoaderMetadata:
         assert loader.name == "yahoo"
         assert loader.markets == {
             "us_equity", "hk_equity", "india_equity", "kr_equity", "ca_equity",
-            "vietnam_equity", "uk_equity",
+            "vietnam_equity", "uk_equity", "ar_equity",
         }
         assert loader.requires_auth is False
         assert loader.is_available() is True
+
+
+@pytest.mark.parametrize(
+    ("symbol", "declared", "admitted"),
+    [
+        ("GGAL.BA", "ARS", True),
+        ("GGALD.BA", "USD", False),  # BYMA's dollar line for Galicia
+        ("GGALD.BA", "", False),
+        ("DLR.TO", "CAD", True),
+        ("DLR-U.TO", "USD", False),  # the TSX's US-dollar unit of the same fund
+    ],
+)
+def test_fetch_admits_a_line_only_in_its_markets_currency(
+    symbol: str, declared: str, admitted: bool
+) -> None:
+    """ar_equity is one ARS pool and ca_equity one CAD pool; both venues list USD lines."""
+    rows = [_row("2024-01-02", 4.1, 4.3, 4.0, 4.2, 1000)]
+    with patch(
+        "backtest.loaders.yahoo_loader.yahoo_client.get_chart",
+        return_value=(rows, declared),
+    ):
+        out = DataLoader().fetch([symbol], "2024-01-01", "2024-01-31")
+    assert (symbol in out) is admitted
+    if admitted:
+        assert out[symbol].attrs["quote_currency"] == declared

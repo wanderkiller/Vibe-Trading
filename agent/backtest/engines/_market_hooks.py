@@ -22,6 +22,32 @@ from backtest.models import Position
 
 # ── Symbol -> market classification (shared by runner.py + composite.py) ──
 
+# Known Chinese-futures product codes — used as a heuristic when a symbol
+# lacks an exchange suffix (e.g. bare ``RB2410``, ``IF2406``). Without this
+# table composite.py was misrouting such bare codes to GlobalFutures.
+# Stored lowercase; ``_is_china_futures`` lowercases the extracted product
+# before lookup so callers can pass any case (``RB2410`` and ``rb2410``
+# both resolve correctly).
+_CN_FUTURES_PRODUCTS = {
+    "if", "ic", "ih", "im", "t", "tf", "ts", "tl",
+    "au", "ag", "cu", "al", "zn", "pb", "ni", "sn", "ss",
+    "rb", "hc", "i", "j", "jm",
+    "sc", "fu", "lu", "bu", "nr",
+    "c", "cs", "m", "y", "a", "p", "jd", "lh",
+    "cf", "sr", "ta", "ma", "ap", "rm", "oi",
+    "pp", "l", "v", "eg", "eb", "pf", "sa", "fg", "ur",
+    "si", "lc",
+}
+
+
+#: The main continuous contract, spelled ``<product>0`` (``RB0``, ``IF0``).
+#: Built from the product whitelist rather than a width rule, because a
+#: bare ``<letters>0`` is otherwise indistinguishable from an ordinary
+#: ticker; anchoring on the whitelist leaves no collision surface.
+_CN_FUTURES_MAIN_PATTERN = r"^(?:{})0$".format(
+    "|".join(sorted(_CN_FUTURES_PRODUCTS, key=len, reverse=True))
+)
+
 _MARKET_PATTERNS = [
     (re.compile(r"^\d{6}\.(SZ|SH|BJ)$", re.I), "a_share"),
     (re.compile(r"^(51|15|56)\d{4}\.(SZ|SH)$", re.I), "a_share"),
@@ -37,6 +63,9 @@ _MARKET_PATTERNS = [
     # Canada equities: Toronto Stock Exchange (TD.TO) and TSX Venture
     # (PNG.V). Yahoo carries both suffixes verbatim.
     (re.compile(r"^[A-Z0-9&.\-]+\.(TO|V)$", re.I), "ca_equity"),
+    # Argentina: BYMA listings use Yahoo's canonical .BA suffix. Keep this
+    # as a distinct market so ARS can never be mixed with USD/CNY accounting.
+    (re.compile(r"^[A-Z0-9&.\-]+\.BA$", re.I), "ar_equity"),
     # UK equities: London Stock Exchange (VOD.L, SHEL.L). Yahoo carries the
     # suffix verbatim.
     (re.compile(r"^[A-Z0-9&.\-]+\.L$", re.I), "uk_equity"),
@@ -48,14 +77,40 @@ _MARKET_PATTERNS = [
     # yfinance's native crypto spelling (BTC-USD, ETH-USD). Distinct from
     # USDT pairs only in the quote currency; both belong to CryptoEngine.
     (re.compile(r"^[A-Z]+-USD$", re.I), "crypto"),
+    # Concatenated spot pairs (BTCUSDT, ETHUSDC) with no separator. Same
+    # quote-asset table the trade-journal parser uses; without it these fell
+    # through every pattern and got a_share rules (T+1, no shorting) on a
+    # perpetual. Bare metals/FX (XAUUSD) end in USD, not USDT/USDC/BUSD, so
+    # they still reach the forex whitelist below.
+    (re.compile(r"^[A-Z]{2,}(?:USDT|USDC|BUSD)$", re.I), "crypto"),
     # China futures: product+delivery.exchange (e.g. IF2406.CFFEX, rb2410.SHFE)
-    (re.compile(r"^[A-Za-z]{1,2}\d{3,4}\.(ZCE|DCE|SHFE|INE|CFFEX|GFEX)$", re.I), "futures"),
+    # Tushare suffix spellings (SHF/CZC/CFX/GFE) classify here too.
+    (re.compile(r"^[A-Za-z]{1,2}\d{3,4}\.(ZCE|DCE|SHFE|INE|CFFEX|GFEX|SHF|CZC|CFX|GFE)$", re.I), "futures"),
     # Global futures: product+month-code (e.g. ESZ4, CLF25, GCM2025)
     (re.compile(r"^[A-Z]{2,4}[FGHJKMNQUVXZ]\d{1,2}$", re.I), "futures"),
     # Global futures: product+YYMM (e.g. CL2412, ES2503)
     (re.compile(r"^[A-Z]{2,4}\d{4}$", re.I), "futures"),
     # Global futures: bare product code with exchange (e.g. ES.CME)
     (re.compile(r"^[A-Z]{2,4}\.(CME|CBOT|NYMEX|COMEX|ICE|EUREX)$", re.I), "futures"),
+    # Global futures: dated contract carrying its venue (ESZ4.CME, CL2412.NYMEX,
+    # GCM2025.COMEX). The bare dated forms above matched, and the continuous
+    # form with a venue matched, but the combination fell through every pattern
+    # to the a_share default below — a USD contract then priced in CNY under
+    # T+1 with no shorting. Same class as #1394 on the global side. The product
+    # width opens to {1,4} here (not on the bare forms) because a recognized
+    # futures venue already proves the class: CBOT lists single-letter grains
+    # (C, S, W, O), which ``^[A-Z]{2,4}\d{4}$`` cannot express without also
+    # claiming bare codes it has no venue to justify.
+    (re.compile(
+        r"^[A-Z]{1,4}(?:[FGHJKMNQUVXZ]\d{1,2}|\d{4})\.(CME|CBOT|NYMEX|COMEX|ICE|EUREX)$",
+        re.I,
+    ), "futures"),
+    # China futures: main continuous contract (RB0, IF0, MA0). Dated contracts
+    # live ~240 trading days (RB2601 measured at 242), so any backtest longer
+    # than a contract cycle has to name the rolled series. It fell through to
+    # the a_share default, which put a leveraged futures series under T+1 and
+    # no shorting, and kept it out of the futures loader chain entirely.
+    (re.compile(_CN_FUTURES_MAIN_PATTERN, re.I), "futures"),
     # Forex pairs: XXX/YYY or XXXXXX.FX
     (re.compile(r"^[A-Z]{3}/[A-Z]{3}$"), "forex"),
     (re.compile(r"^[A-Z]{6}\.FX$"), "forex"),
@@ -89,12 +144,16 @@ _MARKET_PATTERNS = [
     # Bare US tickers (AAPL, MSFT, SPY, T, ...). Must stay LAST so every
     # suffixed equity / futures / crypto / forex form above wins first.
     # ``{1,5}`` covers every standard US ticker length while 6-char bare
-    # forex/metals (now caught by the whitelist above) and longer crypto
-    # codes (``BTCUSDT``) fall through to the a_share default.
+    # forex/metals (caught by the whitelist above) and longer unknown codes
+    # fall through to the a_share default.
     (re.compile(r"^[A-Z]{1,5}$", re.I), "us_equity"),
 ]
 
 _CHINA_EXCHANGES = {"CFFEX", "SHFE", "DCE", "ZCE", "INE", "GFEX"}
+
+# Tushare spells the same exchanges differently (ts_code='CU1811.SHF');
+# normalize to the canonical suffix before any set membership test (#1394).
+_EXCHANGE_ALIASES = {"SHF": "SHFE", "CZC": "ZCE", "CFX": "CFFEX", "GFE": "GFEX"}
 
 # Supported settlement-currency contract per market. A composite backtest holds
 # one shared capital pool, so a code set spanning two of these would add CNY to
@@ -108,6 +167,7 @@ _MARKET_CURRENCY = {
     "india_equity": "INR",
     "kr_equity": "KRW",
     "ca_equity": "CAD",
+    "ar_equity": "ARS",
     "uk_equity": "GBP",
     "vietnam_equity": "VND",
     # Every crypto pattern in _MARKET_PATTERNS is USDT-quoted, and USDT is
@@ -125,6 +185,47 @@ _MARKET_CURRENCY = {
 _FUTURES_EXCHANGE_CURRENCY = {"EUREX": "EUR"}
 
 
+# HKEX's Stock Code Allocation Plan (updated 2026-03-12) assigns a trading
+# currency by code range: 80000-89999 are "Products traded in Renminbi" (the
+# RMB counters, 80700.HK beside 00700.HK), and these sub-ranges trade in USD.
+# Every other .HK code trades in HKD. The venue publishes the rule, so the
+# currency is known whichever source served the bars -- unlike BYMA's dollar
+# lines, where a trailing D is only a habit. Checked against the currency Yahoo
+# declares for 24 codes across the ranges on 2026-09-24 (6 CNY, 10 USD, 8 HKD).
+_HK_COUNTER_CURRENCY_RANGES: tuple[tuple[int, int, str], ...] = (
+    (80000, 89999, "CNY"),
+    (9000, 9199, "USD"),  # ETFs
+    (9200, 9399, "USD"),  # leveraged and inverse products
+    (9400, 9499, "USD"),  # ETFs
+    (9500, 9599, "USD"),  # leveraged and inverse products
+    (9700, 9799, "USD"),  # leveraged and inverse products
+    (9800, 9849, "USD"),  # ETFs
+    (10900, 10999, "USD"),  # derivative warrants
+    (41500, 41599, "USD"),  # ETFs
+)
+_HK_CODE = re.compile(r"^(\d{3,5})\.HK$", re.I)
+
+
+def hk_counter_currency(code: str) -> str | None:
+    """Return the currency HKEX's code allocation assigns to a ``.HK`` code.
+
+    Args:
+        code: Ticker / symbol string, optionally ``local:``-prefixed.
+
+    Returns:
+        ``"CNY"``, ``"USD"`` or ``"HKD"`` for a Hong Kong code, ``None`` for
+        anything else.
+    """
+    match = _HK_CODE.match(strip_local_prefix(code).strip())
+    if match is None:
+        return None
+    number = int(match.group(1))
+    return next(
+        (cur for low, high, cur in _HK_COUNTER_CURRENCY_RANGES if low <= number <= high),
+        "HKD",
+    )
+
+
 def code_currency(code: str) -> str:
     """Return the supported settlement-currency contract for a symbol.
 
@@ -138,7 +239,10 @@ def code_currency(code: str) -> str:
         than a guess, so a homogeneous set still compares equal while a mixed
         one cannot pass a same-currency check by accident.
     """
+    code = strip_local_prefix(code)
     market = _detect_market(code)
+    if market == "hk_equity":
+        return hk_counter_currency(code) or _MARKET_CURRENCY[market]
     if market in _MARKET_CURRENCY:
         return _MARKET_CURRENCY[market]
     if market == "forex":
@@ -155,22 +259,20 @@ def code_currency(code: str) -> str:
         return _FUTURES_EXCHANGE_CURRENCY.get(exchange, "USD")
     return f"UNKNOWN:{market}"
 
-# Known Chinese-futures product codes — used as a heuristic when a symbol
-# lacks an exchange suffix (e.g. bare ``RB2410``, ``IF2406``). Without this
-# table composite.py was misrouting such bare codes to GlobalFutures.
-# Stored lowercase; ``_is_china_futures`` lowercases the extracted product
-# before lookup so callers can pass any case (``RB2410`` and ``rb2410``
-# both resolve correctly).
-_CN_FUTURES_PRODUCTS = {
-    "if", "ic", "ih", "im", "t", "tf", "ts", "tl",
-    "au", "ag", "cu", "al", "zn", "pb", "ni", "sn", "ss",
-    "rb", "hc", "i", "j", "jm",
-    "sc", "fu", "lu", "bu", "nr",
-    "c", "cs", "m", "y", "a", "p", "jd", "lh",
-    "cf", "sr", "ta", "ma", "ap", "rm", "oi",
-    "pp", "l", "v", "eg", "eb", "pf", "sa", "fg", "ur",
-    "si", "lc",
-}
+def strip_local_prefix(code: str) -> str:
+    """Return the instrument symbol behind a ``local:`` routing prefix.
+
+    ``local:AAPL.US`` asks for the user's own ``AAPL.US`` dataset. The prefix
+    chooses the loader; it is not part of the instrument, so market rules,
+    price caliber and result keys must all see ``AAPL.US``.
+
+    Args:
+        code: Ticker / symbol string, optionally prefixed with ``local:``.
+
+    Returns:
+        The symbol without the prefix, or ``code`` unchanged.
+    """
+    return code.split(":", 1)[1] if code[:6].lower() == "local:" else code
 
 
 def _detect_market(code: str) -> str:
@@ -181,15 +283,17 @@ def _detect_market(code: str) -> str:
 
     Returns:
         Market type (a_share/us_equity/hk_equity/india_equity/kr_equity/
-        ca_equity/crypto/futures/forex).
+        ca_equity/ar_equity/crypto/futures/forex).
         Bare 1-5 letter alphabetic tickers resolve to ``us_equity``;
         bare 6-letter codes that start with a precious-metal or G10
-        currency code (whitelist) resolve to ``forex``; Yahoo's
+        currency code (whitelist) resolve to ``forex``; concatenated
+        crypto pairs (``BTCUSDT``) resolve to ``crypto``; Yahoo's
         ``=F`` (futures) and ``=X`` (forex) notations are recognized;
         any other unknown format defaults to ``a_share``.
     """
+    symbol = strip_local_prefix(code)
     for pattern, market in _MARKET_PATTERNS:
-        if pattern.match(code):
+        if pattern.match(symbol):
             return market
     return "a_share"
 
@@ -209,13 +313,13 @@ def _is_china_futures(code: str) -> bool:
     Returns:
         True if it looks like a Chinese futures contract.
     """
-    parts = code.upper().split(".")
+    parts = strip_local_prefix(code).upper().split(".")
     if len(parts) == 2:
         # Has an exchange suffix — trust it. CN exchange = True, anything
         # else = False. Without this guard the product-code heuristic below
         # would misclassify global futures whose product letters happen to
         # collide with a CN product (e.g. ``M2412.CBOT`` — US soybean meal).
-        return parts[1] in _CHINA_EXCHANGES
+        return _EXCHANGE_ALIASES.get(parts[1], parts[1]) in _CHINA_EXCHANGES
     # Bare code (no exchange suffix): fall back to product-code heuristic.
     m = re.match(r"([A-Za-z]+)\d+", parts[0])
     if m:
@@ -259,13 +363,21 @@ _TIER_TABLE = [
 FUNDING_HOURS = {0, 8, 16}
 
 
+#: Spans of the calendar-period bars the runner builds from daily ones
+#: (#1479). A month is the mean one, 365.25 / 12 days, so a monthly bar settles
+#: 91 funding periods whether the month has 28 days or 31.
+_PERIOD_SPAN_HOURS = {"1W": 168.0, "1M": 730.5}
+
+
 def _interval_span_hours(interval: str) -> float | None:
     """Bar span in hours for a runner interval token, ``None`` when unknown.
 
-    The runner accepts only 1m/5m/15m/30m/1H/4H/1D, so ``m`` is minutes here
-    (there is no monthly token to confuse it with).
+    ``1M`` is a month and ``1m`` a minute; the period tokens are looked up
+    whole before any suffix is read, so the two never meet.
     """
     token = str(interval).strip()
+    if token in _PERIOD_SPAN_HOURS:
+        return _PERIOD_SPAN_HOURS[token]
     for suffix, scale in (("m", 1 / 60), ("H", 1.0), ("D", 24.0)):
         if token.endswith(suffix) and token[: -len(suffix)].isdigit():
             return int(token[: -len(suffix)]) * scale

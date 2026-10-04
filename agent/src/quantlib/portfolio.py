@@ -116,6 +116,13 @@ def hierarchical_risk_parity(
     """
     is_df = isinstance(cov, pd.DataFrame)
     labels = cov.columns.tolist() if is_df else None
+    if is_df:
+        # The matrix is read positionally below, so a frame whose rows are in
+        # another order than its columns is the same misalignment as a
+        # reordered corr: align it by label, reject a different label set.
+        if set(cov.index) != set(labels):
+            raise ValueError("Covariance matrix row labels must match its column labels")
+        cov = cov.loc[labels, labels]
 
     cov_mat = np.asarray(cov, dtype=float)
     if cov_mat.ndim != 2 or cov_mat.shape[0] != cov_mat.shape[1]:
@@ -134,7 +141,13 @@ def hierarchical_risk_parity(
         std = np.sqrt(diag)
         corr_mat = cov_mat / np.outer(std, std)
     else:
+        if is_df and isinstance(corr, pd.DataFrame):
+            if set(corr.index) != set(labels) or set(corr.columns) != set(labels):
+                raise ValueError("Correlation matrix labels must match covariance labels")
+            corr = corr.loc[labels, labels]
         corr_mat = np.asarray(corr, dtype=float)
+        if corr_mat.shape != cov_mat.shape:
+            raise ValueError("Correlation matrix dimensions must match covariance matrix")
 
     dist = correlation_distance(corr_mat)
     # Scipy linkage expects condensed distance or observation matrix

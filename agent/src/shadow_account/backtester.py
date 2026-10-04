@@ -284,6 +284,7 @@ def run_shadow_backtest(
         initial_capital=initial_capital,
         pool_currency=headline_currency,
         adjust=build_frame_adjust(adjust_frames) if adjust_frames else None,
+        covered_symbols=frozenset(adjust_frames),
     )
 
     result = ShadowBacktestResult(
@@ -538,6 +539,7 @@ def _attribution_or_zero(
     initial_capital: float,
     pool_currency: str | None = None,
     adjust=None,
+    covered_symbols: frozenset[str] = frozenset(),
 ) -> tuple[AttributionBreakdown, float | None, float]:
     """Compute attribution if the journal is available, else return zeros."""
     shadow_pnl = _shadow_pnl_from_metrics(combined, initial_capital)
@@ -560,12 +562,44 @@ def _attribution_or_zero(
     if not roundtrips:
         return _zero_attribution(), shadow_pnl, 0.0
 
+    dividend_cash = _dividend_cash(
+        trades_df, covered_symbols=covered_symbols, pool_currency=pool_currency,
+    )
     return _compute_attribution(
         profile=profile,
         roundtrips=roundtrips,
         shadow_pnl=shadow_pnl,
         pool_currency=pool_currency,
+        extra_real_pnl=dividend_cash,
     )
+
+
+def _dividend_cash(
+    trades_df: pd.DataFrame,
+    *,
+    covered_symbols: frozenset[str],
+    pool_currency: str | None,
+) -> float:
+    """Sum cash-dividend rows the adjusted frames do not already capture.
+
+    When the run's adjusted frames cover a symbol, the dividend is embedded in
+    the adjusted-close caliber the roundtrip legs are restated through (#1311),
+    so booking the cash as well would count it twice; only dividends on
+    uncovered symbols add to real PnL here. Rows settling in a currency other
+    than the pool's are excluded exactly like the roundtrips are (#14).
+    """
+    if trades_df.empty or "side" not in trades_df.columns:
+        return 0.0
+    total = 0.0
+    for row in trades_df.itertuples(index=False):
+        if row.side != "dividend":
+            continue
+        if row.symbol in covered_symbols:
+            continue
+        if pool_currency is not None and code_currency(row.symbol) != pool_currency:
+            continue
+        total += float(row.amount)
+    return total
 
 
 def _zero_attribution() -> AttributionBreakdown:
@@ -585,6 +619,7 @@ def _compute_attribution(
     roundtrips: list[dict[str, Any]],
     shadow_pnl: float,
     pool_currency: str | None = None,
+    extra_real_pnl: float = 0.0,
 ) -> tuple[AttributionBreakdown, float, float]:
     """Attribute the delta between user's real PnL and shadow PnL.
 
@@ -609,11 +644,16 @@ def _compute_attribution(
     are excluded from ``real_pnl`` and counted in
     ``AttributionBreakdown.excluded_currencies`` instead of being summed
     against it (#14).
+
+    ``extra_real_pnl`` carries real cash the roundtrips do not capture (cash
+    dividends on symbols the run's adjusted frames do not cover). It is added
+    into ``real_pnl`` so the ``missed`` residual stays balanced.
     """
     rule_hold_lo, rule_hold_hi = _aggregate_holding_range(profile)
     noise = 0.0
     early = 0.0
     late = 0.0
+    already_explained: set[int] = set()
     excluded_currencies: dict[str, int] = {}
     pool_roundtrips = [
         rt
@@ -625,7 +665,7 @@ def _compute_attribution(
             currency = code_currency(rt["symbol"])
             if currency != pool_currency:
                 excluded_currencies[currency] = excluded_currencies.get(currency, 0) + 1
-    real_pnl = 0.0
+    real_pnl = float(extra_real_pnl)
     counterfactuals: list[dict[str, Any]] = []
 
     for rt in pool_roundtrips:
@@ -656,6 +696,7 @@ def _compute_attribution(
                 impact += -pnl
                 reason = "rule_violation"
         if impact != 0.0:
+            already_explained.add(id(rt))
             counterfactuals.append({
                 "symbol": rt["symbol"],
                 "buy_dt": str(rt["buy_dt"]),
@@ -666,7 +707,9 @@ def _compute_attribution(
                 "reason": reason,
             })
 
-    overtrading = _overtrading_pnl(profile=profile, roundtrips=pool_roundtrips)
+    overtrading = _overtrading_pnl(
+        profile=profile, roundtrips=pool_roundtrips, already_explained=already_explained
+    )
     explained = noise + early + late + overtrading
     missed = round(shadow_pnl - real_pnl - explained, 2)
 
@@ -701,6 +744,7 @@ def _overtrading_pnl(
     *,
     profile: ShadowProfile,
     roundtrips: list[dict[str, Any]],
+    already_explained: set[int] = frozenset(),
 ) -> float:
     """Excess-frequency PnL: trades beyond the shadow's expected budget.
 
@@ -708,21 +752,34 @@ def _overtrading_pnl(
     compare against the user's actual roundtrip count over the same span.
     Excess trades' PnL is totaled with a negative sign (shadow would've
     skipped them, so real PnL — positive or negative — is "noise").
+
+    ``already_explained`` holds ``id()`` of roundtrips the caller already
+    booked into noise/early/late (#17's mutual-exclusivity invariant): those
+    trades' PnL already explains their gap from shadow behaviour, so they
+    are excluded from the "extra" candidates here to avoid double-counting
+    the same trade in two buckets.
     """
     if not roundtrips:
         return 0.0
     median_hold, _ = profile.typical_holding_days
     if median_hold <= 0:
         return 0.0
+    # roundtrips is appended in sell-chronological order (pair_trades_fifo
+    # closes each position as its sell/cover row is processed), so [-1]'s
+    # sell_dt is the true latest sell, but [0]'s buy_dt is only the buy date
+    # of whichever roundtrip happened to sell first -- not the true earliest
+    # buy. A long hold mixed with short trades understates the span.
     span_days = (
-        pd.Timestamp(roundtrips[-1]["sell_dt"]) - pd.Timestamp(roundtrips[0]["buy_dt"])
+        max(pd.Timestamp(rt["sell_dt"]) for rt in roundtrips)
+        - min(pd.Timestamp(rt["buy_dt"]) for rt in roundtrips)
     ).total_seconds() / 86400.0
     expected = max(1.0, span_days / max(2 * median_hold, 1.0))
     actual = len(roundtrips)
     if actual <= expected:
         return 0.0
     # Penalize the cheapest (lowest |pnl|) extras — those look like noise.
-    extras = sorted(roundtrips, key=lambda rt: abs(float(rt["pnl"])))
+    candidates = [rt for rt in roundtrips if id(rt) not in already_explained]
+    extras = sorted(candidates, key=lambda rt: abs(float(rt["pnl"])))
     extra_count = int(actual - expected)
     extra_pnl = sum(float(rt["pnl"]) for rt in extras[:extra_count])
     return -extra_pnl

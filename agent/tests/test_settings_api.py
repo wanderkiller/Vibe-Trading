@@ -532,6 +532,31 @@ def test_update_data_source_settings_persists_tushare_token(
     assert "TUSHARE_TOKEN=ts-secret-token" in env_text
 
 
+def test_update_data_source_settings_persists_gildata_token(
+    client: TestClient, tmp_path: Path,
+) -> None:
+    response = client.put(
+        "/settings/data-sources",
+        json={"gildata_token": "gd-secret-token"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["gildata_token_configured"] is True
+    assert body["gildata_token_hint"] is None
+    assert "gd-secret-token" not in response.text
+    assert "gd-s...oken" not in response.text
+
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "GILDATA_TOKEN=gd-secret-token" in env_text
+
+    cleared = client.put(
+        "/settings/data-sources", json={"clear_gildata_token": True},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["gildata_token_configured"] is False
+
+
 def test_desktop_secure_mode_never_persists_injected_tushare_token(
     client: TestClient,
     tmp_path: Path,
@@ -665,7 +690,7 @@ def test_get_data_source_settings_lists_default_source_orders(
     orders = {entry["market"]: entry for entry in entries}
     assert set(orders) == {
         "a_share", "us_equity", "hk_equity", "india_equity", "kr_equity",
-        "ca_equity", "vietnam_equity", "uk_equity", "crypto", "futures",
+        "ca_equity", "ar_equity", "vietnam_equity", "uk_equity", "crypto", "futures",
         "fund", "macro", "forex", "index",
     }
     a_share = orders["a_share"]
@@ -694,7 +719,7 @@ def test_update_source_orders_persists_and_hot_applies(
                     "market": "a_share",
                     "order": [
                         "tushare", "tencent", "mootdx", "eastmoney",
-                        "baostock", "akshare", "local",
+                        "baostock", "akshare", "gildata", "local",
                     ],
                 },
             ],
@@ -733,7 +758,7 @@ def test_update_source_orders_reset_clears_override(
                     "market": "a_share",
                     "order": [
                         "tushare", "tencent", "mootdx", "eastmoney",
-                        "baostock", "akshare", "local",
+                        "baostock", "akshare", "gildata", "local",
                     ],
                 },
             ],

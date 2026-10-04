@@ -1,0 +1,19 @@
+# Deployment override maintained by this fork alongside Dockerfile.local and
+# requirements-local-providers-lock.txt. Preserve it when merging upstream.
+services:
+  vibe-trading:
+    build:
+      context: .
+      # Dockerfile.local follows the upstream Dockerfile and installs the
+      # hash-pinned requirements-local-providers-lock.txt overlay (Anthropic
+      # and DeepSeek). Regenerate it when the upstream Dockerfile changes.
+      dockerfile: Dockerfile.local
+    # Host networking so cloudflared (a host process at 127.0.0.1:8899) sees
+    # the app's real loopback peer identity, matching bare-metal behavior.
+    # Bridge NAT would present the container with the bridge gateway IP
+    # instead of 127.0.0.1, which falls outside uvicorn's default
+    # trusted-proxy IP list and breaks X-Forwarded-Proto handling for
+    # non-GET requests.
+    network_mode: host
+    ports: !reset []
+    command: ["vibe-trading", "serve", "--host", "127.0.0.1", "--port", "8899"]

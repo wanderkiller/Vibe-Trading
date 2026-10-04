@@ -18,6 +18,7 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -32,6 +33,8 @@ from backtest.loaders.rsshub_events import (
     feed_specs_from_config,
 )
 from backtest.loaders.tushare_fundamentals import (
+    SUBDAILY_POLICIES,
+    SubdailyPitError,
     TushareFundamentalProvider,
     enrich_price_frames_with_fundamentals,
 )
@@ -255,8 +258,17 @@ def _align(
         is the bounded-ffill trading view; ``close_val_df`` carries the last
         traded close through halts of any length and is only for valuation.
     """
-    # Build unified sorted date index from all symbols' trading calendars
-    indexes = [data_map[c].index for c in codes]
+    # Build unified sorted date index from all symbols' trading calendars.
+    # Everything below works on int64 epochs, and ``asi8`` / ``view("i8")``
+    # count in the index's own unit: a duckdb-backed local source arrives as
+    # datetime64[us], which read as nanoseconds put the run in 1970 and, beside
+    # a nanosecond source, matched none of its bars. One unit for all of them.
+    ns_index = {
+        c: idx if idx.unit == "ns" else idx.as_unit("ns")
+        for c in codes
+        for idx in (data_map[c].index,)
+    }
+    indexes = [ns_index[c] for c in codes]
     merged = np.unique(np.concatenate([index.asi8 for index in indexes]))
     common_tz = indexes[0].tz
     if all(index.tz == common_tz for index in indexes) and common_tz is not None:
@@ -278,7 +290,7 @@ def _align(
     close_arr = np.full((n_dates, n_codes), np.nan)
     for j, c in enumerate(codes):
         series = data_map[c]["close"]
-        row_idx = np.searchsorted(dates_i8, series.index.values.view("i8"))
+        row_idx = np.searchsorted(dates_i8, indexes[j].asi8)
         close_arr[row_idx, j] = series.values
 
     # Vectorized ffill with limit using pandas (C-optimized internals)
@@ -318,7 +330,7 @@ def _align(
         shifted_vals[0] = 0.0
         shifted_vals[1:] = sig_vals[:-1]
         # Place into unified grid via searchsorted
-        row_idx = np.searchsorted(dates_i8, own_idx.values.view("i8"))
+        row_idx = np.searchsorted(dates_i8, ns_index[c].asi8)
         pos_arr[row_idx, j] = shifted_vals
 
     # Vectorized ffill with limit using pandas (C-optimized)
@@ -409,6 +421,12 @@ def _maybe_enrich_fundamentals(
     if not fields_by_table:
         return data_map
 
+    subdaily = str(config.get("fundamental_subdaily", "reject")).strip().lower()
+    if subdaily not in SUBDAILY_POLICIES:
+        raise ValueError(
+            f"fundamental_subdaily must be one of {SUBDAILY_POLICIES}, got {subdaily!r}"
+        )
+
     try:
         provider = TushareFundamentalProvider()
         return enrich_price_frames_with_fundamentals(
@@ -417,7 +435,14 @@ def _maybe_enrich_fundamentals(
             fields_by_table,
             as_of=config.get("end_date", ""),
             periods=config.get("fundamental_periods"),
+            subdaily=subdaily,
         )
+    except SubdailyPitError:
+        # A contract error (an intraday frame under the default reject policy)
+        # is the caller's to fix and must not be reworded as a provider
+        # failure. Narrow on purpose: a stray ValueError from inside the
+        # enrichment is a failure and keeps the wrapped message.
+        raise
     except Exception as exc:
         raise RuntimeError(
             f"fundamental_fields requested but Tushare enrichment failed: {exc}"
@@ -736,6 +761,7 @@ class BaseEngine(ABC):
         "execution_blocked",
         "invalid_price",
         "zero_size",
+        "insufficient_capital",
     )
 
     def _plan_rejection_metrics(self) -> Dict[str, Any]:
@@ -764,6 +790,20 @@ class BaseEngine(ABC):
             "unfilled_plan_rejections_by_symbol": by_symbol,
         }
 
+    def _engine_diagnostics(self) -> Dict[str, Any]:
+        """Per-engine facts about how this run was priced.
+
+        Default empty. An engine overrides this to state something the metrics
+        cannot be derived from — currently ChinaFuturesEngine reporting which
+        products it priced on a generic default instead of a table entry
+        (#1393), where the alternative is a number that looks like data.
+
+        Returns:
+            Extra keys merged into the metrics dict; empty when there is
+            nothing to declare.
+        """
+        return {}
+
     def _on_plan_rejected(self, symbol: str, reason: str, timestamp: pd.Timestamp) -> None:
         """Observe a silently rejected opening-order plan.
 
@@ -774,11 +814,17 @@ class BaseEngine(ABC):
         an engine subclass to tell "nothing to do" apart from "wanted but
         unfillable".
 
+        The capital fit reports one more cause after the planner: a sleeve that
+        was a real order at full scale and left the basket when every opening
+        order was scaled down to the cash available is ``insufficient_capital``
+        (#1470), reported once per bar — never the trial plans of the search.
+
         Args:
             symbol: Instrument the plan was for.
             reason: Machine-readable cause: ``no_target_weight``,
                 ``already_held``, ``no_data``, ``no_bar``,
-                ``execution_blocked``, ``invalid_price`` or ``zero_size``.
+                ``execution_blocked``, ``invalid_price``, ``zero_size`` or
+                ``insufficient_capital``.
             timestamp: Decision bar timestamp.
         """
         self.plan_rejections[(symbol, reason)] += 1
@@ -852,6 +898,7 @@ class BaseEngine(ABC):
         Returns:
             Metrics dictionary.
         """
+        trace_started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         codes = config.get("codes", [])
         interval = config.get("interval", "1D")
         extra_fields = config.get("extra_fields") or None
@@ -990,6 +1037,7 @@ class BaseEngine(ABC):
                 m["total_return"] - benchmark_metadata["benchmark_return"], 6
             )
         m.update(self._plan_rejection_metrics())
+        m.update(self._engine_diagnostics())
         if self.rebalance_mask is not None:
             m["rebalance_mask"] = self.rebalance_mask
             m["rebalance_bars_executed"] = self.rebalance_bars_executed
@@ -1101,6 +1149,8 @@ class BaseEngine(ABC):
         card_warnings = list(config.get("content_filter_warnings") or [])
         if config.get("_run_card_caliber_warning"):
             card_warnings.append(config["_run_card_caliber_warning"])
+        if config.get("_run_card_annualisation_warning"):
+            card_warnings.append(config["_run_card_annualisation_warning"])
         from backtest.run_card import write_run_card
         write_run_card(
             run_dir,
@@ -1109,6 +1159,16 @@ class BaseEngine(ABC):
             data_sources=_run_card_data_sources(config, loader),
             strategy_path=run_dir / "code" / "signal_engine.py",
             warnings=card_warnings or None,
+            tool_traces=[
+                {
+                    "tool": "backtest",
+                    "args": config,
+                    "started_at": trace_started_at,
+                    "ended_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    "status": "ok",
+                    "result": m,
+                }
+            ],
         )
 
         # Print scalar metrics (skip nested dicts for JSON compat).
@@ -1216,12 +1276,12 @@ class BaseEngine(ABC):
                 if current_pos is None and target_dir != 0:
                     open_targets.append((c, target_w, data_map.get(c)))
 
-            def _plans(scale: float) -> list[_OpenOrder]:
+            def _plans(scale: float, *, observe: bool) -> list[_OpenOrder]:
                 result: list[_OpenOrder] = []
                 for c, target_w, frame in open_targets:
                     try:
                         order = self._plan_open_order(
-                            c, target_w * scale, frame, ts, equity
+                            c, target_w * scale, frame, ts, equity, observe=observe
                         )
                     except Exception as exc:
                         logger.warning(
@@ -1235,16 +1295,31 @@ class BaseEngine(ABC):
                         result.append(order)
                 return result
 
-            planned = _plans(1.0)
+            planned = _plans(1.0, observe=True)
             if sum(order.cost for order in planned) > self.capital + 1e-9:
+                # The trial plans of the search are not findings: one starved
+                # open used to be booked as a zero_size rejection on every
+                # bisection step (#1470). The sleeve that leaves the basket is
+                # reported once, after the search, as the rebalance path does.
+                wanted = [order.symbol for order in planned]
+                # Nothing fits until a candidate proves it does: with cash below
+                # zero (a funding debit leaves it there) not even the empty plan
+                # fits, and the full-scale plan used to fall through to
+                # _execute_open_order and abort the run (#1542).
+                fitting: list[_OpenOrder] = []
                 low, high = 0.0, 1.0
                 for _ in range(50):
                     mid = (low + high) / 2.0
-                    candidate = _plans(mid)
+                    candidate = _plans(mid, observe=False)
                     if sum(order.cost for order in candidate) <= self.capital + 1e-9:
-                        low, planned = mid, candidate
+                        low, fitting = mid, candidate
                     else:
                         high = mid
+                planned = fitting
+                fitted = {order.symbol for order in planned}
+                for symbol in wanted:
+                    if symbol not in fitted:
+                        self._on_plan_rejected(symbol, "insufficient_capital", ts)
 
             for order in planned:
                 self._execute_open_order(order, ts)
@@ -1467,25 +1542,35 @@ class BaseEngine(ABC):
         equity: float,
         *,
         allow_existing: bool = False, require_positive_price: bool = False,
+        observe: bool = True,
     ) -> Optional[_OpenOrder]:
-        """Price an opening order without mutating portfolio state."""
+        """Price an opening order without mutating portfolio state.
+
+        ``observe=False`` plans a trial inside a capital-fit search: a rejection
+        there is not a finding and is not reported to ``_on_plan_rejected``.
+        """
         self._active_symbol = symbol
+
+        def rejected(reason: str) -> None:
+            if observe:
+                self._on_plan_rejected(symbol, reason, ts)
+
         direction = 1 if target_weight > 1e-9 else (-1 if target_weight < -1e-9 else 0)
         if direction == 0:
-            self._on_plan_rejected(symbol, "no_target_weight", ts)
+            rejected("no_target_weight")
             return None
         if symbol in self.positions and not allow_existing:
-            self._on_plan_rejected(symbol, "already_held", ts)
+            rejected("already_held")
             return None
         if df is None:
-            self._on_plan_rejected(symbol, "no_data", ts)
+            rejected("no_data")
             return None
         if ts not in df.index:
-            self._on_plan_rejected(symbol, "no_bar", ts)
+            rejected("no_bar")
             return None
         bar = df.loc[ts]
         if not self.can_execute(symbol, direction, bar):
-            self._on_plan_rejected(symbol, "execution_blocked", ts)
+            rejected("execution_blocked")
             return None
         open_price = self.execution_open(bar)
         if require_positive_price:
@@ -1494,7 +1579,7 @@ class BaseEngine(ABC):
         # negatives are rejected unless this engine opted into non-positive
         # prices, in which case abs()-based sizing/margin below handle them.
         elif open_price == 0 or (open_price < 0 and not self.allow_nonpositive_prices):
-            self._on_plan_rejected(symbol, "invalid_price", ts)
+            rejected("invalid_price")
             return None
         price = self.apply_slippage(open_price, direction)
         if require_positive_price:
@@ -1505,7 +1590,7 @@ class BaseEngine(ABC):
             self._calc_raw_size(symbol, target_notional, price), price
         )
         if size <= 0:
-            self._on_plan_rejected(symbol, "zero_size", ts)
+            rejected("zero_size")
             return None
         margin = self._calc_margin(symbol, size, price, leverage)
         commission = self.calc_commission(
@@ -1699,7 +1784,23 @@ class BaseEngine(ABC):
         if projected_capital < -1e-9:
             fitted = self._fit_rebalance_opens(opens, reductions, ts)
             if fitted is None:
-                raise ValueError("insufficient capital for position rebalance")
+                if sum(order.capital_credit for order in reductions) < 0:
+                    # The reductions themselves consume cash (a close whose loss
+                    # exceeds its margin): no dropping of opens repairs that, so
+                    # the bar aborts atomically as #1274 decided.
+                    raise ValueError("insufficient capital for position rebalance")
+                # Cash was already below zero (a funding debit can leave it
+                # there) and the reductions only release it: drop every open,
+                # still run the reductions, and report each open (#1542).
+                for order in opens:
+                    self._on_plan_rejected(order.symbol, "insufficient_capital", ts)
+                if opens:
+                    logger.warning(
+                        "Cash below zero at %s; no open or increase fits, dropped: %s",
+                        ts,
+                        ", ".join(sorted({order.symbol for order in opens})),
+                    )
+                fitted = []
             opens = fitted
 
         for order in reductions:
@@ -1730,12 +1831,15 @@ class BaseEngine(ABC):
         capital weights shift by each sleeve's fee, as with the open path).
         Sizes re-round per market lot rules; a sleeve whose rounded size hits
         zero is dropped and recorded via ``_on_plan_rejected`` as
-        ``zero_size`` — the same record a too-small plan gets in the open
-        path — so run-card diagnostics see the dropped leg.
+        ``insufficient_capital`` — it was a real order at full scale, so it is
+        the cash that failed, not the lot rule (#1470) — so run-card
+        diagnostics see the dropped leg.
 
         Returns the fitted orders, or ``None`` when no scale fits — not even
-        an empty open sleeve — which the caller must treat as an atomic
-        abort (nothing has been committed at that point).
+        an empty open sleeve; nothing has been committed at that point. The
+        caller aborts atomically when the reductions themselves consume cash
+        (#1274), and otherwise — cash was already below zero — drops every
+        open and still runs the reductions (#1542).
         """
         released = sum(order.capital_credit for order in reductions)
 
@@ -1792,7 +1896,7 @@ class BaseEngine(ABC):
                 - {order.symbol for order in fitted}
             )
             for symbol in dropped_symbols:
-                self._on_plan_rejected(symbol, "zero_size", ts)
+                self._on_plan_rejected(symbol, "insufficient_capital", ts)
             logger.warning(
                 "Rebalance basket scaled to fit capital; sleeves rounded to "
                 "zero and dropped: %s. Set position_adjustment='hold' or "

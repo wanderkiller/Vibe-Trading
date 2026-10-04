@@ -32,6 +32,21 @@ logger = logging.getLogger(__name__)
 _GBP_PENCE_CURRENCY = "GBp"
 _PRICE_COLUMNS = ("open", "high", "low", "close")
 _UK_EQUITY_PATTERN = re.compile(r"^[A-Z0-9&.\-]+\.L$", re.I)
+# Venues that list lines in a second currency, whose market is one static
+# pool in the first. BYMA quotes GGAL.BA in ARS and GGALD.BA in USD (the
+# trailing D is not a rule: YPFD.BA is a peso line); the TSX quotes DLR.TO in
+# CAD and DLR-U.TO in USD. Yahoo declares each, and every priced source in
+# these markets' chains is Yahoo or yfinance, so the declared currency decides.
+_SINGLE_CURRENCY_VENUES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^[A-Z0-9&.\-]+\.BA$", re.I), "ARS"),
+    (re.compile(r"^[A-Z0-9&.\-]+\.(?:TO|V)$", re.I), "CAD"),
+)
+
+
+def _venue_currency(code: str) -> str | None:
+    """Return the one currency a symbol's venue pool accepts, or None if unconstrained."""
+    code = str(code).strip()
+    return next((cur for pattern, cur in _SINGLE_CURRENCY_VENUES if pattern.match(code)), None)
 
 
 def is_lse_symbol(code: str) -> bool:
@@ -65,6 +80,48 @@ def scale_pence_to_currency(
     for column in _PRICE_COLUMNS:
         scaled[column] = scaled[column] / 100.0
     return scaled, "GBp→GBP (÷100)"
+
+
+def declared_currency_required(code: str) -> bool:
+    """Return whether ``code``'s suffix names a venue that quotes in several currencies.
+
+    A loader must read the source's declared currency for such a symbol and
+    pass it to :func:`normalize_declared_quote_currency` before emitting bars.
+    """
+    return is_lse_symbol(code) or _venue_currency(code) is not None
+
+
+def normalize_declared_quote_currency(
+    frame: pd.DataFrame, code: str, currency: str | None
+) -> pd.DataFrame:
+    """Hold a frame to its market's currency contract and record the declared quote.
+
+    Args:
+        frame: Normalized OHLCV frame.
+        code: The project symbol the frame belongs to.
+        currency: Quote currency declared by the source, if any.
+
+    Returns:
+        The frame with ``attrs["quote_currency"]`` set whenever a currency was
+        declared (GBP for an LSE line after pence scaling).
+
+    Raises:
+        ValueError: If an LSE line is not declared GBP/GBp, or a BYMA / TSX
+            line is not declared in its market's currency -- each would enter a
+            single-currency pool in the wrong unit.
+    """
+    if is_lse_symbol(code):
+        return normalize_lse_quote_currency(frame, currency)
+    declared = currency.strip() if isinstance(currency, str) else ""
+    required = _venue_currency(code)
+    if required is not None and declared != required:
+        raise ValueError(
+            f"{code} must be quoted in {required} to enter that market's pool; "
+            f"the source declared {declared or 'no currency'!r}"
+        )
+    if declared:
+        frame.attrs["quote_currency"] = declared
+    return frame
 
 
 def normalize_lse_quote_currency(
@@ -208,6 +265,83 @@ DEFAULT_BACKOFF: tuple[float, ...] = (0.5, 1.5, 4.0)
 DEFAULT_MAX_RETRIES = 3
 
 
+#: Bar sizes built from daily bars instead of asked of a loader (#1479). Every
+#: source serves daily bars; few serve weekly or monthly, and those that do
+#: disagree on where a week ends and how its bar is adjusted, so one resample
+#: here keeps a weekly bar the same thing whichever source served the days. A
+#: bar covers one calendar week (Monday to Sunday) or month.
+RESAMPLED_INTERVALS = {"1W": "W-SUN", "1M": "M"}
+
+#: Columns a period bar sums. ``vwap`` is weighted by volume (NaN without a
+#: volume column), ``funding_rate`` (a per-settlement rate) is averaged,
+#: ``open``/``high``/``low`` take their own rule, and every other column is a
+#: level and takes the period's last value.
+_SUMMED_COLUMNS = frozenset({"volume", "amount"})
+
+
+def source_interval(interval: str) -> str:
+    """Return the bar size to request from a loader when serving ``interval``.
+
+    Args:
+        interval: The bar size the caller asked for.
+
+    Returns:
+        ``"1D"`` for a resampled interval, otherwise ``interval`` unchanged.
+    """
+    return "1D" if interval in RESAMPLED_INTERVALS else interval
+
+
+def resample_bars(frame: pd.DataFrame, interval: str) -> pd.DataFrame:
+    """Aggregate daily bars into ``interval`` bars.
+
+    Each bar is stamped with the last trading day inside its period, which is
+    when its close becomes known, so a signal on it never sees a later day and
+    a partial first or last period stays a bar dated inside that period.
+
+    Args:
+        frame: Daily bars on a ``DatetimeIndex``.
+        interval: A key of :data:`RESAMPLED_INTERVALS`; any other interval
+            returns ``frame`` unchanged.
+
+    Returns:
+        One row per period: first open, highest high, lowest low, last close,
+        summed volume and amount, volume-weighted vwap, mean funding rate, last
+        value of any other column. Frame attributes (quote currency) are kept.
+    """
+    if interval not in RESAMPLED_INTERVALS or frame.empty:
+        return frame
+    index = pd.DatetimeIndex(frame.index)
+    naive = index.tz_localize(None) if index.tz is not None else index
+    periods = naive.to_period(RESAMPLED_INTERVALS[interval])
+    grouped = frame.groupby(periods)
+    columns = {}
+    for column in frame.columns:
+        values = grouped[column]
+        if column == "open":
+            columns[column] = values.first()
+        elif column == "high":
+            columns[column] = values.max()
+        elif column == "low":
+            columns[column] = values.min()
+        elif column in _SUMMED_COLUMNS:
+            columns[column] = values.sum(min_count=1)
+        elif column == "funding_rate":
+            columns[column] = values.mean()
+        elif column == "vwap":
+            if "volume" in frame.columns:
+                traded = (frame["vwap"] * frame["volume"]).groupby(periods).sum(min_count=1)
+                columns[column] = traded / grouped["volume"].sum(min_count=1)
+            else:
+                columns[column] = values.first() * float("nan")
+        else:
+            columns[column] = values.last()
+    out = pd.DataFrame(columns, columns=frame.columns)
+    stamps = pd.Series(index, index=periods).groupby(level=0).max()
+    out.index = pd.DatetimeIndex(stamps.loc[out.index], name=frame.index.name)
+    out.attrs = dict(frame.attrs)
+    return out
+
+
 def positive_env_int(name: str, default: int) -> int:
     """Read a positive integer env var, warning and falling back on invalid values."""
     raw = os.getenv(name)  # noqa: env-gate — generic env var helper
@@ -330,7 +464,9 @@ _LOADER_CACHE_TRUE_VALUES = {"1", "true", "yes", "on"}
 # v5: UK (.L) prices normalized from GBp to GBP (÷100) (#1206).
 # v6: LSE quote currency is fail-closed and per-symbol conversion provenance is
 # persisted. v5 USD/unknown .L entries must never be served as static GBP.
-_LOADER_CACHE_VERSION = 6
+# v7: tencent fqkline paginates backward (#1410) — entries cached under the
+# forward walk hold tail-truncated multi-year series and must never be served.
+_LOADER_CACHE_VERSION = 7
 _LOADER_FRAME_METADATA_ATTRS = ("quote_currency", "currency_conversion")
 
 

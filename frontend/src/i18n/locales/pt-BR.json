@@ -1,6 +1,6 @@
 {
   "app": {
-    "version": "v0.1.14"
+    "version": "v0.1.16"
   },
   "charts": {
     "noPriceData": "Ainda não há dados de preço para este símbolo",
@@ -25,12 +25,14 @@
     "cancel": "Cancelar",
     "rename": "Renomear",
     "delete": "Excluir",
+    "close": "Fechar",
     "light": "Claro",
     "dark": "Escuro",
     "language": "Idioma",
     "collapse": "Recolher",
     "expand": "Expandir",
     "skipToMain": "Pular para o conteúdo principal",
+    "menu": "Menu",
     "sidebar": "Barra lateral Vibe-Trading",
     "mainNavigation": "Navegação principal",
     "about": "Sobre"
@@ -127,9 +129,9 @@
     "connectorVerifyFailed": "A verificação da conexão falhou.",
     "diagnosticCredentialsPartial": "As credenciais estão incompletas. Configure todas as variáveis ​​necessárias e recrie o serviço.",
     "diagnosticCredentialsConflict": "Conflito de fontes de credenciais. Mantenha uma fonte completa e tente novamente.",
-    "diagnosticSdkMissing": "O Longbridge SDK não está instalado no serviço de backend.",
+    "diagnosticSdkMissing": "O SDK necessário para esta corretora não está instalado no serviço de backend.",
     "diagnosticAuthenticationFailed": "Falha na autenticação. Verifique as credenciais configuradas.",
-    "diagnosticNetworkUnreachable": "O serviço Longbridge está inacessível. Verifique o acesso à rede e tente novamente.",
+    "diagnosticNetworkUnreachable": "O serviço da corretora ou o gateway local está inacessível. Verifique o endereço de conexão e o acesso à rede e tente novamente.",
     "diagnosticBrokerError": "A corretora recusou a solicitação de verificação somente leitura. Tente novamente ou verifique os logs do backend."
   },
   "scheduled": {
@@ -421,7 +423,346 @@
       "stoppedToast": "Canais de IM parados",
       "refreshFailed": "Falha ao atualizar canais de mensagens instantâneas",
       "startFailed": "Falha ao iniciar canais de IM",
-      "stopFailed": "Falha ao parar canais de mensagens instantâneas"
+      "stopFailed": "Falha ao parar canais de mensagens instantâneas",
+      "config": {
+        "toggleConfig": "Configurar {{name}}",
+        "keepCurrent": "Manter o valor atual ({{masked}})",
+        "secretNotSet": "Não definido",
+        "clearSecret": "Limpar",
+        "required": "Obrigatório",
+        "listPlaceholder": "Digite um valor e pressione Enter para adicionar",
+        "removeValue": "Remover {{value}}",
+        "save": "Salvar configuração",
+        "hotApply": "Salvar é aplicado imediatamente — não é preciso reiniciar.",
+        "saved": "Configuração do canal salva",
+        "saveFailed": "Falha ao salvar a configuração do canal: {{message}}",
+        "test": "Testar conexão",
+        "testing": "Testando…",
+        "testOk": "Conexão verificada",
+        "testFailed": "Falha no teste de conexão: {{message}}",
+        "testCodeOk": "O provedor aceitou estas credenciais.",
+        "testCodeInvalidCredentials": "O provedor rejeitou estas credenciais.",
+        "testCodeNetwork": "Não foi possível alcançar o provedor.",
+        "testCodeUnsupported": "Este canal não oferece teste de conexão.",
+        "testedSavedConfig": "Foi testada a configuração salva.",
+        "testedDraftConfig": "Foram testados os valores atuais do formulário (ainda não salvos).",
+        "enable": "Ativar canal",
+        "enableHint": "Desativar mantém as credenciais salvas — você pode reativar quando quiser.",
+        "enabledToast": "Canal ativado",
+        "disabledToast": "Canal desativado",
+        "enableFailed": "Falha ao ativar o canal: {{message}}",
+        "disableFailed": "Falha ao desativar o canal: {{message}}",
+        "enableRejected": "O provedor rejeitou estas credenciais, então o canal não foi ativado.",
+        "enableRejectedDetail": "Resposta do provedor: {{detail}}",
+        "enableAnyway": "Ativar mesmo assim",
+        "enableAnywayHint": "Ativar mesmo assim ignora a verificação de credenciais — o canal pode não conseguir conectar.",
+        "notWritable": "A configuração do canal fica em um arquivo YAML ({{path}}), que a interface web não pode editar. Edite o arquivo diretamente para alterar as credenciais.",
+        "notWritableChip": "Somente leitura (YAML)",
+        "sdkMissing": "SDK de execução não instalado — {{hint}}",
+        "sdkMissingNoHint": "O SDK de execução não está instalado; o canal pode ser configurado, mas talvez não inicie.",
+        "noFields": "Este canal não tem campos configuráveis.",
+        "loadFailed": "Não foi possível carregar a configuração do canal."
+      },
+      "fields": {
+        "dingtalk": {
+          "client_id": {
+            "label": "Client ID (AppKey)",
+            "help": "O AppKey do app, na página de credenciais do console de desenvolvedor do DingTalk."
+          },
+          "client_secret": {
+            "label": "Client Secret (AppSecret)",
+            "help": "O AppSecret do app. Fica no servidor e nunca é devolvido ao navegador."
+          },
+          "allow_from": {
+            "label": "Remetentes permitidos",
+            "help": "Lista opcional de IDs de remetentes do DingTalk autorizados a falar com o agente (\"*\" libera todos). Remetentes não emparelhados recebem um código de emparelhamento por mensagem direta."
+          },
+          "allow_remote_media_redirects": {
+            "label": "Permitir redirecionamentos de mídia",
+            "help": "Seguir redirecionamentos do provedor ao baixar mídia das mensagens. Desativado por padrão."
+          },
+          "remote_media_redirect_allowed_hosts": {
+            "label": "Hosts de redirecionamento permitidos",
+            "help": "Hosts permitidos quando os redirecionamentos de mídia estão ativos. Uma lista vazia bloqueia todo redirecionamento entre hosts."
+          },
+          "group_user_isolation": {
+            "label": "Sessões por usuário em grupos",
+            "help": "Dar a cada membro do grupo sua própria sessão do agente em vez de uma compartilhada."
+          },
+          "force_ipv4": {
+            "label": "Forçar IPv4",
+            "help": "Vincula as chamadas da API do DingTalk ao IPv4. Útil quando a lista de IPs de saída tem um IPv4 estável, mas o prefixo IPv6 muda constantemente."
+          }
+        },
+        "qq": {
+          "app_id": {
+            "label": "AppID",
+            "help": "O AppID do bot nas configurações do app na QQ Open Platform (q.qq.com)."
+          },
+          "secret": {
+            "label": "AppSecret",
+            "help": "O AppSecret do bot. Fica no servidor e nunca é devolvido ao navegador."
+          },
+          "allow_from": {
+            "label": "Remetentes permitidos",
+            "help": "Lista opcional de openids de remetentes do QQ autorizados a falar com o agente (\"*\" libera todos). Remetentes não emparelhados recebem um código de emparelhamento por mensagem direta."
+          },
+          "msg_format": {
+            "label": "Formato da mensagem",
+            "help": "Formato da resposta: plain ou markdown."
+          },
+          "ack_message": {
+            "label": "Mensagem de confirmação",
+            "help": "Confirmação imediata enviada quando uma mensagem chega. Deixe vazio para desativar."
+          },
+          "media_dir": {
+            "label": "Diretório de mídia",
+            "help": "Onde os anexos recebidos são salvos. Vazio usa ~/.vibe-trading/media/qq."
+          },
+          "download_chunk_size": {
+            "label": "Tamanho do bloco de download",
+            "help": "Bytes por bloco ao baixar anexos (padrão 262144)."
+          },
+          "download_max_bytes": {
+            "label": "Tamanho máximo de download (bytes)",
+            "help": "Limite de segurança para o download de um único anexo (padrão 209715200 = 200 MB)."
+          }
+        },
+        "email": {
+          "consent_granted": {
+            "label": "Consentimento concedido",
+            "help": "Chave de permissão principal. O canal só lê e envia e-mails depois que você concede o consentimento explicitamente."
+          },
+          "imap_host": {
+            "label": "Host IMAP",
+            "help": "Servidor de e-mail de entrada, por exemplo imap.gmail.com. Os e-mails recebidos são consultados nesse servidor via IMAP."
+          },
+          "imap_port": {
+            "label": "Porta IMAP",
+            "help": "Porta de entrada (padrão 993 com SSL)."
+          },
+          "imap_username": {
+            "label": "Usuário IMAP",
+            "help": "Conta da caixa de correio usada para entrar via IMAP; normalmente é o endereço de e-mail completo."
+          },
+          "imap_password": {
+            "label": "Senha IMAP",
+            "help": "Senha da caixa de correio ou senha de aplicativo para IMAP. Fica armazenada no servidor e nunca é devolvida ao navegador."
+          },
+          "imap_mailbox": {
+            "label": "Caixa IMAP",
+            "help": "Pasta consultada em busca de e-mails novos (padrão INBOX)."
+          },
+          "imap_use_ssl": {
+            "label": "SSL do IMAP",
+            "help": "Conectar ao IMAP via SSL (ativado por padrão; necessário para a porta 993)."
+          },
+          "imap_use_tls": {
+            "label": "STARTTLS do IMAP",
+            "help": "Com o SSL do IMAP desativado, criptografar a conexão com STARTTLS antes do login (ativado por padrão; o usual na porta 143). Desative apenas para um servidor sem TLS em uma rede confiável: a senha passa a ser enviada em texto puro."
+          },
+          "smtp_host": {
+            "label": "Host SMTP",
+            "help": "Servidor de e-mail de saída, por exemplo smtp.gmail.com. As respostas são enviadas por esse servidor."
+          },
+          "smtp_port": {
+            "label": "Porta SMTP",
+            "help": "Porta de saída (padrão 587 com STARTTLS; 465 para SSL implícito)."
+          },
+          "smtp_username": {
+            "label": "Usuário SMTP",
+            "help": "Conta usada para autenticar no servidor SMTP; normalmente é o endereço de e-mail completo."
+          },
+          "smtp_password": {
+            "label": "Senha SMTP",
+            "help": "Senha ou senha de aplicativo para SMTP. Fica armazenada no servidor e nunca é devolvida ao navegador."
+          },
+          "smtp_use_tls": {
+            "label": "STARTTLS do SMTP",
+            "help": "Criptografar a conexão SMTP com STARTTLS (ativado por padrão; o usual na porta 587). Na prática, é exclusivo com o SSL do SMTP."
+          },
+          "smtp_use_ssl": {
+            "label": "SSL do SMTP",
+            "help": "Conectar ao SMTP via TLS implícito, por exemplo na porta 465 (desativado por padrão). Na prática, é exclusivo com o STARTTLS."
+          },
+          "verify_tls": {
+            "label": "Verificar o certificado TLS",
+            "help": "Verificar o certificado TLS e o nome de host do servidor de e-mail (recomendado). Desative apenas para servidores com certificado autoassinado ou CA interna."
+          },
+          "from_address": {
+            "label": "Endereço do remetente",
+            "help": "Endereço de onde as respostas são enviadas. Se ficar vazio, usa o usuário SMTP."
+          },
+          "auto_reply_enabled": {
+            "label": "Respostas automáticas",
+            "help": "Responder automaticamente aos e-mails recebidos. Envios iniciados pelo agente não são afetados."
+          },
+          "poll_interval_seconds": {
+            "label": "Intervalo de consulta (s)",
+            "help": "Com que frequência a caixa IMAP é verificada em busca de e-mails novos (padrão 30, mínimo 5)."
+          },
+          "mark_seen": {
+            "label": "Marcar como lido",
+            "help": "Marcar como lidos os e-mails processados na caixa de correio."
+          },
+          "post_action": {
+            "label": "Ação após processar",
+            "help": "O que fazer com os e-mails processados: delete (excluir), move (mover para outra pasta) ou vazio para mantê-los."
+          },
+          "post_action_move_mailbox": {
+            "label": "Mover para a pasta",
+            "help": "Pasta de destino usada quando a ação após processar é move."
+          },
+          "post_action_expunge": {
+            "label": "Expurgar após excluir",
+            "help": "Remover definitivamente os e-mails excluídos (expunge) em vez de deixá-los apenas sinalizados."
+          },
+          "post_action_ignore_skipped": {
+            "label": "Ignorar próprios e filtrados",
+            "help": "Não aplicar a ação pós-processamento aos e-mails ignorados (os seus e os de remetentes filtrados pela lista) (ativado por padrão)."
+          },
+          "max_body_chars": {
+            "label": "Máx. de caracteres do corpo",
+            "help": "Truncar o corpo de cada e-mail nesse número de caracteres (padrão 12000)."
+          },
+          "subject_prefix": {
+            "label": "Prefixo do assunto",
+            "help": "Prefixo adicionado ao assunto das respostas (padrão \"Re: \")."
+          },
+          "allow_from": {
+            "label": "Remetentes permitidos",
+            "help": "Lista opcional de endereços autorizados a falar com o agente (\"*\" permite todos). Remetentes não pareados recebem um código de pareamento na resposta."
+          },
+          "verify_dkim": {
+            "label": "Verificar DKIM",
+            "help": "Exigir o cabeçalho Authentication-Results com dkim=pass. Desativar DKIM e SPF ao mesmo tempo aceita cabeçalhos From falsificados."
+          },
+          "verify_spf": {
+            "label": "Verificar SPF",
+            "help": "Exigir o cabeçalho Authentication-Results com spf=pass. Desativar DKIM e SPF ao mesmo tempo aceita cabeçalhos From falsificados."
+          },
+          "allowed_attachment_types": {
+            "label": "Tipos de anexo permitidos",
+            "help": "Lista MIME permitida para anexos recebidos, por exemplo application/pdf ou image/*. Deixe vazio para desativar anexos."
+          },
+          "max_attachment_size": {
+            "label": "Tamanho máx. do anexo (bytes)",
+            "help": "Maior tamanho aceito por anexo, em bytes (padrão 2000000 = 2 MB)."
+          },
+          "max_attachments_per_email": {
+            "label": "Máx. de anexos por e-mail",
+            "help": "Quantos anexos são aceitos em um único e-mail (padrão 5)."
+          }
+        },
+        "websocket": {
+          "host": {
+            "label": "Host de escuta",
+            "help": "Endereço local ao qual o servidor WebSocket se vincula (padrão 127.0.0.1, apenas local). Um host curinga como 0.0.0.0 ou :: expõe o servidor em todas as interfaces e é recusado sem um token ou segredo de emissão."
+          },
+          "port": {
+            "label": "Porta de escuta",
+            "help": "Porta local em que o servidor WebSocket escuta (padrão 8765). Ignorada quando um caminho de socket Unix é definido."
+          },
+          "unix_socket_path": {
+            "label": "Caminho do socket Unix",
+            "help": "Caminho absoluto opcional. Quando definido, o servidor escuta nesse socket Unix em vez do host e da porta."
+          },
+          "path": {
+            "label": "Caminho de upgrade",
+            "help": "Caminho de upgrade WebSocket usado pelos clientes (padrão /). Precisa começar com \"/\"."
+          },
+          "token": {
+            "label": "Token estático",
+            "help": "Segredo compartilhado validado pelo parâmetro token durante o handshake. Fica armazenado no servidor e nunca é devolvido ao navegador."
+          },
+          "token_issue_path": {
+            "label": "Caminho de emissão de tokens",
+            "help": "Rota HTTP GET que entrega tokens de curta duração e uso único em JSON. Precisa ser diferente do caminho de upgrade."
+          },
+          "token_issue_secret": {
+            "label": "Segredo de emissão",
+            "help": "Segredo Bearer exigido pela rota de emissão (Authorization: Bearer ou X-Vibe-Trading-Auth). Fica armazenado no servidor e nunca é devolvido ao navegador."
+          },
+          "token_ttl_s": {
+            "label": "TTL do token emitido (s)",
+            "help": "Validade do token emitido pela rota de emissão, em segundos (30-86400, padrão 300)."
+          },
+          "websocket_requires_token": {
+            "label": "Exigir token",
+            "help": "Recusar handshakes sem um token estático ou emitido válido (ativado por padrão)."
+          },
+          "allow_from": {
+            "label": "Clientes permitidos",
+            "help": "Lista opcional de IDs de cliente autorizados a conectar (\"*\" permite todos, padrão)."
+          },
+          "streaming": {
+            "label": "Transmitir saída",
+            "help": "Enviar os deltas de saída do modelo aos clientes conectados conforme são gerados."
+          },
+          "max_message_bytes": {
+            "label": "Máx. de bytes por mensagem",
+            "help": "Maior frame de entrada aceito, em bytes (padrão 37748736; 1024-41943040)."
+          },
+          "ping_interval_s": {
+            "label": "Intervalo de ping (s)",
+            "help": "Segundos entre pings de keepalive (5-300, padrão 20)."
+          },
+          "ping_timeout_s": {
+            "label": "Timeout de ping (s)",
+            "help": "Segundos de espera por uma resposta de ping antes de encerrar a conexão (5-300, padrão 20)."
+          },
+          "ssl_certfile": {
+            "label": "Caminho do certificado TLS",
+            "help": "Caminho do certificado PEM no servidor para WSS. Defina certificado e chave juntos ou nenhum dos dois; são caminhos de arquivo no servidor, não material enviado por upload."
+          },
+          "ssl_keyfile": {
+            "label": "Caminho da chave TLS",
+            "help": "Caminho da chave privada PEM no servidor para WSS. Defina certificado e chave juntos ou nenhum dos dois; são caminhos de arquivo no servidor, não material enviado por upload."
+          }
+        }
+      },
+      "guides": {
+        "dingtalk": {
+          "title": "Guia de configuração do DingTalk",
+          "intro": "Os bots do DingTalk usam o modo Stream, então não é necessária uma URL de callback pública.",
+          "step1": "Crie um app no console de desenvolvedor do DingTalk (open-dev.dingtalk.com).",
+          "step2": "Adicione a capacidade de bot ao app e ative o modo Stream.",
+          "step3": "Copie o AppKey do app para o Client ID e o AppSecret para o Client Secret.",
+          "step4": "Publique o app para que ele fique disponível na sua organização.",
+          "step5": "Volte aqui, clique em “Testar conexão” e ative o canal.",
+          "docsLabel": "Abrir o console de desenvolvedor do DingTalk"
+        },
+        "qq": {
+          "title": "Guia de configuração do QQ",
+          "intro": "Os bots do QQ se conectam via WebSocket pelo SDK oficial botpy, então não é necessária uma URL de callback pública.",
+          "step1": "Registre-se na QQ Open Platform (q.qq.com) e crie um bot.",
+          "step2": "Copie o AppID e o AppSecret da página de configurações de desenvolvimento do bot.",
+          "step3": "Cole-os nos campos AppID e AppSecret acima.",
+          "step4": "Adicione o bot a um grupo do QQ ou converse com ele em privado, seguindo as regras de sandbox/publicação da plataforma.",
+          "step5": "Volte aqui, clique em “Testar conexão” e ative o canal.",
+          "docsLabel": "Abrir a QQ Open Platform"
+        },
+        "email": {
+          "title": "Guia de configuração de e-mail",
+          "intro": "O canal de e-mail consulta a caixa via IMAP e responde via SMTP, então não é necessária uma URL de callback pública.",
+          "step1": "Descubra os hosts e as portas de IMAP e SMTP do seu provedor (normalmente imap.<provedor> na 993 e smtp.<provedor> na 587).",
+          "step2": "Ative IMAP e SMTP nas configurações da caixa de correio e, se o provedor exigir (Gmail, QQ Mail e outros com verificação em duas etapas), crie uma senha de aplicativo.",
+          "step3": "Preencha as credenciais de IMAP e SMTP acima, defina o endereço do remetente e adicione o seu endereço em «Remetentes permitidos».",
+          "step4": "Clique em «Testar conexão»: ele verifica o login IMAP, a pasta da caixa e o login SMTP.",
+          "step5": "Marque «Consentimento concedido» e ative o canal; as respostas automáticas passam a chegar aos remetentes que passarem nas verificações DKIM/SPF.",
+          "docsLabel": "Abrir a documentação do Vibe-Trading"
+        },
+        "websocket": {
+          "title": "Guia de configuração do WebSocket",
+          "intro": "O canal WebSocket executa seu próprio servidor local ao qual os clientes se conectam por uma URL WebSocket, então não é necessária uma URL de callback pública.",
+          "step1": "Escolha um endereço de escuta: mantenha 127.0.0.1 para uso apenas local ou defina 0.0.0.0 / :: para expor o servidor — um host curinga exige um token ou um segredo de emissão.",
+          "step2": "Defina um token estático, ou um caminho de emissão com seu segredo Bearer para que os clientes obtenham tokens de curta duração.",
+          "step3": "Conecte os clientes com ws://host:port/path?client_id=...&token=...",
+          "step4": "Salvar com o canal em execução troca o servidor a quente: os clientes conectados (incluindo este chat da interface web) caem por um instante e se reconectam.",
+          "step5": "Clique em «Testar conexão»: ele valida localmente o certificado e a chave SSL e a disponibilidade do endereço.",
+          "docsLabel": "Abrir a documentação do Vibe-Trading"
+        }
+      }
     },
     "generation": "Geração",
     "dataSourceSettings": "Configurações de fonte de dados",
@@ -449,6 +790,9 @@
         "kr_equity": "Ações da Coreia",
         "ca_equity": "Ações do Canadá",
         "vietnam_equity": "Ações do Vietnã",
+        "ar_equity": "Ações da Argentina",
+        "uk_equity": "Ações do Reino Unido",
+        "index": "Índices",
         "crypto": "Criptografia",
         "futures": "Futuros",
         "fund": "Fundos",
@@ -457,7 +801,9 @@
       }
     },
     "tushareToken": "Token Tushare",
+    "gildataToken": "Token do Gildata",
     "clearTushareToken": "Limpar token Tushare salvo",
+    "clearGildataToken": "Apagar token do Gildata salvo",
     "saveDataSourceSettings": "Salvar configurações de fonte de dados",
     "baostock": "BaoStock",
     "loadLlmSettingsFailed": "Falha ao carregar configurações do LLM: {{message}}",
@@ -489,7 +835,8 @@
     "oauth": "OAuth",
     "authentication": "Autenticação",
     "apiKey": "Chave de API",
-    "tushareTokenDesc": "Usado para ações A da China, futuros, fundos e dados macro. Se não for definido, o projeto volta para o AKShare, quando disponível."
+    "tushareTokenDesc": "Usado para ações A da China, futuros, fundos e dados macro. Se não for definido, o projeto volta para o AKShare, quando disponível.",
+    "gildataTokenDesc": "Fonte opcional do Gildata (Hundsun Juyuan) para ações A da China. Quando configurada, entra no final da cadeia de fallback de ações A com candles diários ajustados."
   },
   "qveris": {
     "title": "Mercado de ferramentas QVeris",
@@ -602,7 +949,8 @@
       "failed": "Falha",
       "steps": "Etapas {{count}}",
       "continue": "Continuar",
-      "reattach": "Anexe novamente"
+      "reattach": "Anexe novamente",
+      "checkingFigures": "Verificando os números desta resposta (rodada {{round}})…"
     },
     "resumeConnector": "Retomar conector",
     "resumeConnectorTitle": "Limpe o kill switch e reative a atividade do conector",
@@ -668,6 +1016,33 @@
     "reproducibility": "Reprodutibilidade",
     "metrics": "Métricas",
     "validationPayload": "Validação",
+    "trust": {
+      "executionRecords": "Registros de execução",
+      "executionDescription": "Etapas de execução registradas e hashes de suas entradas e resultados.",
+      "noExecutionRecords": "Não foram salvos registros de execução para esta execução.",
+      "startedAt": "Início (UTC)",
+      "endedAt": "Fim (UTC)",
+      "argsHash": "SHA-256 dos argumentos",
+      "resultHash": "SHA-256 do resultado",
+      "metricEvidence": "Evidências das métricas",
+      "evidenceDescription": "Referências aos dados de métricas salvos. As somas de verificação identificam os arquivos registrados; esta tela não os verifica de forma independente.",
+      "noMetricEvidence": "Não foram registradas evidências de métricas para esta execução.",
+      "metric": "Métrica",
+      "artifact": "Artefato",
+      "column": "Coluna",
+      "row": "Linha de dados (a partir de 1, sem cabeçalho)",
+      "artifactHash": "SHA-256 do artefato",
+      "tools": {
+        "backtest": "Backtest",
+        "load_data": "Carregar dados",
+        "generate_signals": "Gerar sinais"
+      },
+      "status": {
+        "ok": "Concluído",
+        "error": "Falhou",
+        "cancelled": "Cancelado"
+      }
+    },
     "artifactChecksums": "Somas de verificação de artefato",
     "path": "Caminho",
     "size": "Tamanho",
@@ -675,6 +1050,8 @@
     "noBacktestSummary": "Nenhum resumo de backtest registrado.",
     "noReproducibilityHashes": "Nenhum hashe de reprodutibilidade registrado.",
     "noScalarMetrics": "Nenhuma métrica escalar registrada.",
+    "noStructuredMetrics": "Nenhuma métrica estruturada registrada.",
+    "structuredMetrics": "Métricas estruturadas",
     "noValidationPayload": "Nenhuma carga útil de validação registrada.",
     "noArtifactChecksums": "Nenhuma soma de verificação de artefato registrada.",
     "noCodeFiles": "Nenhum arquivo de código.",
@@ -742,6 +1119,9 @@
         "crypto": "Criptoativos",
         "futures": "Futuros",
         "forex": "Forex",
+        "ar_equity": "Ações da Argentina",
+        "uk_equity": "Ações do Reino Unido",
+        "vietnam_equity": "Ações do Vietnã",
         "other": "Outro"
       }
     },
@@ -1210,7 +1590,15 @@
     "maxPerOrder": "≤{{amount}}/ordem",
     "expiresOn": "expira {{date}}",
     "accountSummary": "{{broker}} · Conta {{type}} · financiado por {{fundedBy}}",
-    "adjustRequestMessage": "Para proposta de mandato \"{{label}}\" (opção {{ordinal}}): {{text}}"
+    "adjustRequestMessage": "Para proposta de mandato \"{{label}}\" (opção {{ordinal}}): {{text}}",
+    "accountLoading": "Carregando as contas da corretora…",
+    "accountLoadFailed": "Não foi possível carregar as contas da corretora: {{error}}",
+    "accountLabel": "Conta em que este mandato pode negociar",
+    "accountChoose": "Escolha uma conta",
+    "accountDefault": " · padrão da corretora",
+    "accountDeactivated": " · desativada",
+    "accountNotAgentic": " · negociação por agente não permitida",
+    "accountHint": "O agente negocia apenas nesta conta. Nenhuma conta é escolhida por você."
   },
   "messageBubble": {
     "elapsedTime": "Tempo total de resposta",
@@ -1620,7 +2008,19 @@
       "testFailed": "Falha na verificação {{label}}: {{error}}",
       "unknownTestError": "O conector retornou um erro desconhecido.",
       "delete": "Excluir",
-      "configured": "Credenciais necessárias configuradas"
+      "configured": "Credenciais necessárias configuradas",
+      "accountTitle": "Conta",
+      "accountCurrent": "Lê a conta com final ····{{last4}}",
+      "accountNone": "Nenhuma conta selecionada. Esta conexão não lê nada até você escolher uma.",
+      "accountLoad": "Escolher conta",
+      "accountChange": "Trocar conta",
+      "accountEmpty": "Este login não acessa nenhuma conta.",
+      "accountPicker": "Contas que este login acessa",
+      "accountChoose": "Escolha uma conta",
+      "accountDefault": " · padrão da corretora",
+      "accountDeactivated": " · desativada",
+      "accountSave": "Usar esta conta",
+      "accountSaved": "Conta salva."
     }
   }
 }

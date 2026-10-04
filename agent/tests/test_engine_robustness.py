@@ -9,9 +9,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Dict
 from unittest.mock import patch
 
@@ -122,10 +123,10 @@ class TestSymbolIsolation:
         # Patch the opening-plan boundary to throw for BAD only.
         original_plan = ChinaAEngine._plan_open_order
 
-        def _exploding_plan(self, symbol, target_weight, df, ts, equity):
+        def _exploding_plan(self, symbol, target_weight, df, ts, equity, **kwargs):
             if symbol == "BAD":
                 raise RuntimeError("Simulated failure for BAD")
-            return original_plan(self, symbol, target_weight, df, ts, equity)
+            return original_plan(self, symbol, target_weight, df, ts, equity, **kwargs)
 
         with patch.object(ChinaAEngine, "_plan_open_order", _exploding_plan):
             # Should NOT raise — exception is caught internally
@@ -164,9 +165,14 @@ class TestSymbolIsolation:
                 assert frame["income_total_revenue"].iloc[-1] == 120.0
                 return {"000001.SZ": pd.Series(0.0, index=frame.index)}
 
-        def fake_enrich(data_map, provider, fields_by_table, *, as_of, periods=None):
+        def fake_enrich(
+            data_map, provider, fields_by_table, *, as_of, periods=None, subdaily="reject"
+        ):
             assert fields_by_table == {"income": ["total_revenue"]}
             assert as_of == "2024-04-30"
+            # #1387: the engine forwards the sub-daily PIT policy, and the
+            # default must stay the fail-closed one.
+            assert subdaily == "reject"
             enriched = {code: frame.copy() for code, frame in data_map.items()}
             enriched["000001.SZ"]["income_total_revenue"] = [None, 80.0, 120.0]
             return enriched
@@ -232,15 +238,16 @@ class TestSymbolIsolation:
         monkeypatch.setattr("backtest.benchmark.resolve_benchmark", fake_resolve_benchmark)
 
         engine = ChinaAEngine({"initial_cash": 1_000_000})
+        config = {
+            "codes": ["000001.SZ"],
+            "start_date": "2024-04-01",
+            "end_date": "2024-04-30",
+            "source": "tushare",
+            "benchmark": "000300.SH",
+            "initial_cash": 1_000_000,
+        }
         metrics = engine.run_backtest(
-            {
-                "codes": ["000001.SZ"],
-                "start_date": "2024-04-01",
-                "end_date": "2024-04-30",
-                "source": "tushare",
-                "benchmark": "000300.SH",
-                "initial_cash": 1_000_000,
-            },
+            config,
             FakeLoader(),
             SignalEngine(),
             tmp_path,
@@ -252,7 +259,44 @@ class TestSymbolIsolation:
         run_card_path = tmp_path / "run_card.json"
         assert run_card_path.exists()
         run_card = json.loads(run_card_path.read_text(encoding="utf-8"))
-        assert run_card["schema_version"] == "0.1"
+        assert run_card["schema_version"] == "1.0"
+        assert len(run_card["tool_traces"]) == 1
+        assert run_card["tool_traces"][0]["tool"] == "backtest"
+        assert run_card["tool_traces"][0]["status"] == "ok"
+        started_at = datetime.fromisoformat(
+            run_card["tool_traces"][0]["started_at"].replace("Z", "+00:00")
+        )
+        ended_at = datetime.fromisoformat(
+            run_card["tool_traces"][0]["ended_at"].replace("Z", "+00:00")
+        )
+        assert started_at.tzinfo == timezone.utc
+        assert ended_at.tzinfo == timezone.utc
+        assert started_at <= ended_at
+        assert (
+            run_card["tool_traces"][0]["args_hash"]
+            == hashlib.sha256(
+                json.dumps(
+                    config,
+                    sort_keys=True,
+                    default=str,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            ).hexdigest()
+        )
+        assert (
+            run_card["tool_traces"][0]["result_hash"]
+            == hashlib.sha256(
+                json.dumps(
+                    metrics,
+                    sort_keys=True,
+                    default=str,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            ).hexdigest()
+        )
+        assert run_card["citations"]
         assert run_card["backtest"]["codes"] == ["000001.SZ"]
         assert run_card["data_sources"] == ["tushare"]
         assert run_card["metrics"]["benchmark_return"] == 0.00495
