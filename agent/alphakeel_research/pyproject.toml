@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alphakeel-research-client"
+version = "0.1.0"
+description = "Client for AlphaKeel's offline research-backtest service: frozen data packs, independent Decimal simulator, policy adapter, evidence"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.28.0", "pydantic>=2.0.0"]
+
+[project.optional-dependencies]
+fast = ["zstandard>=0.22"]
+sql = ["duckdb>=1.2.0"]
+dev = ["pytest", "hypothesis", "schemathesis"]
+
+[project.scripts]
+alphakeel-research = "alphakeel_research.cli:main"
+
+# The directory itself is the package: `pip install ./agent/alphakeel_research` installs `alphakeel_research`.
+[tool.setuptools]
+packages = ["alphakeel_research"]
+package-dir = {"alphakeel_research" = "."}
+
+[tool.setuptools.package-data]
+alphakeel_research = ["contract/*.json", "contract/PIN", "contract/vectors/*.json"]

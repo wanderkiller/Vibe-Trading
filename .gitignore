@@ -174,3 +174,7 @@ bench_report.json
 # Grounding ledger persisted by ad-hoc verification scripts into tests/
 agent/tests/artifacts/
 .idea/*
+
+# AlphaKeel research client build artifacts
+agent/alphakeel_research/*.egg-info/
+agent/alphakeel_research/build/

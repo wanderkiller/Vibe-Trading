@@ -91,7 +91,7 @@ py-modules = ["api_server", "mcp_server"]
 
 [tool.setuptools.packages.find]
 where = ["agent"]
-include = ["src*", "backtest*", "cli*", "evals*"]
+include = ["src*", "backtest*", "cli*", "evals*", "alphakeel_research*"]
 
 [tool.setuptools.package-data]
 "src" = [
@@ -108,6 +108,7 @@ include = ["src*", "backtest*", "cli*", "evals*"]
 ]
 "evals.harness" = ["README.md", "cases/**/*.json"]
 "backtest" = ["*.py"]
+"alphakeel_research" = ["contract/*.json", "contract/PIN", "contract/vectors/*.json"]
 "src.factors" = ["zoo/**/*.yaml", "zoo/**/*.md", "zoo/**/NOTICE"]
 
 [project.optional-dependencies]

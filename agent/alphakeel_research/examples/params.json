@@ -1,0 +1,17 @@
+{
+  "schema": "alphakeel.handoff.params/1",
+  "id": "vt-example-0001",
+  "strategy": "cross_venue_carry",
+  "summary": "fixed sample",
+  "source": {
+    "tool": "vibe-trading"
+  },
+  "rules": {
+    "max_loss": {
+      "value": "0.015"
+    },
+    "max_hold_hours": {
+      "value": 48
+    }
+  }
+}

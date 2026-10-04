@@ -1,0 +1,6522 @@
+{
+ "cases": [
+  {
+   "by_schema_field": true,
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "kind": "data-lock",
+   "name": "data-lock: valid",
+   "valid": true
+  },
+  {
+   "by_schema_field": true,
+   "doc": {
+    "account": {
+     "currencies": [
+      "USDT",
+      "USDC"
+     ],
+     "leverage_perp": "3",
+     "leverage_spot": "1",
+     "liquidation": "disabled",
+     "margin_mode": "per_venue_margin",
+     "position_mode": "hedging",
+     "starting_balance_per_venue": "10000"
+    },
+    "decision_clock": {
+     "history_len": 0,
+     "kind": "scan"
+    },
+    "end_of_run": {
+     "open_positions": "valued_close_now_not_closed"
+    },
+    "engine": "NautilusTrader nautilus-backtest 0.64.0 (Rust, high-precision)",
+    "event_order": {
+     "same_time": [
+      "quote",
+      "mark",
+      "funding_rate",
+      "submit",
+      "fill",
+      "valuation"
+     ],
+     "tie_ns": true
+    },
+    "fees": {
+     "maker": "same_as_taker",
+     "model": "taker_rate_per_venue_market",
+     "rounding": "currency_min_unit_1e-8_per_fill",
+     "table_sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "funding": {
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "mode": "official_settlement",
+     "notional": "abs_qty_times_settlement_price",
+     "rounding": "currency_min_unit_1e-8",
+     "settlement_price": "last_mark_price",
+     "sign": "long_pays_when_rate_positive",
+     "strict": true
+    },
+    "fx": {
+     "end_value": "last_known_rate",
+     "fill_time": "rate_at_fill_scan",
+     "pair": "USDC/USDT",
+     "realized": "rate_at_close_scan",
+     "source": "scan_mid_of_usdc_usdt_spot"
+    },
+    "initial_state": {
+     "cash": "starting_balance_per_venue_and_currency",
+     "positions": "flat"
+    },
+    "matching": {
+     "depth": "not_modeled",
+     "impact": "not_modeled",
+     "lot_step": "not_modeled",
+     "min_notional": "not_modeled",
+     "model": "top_of_book_ioc",
+     "order_types": [
+      "limit_ioc",
+      "market"
+     ],
+     "queue": "not_modeled",
+     "quote_size": "30000000000000",
+     "reduce_only": true,
+     "submit_after_decision_ns": 1,
+     "valuation_after_decision_ns": 2
+    },
+    "precision": {
+     "money_unit": "1e-8",
+     "price": "inferred_from_data_max16",
+     "price_rounding": "buy_up_sell_down",
+     "quantity_rounding": "toward_zero_f64_stable",
+     "size": "inferred_from_intents_max16"
+    },
+    "profile_id": "ak-top-of-book-ioc-taker-v1",
+    "sampling": {
+     "drawdown": "close_now_from_zero_peak",
+     "valuation": "each_scan"
+    },
+    "schema": "alphakeel.execution-profile/1",
+    "unsupported": [
+     "order-book depth",
+     "queue position",
+     "market impact",
+     "borrowing",
+     "liquidation"
+    ],
+    "warmup": {
+     "frames": 0,
+     "trades_allowed": false
+    }
+   },
+   "kind": "execution-profile",
+   "name": "execution-profile: valid",
+   "valid": true
+  },
+  {
+   "by_schema_field": true,
+   "doc": {
+    "content_sha256": "abababababababababababababababababababababababababababababababab",
+    "contract": "policy",
+    "dependency_lock_sha256": "",
+    "entry": {
+     "initialize": "initialize",
+     "on_step": "on_step",
+     "script": "strategy.py"
+    },
+    "files": [
+     {
+      "path": "strategy.py",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 400
+     }
+    ],
+    "interpreter": "CPython 3.12.3",
+    "name": "demo carry script",
+    "parameters": {
+     "enabled": true,
+     "entry_spread": "0.001",
+     "max_open": 2
+    },
+    "requires": {
+     "fields": [
+      "quotes",
+      "observations"
+     ],
+     "history_len": 0
+    },
+    "schema": "alphakeel.strategy-manifest/1",
+    "seed": null,
+    "strategy_id": "st-demo-1",
+    "supports": {
+     "modes": [
+      "fixed_intent_replay",
+      "python_policy"
+     ],
+     "profile_ids": [
+      "ak-top-of-book-ioc-taker-v1"
+     ]
+    }
+   },
+   "kind": "strategy-manifest",
+   "name": "strategy-manifest: valid",
+   "valid": true
+  },
+  {
+   "by_schema_field": true,
+   "doc": {
+    "builder": {
+     "adapter": "research-service",
+     "build": "0.4.0+abcdef",
+     "dependency_lock_sha256": "",
+     "dirty": null
+    },
+    "created_ms": 1700000200000,
+    "data_lock_sha256": "abababababababababababababababababababababababababababababababab",
+    "engine": {
+     "name": "alphakeel-engine",
+     "version": "0.4.0"
+    },
+    "execution_profile_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "inputs": [
+     {
+      "chain_sha256": "abababababababababababababababababababababababababababababababab",
+      "first_ms": 1700000000000,
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "last_ms": 1700000060000,
+      "rows": 2,
+      "table": "quotes"
+     }
+    ],
+    "mode": "fixed_intent_replay",
+    "origin": "service",
+    "outputs": {
+     "events_sha256": "abababababababababababababababababababababababababababababababab",
+     "facts_sha256": "abababababababababababababababababababababababababababababababab",
+     "result_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    },
+    "pack_id": "pk-0123456789abcdef01234567",
+    "parameters": {
+     "entry_spread": "0.001"
+    },
+    "parent_run_id": null,
+    "run_id": "run-1",
+    "schema": "alphakeel.run-manifest/1",
+    "scope": {
+     "claims": [
+      "engine execution and accounting only"
+     ],
+     "compared": []
+    },
+    "seed": null,
+    "side": "alphakeel_engine",
+    "status": "complete",
+    "strategy": {
+     "content_sha256": "abababababababababababababababababababababababababababababababab",
+     "strategy_id": "st-demo-1"
+    }
+   },
+   "kind": "run-manifest",
+   "name": "run-manifest: valid",
+   "valid": true
+  },
+  {
+   "by_schema_field": true,
+   "doc": {
+    "amounts": {
+     "close_now": "-0.4",
+     "fees": "0.2",
+     "funding": "0",
+     "fx_revaluation": "0",
+     "open_value": "0",
+     "price_pnl": "-0.2",
+     "realized": "-0.4"
+    },
+    "amounts_ok": true,
+    "by_currency": {
+     "USDT": {
+      "cash_flow": "-0.2",
+      "fees": "0.2",
+      "funding": "0"
+     }
+    },
+    "capital": {
+     "peak_margin_usdt": "33.3333"
+    },
+    "counts": {
+     "fills": 4,
+     "intents": 4
+    },
+    "data_quality": {
+     "estimate_fallbacks": 0,
+     "stale_points": 0
+    },
+    "drawdown": {
+     "max": "0.4",
+     "points": 2
+    },
+    "equity": {
+     "end_by_ccy": {
+      "USDT": "9999.6"
+     },
+     "end_close_now_usdt": "-0.4",
+     "start_by_ccy": {
+      "USDT": "10000"
+     }
+    },
+    "event_log": {
+     "count": 5,
+     "name": "events.jsonl",
+     "sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "execution_ok": true,
+    "limitations": [
+     "scan snapshots only"
+    ],
+    "mode": "fixed_intent_replay",
+    "not_applicable_metrics": [
+     "win_rate"
+    ],
+    "problems": [],
+    "run_id": "run-1",
+    "schema": "alphakeel.result/1",
+    "side": "alphakeel_engine",
+    "verification": {
+     "engine_recount": "matched",
+     "external_python": "not_applicable",
+     "native_rule_ledger": "not_applicable"
+    }
+   },
+   "kind": "result",
+   "name": "result: valid",
+   "valid": true
+  },
+  {
+   "by_schema_field": true,
+   "doc": {
+    "a": "run-py",
+    "affected": {
+     "events": 0,
+     "from_ms": null,
+     "instruments": []
+    },
+    "b": "run-ak",
+    "comparison_id": "cmp-1",
+    "created_ms": 1700000300000,
+    "differences": [],
+    "first_difference": null,
+    "layers": {
+     "L0": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L1": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L2": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L3": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L4": {
+      "reason": "identical",
+      "status": "matched"
+     }
+    },
+    "mode": "fixed_intent_replay",
+    "notes": [],
+    "pass_scope": "execution and accounting of the submitted intents; not the strategy logic",
+    "passed": true,
+    "required_checks": [
+     {
+      "id": "input_digests",
+      "layer": "L0",
+      "status": "matched"
+     },
+     {
+      "id": "fills",
+      "layer": "L3",
+      "status": "matched"
+     }
+    ],
+    "schema": "alphakeel.comparison/1"
+   },
+   "kind": "comparison",
+   "name": "comparison: valid",
+   "valid": true
+  },
+  {
+   "by_schema_field": true,
+   "doc": {
+    "intents": [
+     {
+      "decision_time_ms": 1700000000000,
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "intent_id": "i-1",
+      "limit_price": "1",
+      "order_type": "limit_ioc",
+      "position_ref": "p-1",
+      "qty": "100",
+      "reduce_only": false,
+      "side": "buy"
+     }
+    ],
+    "schema": "alphakeel.intents/1"
+   },
+   "kind": "intents",
+   "name": "intents: valid",
+   "valid": true
+  },
+  {
+   "by_schema_field": true,
+   "doc": {
+    "accounts": [
+     {
+      "account": "BINANCE",
+      "ccy": "USDT",
+      "free": "10000",
+      "total": "10000"
+     }
+    ],
+    "data_refs": {
+     "decided_ms": 1700000000000,
+     "frame_index": 0,
+     "frame_seq": 1
+    },
+    "history_len": 0,
+    "last_results": [
+     {
+      "avg_price": "1",
+      "filled_qty": "100",
+      "intent_id": "i-1",
+      "reason_code": null,
+      "status": "filled"
+     }
+    ],
+    "positions": [
+     {
+      "avg_entry": "1",
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "position_ref": "p-1",
+      "qty": "100",
+      "side": "long"
+     }
+    ],
+    "schema": "alphakeel.policy-context/1",
+    "session_id": "run-1",
+    "step_seq": 0,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000000"
+   },
+   "kind": "policy-context",
+   "name": "policy-context: valid",
+   "valid": true
+  },
+  {
+   "by_schema_field": true,
+   "doc": {
+    "context_sha256": "abababababababababababababababababababababababababababababababab",
+    "intents": [
+     {
+      "decision_time_ms": 1700000000000,
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "intent_id": "i-1",
+      "limit_price": "1",
+      "order_type": "limit_ioc",
+      "position_ref": "p-1",
+      "qty": "100",
+      "reduce_only": false,
+      "side": "buy"
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "schema": "alphakeel.policy-response/1",
+    "session_id": "run-1",
+    "state_sha256": "abababababababababababababababababababababababababababababababab",
+    "step_seq": 0,
+    "strategy_content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+   },
+   "kind": "policy-response",
+   "name": "policy-response: valid",
+   "valid": true
+  },
+  {
+   "doc": {
+    "a": "run-py",
+    "affected": {
+     "events": 0,
+     "from_ms": null,
+     "instruments": []
+    },
+    "b": "run-ak",
+    "comparison_id": "cmp-1",
+    "created_ms": 1700000300000,
+    "differences": [
+     {
+      "a": "0.05",
+      "b": "0.06",
+      "class": "fee",
+      "delta": "0.01",
+      "event_ids": [
+       "e-4"
+      ],
+      "key": "fill:i-1",
+      "layer": "L3",
+      "message": "fee differs on fill of intent i-1",
+      "tolerance": "0.00000001"
+     }
+    ],
+    "first_difference": {
+     "a": "0.05",
+     "b": "0.06",
+     "class": "fee",
+     "delta": "0.01",
+     "event_ids": [
+      "e-4"
+     ],
+     "key": "fill:i-1",
+     "layer": "L3",
+     "message": "fee differs on fill of intent i-1",
+     "tolerance": "0.00000001"
+    },
+    "layers": {
+     "L0": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L1": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L2": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L3": {
+      "reason": "fee differs",
+      "status": "mismatch"
+     },
+     "L4": {
+      "reason": "identical",
+      "status": "matched"
+     }
+    },
+    "mode": "fixed_intent_replay",
+    "notes": [],
+    "pass_scope": "execution and accounting of the submitted intents; not the strategy logic",
+    "passed": false,
+    "required_checks": [
+     {
+      "id": "input_digests",
+      "layer": "L0",
+      "status": "matched"
+     },
+     {
+      "id": "fills",
+      "layer": "L3",
+      "status": "matched"
+     }
+    ],
+    "schema": "alphakeel.comparison/1"
+   },
+   "kind": "comparison",
+   "name": "comparison: first difference present",
+   "valid": true
+  },
+  {
+   "doc": {
+    "code": "data.insufficient",
+    "field": "window",
+    "message": "no quote at the boundary",
+    "request_id": "req-1",
+    "retryable": false
+   },
+   "kind": "error",
+   "name": "error: valid",
+   "valid": true
+  },
+  {
+   "doc": {
+    "code": "data.insufficient",
+    "event": "e-4",
+    "field": "window",
+    "job_id": "job-1",
+    "message": "no quote at the boundary",
+    "request_id": "req-1",
+    "retryable": false
+   },
+   "kind": "error",
+   "name": "error: with job id",
+   "valid": true
+  },
+  {
+   "doc": {
+    "content_sha256": "abababababababababababababababababababababababababababababababab",
+    "contract": "standalone",
+    "dependency_lock_sha256": "",
+    "entry": {
+     "script": "run.py"
+    },
+    "files": [
+     {
+      "path": "strategy.py",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 400
+     }
+    ],
+    "interpreter": "CPython 3.12.3",
+    "name": "demo carry script",
+    "parameters": {
+     "enabled": true,
+     "entry_spread": "0.001",
+     "max_open": 2
+    },
+    "requires": {
+     "fields": [
+      "quotes",
+      "observations"
+     ],
+     "history_len": 0
+    },
+    "schema": "alphakeel.strategy-manifest/1",
+    "seed": null,
+    "strategy_id": "st-demo-1",
+    "supports": {
+     "modes": [
+      "fixed_intent_replay"
+     ],
+     "profile_ids": [
+      "ak-top-of-book-ioc-taker-v1"
+     ]
+    }
+   },
+   "kind": "strategy-manifest",
+   "name": "strategy: standalone without policy entry",
+   "valid": true
+  },
+  {
+   "doc": {
+    "builder": {
+     "adapter": "research-service",
+     "build": "0.4.0+abcdef",
+     "dependency_lock_sha256": "",
+     "dirty": null
+    },
+    "created_ms": 1700000200000,
+    "data_lock_sha256": "abababababababababababababababababababababababababababababababab",
+    "engine": {
+     "name": "alphakeel-engine",
+     "version": "0.4.0"
+    },
+    "execution_profile_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "inputs": [],
+    "mode": "fixed_intent_replay",
+    "origin": "client_uploaded",
+    "outputs": {
+     "events_sha256": null,
+     "facts_sha256": null,
+     "result_sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "pack_id": "pk-0123456789abcdef01234567",
+    "parameters": {
+     "entry_spread": "0.001"
+    },
+    "parent_run_id": null,
+    "run_id": "run-1",
+    "schema": "alphakeel.run-manifest/1",
+    "scope": {
+     "claims": [
+      "engine execution and accounting only"
+     ],
+     "compared": []
+    },
+    "seed": null,
+    "side": "python_external",
+    "status": "complete",
+    "strategy": {
+     "content_sha256": "abababababababababababababababababababababababababababababababab",
+     "strategy_id": "st-demo-1"
+    }
+   },
+   "kind": "run-manifest",
+   "name": "run: external python summary only",
+   "valid": true
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": true,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000060000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "kind": "data-lock",
+   "name": "data-lock: partial window accepted explicitly",
+   "valid": true
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": {
+      "end_ms": 1700000000000,
+      "start_ms": 1699999000000
+     }
+    }
+   },
+   "kind": "data-lock",
+   "name": "data-lock: warm-up window recorded",
+   "valid": true
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": null,
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "kind": "data-lock",
+   "name": "data-lock: pack without a funding dataset says so",
+   "valid": true
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "schema.required"
+   ],
+   "kind": "data-lock",
+   "name": "data-lock: funding block missing is not allowed",
+   "path": "/funding",
+   "valid": false
+  },
+  {
+   "doc": {
+    "account": {
+     "currencies": [
+      "USDT",
+      "USDC"
+     ],
+     "leverage_perp": "3",
+     "leverage_spot": "1",
+     "liquidation": "disabled",
+     "margin_mode": "per_venue_margin",
+     "position_mode": "hedging",
+     "starting_balance_per_venue": "10000"
+    },
+    "decision_clock": {
+     "history_len": 0,
+     "kind": "scan"
+    },
+    "end_of_run": {
+     "open_positions": "valued_close_now_not_closed"
+    },
+    "engine": "NautilusTrader nautilus-backtest 0.64.0 (Rust, high-precision)",
+    "event_order": {
+     "same_time": [
+      "quote",
+      "mark",
+      "funding_rate",
+      "submit",
+      "fill",
+      "valuation"
+     ],
+     "tie_ns": true
+    },
+    "fees": {
+     "maker": "same_as_taker",
+     "model": "taker_rate_per_venue_market",
+     "rounding": "currency_min_unit_1e-8_per_fill",
+     "table_sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "funding": {
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "mode": "official_settlement",
+     "notional": "abs_qty_times_settlement_price",
+     "rounding": "currency_min_unit_1e-8",
+     "settlement_price": "last_mark_price",
+     "sign": "long_pays_when_rate_positive",
+     "strict": true
+    },
+    "fx": {
+     "end_value": "last_known_rate",
+     "fill_time": "rate_at_fill_scan",
+     "pair": "USDC/USDT",
+     "realized": "rate_at_close_scan",
+     "source": "scan_mid_of_usdc_usdt_spot"
+    },
+    "initial_state": {
+     "cash": "starting_balance_per_venue_and_currency",
+     "positions": "flat"
+    },
+    "matching": {
+     "depth": "not_modeled",
+     "impact": "not_modeled",
+     "lot_step": "not_modeled",
+     "min_notional": "not_modeled",
+     "model": "top_of_book_ioc",
+     "order_types": [
+      "limit_ioc",
+      "market"
+     ],
+     "queue": "not_modeled",
+     "quote_size": "30000000000000",
+     "reduce_only": true,
+     "submit_after_decision_ns": 1,
+     "valuation_after_decision_ns": 2
+    },
+    "precision": {
+     "money_unit": "1e-8",
+     "price": "inferred_from_data_max16",
+     "price_rounding": "buy_up_sell_down",
+     "quantity_rounding": "toward_zero_f64_stable",
+     "size": "fixed_8_places"
+    },
+    "profile_id": "ak-top-of-book-ioc-taker-v1",
+    "sampling": {
+     "drawdown": "close_now_from_zero_peak",
+     "valuation": "each_scan"
+    },
+    "schema": "alphakeel.execution-profile/1",
+    "unsupported": [
+     "order-book depth",
+     "queue position",
+     "market impact",
+     "borrowing",
+     "liquidation"
+    ],
+    "warmup": {
+     "frames": 0,
+     "trades_allowed": false
+    }
+   },
+   "kind": "execution-profile",
+   "name": "profile: fixed size precision for replay and policy",
+   "valid": true
+  },
+  {
+   "doc": {
+    "intents": [],
+    "schema": "alphakeel.intents/1"
+   },
+   "kind": "intents",
+   "name": "intents: empty list is a valid decision",
+   "valid": true
+  },
+  {
+   "doc": {
+    "decision_time_ms": 1700000000000,
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "limit_price": null,
+    "order_type": "market",
+    "position_ref": "p-1",
+    "qty": "100",
+    "reduce_only": false,
+    "side": "buy"
+   },
+   "kind": "intent",
+   "name": "intent: market order has no limit price",
+   "valid": true
+  },
+  {
+   "doc": {
+    "data": {
+     "intents": 1,
+     "state_sha256": null,
+     "step_seq": null
+    },
+    "event_id": "e-1",
+    "instrument": null,
+    "intent_id": null,
+    "kind": "decision",
+    "order_id": null,
+    "pair_id": null,
+    "position_ref": null,
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 0,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000000"
+   },
+   "kind": "event",
+   "name": "event: valid decision",
+   "valid": true
+  },
+  {
+   "doc": {
+    "data": {
+     "decision_time_ms": 1700000000000,
+     "limit_price": "1",
+     "order_type": "limit_ioc",
+     "qty": "100",
+     "reduce_only": false,
+     "side": "buy"
+    },
+    "event_id": "e-2",
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "kind": "intent",
+    "order_id": null,
+    "pair_id": "pair-1",
+    "position_ref": "p-1",
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 1,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000001"
+   },
+   "kind": "event",
+   "name": "event: valid intent",
+   "valid": true
+  },
+  {
+   "doc": {
+    "data": {
+     "adjustments": [],
+     "effective_price": "1",
+     "effective_qty": "100",
+     "filled_qty": "100",
+     "reason": null,
+     "reason_code": null,
+     "requested_price": "1",
+     "requested_qty": "100",
+     "status": "filled"
+    },
+    "event_id": "e-3",
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "kind": "order_result",
+    "order_id": "o-1",
+    "pair_id": "pair-1",
+    "position_ref": "p-1",
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 2,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000001"
+   },
+   "kind": "event",
+   "name": "event: valid order_result",
+   "valid": true
+  },
+  {
+   "doc": {
+    "data": {
+     "fee": "0.05",
+     "fee_ccy": "USDT",
+     "liquidity": "taker",
+     "price": "1",
+     "qty": "100",
+     "side": "buy"
+    },
+    "event_id": "e-4",
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "kind": "fill",
+    "order_id": "o-1",
+    "pair_id": "pair-1",
+    "position_ref": "p-1",
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 3,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000001"
+   },
+   "kind": "event",
+   "name": "event: valid fill",
+   "valid": true
+  },
+  {
+   "doc": {
+    "data": {
+     "by_ccy": {
+      "USDT": "-0.05"
+     },
+     "close_now_usdt": "-0.05",
+     "fx": null,
+     "stale": false
+    },
+    "event_id": "e-5",
+    "instrument": null,
+    "intent_id": null,
+    "kind": "equity",
+    "order_id": null,
+    "pair_id": null,
+    "position_ref": null,
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 4,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000002"
+   },
+   "kind": "event",
+   "name": "event: valid equity",
+   "valid": true
+  },
+  {
+   "doc": {
+    "data": {
+     "amount": "1",
+     "boundary_ms": 1700003600000,
+     "ccy": "USDT",
+     "position_qty": "100",
+     "rate": "-0.01",
+     "rate_source": "official_settlement",
+     "settlement_price": "1"
+    },
+    "event_id": "e-7",
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "kind": "funding",
+    "order_id": null,
+    "pair_id": "pair-1",
+    "position_ref": "p-1",
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 6,
+    "time_ms": 1700000000000,
+    "time_ns": "1700003600000000000"
+   },
+   "kind": "event",
+   "name": "event: funding valid",
+   "valid": true
+  },
+  {
+   "doc": {
+    "data": {
+     "avg_entry": "1",
+     "change": "opened",
+     "qty": "100",
+     "side": "long"
+    },
+    "event_id": "e-8",
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "kind": "position",
+    "order_id": null,
+    "pair_id": "pair-1",
+    "position_ref": "p-1",
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 7,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000002"
+   },
+   "kind": "event",
+   "name": "event: position valid",
+   "valid": true
+  },
+  {
+   "doc": {
+    "data": {
+     "amount": "0.05",
+     "ccy": "USDT",
+     "fill_event_id": "e-4"
+    },
+    "event_id": "e-9",
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "kind": "fee",
+    "order_id": null,
+    "pair_id": "pair-1",
+    "position_ref": "p-1",
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 8,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000003"
+   },
+   "kind": "event",
+   "name": "event: fee valid",
+   "valid": true
+  },
+  {
+   "doc": {
+    "data": {
+     "account": "BINANCE",
+     "ccy": "USDT",
+     "total": "9999.95"
+    },
+    "event_id": "e-10",
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "kind": "balance",
+    "order_id": null,
+    "pair_id": "pair-1",
+    "position_ref": "p-1",
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 9,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000004"
+   },
+   "kind": "event",
+   "name": "event: balance valid",
+   "valid": true
+  },
+  {
+   "doc": [
+    {
+     "count": 5,
+     "run_id": "run-1",
+     "schema": "alphakeel.events/1"
+    },
+    {
+     "data": {
+      "intents": 1,
+      "state_sha256": null,
+      "step_seq": null
+     },
+     "event_id": "e-1",
+     "instrument": null,
+     "intent_id": null,
+     "kind": "decision",
+     "order_id": null,
+     "pair_id": null,
+     "position_ref": null,
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 0,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000000"
+    },
+    {
+     "data": {
+      "decision_time_ms": 1700000000000,
+      "limit_price": "1",
+      "order_type": "limit_ioc",
+      "qty": "100",
+      "reduce_only": false,
+      "side": "buy"
+     },
+     "event_id": "e-2",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "intent",
+     "order_id": null,
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 1,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "adjustments": [],
+      "effective_price": "1",
+      "effective_qty": "100",
+      "filled_qty": "100",
+      "reason": null,
+      "reason_code": null,
+      "requested_price": "1",
+      "requested_qty": "100",
+      "status": "filled"
+     },
+     "event_id": "e-3",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "order_result",
+     "order_id": "o-1",
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 2,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "fee": "0.05",
+      "fee_ccy": "USDT",
+      "liquidity": "taker",
+      "price": "1",
+      "qty": "100",
+      "side": "buy"
+     },
+     "event_id": "e-4",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "fill",
+     "order_id": "o-1",
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 3,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "by_ccy": {
+       "USDT": "-0.05"
+      },
+      "close_now_usdt": "-0.05",
+      "fx": null,
+      "stale": false
+     },
+     "event_id": "e-5",
+     "instrument": null,
+     "intent_id": null,
+     "kind": "equity",
+     "order_id": null,
+     "pair_id": null,
+     "position_ref": null,
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 4,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000002"
+    }
+   ],
+   "kind": "events-log",
+   "name": "events-log: valid",
+   "valid": true
+  },
+  {
+   "doc": [
+    {
+     "count": 5,
+     "run_id": "run-1",
+     "schema": "alphakeel.events/1"
+    },
+    {
+     "data": {
+      "intents": 1,
+      "state_sha256": null,
+      "step_seq": null
+     },
+     "event_id": "e-1",
+     "instrument": null,
+     "intent_id": null,
+     "kind": "decision",
+     "order_id": null,
+     "pair_id": null,
+     "position_ref": null,
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 0,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000000"
+    },
+    {
+     "data": {
+      "decision_time_ms": 1700000000000,
+      "limit_price": "1",
+      "order_type": "limit_ioc",
+      "qty": "100",
+      "reduce_only": false,
+      "side": "buy"
+     },
+     "event_id": "e-1",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "intent",
+     "order_id": null,
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 1,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "adjustments": [],
+      "effective_price": "1",
+      "effective_qty": "100",
+      "filled_qty": "100",
+      "reason": null,
+      "reason_code": null,
+      "requested_price": "1",
+      "requested_qty": "100",
+      "status": "filled"
+     },
+     "event_id": "e-3",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "order_result",
+     "order_id": "o-1",
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 2,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "fee": "0.05",
+      "fee_ccy": "USDT",
+      "liquidity": "taker",
+      "price": "1",
+      "qty": "100",
+      "side": "buy"
+     },
+     "event_id": "e-4",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "fill",
+     "order_id": "o-1",
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 3,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "by_ccy": {
+       "USDT": "-0.05"
+      },
+      "close_now_usdt": "-0.05",
+      "fx": null,
+      "stale": false
+     },
+     "event_id": "e-5",
+     "instrument": null,
+     "intent_id": null,
+     "kind": "equity",
+     "order_id": null,
+     "pair_id": null,
+     "position_ref": null,
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 4,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000002"
+    }
+   ],
+   "errors": [
+    "evidence.reference"
+   ],
+   "kind": "events-log",
+   "name": "events-log: duplicate event id",
+   "valid": false
+  },
+  {
+   "doc": [
+    {
+     "count": 5,
+     "run_id": "run-1",
+     "schema": "alphakeel.events/1"
+    },
+    {
+     "data": {
+      "intents": 1,
+      "state_sha256": null,
+      "step_seq": null
+     },
+     "event_id": "e-1",
+     "instrument": null,
+     "intent_id": null,
+     "kind": "decision",
+     "order_id": null,
+     "pair_id": null,
+     "position_ref": null,
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 0,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000000"
+    },
+    {
+     "data": {
+      "decision_time_ms": 1700000000000,
+      "limit_price": "1",
+      "order_type": "limit_ioc",
+      "qty": "100",
+      "reduce_only": false,
+      "side": "buy"
+     },
+     "event_id": "e-2",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "intent",
+     "order_id": null,
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 1,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "adjustments": [],
+      "effective_price": "1",
+      "effective_qty": "100",
+      "filled_qty": "100",
+      "reason": null,
+      "reason_code": null,
+      "requested_price": "1",
+      "requested_qty": "100",
+      "status": "filled"
+     },
+     "event_id": "e-3",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "order_result",
+     "order_id": "o-1",
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 2,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000000"
+    },
+    {
+     "data": {
+      "fee": "0.05",
+      "fee_ccy": "USDT",
+      "liquidity": "taker",
+      "price": "1",
+      "qty": "100",
+      "side": "buy"
+     },
+     "event_id": "e-4",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "fill",
+     "order_id": "o-1",
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 3,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "by_ccy": {
+       "USDT": "-0.05"
+      },
+      "close_now_usdt": "-0.05",
+      "fx": null,
+      "stale": false
+     },
+     "event_id": "e-5",
+     "instrument": null,
+     "intent_id": null,
+     "kind": "equity",
+     "order_id": null,
+     "pair_id": null,
+     "position_ref": null,
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 4,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000002"
+    }
+   ],
+   "errors": [
+    "evidence.schema"
+   ],
+   "kind": "events-log",
+   "name": "events-log: out of order time",
+   "valid": false
+  },
+  {
+   "doc": [
+    {
+     "count": 99,
+     "run_id": "run-1",
+     "schema": "alphakeel.events/1"
+    },
+    {
+     "data": {
+      "intents": 1,
+      "state_sha256": null,
+      "step_seq": null
+     },
+     "event_id": "e-1",
+     "instrument": null,
+     "intent_id": null,
+     "kind": "decision",
+     "order_id": null,
+     "pair_id": null,
+     "position_ref": null,
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 0,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000000"
+    },
+    {
+     "data": {
+      "decision_time_ms": 1700000000000,
+      "limit_price": "1",
+      "order_type": "limit_ioc",
+      "qty": "100",
+      "reduce_only": false,
+      "side": "buy"
+     },
+     "event_id": "e-2",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "intent",
+     "order_id": null,
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 1,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "adjustments": [],
+      "effective_price": "1",
+      "effective_qty": "100",
+      "filled_qty": "100",
+      "reason": null,
+      "reason_code": null,
+      "requested_price": "1",
+      "requested_qty": "100",
+      "status": "filled"
+     },
+     "event_id": "e-3",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "order_result",
+     "order_id": "o-1",
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 2,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "fee": "0.05",
+      "fee_ccy": "USDT",
+      "liquidity": "taker",
+      "price": "1",
+      "qty": "100",
+      "side": "buy"
+     },
+     "event_id": "e-4",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "fill",
+     "order_id": "o-1",
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 3,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "by_ccy": {
+       "USDT": "-0.05"
+      },
+      "close_now_usdt": "-0.05",
+      "fx": null,
+      "stale": false
+     },
+     "event_id": "e-5",
+     "instrument": null,
+     "intent_id": null,
+     "kind": "equity",
+     "order_id": null,
+     "pair_id": null,
+     "position_ref": null,
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 4,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000002"
+    }
+   ],
+   "errors": [
+    "evidence.schema"
+   ],
+   "kind": "events-log",
+   "name": "events-log: header count mismatch",
+   "valid": false
+  },
+  {
+   "doc": [
+    {
+     "count": 5,
+     "run_id": "run-1",
+     "schema": "alphakeel.events/1"
+    },
+    {
+     "data": {
+      "intents": 1,
+      "state_sha256": null,
+      "step_seq": null
+     },
+     "event_id": "e-1",
+     "instrument": null,
+     "intent_id": null,
+     "kind": "decision",
+     "order_id": null,
+     "pair_id": null,
+     "position_ref": null,
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 0,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000000"
+    },
+    {
+     "data": {
+      "decision_time_ms": 1700000000000,
+      "limit_price": "1",
+      "order_type": "limit_ioc",
+      "qty": "100",
+      "reduce_only": false,
+      "side": "buy"
+     },
+     "event_id": "e-2",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "intent",
+     "order_id": null,
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-2",
+     "seq": 1,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "adjustments": [],
+      "effective_price": "1",
+      "effective_qty": "100",
+      "filled_qty": "100",
+      "reason": null,
+      "reason_code": null,
+      "requested_price": "1",
+      "requested_qty": "100",
+      "status": "filled"
+     },
+     "event_id": "e-3",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "order_result",
+     "order_id": "o-1",
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 2,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "fee": "0.05",
+      "fee_ccy": "USDT",
+      "liquidity": "taker",
+      "price": "1",
+      "qty": "100",
+      "side": "buy"
+     },
+     "event_id": "e-4",
+     "instrument": {
+      "market": "perp",
+      "symbol": "BTCUSDT",
+      "venue": "binance"
+     },
+     "intent_id": "i-1",
+     "kind": "fill",
+     "order_id": "o-1",
+     "pair_id": "pair-1",
+     "position_ref": "p-1",
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 3,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000001"
+    },
+    {
+     "data": {
+      "by_ccy": {
+       "USDT": "-0.05"
+      },
+      "close_now_usdt": "-0.05",
+      "fx": null,
+      "stale": false
+     },
+     "event_id": "e-5",
+     "instrument": null,
+     "intent_id": null,
+     "kind": "equity",
+     "order_id": null,
+     "pair_id": null,
+     "position_ref": null,
+     "refs": [],
+     "run_id": "run-1",
+     "seq": 4,
+     "time_ms": 1700000000000,
+     "time_ns": "1700000000000000002"
+    }
+   ],
+   "errors": [
+    "evidence.reference"
+   ],
+   "kind": "events-log",
+   "name": "events-log: foreign run id",
+   "valid": false
+  },
+  {
+   "doc": [],
+   "errors": [
+    "evidence.schema"
+   ],
+   "kind": "events-log",
+   "name": "events-log: empty",
+   "valid": false
+  },
+  {
+   "doc": {
+    "data": {
+     "fee": "0.05",
+     "fee_ccy": "USDT",
+     "liquidity": "taker",
+     "price": 1.5,
+     "qty": "100",
+     "side": "buy"
+    },
+    "event_id": "e-4",
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "kind": "fill",
+    "order_id": null,
+    "pair_id": "pair-1",
+    "position_ref": "p-1",
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 3,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000001"
+   },
+   "errors": [
+    "schema.float"
+   ],
+   "kind": "event",
+   "name": "event: float in data",
+   "path": "/data/price",
+   "valid": false
+  },
+  {
+   "doc": {
+    "data": {
+     "fee": "0.05",
+     "fee_ccy": "USDT",
+     "liquidity": "taker",
+     "price": "1",
+     "qty": "1e2",
+     "side": "buy"
+    },
+    "event_id": "e-4",
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "kind": "fill",
+    "order_id": null,
+    "pair_id": "pair-1",
+    "position_ref": "p-1",
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 3,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000001"
+   },
+   "errors": [
+    "schema.format"
+   ],
+   "kind": "event",
+   "name": "event: exponent decimal",
+   "path": "/data/qty",
+   "valid": false
+  },
+  {
+   "doc": {
+    "data": {
+     "fee": "0.05",
+     "fee_ccy": "USDT",
+     "liquidity": "taker",
+     "price": "1",
+     "qty": "0",
+     "side": "buy"
+    },
+    "event_id": "e-4",
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "kind": "fill",
+    "order_id": null,
+    "pair_id": "pair-1",
+    "position_ref": "p-1",
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 3,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000001"
+   },
+   "errors": [
+    "schema.format"
+   ],
+   "kind": "event",
+   "name": "event: zero quantity fill",
+   "path": "/data/qty",
+   "valid": false
+  },
+  {
+   "doc": {
+    "data": {
+     "intents": 1,
+     "state_sha256": null,
+     "step_seq": null
+    },
+    "event_id": "e-1",
+    "instrument": null,
+    "intent_id": null,
+    "kind": "decision",
+    "order_id": null,
+    "pair_id": null,
+    "position_ref": null,
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 0,
+    "time_ms": 1700000000000,
+    "time_ns": 1700000000000000000
+   },
+   "errors": [
+    "schema.type"
+   ],
+   "kind": "event",
+   "name": "event: nanoseconds as a number",
+   "path": "/time_ns",
+   "valid": false
+  },
+  {
+   "doc": {
+    "data": {
+     "intents": 1,
+     "state_sha256": null,
+     "step_seq": null
+    },
+    "event_id": "e-1",
+    "instrument": null,
+    "intent_id": null,
+    "kind": "teleport",
+    "order_id": null,
+    "pair_id": null,
+    "position_ref": null,
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 0,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000000"
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "event",
+   "name": "event: unknown kind",
+   "path": "/kind",
+   "valid": false
+  },
+  {
+   "doc": {
+    "data": {
+     "intents": 1,
+     "state_sha256": null,
+     "step_seq": null
+    },
+    "event_id": "e-1",
+    "extra": 1,
+    "instrument": null,
+    "intent_id": null,
+    "kind": "decision",
+    "order_id": null,
+    "pair_id": null,
+    "position_ref": null,
+    "refs": [],
+    "run_id": "run-1",
+    "seq": 0,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000000"
+   },
+   "errors": [
+    "schema.additional"
+   ],
+   "kind": "event",
+   "name": "event: unknown field",
+   "path": "/extra",
+   "valid": false
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "schema.required"
+   ],
+   "kind": "data-lock",
+   "name": "data-lock: missing universe",
+   "path": "/universe",
+   "valid": false
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "XYZ",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "schema.format"
+   ],
+   "kind": "data-lock",
+   "name": "data-lock: bad hash",
+   "path": "/pack_sha256",
+   "valid": false
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "schema.format"
+   ],
+   "kind": "data-lock",
+   "name": "data-lock: uppercase hash",
+   "path": "/pack_sha256",
+   "valid": false
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 1.5,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "schema.float"
+   ],
+   "kind": "data-lock",
+   "name": "data-lock: float row count",
+   "path": "/objects/0/rows",
+   "valid": false
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "mtgox"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "data-lock",
+   "name": "data-lock: unknown venue",
+   "path": "/request/venues/1",
+   "valid": false
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": -1
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "schema.range"
+   ],
+   "kind": "data-lock",
+   "name": "data-lock: negative milliseconds",
+   "path": "/windows/requested/start_ms",
+   "valid": false
+  },
+  {
+   "doc": {
+    "bonus": true,
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "schema.additional"
+   ],
+   "kind": "data-lock",
+   "name": "data-lock: unknown field",
+   "path": "/bonus",
+   "valid": false
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "wishful",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "data-lock",
+   "name": "data-lock: visibility not allowed",
+   "path": "/funding/visibility",
+   "valid": false
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1.1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "data-lock",
+   "name": "data-lock: wrong schema constant",
+   "path": "/schema",
+   "valid": false
+  },
+  {
+   "by_schema_field": true,
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/2",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "contract.unknown_major"
+   ],
+   "kind": "data-lock",
+   "name": "data-lock: unknown major (by schema field)",
+   "path": "/schema",
+   "valid": false
+  },
+  {
+   "by_schema_field": true,
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "contract.missing_schema"
+   ],
+   "kind": "data-lock",
+   "name": "document: no schema field",
+   "path": "/schema",
+   "valid": false
+  },
+  {
+   "by_schema_field": true,
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "other.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "contract.unknown_kind"
+   ],
+   "kind": "data-lock",
+   "name": "document: foreign schema family",
+   "path": "/schema",
+   "valid": false
+  },
+  {
+   "by_schema_field": true,
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.sandwich/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "contract.unknown_kind"
+   ],
+   "kind": "data-lock",
+   "name": "document: unknown artifact kind",
+   "path": "/schema",
+   "valid": false
+  },
+  {
+   "doc": {
+    "account": {
+     "currencies": [
+      "USDT",
+      "USDC"
+     ],
+     "leverage_perp": "3",
+     "leverage_spot": "1",
+     "liquidation": "disabled",
+     "margin_mode": "per_venue_margin",
+     "position_mode": "hedging",
+     "starting_balance_per_venue": "10000"
+    },
+    "decision_clock": {
+     "history_len": 0,
+     "kind": "scan"
+    },
+    "end_of_run": {
+     "open_positions": "valued_close_now_not_closed"
+    },
+    "engine": "NautilusTrader nautilus-backtest 0.64.0 (Rust, high-precision)",
+    "event_order": {
+     "same_time": [
+      "quote",
+      "mark",
+      "funding_rate",
+      "submit",
+      "fill",
+      "valuation"
+     ],
+     "tie_ns": true
+    },
+    "fees": {
+     "maker": "same_as_taker",
+     "model": "taker_rate_per_venue_market",
+     "rounding": "currency_min_unit_1e-8_per_fill",
+     "table_sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "funding": {
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "mode": "official_settlement",
+     "notional": "abs_qty_times_settlement_price",
+     "rounding": "currency_min_unit_1e-8",
+     "settlement_price": "last_mark_price",
+     "sign": "long_pays_when_rate_positive",
+     "strict": true
+    },
+    "fx": {
+     "end_value": "last_known_rate",
+     "fill_time": "rate_at_fill_scan",
+     "pair": "USDC/USDT",
+     "realized": "rate_at_close_scan",
+     "source": "scan_mid_of_usdc_usdt_spot"
+    },
+    "initial_state": {
+     "cash": "starting_balance_per_venue_and_currency",
+     "positions": "flat"
+    },
+    "matching": {
+     "depth": "not_modeled",
+     "impact": "not_modeled",
+     "lot_step": "not_modeled",
+     "min_notional": "not_modeled",
+     "model": "top_of_book_ioc",
+     "order_types": [
+      "iceberg"
+     ],
+     "queue": "not_modeled",
+     "quote_size": "30000000000000",
+     "reduce_only": true,
+     "submit_after_decision_ns": 1,
+     "valuation_after_decision_ns": 2
+    },
+    "precision": {
+     "money_unit": "1e-8",
+     "price": "inferred_from_data_max16",
+     "price_rounding": "buy_up_sell_down",
+     "quantity_rounding": "toward_zero_f64_stable",
+     "size": "inferred_from_intents_max16"
+    },
+    "profile_id": "ak-top-of-book-ioc-taker-v1",
+    "sampling": {
+     "drawdown": "close_now_from_zero_peak",
+     "valuation": "each_scan"
+    },
+    "schema": "alphakeel.execution-profile/1",
+    "unsupported": [
+     "order-book depth",
+     "queue position",
+     "market impact",
+     "borrowing",
+     "liquidation"
+    ],
+    "warmup": {
+     "frames": 0,
+     "trades_allowed": false
+    }
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "execution-profile",
+   "name": "profile: unsupported order type",
+   "path": "/matching/order_types/0",
+   "valid": false
+  },
+  {
+   "doc": {
+    "account": {
+     "currencies": [
+      "USDT",
+      "USDC"
+     ],
+     "leverage_perp": "3",
+     "leverage_spot": "2",
+     "liquidation": "disabled",
+     "margin_mode": "per_venue_margin",
+     "position_mode": "hedging",
+     "starting_balance_per_venue": "10000"
+    },
+    "decision_clock": {
+     "history_len": 0,
+     "kind": "scan"
+    },
+    "end_of_run": {
+     "open_positions": "valued_close_now_not_closed"
+    },
+    "engine": "NautilusTrader nautilus-backtest 0.64.0 (Rust, high-precision)",
+    "event_order": {
+     "same_time": [
+      "quote",
+      "mark",
+      "funding_rate",
+      "submit",
+      "fill",
+      "valuation"
+     ],
+     "tie_ns": true
+    },
+    "fees": {
+     "maker": "same_as_taker",
+     "model": "taker_rate_per_venue_market",
+     "rounding": "currency_min_unit_1e-8_per_fill",
+     "table_sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "funding": {
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "mode": "official_settlement",
+     "notional": "abs_qty_times_settlement_price",
+     "rounding": "currency_min_unit_1e-8",
+     "settlement_price": "last_mark_price",
+     "sign": "long_pays_when_rate_positive",
+     "strict": true
+    },
+    "fx": {
+     "end_value": "last_known_rate",
+     "fill_time": "rate_at_fill_scan",
+     "pair": "USDC/USDT",
+     "realized": "rate_at_close_scan",
+     "source": "scan_mid_of_usdc_usdt_spot"
+    },
+    "initial_state": {
+     "cash": "starting_balance_per_venue_and_currency",
+     "positions": "flat"
+    },
+    "matching": {
+     "depth": "not_modeled",
+     "impact": "not_modeled",
+     "lot_step": "not_modeled",
+     "min_notional": "not_modeled",
+     "model": "top_of_book_ioc",
+     "order_types": [
+      "limit_ioc",
+      "market"
+     ],
+     "queue": "not_modeled",
+     "quote_size": "30000000000000",
+     "reduce_only": true,
+     "submit_after_decision_ns": 1,
+     "valuation_after_decision_ns": 2
+    },
+    "precision": {
+     "money_unit": "1e-8",
+     "price": "inferred_from_data_max16",
+     "price_rounding": "buy_up_sell_down",
+     "quantity_rounding": "toward_zero_f64_stable",
+     "size": "inferred_from_intents_max16"
+    },
+    "profile_id": "ak-top-of-book-ioc-taker-v1",
+    "sampling": {
+     "drawdown": "close_now_from_zero_peak",
+     "valuation": "each_scan"
+    },
+    "schema": "alphakeel.execution-profile/1",
+    "unsupported": [
+     "order-book depth",
+     "queue position",
+     "market impact",
+     "borrowing",
+     "liquidation"
+    ],
+    "warmup": {
+     "frames": 0,
+     "trades_allowed": false
+    }
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "execution-profile",
+   "name": "profile: fractional leverage_spot",
+   "path": "/account/leverage_spot",
+   "valid": false
+  },
+  {
+   "doc": {
+    "account": {
+     "currencies": [
+      "USDT",
+      "USDC"
+     ],
+     "leverage_perp": "3",
+     "leverage_spot": "1",
+     "liquidation": "disabled",
+     "margin_mode": "per_venue_margin",
+     "position_mode": "hedging",
+     "starting_balance_per_venue": "10000"
+    },
+    "decision_clock": {
+     "history_len": 0,
+     "kind": "scan"
+    },
+    "end_of_run": {
+     "open_positions": "valued_close_now_not_closed"
+    },
+    "engine": "NautilusTrader nautilus-backtest 0.64.0 (Rust, high-precision)",
+    "event_order": {
+     "same_time": [
+      "quote",
+      "mark",
+      "funding_rate",
+      "submit",
+      "fill",
+      "valuation"
+     ],
+     "tie_ns": true
+    },
+    "fees": {
+     "maker": "same_as_taker",
+     "model": "taker_rate_per_venue_market",
+     "rounding": "currency_min_unit_1e-8_per_fill",
+     "table_sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "funding": {
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "mode": "official_settlement",
+     "notional": "abs_qty_times_settlement_price",
+     "rounding": "currency_min_unit_1e-8",
+     "settlement_price": "last_mark_price",
+     "sign": "long_pays_when_rate_positive",
+     "strict": true
+    },
+    "fx": {
+     "end_value": "last_known_rate",
+     "fill_time": "rate_at_fill_scan",
+     "pair": "USDC/USDT",
+     "realized": "rate_at_close_scan",
+     "source": "scan_mid_of_usdc_usdt_spot"
+    },
+    "initial_state": {
+     "cash": "starting_balance_per_venue_and_currency",
+     "positions": "flat"
+    },
+    "matching": {
+     "depth": "not_modeled",
+     "impact": "not_modeled",
+     "lot_step": "not_modeled",
+     "min_notional": "not_modeled",
+     "model": "top_of_book_ioc",
+     "order_types": [
+      "limit_ioc",
+      "market"
+     ],
+     "queue": "not_modeled",
+     "quote_size": "30000000000000",
+     "reduce_only": true,
+     "submit_after_decision_ns": 1,
+     "valuation_after_decision_ns": 2
+    },
+    "precision": {
+     "money_unit": "1e-8",
+     "price": "inferred_from_data_max16",
+     "price_rounding": "buy_up_sell_down",
+     "quantity_rounding": "toward_zero_f64_stable",
+     "size": "inferred_from_intents_max16"
+    },
+    "profile_id": "ak-top-of-book-ioc-taker-v1",
+    "sampling": {
+     "drawdown": "close_now_from_zero_peak",
+     "valuation": "each_scan"
+    },
+    "schema": "alphakeel.execution-profile/1",
+    "unsupported": [
+     "order-book depth",
+     "queue position",
+     "market impact",
+     "borrowing",
+     "liquidation"
+    ],
+    "warmup": {
+     "frames": 0,
+     "trades_allowed": true
+    }
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "execution-profile",
+   "name": "profile: warm-up trades allowed",
+   "path": "/warmup/trades_allowed",
+   "valid": false
+  },
+  {
+   "doc": {
+    "account": {
+     "currencies": [
+      "USDT",
+      "USDC"
+     ],
+     "leverage_perp": "3",
+     "leverage_spot": "1",
+     "liquidation": "disabled",
+     "margin_mode": "per_venue_margin",
+     "position_mode": "hedging",
+     "starting_balance_per_venue": "10000"
+    },
+    "decision_clock": {
+     "history_len": 0,
+     "kind": "scan"
+    },
+    "end_of_run": {
+     "open_positions": "valued_close_now_not_closed"
+    },
+    "engine": "NautilusTrader nautilus-backtest 0.64.0 (Rust, high-precision)",
+    "event_order": {
+     "same_time": [
+      "quote",
+      "mark",
+      "funding_rate",
+      "submit",
+      "fill",
+      "valuation"
+     ],
+     "tie_ns": true
+    },
+    "fees": {
+     "maker": "same_as_taker",
+     "model": "taker_rate_per_venue_market",
+     "rounding": "currency_min_unit_1e-8_per_fill",
+     "table_sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "funding": {
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "mode": "official_settlement",
+     "notional": "abs_qty_times_settlement_price",
+     "rounding": "currency_min_unit_1e-8",
+     "settlement_price": "last_mark_price",
+     "sign": "long_pays_when_rate_positive",
+     "strict": true
+    },
+    "fx": {
+     "end_value": "last_known_rate",
+     "fill_time": "rate_at_fill_scan",
+     "pair": "USDC/USDT",
+     "realized": "rate_at_close_scan",
+     "source": "scan_mid_of_usdc_usdt_spot"
+    },
+    "initial_state": {
+     "cash": "starting_balance_per_venue_and_currency",
+     "positions": "flat"
+    },
+    "matching": {
+     "depth": "modeled",
+     "impact": "not_modeled",
+     "lot_step": "not_modeled",
+     "min_notional": "not_modeled",
+     "model": "top_of_book_ioc",
+     "order_types": [
+      "limit_ioc",
+      "market"
+     ],
+     "queue": "not_modeled",
+     "quote_size": "30000000000000",
+     "reduce_only": true,
+     "submit_after_decision_ns": 1,
+     "valuation_after_decision_ns": 2
+    },
+    "precision": {
+     "money_unit": "1e-8",
+     "price": "inferred_from_data_max16",
+     "price_rounding": "buy_up_sell_down",
+     "quantity_rounding": "toward_zero_f64_stable",
+     "size": "inferred_from_intents_max16"
+    },
+    "profile_id": "ak-top-of-book-ioc-taker-v1",
+    "sampling": {
+     "drawdown": "close_now_from_zero_peak",
+     "valuation": "each_scan"
+    },
+    "schema": "alphakeel.execution-profile/1",
+    "unsupported": [
+     "order-book depth",
+     "queue position",
+     "market impact",
+     "borrowing",
+     "liquidation"
+    ],
+    "warmup": {
+     "frames": 0,
+     "trades_allowed": false
+    }
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "execution-profile",
+   "name": "profile: depth claimed",
+   "path": "/matching/depth",
+   "valid": false
+  },
+  {
+   "doc": {
+    "account": {
+     "currencies": [
+      "USDT",
+      "USDC"
+     ],
+     "leverage_perp": "3",
+     "leverage_spot": "1",
+     "liquidation": "disabled",
+     "margin_mode": "per_venue_margin",
+     "position_mode": "hedging",
+     "starting_balance_per_venue": "10000"
+    },
+    "decision_clock": {
+     "history_len": 0,
+     "kind": "scan"
+    },
+    "end_of_run": {
+     "open_positions": "valued_close_now_not_closed"
+    },
+    "engine": "NautilusTrader nautilus-backtest 0.64.0 (Rust, high-precision)",
+    "event_order": {
+     "same_time": [
+      "quote",
+      "mark",
+      "funding_rate",
+      "submit",
+      "fill",
+      "valuation"
+     ],
+     "tie_ns": true
+    },
+    "fees": {
+     "maker": "same_as_taker",
+     "model": "taker_rate_per_venue_market",
+     "rounding": "currency_min_unit_1e-8_per_fill",
+     "table_sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "funding": {
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "mode": "official_settlement",
+     "notional": "abs_qty_times_settlement_price",
+     "rounding": "currency_min_unit_1e-8",
+     "settlement_price": "last_mark_price",
+     "sign": "long_pays_when_rate_positive",
+     "strict": true
+    },
+    "fx": {
+     "end_value": "last_known_rate",
+     "fill_time": "rate_at_fill_scan",
+     "pair": "USDC/USDT",
+     "realized": "rate_at_close_scan",
+     "source": "scan_mid_of_usdc_usdt_spot"
+    },
+    "initial_state": {
+     "cash": "starting_balance_per_venue_and_currency",
+     "positions": "flat"
+    },
+    "matching": {
+     "depth": "not_modeled",
+     "impact": "not_modeled",
+     "lot_step": "not_modeled",
+     "min_notional": "not_modeled",
+     "model": "top_of_book_ioc",
+     "order_types": [
+      "limit_ioc",
+      "market"
+     ],
+     "queue": "not_modeled",
+     "quote_size": "30000000000000",
+     "reduce_only": true,
+     "submit_after_decision_ns": 5,
+     "valuation_after_decision_ns": 2
+    },
+    "precision": {
+     "money_unit": "1e-8",
+     "price": "inferred_from_data_max16",
+     "price_rounding": "buy_up_sell_down",
+     "quantity_rounding": "toward_zero_f64_stable",
+     "size": "inferred_from_intents_max16"
+    },
+    "profile_id": "ak-top-of-book-ioc-taker-v1",
+    "sampling": {
+     "drawdown": "close_now_from_zero_peak",
+     "valuation": "each_scan"
+    },
+    "schema": "alphakeel.execution-profile/1",
+    "unsupported": [
+     "order-book depth",
+     "queue position",
+     "market impact",
+     "borrowing",
+     "liquidation"
+    ],
+    "warmup": {
+     "frames": 0,
+     "trades_allowed": false
+    }
+   },
+   "errors": [
+    "schema.range"
+   ],
+   "kind": "execution-profile",
+   "name": "profile: submit delay other than 1ns",
+   "path": "/matching/submit_after_decision_ns",
+   "valid": false
+  },
+  {
+   "doc": {
+    "content_sha256": "abababababababababababababababababababababababababababababababab",
+    "contract": "magic",
+    "dependency_lock_sha256": "",
+    "entry": {
+     "initialize": "initialize",
+     "on_step": "on_step",
+     "script": "strategy.py"
+    },
+    "files": [
+     {
+      "path": "strategy.py",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 400
+     }
+    ],
+    "interpreter": "CPython 3.12.3",
+    "name": "demo carry script",
+    "parameters": {
+     "enabled": true,
+     "entry_spread": "0.001",
+     "max_open": 2
+    },
+    "requires": {
+     "fields": [
+      "quotes",
+      "observations"
+     ],
+     "history_len": 0
+    },
+    "schema": "alphakeel.strategy-manifest/1",
+    "seed": null,
+    "strategy_id": "st-demo-1",
+    "supports": {
+     "modes": [
+      "fixed_intent_replay",
+      "python_policy"
+     ],
+     "profile_ids": [
+      "ak-top-of-book-ioc-taker-v1"
+     ]
+    }
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "strategy-manifest",
+   "name": "strategy: unknown contract kind",
+   "path": "/contract",
+   "valid": false
+  },
+  {
+   "doc": {
+    "content_sha256": "abababababababababababababababababababababababababababababababab",
+    "contract": "policy",
+    "dependency_lock_sha256": "",
+    "entry": {
+     "initialize": "initialize",
+     "on_step": "on_step",
+     "script": "strategy.py"
+    },
+    "files": [],
+    "interpreter": "CPython 3.12.3",
+    "name": "demo carry script",
+    "parameters": {
+     "enabled": true,
+     "entry_spread": "0.001",
+     "max_open": 2
+    },
+    "requires": {
+     "fields": [
+      "quotes",
+      "observations"
+     ],
+     "history_len": 0
+    },
+    "schema": "alphakeel.strategy-manifest/1",
+    "seed": null,
+    "strategy_id": "st-demo-1",
+    "supports": {
+     "modes": [
+      "fixed_intent_replay",
+      "python_policy"
+     ],
+     "profile_ids": [
+      "ak-top-of-book-ioc-taker-v1"
+     ]
+    }
+   },
+   "errors": [
+    "schema.length"
+   ],
+   "kind": "strategy-manifest",
+   "name": "strategy: no files",
+   "path": "/files",
+   "valid": false
+  },
+  {
+   "doc": {
+    "content_sha256": "abababababababababababababababababababababababababababababababab",
+    "contract": "policy",
+    "dependency_lock_sha256": "",
+    "entry": {
+     "initialize": "initialize",
+     "on_step": "on_step",
+     "script": "strategy.py"
+    },
+    "files": [
+     {
+      "path": "strategy.py",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 400
+     }
+    ],
+    "interpreter": "CPython 3.12.3",
+    "name": "demo carry script",
+    "parameters": {
+     "enabled": true,
+     "entry_spread": 0.001,
+     "max_open": 2
+    },
+    "requires": {
+     "fields": [
+      "quotes",
+      "observations"
+     ],
+     "history_len": 0
+    },
+    "schema": "alphakeel.strategy-manifest/1",
+    "seed": null,
+    "strategy_id": "st-demo-1",
+    "supports": {
+     "modes": [
+      "fixed_intent_replay",
+      "python_policy"
+     ],
+     "profile_ids": [
+      "ak-top-of-book-ioc-taker-v1"
+     ]
+    }
+   },
+   "errors": [
+    "schema.float"
+   ],
+   "kind": "strategy-manifest",
+   "name": "strategy: float parameter",
+   "path": "/parameters/entry_spread",
+   "valid": false
+  },
+  {
+   "doc": {
+    "builder": {
+     "adapter": "research-service",
+     "build": "0.4.0+abcdef",
+     "dependency_lock_sha256": "",
+     "dirty": null
+    },
+    "created_ms": 1700000200000,
+    "engine": {
+     "name": "alphakeel-engine",
+     "version": "0.4.0"
+    },
+    "execution_profile_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "inputs": [
+     {
+      "chain_sha256": "abababababababababababababababababababababababababababababababab",
+      "first_ms": 1700000000000,
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "last_ms": 1700000060000,
+      "rows": 2,
+      "table": "quotes"
+     }
+    ],
+    "mode": "fixed_intent_replay",
+    "origin": "service",
+    "outputs": {
+     "events_sha256": "abababababababababababababababababababababababababababababababab",
+     "facts_sha256": "abababababababababababababababababababababababababababababababab",
+     "result_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    },
+    "pack_id": "pk-0123456789abcdef01234567",
+    "parameters": {
+     "entry_spread": "0.001"
+    },
+    "parent_run_id": null,
+    "run_id": "run-1",
+    "schema": "alphakeel.run-manifest/1",
+    "scope": {
+     "claims": [
+      "engine execution and accounting only"
+     ],
+     "compared": []
+    },
+    "seed": null,
+    "side": "alphakeel_engine",
+    "status": "complete",
+    "strategy": {
+     "content_sha256": "abababababababababababababababababababababababababababababababab",
+     "strategy_id": "st-demo-1"
+    }
+   },
+   "errors": [
+    "schema.required"
+   ],
+   "kind": "run-manifest",
+   "name": "run: missing data lock hash",
+   "path": "/data_lock_sha256",
+   "valid": false
+  },
+  {
+   "doc": {
+    "builder": {
+     "adapter": "research-service",
+     "build": "0.4.0+abcdef",
+     "dependency_lock_sha256": "",
+     "dirty": null
+    },
+    "created_ms": 1700000200000,
+    "data_lock_sha256": "abababababababababababababababababababababababababababababababab",
+    "engine": {
+     "name": "alphakeel-engine",
+     "version": "0.4.0"
+    },
+    "execution_profile_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "inputs": [
+     {
+      "chain_sha256": "abababababababababababababababababababababababababababababababab",
+      "first_ms": 1700000000000,
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "last_ms": 1700000060000,
+      "rows": 2,
+      "table": "quotes"
+     }
+    ],
+    "mode": "fixed_intent_replay",
+    "origin": "service",
+    "outputs": {
+     "events_sha256": "abababababababababababababababababababababababababababababababab",
+     "facts_sha256": "abababababababababababababababababababababababababababababababab",
+     "result_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    },
+    "pack_id": "pk-0123456789abcdef01234567",
+    "parameters": {
+     "entry_spread": "0.001"
+    },
+    "parent_run_id": null,
+    "run_id": "run-1",
+    "schema": "alphakeel.run-manifest/1",
+    "scope": {
+     "claims": [
+      "engine execution and accounting only"
+     ],
+     "compared": []
+    },
+    "seed": null,
+    "side": "alphakeel_engine",
+    "status": "done",
+    "strategy": {
+     "content_sha256": "abababababababababababababababababababababababababababababababab",
+     "strategy_id": "st-demo-1"
+    }
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "run-manifest",
+   "name": "run: unknown status",
+   "path": "/status",
+   "valid": false
+  },
+  {
+   "doc": {
+    "builder": {
+     "adapter": "research-service",
+     "build": "0.4.0+abcdef",
+     "dependency_lock_sha256": "",
+     "dirty": null
+    },
+    "created_ms": 1700000200000,
+    "data_lock_sha256": "abababababababababababababababababababababababababababababababab",
+    "engine": {
+     "name": "alphakeel-engine",
+     "version": "0.4.0"
+    },
+    "execution_profile_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "inputs": [
+     {
+      "chain_sha256": "abababababababababababababababababababababababababababababababab",
+      "first_ms": 1700000000000,
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "last_ms": 1700000060000,
+      "rows": 2,
+      "table": "quotes"
+     }
+    ],
+    "mode": "paper_forward",
+    "origin": "service",
+    "outputs": {
+     "events_sha256": "abababababababababababababababababababababababababababababababab",
+     "facts_sha256": "abababababababababababababababababababababababababababababababab",
+     "result_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    },
+    "pack_id": "pk-0123456789abcdef01234567",
+    "parameters": {
+     "entry_spread": "0.001"
+    },
+    "parent_run_id": null,
+    "run_id": "run-1",
+    "schema": "alphakeel.run-manifest/1",
+    "scope": {
+     "claims": [
+      "engine execution and accounting only"
+     ],
+     "compared": []
+    },
+    "seed": null,
+    "side": "alphakeel_engine",
+    "status": "complete",
+    "strategy": {
+     "content_sha256": "abababababababababababababababababababababababababababababababab",
+     "strategy_id": "st-demo-1"
+    }
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "run-manifest",
+   "name": "run: mode not supported",
+   "path": "/mode",
+   "valid": false
+  },
+  {
+   "doc": {
+    "builder": {
+     "adapter": "research-service",
+     "build": "0.4.0+abcdef",
+     "dependency_lock_sha256": "",
+     "dirty": null
+    },
+    "created_ms": 1700000200000,
+    "data_lock_sha256": "abababababababababababababababababababababababababababababababab",
+    "engine": {
+     "name": "alphakeel-engine",
+     "version": "0.4.0"
+    },
+    "execution_profile_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "inputs": [
+     {
+      "chain_sha256": "00",
+      "first_ms": 1700000000000,
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "last_ms": 1700000060000,
+      "rows": 2,
+      "table": "quotes"
+     }
+    ],
+    "mode": "fixed_intent_replay",
+    "origin": "service",
+    "outputs": {
+     "events_sha256": "abababababababababababababababababababababababababababababababab",
+     "facts_sha256": "abababababababababababababababababababababababababababababababab",
+     "result_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    },
+    "pack_id": "pk-0123456789abcdef01234567",
+    "parameters": {
+     "entry_spread": "0.001"
+    },
+    "parent_run_id": null,
+    "run_id": "run-1",
+    "schema": "alphakeel.run-manifest/1",
+    "scope": {
+     "claims": [
+      "engine execution and accounting only"
+     ],
+     "compared": []
+    },
+    "seed": null,
+    "side": "alphakeel_engine",
+    "status": "complete",
+    "strategy": {
+     "content_sha256": "abababababababababababababababababababababababababababababababab",
+     "strategy_id": "st-demo-1"
+    }
+   },
+   "errors": [
+    "schema.format"
+   ],
+   "kind": "run-manifest",
+   "name": "run: input access bad chain hash",
+   "path": "/inputs/0/chain_sha256",
+   "valid": false
+  },
+  {
+   "doc": {
+    "builder": {
+     "adapter": "research-service",
+     "build": "0.4.0+abcdef",
+     "dependency_lock_sha256": "",
+     "dirty": null
+    },
+    "created_ms": 1700000200000,
+    "data_lock_sha256": "abababababababababababababababababababababababababababababababab",
+    "engine": {
+     "name": "alphakeel-engine",
+     "version": "0.4.0"
+    },
+    "execution_profile_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "inputs": [
+     {
+      "chain_sha256": "abababababababababababababababababababababababababababababababab",
+      "first_ms": 1700000000000,
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "last_ms": 1700000060000,
+      "rows": 2,
+      "table": "orderbook"
+     }
+    ],
+    "mode": "fixed_intent_replay",
+    "origin": "service",
+    "outputs": {
+     "events_sha256": "abababababababababababababababababababababababababababababababab",
+     "facts_sha256": "abababababababababababababababababababababababababababababababab",
+     "result_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    },
+    "pack_id": "pk-0123456789abcdef01234567",
+    "parameters": {
+     "entry_spread": "0.001"
+    },
+    "parent_run_id": null,
+    "run_id": "run-1",
+    "schema": "alphakeel.run-manifest/1",
+    "scope": {
+     "claims": [
+      "engine execution and accounting only"
+     ],
+     "compared": []
+    },
+    "seed": null,
+    "side": "alphakeel_engine",
+    "status": "complete",
+    "strategy": {
+     "content_sha256": "abababababababababababababababababababababababababababababababab",
+     "strategy_id": "st-demo-1"
+    }
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "run-manifest",
+   "name": "run: input table unknown",
+   "path": "/inputs/0/table",
+   "valid": false
+  },
+  {
+   "doc": {
+    "amounts": {
+     "close_now": "-0.4",
+     "fees": "0.2",
+     "funding": "0",
+     "fx_revaluation": "0",
+     "open_value": "0",
+     "price_pnl": "-0.2",
+     "realized": -0.4
+    },
+    "amounts_ok": true,
+    "by_currency": {
+     "USDT": {
+      "cash_flow": "-0.2",
+      "fees": "0.2",
+      "funding": "0"
+     }
+    },
+    "capital": {
+     "peak_margin_usdt": "33.3333"
+    },
+    "counts": {
+     "fills": 4,
+     "intents": 4
+    },
+    "data_quality": {
+     "estimate_fallbacks": 0,
+     "stale_points": 0
+    },
+    "drawdown": {
+     "max": "0.4",
+     "points": 2
+    },
+    "equity": {
+     "end_by_ccy": {
+      "USDT": "9999.6"
+     },
+     "end_close_now_usdt": "-0.4",
+     "start_by_ccy": {
+      "USDT": "10000"
+     }
+    },
+    "event_log": {
+     "count": 5,
+     "name": "events.jsonl",
+     "sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "execution_ok": true,
+    "limitations": [
+     "scan snapshots only"
+    ],
+    "mode": "fixed_intent_replay",
+    "not_applicable_metrics": [
+     "win_rate"
+    ],
+    "problems": [],
+    "run_id": "run-1",
+    "schema": "alphakeel.result/1",
+    "side": "alphakeel_engine",
+    "verification": {
+     "engine_recount": "matched",
+     "external_python": "not_applicable",
+     "native_rule_ledger": "not_applicable"
+    }
+   },
+   "errors": [
+    "schema.float"
+   ],
+   "kind": "result",
+   "name": "result: amount as number",
+   "path": "/amounts/realized",
+   "valid": false
+  },
+  {
+   "doc": {
+    "amounts": {
+     "close_now": "-0.4",
+     "fees": "2e-1",
+     "funding": "0",
+     "fx_revaluation": "0",
+     "open_value": "0",
+     "price_pnl": "-0.2",
+     "realized": "-0.4"
+    },
+    "amounts_ok": true,
+    "by_currency": {
+     "USDT": {
+      "cash_flow": "-0.2",
+      "fees": "0.2",
+      "funding": "0"
+     }
+    },
+    "capital": {
+     "peak_margin_usdt": "33.3333"
+    },
+    "counts": {
+     "fills": 4,
+     "intents": 4
+    },
+    "data_quality": {
+     "estimate_fallbacks": 0,
+     "stale_points": 0
+    },
+    "drawdown": {
+     "max": "0.4",
+     "points": 2
+    },
+    "equity": {
+     "end_by_ccy": {
+      "USDT": "9999.6"
+     },
+     "end_close_now_usdt": "-0.4",
+     "start_by_ccy": {
+      "USDT": "10000"
+     }
+    },
+    "event_log": {
+     "count": 5,
+     "name": "events.jsonl",
+     "sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "execution_ok": true,
+    "limitations": [
+     "scan snapshots only"
+    ],
+    "mode": "fixed_intent_replay",
+    "not_applicable_metrics": [
+     "win_rate"
+    ],
+    "problems": [],
+    "run_id": "run-1",
+    "schema": "alphakeel.result/1",
+    "side": "alphakeel_engine",
+    "verification": {
+     "engine_recount": "matched",
+     "external_python": "not_applicable",
+     "native_rule_ledger": "not_applicable"
+    }
+   },
+   "errors": [
+    "schema.format"
+   ],
+   "kind": "result",
+   "name": "result: amount with exponent",
+   "path": "/amounts/fees",
+   "valid": false
+  },
+  {
+   "doc": {
+    "amounts": {
+     "close_now": "-0.4",
+     "fees": "0.2",
+     "funding": "0",
+     "fx_revaluation": "0",
+     "open_value": "0",
+     "price_pnl": "-0.2",
+     "realized": "-0.4"
+    },
+    "amounts_ok": true,
+    "by_currency": {
+     "USDT": {
+      "cash_flow": "-0.2",
+      "fees": "0.2",
+      "funding": "0"
+     }
+    },
+    "capital": {
+     "peak_margin_usdt": "33.3333"
+    },
+    "counts": {
+     "fills": 4,
+     "intents": 4
+    },
+    "data_quality": {
+     "estimate_fallbacks": 0,
+     "stale_points": 0
+    },
+    "drawdown": {
+     "max": "0.4",
+     "points": 2
+    },
+    "equity": {
+     "end_by_ccy": {
+      "USDT": "9999.6"
+     },
+     "end_close_now_usdt": "-0.4",
+     "start_by_ccy": {
+      "USDT": "10000"
+     }
+    },
+    "event_log": {
+     "count": 5,
+     "name": "events.jsonl",
+     "sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "execution_ok": true,
+    "limitations": [
+     "scan snapshots only"
+    ],
+    "mode": "fixed_intent_replay",
+    "not_applicable_metrics": [
+     "win_rate"
+    ],
+    "problems": [],
+    "run_id": "run-1",
+    "schema": "alphakeel.result/1",
+    "side": "alphakeel_engine"
+   },
+   "errors": [
+    "schema.required"
+   ],
+   "kind": "result",
+   "name": "result: missing verification",
+   "path": "/verification",
+   "valid": false
+  },
+  {
+   "doc": {
+    "amounts": {
+     "close_now": "-0.4",
+     "fees": "0.2",
+     "funding": "0",
+     "fx_revaluation": "0",
+     "open_value": "0",
+     "price_pnl": "-0.2",
+     "realized": "-0.4"
+    },
+    "amounts_ok": true,
+    "by_currency": {
+     "USDT": {
+      "cash_flow": "-0.2",
+      "fees": "0.2",
+      "funding": "0"
+     }
+    },
+    "capital": {
+     "peak_margin_usdt": "33.3333"
+    },
+    "counts": {
+     "fills": 4,
+     "intents": 4
+    },
+    "data_quality": {
+     "estimate_fallbacks": 0,
+     "stale_points": 0
+    },
+    "drawdown": {
+     "max": "0.4",
+     "points": 2
+    },
+    "equity": {
+     "end_by_ccy": {
+      "USDT": "9999.6"
+     },
+     "end_close_now_usdt": "-0.4",
+     "start_by_ccy": {
+      "USDT": "10000"
+     }
+    },
+    "event_log": {
+     "count": 5,
+     "name": "events.jsonl",
+     "sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "execution_ok": true,
+    "limitations": [
+     "scan snapshots only"
+    ],
+    "mode": "fixed_intent_replay",
+    "not_applicable_metrics": [
+     "win_rate"
+    ],
+    "problems": [],
+    "run_id": "run-1",
+    "schema": "alphakeel.result/1",
+    "side": "alphakeel_engine",
+    "verification": {
+     "engine_recount": "passed",
+     "external_python": "not_applicable",
+     "native_rule_ledger": "not_applicable"
+    }
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "result",
+   "name": "result: unknown verification status",
+   "path": "/verification/engine_recount",
+   "valid": false
+  },
+  {
+   "doc": {
+    "a": "run-py",
+    "affected": {
+     "events": 0,
+     "from_ms": null,
+     "instruments": []
+    },
+    "b": "run-ak",
+    "comparison_id": "cmp-1",
+    "created_ms": 1700000300000,
+    "differences": [],
+    "first_difference": null,
+    "layers": {
+     "L0": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L1": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L3": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L4": {
+      "reason": "identical",
+      "status": "matched"
+     }
+    },
+    "mode": "fixed_intent_replay",
+    "notes": [],
+    "pass_scope": "execution and accounting of the submitted intents; not the strategy logic",
+    "passed": true,
+    "required_checks": [
+     {
+      "id": "input_digests",
+      "layer": "L0",
+      "status": "matched"
+     },
+     {
+      "id": "fills",
+      "layer": "L3",
+      "status": "matched"
+     }
+    ],
+    "schema": "alphakeel.comparison/1"
+   },
+   "errors": [
+    "schema.required"
+   ],
+   "kind": "comparison",
+   "name": "comparison: missing layer",
+   "path": "/layers/L2",
+   "valid": false
+  },
+  {
+   "doc": {
+    "a": "run-py",
+    "affected": {
+     "events": 0,
+     "from_ms": null,
+     "instruments": []
+    },
+    "b": "run-ak",
+    "comparison_id": "cmp-1",
+    "created_ms": 1700000300000,
+    "differences": [],
+    "first_difference": null,
+    "layers": {
+     "L0": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L1": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L2": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L3": {
+      "reason": "identical",
+      "status": "matched"
+     },
+     "L4": {
+      "reason": "identical",
+      "status": "matched"
+     }
+    },
+    "mode": "fixed_intent_replay",
+    "notes": [],
+    "pass_scope": "execution and accounting of the submitted intents; not the strategy logic",
+    "passed": true,
+    "required_checks": [],
+    "schema": "alphakeel.comparison/1"
+   },
+   "errors": [
+    "schema.length"
+   ],
+   "kind": "comparison",
+   "name": "comparison: no required checks",
+   "path": "/required_checks",
+   "valid": false
+  },
+  {
+   "doc": {
+    "a": "0.05",
+    "b": "0.06",
+    "class": "vibes",
+    "delta": "0.01",
+    "event_ids": [
+     "e-4"
+    ],
+    "key": "fill:i-1",
+    "layer": "L3",
+    "message": "fee differs on fill of intent i-1",
+    "tolerance": "0.00000001"
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "difference",
+   "name": "comparison: difference class unknown",
+   "path": "/class",
+   "valid": false
+  },
+  {
+   "doc": {
+    "decision_time_ms": 1700000000000,
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "limit_price": "1",
+    "order_type": "limit_ioc",
+    "position_ref": "p-1",
+    "qty": 100.5,
+    "reduce_only": false,
+    "side": "buy"
+   },
+   "errors": [
+    "schema.float"
+   ],
+   "kind": "intent",
+   "name": "intent: float quantity",
+   "path": "/qty",
+   "valid": false
+  },
+  {
+   "doc": {
+    "decision_time_ms": 1700000000000,
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "limit_price": "1",
+    "order_type": "limit_ioc",
+    "position_ref": "p-1",
+    "qty": "NaN",
+    "reduce_only": false,
+    "side": "buy"
+   },
+   "errors": [
+    "schema.format"
+   ],
+   "kind": "intent",
+   "name": "intent: nan quantity",
+   "path": "/qty",
+   "valid": false
+  },
+  {
+   "doc": {
+    "decision_time_ms": 1700000000000,
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "limit_price": "inf",
+    "order_type": "limit_ioc",
+    "position_ref": "p-1",
+    "qty": "100",
+    "reduce_only": false,
+    "side": "buy"
+   },
+   "errors": [
+    "schema.format"
+   ],
+   "kind": "intent",
+   "name": "intent: infinite price",
+   "path": "/limit_price",
+   "valid": false
+  },
+  {
+   "doc": {
+    "decision_time_ms": 1700000000000,
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "limit_price": "1",
+    "order_type": "limit_ioc",
+    "position_ref": "p-1",
+    "qty": "-1",
+    "reduce_only": false,
+    "side": "buy"
+   },
+   "errors": [
+    "schema.format"
+   ],
+   "kind": "intent",
+   "name": "intent: negative quantity",
+   "path": "/qty",
+   "valid": false
+  },
+  {
+   "doc": {
+    "decision_time_ms": 1700000000000,
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "limit_price": "1",
+    "order_type": "limit_ioc",
+    "position_ref": "p-1",
+    "qty": "0",
+    "reduce_only": false,
+    "side": "buy"
+   },
+   "errors": [
+    "schema.format"
+   ],
+   "kind": "intent",
+   "name": "intent: zero quantity",
+   "path": "/qty",
+   "valid": false
+  },
+  {
+   "doc": {
+    "decision_time_ms": 1700000000000,
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "limit_price": "1",
+    "order_type": "stop",
+    "position_ref": "p-1",
+    "qty": "100",
+    "reduce_only": false,
+    "side": "buy"
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "intent",
+   "name": "intent: unknown order type",
+   "path": "/order_type",
+   "valid": false
+  },
+  {
+   "doc": {
+    "decision_time_ms": 1700000000000,
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "limit_price": "1",
+    "order_type": "limit_ioc",
+    "position_ref": "p-1",
+    "qty": "100",
+    "side": "buy"
+   },
+   "errors": [
+    "schema.required"
+   ],
+   "kind": "intent",
+   "name": "intent: missing reduce_only",
+   "path": "/reduce_only",
+   "valid": false
+  },
+  {
+   "doc": {
+    "decision_time_ms": 1700000000000,
+    "instrument": {
+     "market": "perp",
+     "symbol": "BTCUSDT",
+     "venue": "binance"
+    },
+    "intent_id": "bad id",
+    "limit_price": "1",
+    "order_type": "limit_ioc",
+    "position_ref": "p-1",
+    "qty": "100",
+    "reduce_only": false,
+    "side": "buy"
+   },
+   "errors": [
+    "schema.format"
+   ],
+   "kind": "intent",
+   "name": "intent: bad id",
+   "path": "/intent_id",
+   "valid": false
+  },
+  {
+   "doc": {
+    "decision_time_ms": 1700000000000,
+    "instrument": {
+     "market": "perp",
+     "symbol": "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+     "venue": "binance"
+    },
+    "intent_id": "i-1",
+    "limit_price": "1",
+    "order_type": "limit_ioc",
+    "position_ref": "p-1",
+    "qty": "100",
+    "reduce_only": false,
+    "side": "buy"
+   },
+   "errors": [
+    "schema.length"
+   ],
+   "kind": "intent",
+   "name": "intent: spot symbol too long",
+   "path": "/instrument/symbol",
+   "valid": false
+  },
+  {
+   "doc": {
+    "accounts": [
+     {
+      "account": "BINANCE",
+      "ccy": "USDT",
+      "free": "10000",
+      "total": "10000"
+     }
+    ],
+    "data_refs": {
+     "decided_ms": 1700000000000,
+     "frame_index": 0,
+     "frame_seq": 1
+    },
+    "history_len": 0,
+    "last_results": [
+     {
+      "avg_price": "1",
+      "filled_qty": "100",
+      "intent_id": "i-1",
+      "reason_code": null,
+      "status": "filled"
+     }
+    ],
+    "positions": [
+     {
+      "avg_entry": "1",
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "position_ref": "p-1",
+      "qty": "100",
+      "side": "long"
+     }
+    ],
+    "schema": "alphakeel.policy-context/1",
+    "session_id": "run-1",
+    "step_seq": "0",
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000000"
+   },
+   "errors": [
+    "schema.type"
+   ],
+   "kind": "policy-context",
+   "name": "context: step as string",
+   "path": "/step_seq",
+   "valid": false
+  },
+  {
+   "doc": {
+    "accounts": [
+     {
+      "account": "BINANCE",
+      "ccy": "USDT",
+      "free": "10000",
+      "total": "10000"
+     }
+    ],
+    "data_refs": {
+     "decided_ms": 1700000000000,
+     "frame_index": 0,
+     "frame_seq": 1
+    },
+    "history_len": 0,
+    "last_results": [
+     {
+      "avg_price": "1",
+      "filled_qty": "100",
+      "intent_id": "i-1",
+      "reason_code": null,
+      "status": "filled"
+     }
+    ],
+    "positions": [
+     {
+      "avg_entry": "1",
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "position_ref": "p-1",
+      "qty": "100",
+      "side": "long"
+     }
+    ],
+    "schema": "alphakeel.policy-context/1",
+    "session_id": "run-1",
+    "step_seq": 0,
+    "time_ms": 1700000000000,
+    "time_ns": "1.7e18"
+   },
+   "errors": [
+    "schema.format"
+   ],
+   "kind": "policy-context",
+   "name": "context: nanoseconds not exact",
+   "path": "/time_ns",
+   "valid": false
+  },
+  {
+   "doc": {
+    "intents": [
+     {
+      "decision_time_ms": 1700000000000,
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "intent_id": "i-1",
+      "limit_price": "1",
+      "order_type": "limit_ioc",
+      "position_ref": "p-1",
+      "qty": "100",
+      "reduce_only": false,
+      "side": "buy"
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "schema": "alphakeel.policy-response/1",
+    "session_id": "run-1",
+    "state_sha256": "abababababababababababababababababababababababababababababababab",
+    "step_seq": 0,
+    "strategy_content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+   },
+   "errors": [
+    "schema.required"
+   ],
+   "kind": "policy-response",
+   "name": "response: missing context hash",
+   "path": "/context_sha256",
+   "valid": false
+  },
+  {
+   "doc": {
+    "context_sha256": "abababababababababababababababababababababababababababababababab",
+    "intents": [
+     {
+      "decision_time_ms": 1700000000000,
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "intent_id": "i-1",
+      "limit_price": "1",
+      "order_type": "limit_ioc",
+      "position_ref": "p-1",
+      "qty": "100",
+      "reduce_only": false,
+      "side": "buy"
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "schema": "alphakeel.policy-response/1",
+    "session_id": "run-1",
+    "state_sha256": "gASVBQ==",
+    "step_seq": 0,
+    "strategy_content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+   },
+   "errors": [
+    "schema.format"
+   ],
+   "kind": "policy-response",
+   "name": "response: pickled state refused (not a hash)",
+   "path": "/state_sha256",
+   "valid": false
+  },
+  {
+   "doc": {
+    "code": "data.insufficient",
+    "field": "window",
+    "hint": "x",
+    "message": "no quote at the boundary",
+    "request_id": "req-1",
+    "retryable": false
+   },
+   "errors": [
+    "schema.additional"
+   ],
+   "kind": "error",
+   "name": "error: unknown field",
+   "path": "/hint",
+   "valid": false
+  },
+  {
+   "doc": {
+    "code": "data.insufficient",
+    "field": "window",
+    "message": "no quote at the boundary",
+    "request_id": "req-1"
+   },
+   "errors": [
+    "schema.required"
+   ],
+   "kind": "error",
+   "name": "error: retryable missing",
+   "path": "/retryable",
+   "valid": false
+  }
+ ],
+ "description": "Valid and invalid artifacts. Every implementation must give the same verdict, and every expected error code must be reported."
+}
