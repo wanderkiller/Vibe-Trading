@@ -51,3 +51,9 @@ answer, both before and after deployment. Other providers were not exercised
 with live generation requests. Health/readiness, session database integrity,
 configuration hashes, user-skill hashes, and persistent mounts were checked
 after deployment.
+
+AlphaKeel research client: `agent/alphakeel_research/` (installed with the project, httpx/pydantic/zstandard/duckdb are
+already in the locks) reaches AlphaKeel's research service at http://127.0.0.1:8731 over the host network. Put the service
+credential in a file readable by the container user and set `ALPHAKEEL_RESEARCH_TOKEN_FILE` (see agent/.env.example); the
+credential is created on the AlphaKeel host with `arb research-service token create`. To turn the integration off, run
+`arb research-service disable` on the AlphaKeel host or remove the variables; no Vibe-Trading data is touched.

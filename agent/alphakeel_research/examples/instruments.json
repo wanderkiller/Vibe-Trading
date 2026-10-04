@@ -1,0 +1,12 @@
+[
+  {
+    "venue": "binance",
+    "market": "perp",
+    "symbol": "BTCUSDT"
+  },
+  {
+    "venue": "okx",
+    "market": "perp",
+    "symbol": "BTC-USDT-SWAP"
+  }
+]

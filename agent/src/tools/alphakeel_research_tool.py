@@ -1,0 +1,108 @@
+"""Agent tool: research against AlphaKeel's frozen data and engine through its service API.
+
+Thin wrapper over the ``alphakeel_research`` command line (the same code a standalone script uses). It returns
+references (pack/run/comparison ids, digests, file paths) and short summaries, never full event logs: those stay on disk
+under the returned ``run_dir``. No orders are placed anywhere; the service credential is read from the environment
+(``ALPHAKEEL_RESEARCH_TOKEN`` / ``_TOKEN_FILE``) and never appears in arguments or results.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+from typing import Any
+
+from src.agent.tools import BaseTool
+
+_ACTIONS = ("check", "freeze", "read", "review", "policy", "native", "compare")
+_MAX_OUT = 20_000
+
+
+def _argv(action: str, a: dict[str, Any]) -> list[str]:
+    out: list[str] = [action]
+
+    def add(flag: str, key: str, required: bool = False) -> None:
+        v = a.get(key)
+        if v is None or v == "":
+            if required:
+                raise ValueError(f"{action} needs {key}")
+            return
+        out.extend([flag, str(v)])
+
+    if action == "freeze":
+        add("--start-ms", "start_ms", True), add("--end-ms", "end_ms", True), add("--venues", "venues"), add("--funding", "funding")
+        add("--warmup-frames", "warmup_frames")
+        if a.get("accept_partial"):
+            out.append("--accept-partial")
+    elif action == "read":
+        for f, k in (("--pack", "pack"), ("--venue", "venue"), ("--symbol", "symbol"), ("--start-ms", "start_ms"), ("--end-ms", "end_ms")):
+            add(f, k, True)
+        add("--market", "market"), add("--table", "table"), add("--as-of-ms", "as_of_ms"), add("--limit", "limit")
+    elif action == "review":
+        add("--pack", "pack", True), add("--intents", "intents", True), add("--profile", "profile"), add("--instruments", "instruments")
+    elif action == "policy":
+        for f, k in (("--pack", "pack"), ("--strategy", "strategy"), ("--instruments", "instruments")):
+            add(f, k, True)
+        add("--profile", "profile"), add("--seed", "seed"), add("--parameters", "parameters")
+    elif action == "native":
+        add("--pack", "pack", True), add("--rules", "rules"), add("--params", "params"), add("--profile", "profile")
+    elif action == "compare":
+        add("--a", "a", True), add("--b", "b", True), add("--mode", "mode", True)
+    return out
+
+
+class AlphakeelResearchTool(BaseTool):
+    """Freeze AlphaKeel data, review a Python backtest, run a policy or the native strategy, compare results."""
+
+    name = "alphakeel_research"
+    description = (
+        "Use AlphaKeel's frozen market data and its Rust/Nautilus engine through the research service: "
+        "'freeze' a data pack for a time window, 'read' point-in-time rows, 'review' a Python backtest's fixed intents "
+        "against the engine (layered L0-L4 comparison with the first difference), run a Python 'policy' under both a "
+        "local simulator and the engine's real state, run the 'native' strategy, or 'compare' two runs. Files for "
+        "intents/strategy/profile are paths on disk. Returns ids, digests and summaries only; a pass never certifies "
+        "strategy logic. Needs ALPHAKEEL_RESEARCH_URL and a service token in the environment."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": list(_ACTIONS)},
+            "args": {"type": "object", "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, pack, venue, symbol, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode."},
+        },
+        "required": ["action"],
+    }
+    repeatable = True
+    is_readonly = False
+
+    def execute(self, **kwargs: Any) -> str:
+        action = str(kwargs.get("action", "")).strip()
+        args = kwargs.get("args") or {}
+        if action not in _ACTIONS or not isinstance(args, dict):
+            return json.dumps({"status": "error", "error": f"action must be one of {list(_ACTIONS)} and args an object"})
+        try:
+            from alphakeel_research import cli
+            from alphakeel_research.errors import ApiError
+
+            argv = _argv(action, args)
+        except ImportError as e:
+            return json.dumps({"status": "error", "error": f"alphakeel_research is not installed: {e}"})
+        except ValueError as e:
+            return json.dumps({"status": "error", "error": str(e)})
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                rc = cli.main(argv)
+        except ApiError as e:
+            return json.dumps({"status": "error", "error": e.message, "code": e.code, "request_id": getattr(e, "request_id", None)})
+        except SystemExit as e:  # argparse
+            return json.dumps({"status": "error", "error": f"bad arguments (exit {e.code})"})
+        except Exception as e:  # noqa: BLE001 - surfaced as a clean tool error, never with credentials
+            return json.dumps({"status": "error", "error": f"{e.__class__.__name__}: {str(e)[:500]}"})
+        text = buf.getvalue()
+        try:
+            result: Any = json.loads(text)
+        except ValueError:
+            result = {"output": text[:_MAX_OUT]}
+        body = json.dumps({"status": "ok" if rc == 0 else "error", "result": result}, ensure_ascii=False, default=str)
+        return body if len(body) <= _MAX_OUT else json.dumps({"status": "ok" if rc == 0 else "error", "truncated": True, "head": body[:_MAX_OUT]})

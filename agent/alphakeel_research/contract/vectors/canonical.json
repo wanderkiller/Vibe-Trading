@@ -1,0 +1,303 @@
+{
+ "cases": [
+  {
+   "canonical": "{\"a\":{\"c\":null,\"d\":[3,2,1]},\"b\":1}",
+   "doc": {
+    "a": {
+     "c": null,
+     "d": [
+      3,
+      2,
+      1
+     ]
+    },
+    "b": 1
+   },
+   "name": "nested objects sort by key",
+   "sha256": "99292fc65b1416433c73754bd2133c24f100c4da791e825377abb6756eeb69ae"
+  },
+  {
+   "canonical": "{\"emoji\":\"😀\",\"é\":\"ü\\n\\t\\\"\\\\\\u0001\",\"ключ\":\"значение\"}",
+   "doc": {
+    "emoji": "😀",
+    "é": "ü\n\t\"\\\u0001",
+    "ключ": "значение"
+   },
+   "name": "unicode and control characters",
+   "sha256": "b36e49a5ea6cc1ed5021dbb6ecf92788e93f25219109bd9d29dd197d6a053148"
+  },
+  {
+   "canonical": "[3,1,2,{\"y\":2,\"z\":1}]",
+   "doc": [
+    3,
+    1,
+    2,
+    {
+     "y": 2,
+     "z": 1
+    }
+   ],
+   "name": "arrays keep order",
+   "sha256": "b166da0cac2959ed39b8bc445a4bcc7e13f975d5c0f2b83cbadcb65361c0725e"
+  },
+  {
+   "canonical": "{\"a\":9007199254740993,\"b\":-5,\"c\":0}",
+   "doc": {
+    "a": 9007199254740993,
+    "b": -5,
+    "c": 0
+   },
+   "name": "large and negative integers",
+   "sha256": "1ecb1cf2a5b89b467742652f8aa29f28b9aa51051520d9f9b1f99c6c75664507"
+  },
+  {
+   "canonical": "{\"p\":\"0.10\",\"q\":\"1.0\",\"r\":\"-0.00000001\"}",
+   "doc": {
+    "p": "0.10",
+    "q": "1.0",
+    "r": "-0.00000001"
+   },
+   "name": "decimal strings are opaque",
+   "sha256": "3ee1dc67754c950deec892004116a6450e21c5e78f8eab37e8fab0b0b080a2c3"
+  },
+  {
+   "canonical": "{\"f\":false,\"n\":null,\"t\":true}",
+   "doc": {
+    "f": false,
+    "n": null,
+    "t": true
+   },
+   "name": "booleans and null",
+   "sha256": "22e00dc2f7b01420f940fbdbfbdf34fa0667cc6500186495023ba37722cbd05e"
+  },
+  {
+   "canonical": "{\"a\":[],\"b\":{}}",
+   "doc": {
+    "a": [],
+    "b": {}
+   },
+   "name": "empty containers",
+   "sha256": "9959f7ea5ff37e0cf81634a894845a335eb6e26fbad0877944e9bc009b4f0644"
+  },
+  {
+   "canonical": "{\"time_ns\":\"1791094940914000001\"}",
+   "doc": {
+    "time_ns": "1791094940914000001"
+   },
+   "name": "nanosecond strings",
+   "sha256": "fcbf1f0b1a96c163e848a9d3508b62f462cc1f13106227d885d84e3c71833885"
+  },
+  {
+   "canonical": "{\"coverage\":{\"funding\":{\"complete\":2,\"none\":0,\"partial\":0,\"perps\":2},\"fx\":{\"frames_without_rate\":2,\"points\":0},\"pnl_backtest_complete\":true,\"quotes\":{\"frames\":2,\"frames_all_venues_failed\":0,\"rows\":4},\"reasons\":[]},\"created_ms\":1700000100000,\"funding\":{\"assumed_delay_ms\":0,\"boundary_match\":\"nearest-within-60s-unique-v1\",\"conflict_policy\":\"strict\",\"dataset_version\":\"ds-fixture-1\",\"snapshot_sha256\":\"abababababababababababababababababababababababababababababababab\",\"visibility\":\"historical_reconstruction\",\"watermark_ms\":1700000050000},\"limits\":[\"scan snapshots only: no order-book depth\"],\"objects\":[{\"codec\":\"jsonl+zstd\",\"content_sha256\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"content_size\":9999,\"first_ms\":1700000000000,\"last_ms\":1700000060000,\"name\":\"quotes/binance-perp/part-000001.jsonl.zst\",\"role\":\"quotes\",\"rows\":120,\"rows_sha256\":\"abababababababababababababababababababababababababababababababab\",\"schema_id\":\"alphakeel.rows.quotes/1\",\"sha256\":\"abababababababababababababababababababababababababababababababab\",\"size\":1234}],\"pack_id\":\"pk-0123456789abcdef01234567\",\"pack_sha256\":\"abababababababababababababababababababababababababababababababab\",\"request\":{\"accept_partial\":false,\"funding_dataset\":\"ds-fixture-1\",\"include\":{\"native\":true,\"tables\":true},\"instruments\":null,\"venues\":[\"binance\",\"okx\"],\"warmup_frames\":0,\"window\":{\"end_ms\":1700000120000,\"start_ms\":1700000000000}},\"scans\":{\"anchor_sha256\":\"\",\"committed_last_seq\":2,\"end_seq\":3,\"first_ms\":1700000000000,\"frames\":2,\"gaps_over_3_minutes\":0,\"last_ms\":1700000060000,\"manifest_sha256\":\"abababababababababababababababababababababababababababababababab\",\"max_gap_ms\":60000,\"start_seq\":1,\"venue_failures\":{}},\"schema\":\"alphakeel.data-lock/1\",\"sources\":[{\"identity\":\"scan-archive:committed:2\",\"role\":\"quote\",\"visibility\":\"observed_pit\",\"watermark_ms\":1700000060000},{\"identity\":\"funding-dataset:ds-fixture-1\",\"note\":\"backfilled facts are not point-in-time observations\",\"role\":\"funding_settlement\",\"visibility\":\"historical_reconstruction\",\"watermark_ms\":1700000050000}],\"transforms\":[{\"code_version\":\"alphakeel-0.4.0\",\"config_sha256\":\"abababababababababababababababababababababababababababababababab\",\"id\":\"scan-to-rows\",\"inputs\":[\"abababababababababababababababababababababababababababababababab\"],\"outputs\":[\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"]}],\"units\":{\"money\":\"settlement currency, decimal strings\",\"price\":\"quote currency per 1 base unit (contract multiplier already applied)\",\"quantity\":\"base units\",\"rate\":\"decimal fraction per settlement period, positive = longs pay shorts\",\"time\":\"UTC milliseconds\"},\"universe\":{\"by_venue\":{\"binance\":{\"perp\":1,\"spot\":0},\"okx\":{\"perp\":1,\"spot\":0}},\"digest\":\"abababababababababababababababababababababababababababababababab\",\"instruments\":2,\"selected\":2},\"windows\":{\"actual\":{\"end_ms\":1700000120000,\"start_ms\":1700000000000},\"requested\":{\"end_ms\":1700000120000,\"start_ms\":1700000000000},\"warmup\":null}}",
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "quotes/binance-perp/part-000001.jsonl.zst",
+      "role": "quotes",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.quotes/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": true,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": {
+     "anchor_sha256": "",
+     "committed_last_seq": 2,
+     "end_seq": 3,
+     "first_ms": 1700000000000,
+     "frames": 2,
+     "gaps_over_3_minutes": 0,
+     "last_ms": 1700000060000,
+     "manifest_sha256": "abababababababababababababababababababababababababababababababab",
+     "max_gap_ms": 60000,
+     "start_seq": 1,
+     "venue_failures": {}
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "name": "data lock sample",
+   "sha256": "fc149dabc515cd25dd0d86c881e1affe59984528221b6e8fe46ec0c8d0a98629"
+  },
+  {
+   "canonical": "{\"builder\":{\"adapter\":\"research-service\",\"build\":\"0.4.0+abcdef\",\"dependency_lock_sha256\":\"\",\"dirty\":null},\"created_ms\":1700000200000,\"data_lock_sha256\":\"abababababababababababababababababababababababababababababababab\",\"engine\":{\"name\":\"alphakeel-engine\",\"version\":\"0.4.0\"},\"execution_profile_sha256\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\",\"inputs\":[{\"chain_sha256\":\"abababababababababababababababababababababababababababababababab\",\"first_ms\":1700000000000,\"instrument\":{\"market\":\"perp\",\"symbol\":\"BTCUSDT\",\"venue\":\"binance\"},\"last_ms\":1700000060000,\"rows\":2,\"table\":\"quotes\"}],\"mode\":\"fixed_intent_replay\",\"origin\":\"service\",\"outputs\":{\"events_sha256\":\"abababababababababababababababababababababababababababababababab\",\"facts_sha256\":\"abababababababababababababababababababababababababababababababab\",\"result_sha256\":\"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\"},\"pack_id\":\"pk-0123456789abcdef01234567\",\"parameters\":{\"entry_spread\":\"0.001\"},\"parent_run_id\":null,\"run_id\":\"run-1\",\"schema\":\"alphakeel.run-manifest/1\",\"scope\":{\"claims\":[\"engine execution and accounting only\"],\"compared\":[]},\"seed\":null,\"side\":\"alphakeel_engine\",\"status\":\"complete\",\"strategy\":{\"content_sha256\":\"abababababababababababababababababababababababababababababababab\",\"strategy_id\":\"st-demo-1\"}}",
+   "doc": {
+    "builder": {
+     "adapter": "research-service",
+     "build": "0.4.0+abcdef",
+     "dependency_lock_sha256": "",
+     "dirty": null
+    },
+    "created_ms": 1700000200000,
+    "data_lock_sha256": "abababababababababababababababababababababababababababababababab",
+    "engine": {
+     "name": "alphakeel-engine",
+     "version": "0.4.0"
+    },
+    "execution_profile_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "inputs": [
+     {
+      "chain_sha256": "abababababababababababababababababababababababababababababababab",
+      "first_ms": 1700000000000,
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "last_ms": 1700000060000,
+      "rows": 2,
+      "table": "quotes"
+     }
+    ],
+    "mode": "fixed_intent_replay",
+    "origin": "service",
+    "outputs": {
+     "events_sha256": "abababababababababababababababababababababababababababababababab",
+     "facts_sha256": "abababababababababababababababababababababababababababababababab",
+     "result_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    },
+    "pack_id": "pk-0123456789abcdef01234567",
+    "parameters": {
+     "entry_spread": "0.001"
+    },
+    "parent_run_id": null,
+    "run_id": "run-1",
+    "schema": "alphakeel.run-manifest/1",
+    "scope": {
+     "claims": [
+      "engine execution and accounting only"
+     ],
+     "compared": []
+    },
+    "seed": null,
+    "side": "alphakeel_engine",
+    "status": "complete",
+    "strategy": {
+     "content_sha256": "abababababababababababababababababababababababababababababababab",
+     "strategy_id": "st-demo-1"
+    }
+   },
+   "name": "run manifest sample",
+   "sha256": "4e8a68c2a3a563a581b0bb4c22f830b2e4c88468f8c4dbf05bf11e6ab987f3ad"
+  }
+ ],
+ "description": "Canonical JSON (sorted keys, no whitespace, UTF-8 verbatim, integers only) and its SHA-256."
+}

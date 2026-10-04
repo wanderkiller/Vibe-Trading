@@ -1,0 +1,68 @@
+{
+ "cases": [
+  {
+   "calc": "notional = qty * price; fee = notional * rate",
+   "fee": "0.05",
+   "fee_rate": "0.0005",
+   "name": "taker fee",
+   "price": "1",
+   "qty": "100"
+  },
+  {
+   "calc": "long 100@1 -> 0.999 (-0.1); short 100@1 -> 1.001 (-0.1); fees .05+.05+.04995+.05005=.2; net -0.4",
+   "fees": "0.2",
+   "name": "round trip loses spread and fees",
+   "net": "-0.4",
+   "price_pnl": "-0.2"
+  },
+  {
+   "amount": "-1",
+   "calc": "amount = -notional*rate for long",
+   "mark": "1",
+   "name": "funding long pays when rate positive",
+   "qty": "100",
+   "rate": "0.01",
+   "side": "long"
+  },
+  {
+   "amount": "1",
+   "calc": "amount = -notional*rate",
+   "mark": "1",
+   "name": "funding long receives when rate negative",
+   "qty": "100",
+   "rate": "-0.01",
+   "side": "long"
+  },
+  {
+   "amount": "2",
+   "calc": "amount = +notional*rate for short",
+   "mark": "1",
+   "name": "funding short receives when rate positive",
+   "qty": "100",
+   "rate": "0.02",
+   "side": "short"
+  },
+  {
+   "amount": "0.12345679",
+   "calc": "0.123456789 -> 0.12345679 (half away from zero)",
+   "name": "funding rounds to 1e-8",
+   "unrounded": "0.123456785"
+  },
+  {
+   "calc": "native 2 USDC * 1.01 = 2.02 USDT",
+   "fx": "1.01",
+   "name": "usdc to usdt once at close",
+   "native": "2",
+   "usdt": "2.02"
+  },
+  {
+   "calc": "AGENTS.md teaching golds are unchanged",
+   "name": "teaching gold",
+   "values": [
+    "-2.40365",
+    "2197.59635"
+   ]
+  }
+ ],
+ "description": "Hand-calculated numeric golds shared by both sides (not produced by either engine). Decimal strings; every case states its arithmetic."
+}
