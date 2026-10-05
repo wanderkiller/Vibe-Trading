@@ -436,7 +436,7 @@ La mayoría de las ejecuciones siguen la misma ruta de evidencia: enrutar la sol
 
 ## 📡 Fuentes de Datos y Fallback Inteligente
 
-Una sola llamada `get_market_data`, **28 fuentes de datos de mercado**, una de ellas el mercado premium opcional **QVeris** (además del mercado premium opcional **QVeris**). Establece `source: "auto"`: el cargador elige según el símbolo y luego recorre una cadena por mercado ordenada por **riesgo de bloqueo de IP**: primero las fuentes públicas que nunca se bloquean, al final las limitadas o que requieren clave. Cero configuración, sin punto único de fallo.
+Una sola llamada `get_market_data`, **29 fuentes de datos de mercado**, una de ellas el mercado premium opcional **QVeris** (además del mercado premium opcional **QVeris**). Establece `source: "auto"`: el cargador elige según el símbolo y luego recorre una cadena por mercado ordenada por **riesgo de bloqueo de IP**: primero las fuentes públicas que nunca se bloquean, al final las limitadas o que requieren clave. Cero configuración, sin punto único de fallo.
 
 | Fuente | Mercados | Autenticación | Rol |
 |--------|---------|------|------|
@@ -459,6 +459,7 @@ Una sola llamada `get_market_data`, **28 fuentes de datos de mercado**, una de e
 | `pykrx` | Corea (KRX: KOSPI/KOSDAQ) | ninguna | barras diarias de KOSPI / KOSDAQ para `.KS` / `.KQ` (extra opcional `krx`) |
 | `india_broker` | India (NSE/BSE) | login de broker | barras de solo lectura de Zerodha / Shoonya / Dhan para `.NS` / `.BO` (al final de la cadena de fallback) |
 | `local` | cualquiera | ninguna | tu propio CSV / Parquet / DuckDB mediante el prefijo `local:` |
+| `alphakeel_pack` | crypto (frozen AlphaKeel scans) | none | **explicit-only** marker for an exported AlphaKeel research pack (`ALPHAKEEL_PACK_DIR`); quotes, funding and settlements, not bars — refuses OHLCV requests and never falls back; read it with `alphakeel_research` |
 
 **Cadenas de fallback (por riesgo de bloqueo de IP):**
 
@@ -1775,7 +1776,7 @@ Vibe-Trading/
 │   │   ├── memory/                 # Memoria persistente entre sesiones
 │   │   │   └── persistent.py       #   memoria basada en archivos (~/.vibe-trading/memory/)
 │   │   │
-│   │   ├── tools/                  # 107 herramientas de agente autodescubiertas
+│   │   ├── tools/                  # 108 herramientas de agente autodescubiertas
 │   │   │   ├── backtest_tool.py    #   ejecuta backtests
 │   │   │   ├── remember_tool.py    #   memoria entre sesiones (save/recall/forget)
 │   │   │   ├── skill_writer_tool.py #  CRUD de skills (save/patch/delete/file)
@@ -1801,7 +1802,7 @@ Vibe-Trading/
 │   │
 │   └── backtest/                   # Motores de backtest
 │       ├── engines/                #   9 motores + motor compuesto multi-mercado + options_portfolio
-│       ├── loaders/                #   28 fuentes: tushare, okx, nobitex, wallex, binance, yfinance, akshare, baostock, tencent, mootdx, ccxt, futu, pykrx, local, eastmoney, sina, stooq, yahoo, finnhub, alphavantage, tiingo, fmp, longbridge, mt5, qveris, india_broker, tickerall, gildata
+│       ├── loaders/                #   29 fuentes: tushare, okx, nobitex, wallex, binance, yfinance, akshare, baostock, tencent, mootdx, ccxt, futu, pykrx, local, eastmoney, sina, stooq, yahoo, finnhub, alphavantage, tiingo, fmp, longbridge, mt5, qveris, india_broker, tickerall, gildata, alphakeel_pack
 │       │   ├── base.py             #   Protocolo DataLoader
 │       │   └── registry.py         #   Registro + cadenas de fallback automáticas
 │       └── optimizers/             #   MVO, equal vol, max div, risk parity

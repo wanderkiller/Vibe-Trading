@@ -437,7 +437,7 @@ vibe-trading connector install /tmp/my-broker
 
 ## 📡 データソースとスマートフォールバック
 
-1 回の `get_market_data` 呼び出しで **28 のマーケットデータソース**（うち **QVeris** はオプションの有料マーケットプレイス）にアクセスできます。`source: "auto"` を指定すれば、loader が銘柄に応じてソースを選び、**IP 規制リスク**の順に並んだ市場別チェーンをたどります。規制を受けない公開ソースを先に、スロットリングや key を要するソースを最後に試します。設定不要、単一障害点なし。
+1 回の `get_market_data` 呼び出しで **29 のマーケットデータソース**（うち **QVeris** はオプションの有料マーケットプレイス）にアクセスできます。`source: "auto"` を指定すれば、loader が銘柄に応じてソースを選び、**IP 規制リスク**の順に並んだ市場別チェーンをたどります。規制を受けない公開ソースを先に、スロットリングや key を要するソースを最後に試します。設定不要、単一障害点なし。
 
 | Source | Markets | Auth | Role |
 |--------|---------|------|------|
@@ -460,6 +460,7 @@ vibe-trading connector install /tmp/my-broker
 | `pykrx` | 韓国（KRX：KOSPI/KOSDAQ） | 不要 | `.KS` / `.KQ` の KOSPI / KOSDAQ 日足（任意の `krx` extra） |
 | `india_broker` | インド（NSE/BSE） | ブローカーログイン | `.NS` / `.BO` 向けの読み取り専用 Zerodha / Shoonya / Dhan bars（フォールバックチェーン末尾） |
 | `local` | any | none | your own CSV / Parquet / DuckDB via `local:` prefix |
+| `alphakeel_pack` | crypto (frozen AlphaKeel scans) | none | **explicit-only** marker for an exported AlphaKeel research pack (`ALPHAKEEL_PACK_DIR`); quotes, funding and settlements, not bars — refuses OHLCV requests and never falls back; read it with `alphakeel_research` |
 
 **フォールバックチェーン（IP 規制リスク順）：**
 
@@ -1695,7 +1696,7 @@ Vibe-Trading/
 │   │   ├── memory/                 # クロスセッション永続メモリ
 │   │   │   └── persistent.py       #   ファイルベースメモリ (~/.vibe-trading/memory/)
 │   │   │
-│   │   ├── tools/                  # 107 個の自動検出エージェントツール
+│   │   ├── tools/                  # 108 個の自動検出エージェントツール
 │   │   │   ├── backtest_tool.py    #   バックテスト実行
 │   │   │   ├── remember_tool.py    #   クロスセッションメモリ (save/recall/forget)
 │   │   │   ├── skill_writer_tool.py #  skill CRUD (save/patch/delete/file)
@@ -1721,7 +1722,7 @@ Vibe-Trading/
 │   │
 │   └── backtest/                   # バックテストエンジン
 │       ├── engines/                #   9 エンジン + クロスマーケット composite engine + options_portfolio
-│       ├── loaders/                #   28 ソース: tushare、okx、nobitex、wallex、binance、yfinance、akshare、baostock、tencent、mootdx、ccxt、futu、pykrx、local、eastmoney、sina、stooq、yahoo、finnhub、alphavantage、tiingo、fmp、longbridge、mt5、qveris、india_broker、tickerall、gildata
+│       ├── loaders/                #   29 ソース: tushare、okx、nobitex、wallex、binance、yfinance、akshare、baostock、tencent、mootdx、ccxt、futu、pykrx、local、eastmoney、sina、stooq、yahoo、finnhub、alphavantage、tiingo、fmp、longbridge、mt5、qveris、india_broker、tickerall、gildata、alphakeel_pack
 │       │   ├── base.py             #   DataLoader Protocol
 │       │   └── registry.py         #   Registry + 自動フォールバックチェーン
 │       └── optimizers/             #   MVO、equal vol、max div、risk parity

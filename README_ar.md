@@ -437,7 +437,7 @@ vibe-trading connector install /tmp/my-broker
 
 ## 📡 مصادر البيانات والتراجع الذكي
 
-استدعاء واحد لـ `get_market_data`، **28 مصدر بيانات سوقية**، أحدها سوق **QVeris** المدفوع الاختياري (إضافة إلى سوق مدفوع اختياري **QVeris**). اضبط `source: "auto"` — يختار المُحمّل حسب الرمز، ثم يسير عبر سلسلة لكل سوق مرتبة بحسب **خطر حظر عنوان IP**: المصادر العامة التي لا تُحظر أبداً أولاً، والمصادر المُقيّدة أو المحمية بمفتاح أخيراً. بلا أي إعداد، ولا نقطة فشل واحدة.
+استدعاء واحد لـ `get_market_data`، **29 مصدر بيانات سوقية**، أحدها سوق **QVeris** المدفوع الاختياري (إضافة إلى سوق مدفوع اختياري **QVeris**). اضبط `source: "auto"` — يختار المُحمّل حسب الرمز، ثم يسير عبر سلسلة لكل سوق مرتبة بحسب **خطر حظر عنوان IP**: المصادر العامة التي لا تُحظر أبداً أولاً، والمصادر المُقيّدة أو المحمية بمفتاح أخيراً. بلا أي إعداد، ولا نقطة فشل واحدة.
 
 | Source | Markets | Auth | Role |
 |--------|---------|------|------|
@@ -460,6 +460,7 @@ vibe-trading connector install /tmp/my-broker
 | `pykrx` | كوريا (KRX: KOSPI/KOSDAQ) | لا شيء | أشرطة يومية لـ KOSPI / KOSDAQ لرموز `.KS` / `.KQ` (إضافة `krx` اختيارية) |
 | `india_broker` | الهند (NSE/BSE) | تسجيل دخول الوسيط | قراءة فقط لأشرطة Zerodha / Shoonya / Dhan لرموز `.NS` / `.BO` (ذيل سلسلة التراجع) |
 | `local` | any | none | your own CSV / Parquet / DuckDB via `local:` prefix |
+| `alphakeel_pack` | crypto (frozen AlphaKeel scans) | none | **explicit-only** marker for an exported AlphaKeel research pack (`ALPHAKEEL_PACK_DIR`); quotes, funding and settlements, not bars — refuses OHLCV requests and never falls back; read it with `alphakeel_research` |
 
 **سلاسل التراجع (بحسب خطر حظر عنوان IP):**
 
@@ -1687,7 +1688,7 @@ Vibe-Trading/
 │   │   ├── memory/                 # Cross-session persistent memory
 │   │   │   └── persistent.py       #   file-based memory (~/.vibe-trading/memory/)
 │   │   │
-│   │   ├── tools/                  # 107 auto-discovered agent tools
+│   │   ├── tools/                  # 108 auto-discovered agent tools
 │   │   │   ├── backtest_tool.py    #   run backtests
 │   │   │   ├── remember_tool.py    #   cross-session memory (save/recall/forget)
 │   │   │   ├── skill_writer_tool.py #  skill CRUD (save/patch/delete/file)
@@ -1713,7 +1714,7 @@ Vibe-Trading/
 │   │
 │   └── backtest/                   # Backtest engines
 │       ├── engines/                #   9 engines + composite cross-market engine + options_portfolio
-│       ├── loaders/                #   28 sources: tushare, okx, nobitex, wallex, binance, yfinance, akshare, baostock, tencent, mootdx, ccxt, futu, pykrx, local, eastmoney, sina, stooq, yahoo, finnhub, alphavantage, tiingo, fmp, longbridge, mt5, qveris, india_broker, tickerall, gildata
+│       ├── loaders/                #   29 sources: tushare, okx, nobitex, wallex, binance, yfinance, akshare, baostock, tencent, mootdx, ccxt, futu, pykrx, local, eastmoney, sina, stooq, yahoo, finnhub, alphavantage, tiingo, fmp, longbridge, mt5, qveris, india_broker, tickerall, gildata, alphakeel_pack
 │       │   ├── base.py             #   DataLoader Protocol
 │       │   └── registry.py         #   Registry + auto-fallback chains
 │       └── optimizers/             #   MVO, equal vol, max div, risk parity

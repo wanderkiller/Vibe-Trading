@@ -31,6 +31,8 @@ _TRADING_DAYS = {
     "binance": 365,
     # Iranian crypto exchanges (24/7 markets, same annualisation as okx/ccxt)
     "nobitex": 365, "wallex": 365,
+    # frozen AlphaKeel scan packs (24/7 crypto venues); the loader serves no bars, the entry keeps the table complete
+    "alphakeel_pack": 365,
     # A-share equity
     "baostock": 252, "tencent": 252, "eastmoney": 252, "sina": 252,
     "gildata": 252,
@@ -64,7 +66,7 @@ _BARS_PER_DAY = {
             "eastmoney": 240, "sina": 240, "mootdx": 240, "futu": 240,
             # crypto (24h)
             "okx": 1440, "ccxt": 1440, "binance": 1440,
-            "nobitex": 1440, "wallex": 1440,
+            "nobitex": 1440, "wallex": 1440, "alphakeel_pack": 1440,
             # forex/CFD (24h intraday)
             "mt5": 1440, "tickerall": 1440,
             # Indian equity (6.25h session)
@@ -78,7 +80,7 @@ _BARS_PER_DAY = {
             "tushare": 48, "gildata": 48,  "akshare": 48,  "baostock": 48,  "tencent": 48,
             "eastmoney": 48,  "sina": 48,  "mootdx": 48,  "futu": 48,
             "okx": 288,  "ccxt": 288,  "binance": 288,
-            "nobitex": 288,  "wallex": 288,
+            "nobitex": 288,  "wallex": 288, "alphakeel_pack": 288,
             "mt5": 288, "tickerall": 288,
             "india_broker": 75,
             "pykrx": 78,
@@ -89,7 +91,7 @@ _BARS_PER_DAY = {
             "tushare": 16, "gildata": 16,  "akshare": 16,  "baostock": 16,  "tencent": 16,
             "eastmoney": 16,  "sina": 16,  "mootdx": 16,  "futu": 16,
             "okx": 96,   "ccxt": 96,   "binance": 96,
-            "nobitex": 96,   "wallex": 96,
+            "nobitex": 96,   "wallex": 96, "alphakeel_pack": 96,
             "mt5": 96, "tickerall": 96,
             "india_broker": 25,
             "pykrx": 26,
@@ -100,7 +102,7 @@ _BARS_PER_DAY = {
             "tushare": 8, "gildata": 8,   "akshare": 8,   "baostock": 8,   "tencent": 8,
             "eastmoney": 8,   "sina": 8,   "mootdx": 8,   "futu": 8,
             "okx": 48,   "ccxt": 48,   "binance": 48,
-            "nobitex": 48,   "wallex": 48,
+            "nobitex": 48,   "wallex": 48, "alphakeel_pack": 48,
             "mt5": 48, "tickerall": 48,
             "india_broker": 13,
             "pykrx": 13,
@@ -111,7 +113,7 @@ _BARS_PER_DAY = {
             "tushare": 4, "gildata": 4,   "akshare": 4,   "baostock": 4,   "tencent": 4,
             "eastmoney": 4,   "sina": 4,   "mootdx": 4,   "futu": 4,
             "okx": 24,   "ccxt": 24,   "binance": 24,
-            "nobitex": 24,   "wallex": 24,
+            "nobitex": 24,   "wallex": 24, "alphakeel_pack": 24,
             "mt5": 24, "tickerall": 24,
             "india_broker": 7,
             "pykrx": 7,
@@ -122,7 +124,7 @@ _BARS_PER_DAY = {
             "tushare": 1,   "gildata": 1,  "akshare": 1,   "baostock": 1,   "tencent": 1,
             "eastmoney": 1,   "sina": 1,   "mootdx": 1,   "futu": 1,
             "okx": 6,    "ccxt": 6,    "binance": 6,
-            "nobitex": 6,    "wallex": 6,
+            "nobitex": 6,    "wallex": 6, "alphakeel_pack": 6,
             "mt5": 6, "tickerall": 6,
             "india_broker": 2,
             "pykrx": 2,
@@ -133,7 +135,7 @@ _BARS_PER_DAY = {
             "tushare": 1,   "gildata": 1,  "akshare": 1,   "baostock": 1,   "tencent": 1,
             "eastmoney": 1,   "sina": 1,   "mootdx": 1,   "futu": 1,
             "okx": 1,    "ccxt": 1,    "binance": 1,
-            "nobitex": 1,    "wallex": 1,
+            "nobitex": 1,    "wallex": 1, "alphakeel_pack": 1,
             "mt5": 1, "tickerall": 1,
             "india_broker": 1,
             "pykrx": 1,

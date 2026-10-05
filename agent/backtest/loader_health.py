@@ -39,7 +39,10 @@ CANARY_SYMBOLS = {
     "yahoo": "AAPL.US",
     "yfinance": "AAPL.US",
 }
-EXCLUDED_PUBLIC_SOURCES = {"local": "operator files, not a public endpoint"}
+EXCLUDED_PUBLIC_SOURCES = {
+    "local": "operator files, not a public endpoint",
+    "alphakeel_pack": "frozen AlphaKeel pack directory; never touches the network and serves no OHLCV",
+}
 DEPENDENCIES = {
     "akshare": "akshare",
     "baostock": "baostock",
