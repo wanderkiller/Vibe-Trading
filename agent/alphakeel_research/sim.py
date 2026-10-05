@@ -10,8 +10,12 @@ What it does not model is refused loudly (``Unsupported``) instead of being gues
 position, reduce-only with no open position, partial fills, quotes that never existed, unsupported order types.
 
 Facts it reproduces from the engine (found by probing the engine, documented in the profile): fees and funding are
-rounded to 1e-8 half-even; an order is denied when its notional exceeds the account's total balance (leverage and
-open-position margin do not reduce it); IOC limit orders fill at the touch when marketable and are cancelled otherwise;
+rounded to 1e-8 half-even; an opening order is denied when its notional (leverage does not reduce it) exceeds the
+account's free balance, i.e. its total balance minus the maintenance margin of the positions open in that account, and
+position-reducing orders skip that check; orders at the same decision time are all checked against the account as it was
+before any of them filled. Where the outcome depends on what is not modelled exactly (the price basis of the maintenance
+margin, or same-time orders whose sequential outcome would differ from that before-batch check) the simulator refuses
+with ``Unsupported`` instead of picking a side; IOC limit orders fill at the touch when marketable and are cancelled otherwise;
 the funding rate of a boundary is the last predicted rate reported for it (or the official event when the profile says
 so); the settlement price is the last mark seen at or before the boundary.
 """
@@ -163,6 +167,10 @@ class Simulator:
         self.strict = bool(profile["funding"]["strict"])
         fees = pack.fees()
         self.max_age = int(fees["engine"]["max_quote_age_ms"])
+        mm = fees["engine"].get("maint_margin")
+        self.maint_margin: Decimal | None = Decimal(mm) if mm not in (None, "") else None
+        # per account: (decision ns, the account as it was before the first order of that decision time)
+        self._batch: dict[tuple[str, str], tuple[int, tuple]] = {}
         self.fee_rate = {i: Decimal(fees["fees"][i.venue]["perp" if i.market == "perp" else "spot"]) for i in self.insts}
         self.instr_meta = pack.instruments()
         self.frames = pack.frames(include_warmup=False)
@@ -180,6 +188,7 @@ class Simulator:
             self.start_by_ccy[ccy] = self.start_by_ccy.get(ccy, Decimal(0)) + v
         self.pos: dict[str, Pos] = {}
         self.refs: dict[str, tuple[Inst, bool]] = {}
+        self.ref_decl: dict[str, tuple[Inst, bool]] = {}  # bound by the first opening intent naming the ref
         self.last_quote: dict[Inst, tuple[Decimal, Decimal, int]] = {}  # bid, ask, frame index (data time)
         self.fills: list[dict] = []
         self.evs: list[Ev] = []
@@ -412,13 +421,16 @@ class Simulator:
             return {"intent_id": rec.intent_id, "status": status, "filled_qty": dstr(filled), "avg_price": None if avg is None else dstr(avg),
                     "reason_code": code}
 
-        # position bookkeeping rules (no guessing outside the profile)
-        existing = self.refs.get(ref)
+        # position bookkeeping rules (no guessing outside the profile). Like the service, a position_ref is bound to its
+        # contract and side by the first opening INTENT that names it, whether or not that order then fills.
+        existing = self.ref_decl.get(ref)
         if rec.reduce_only:
             if existing is None:
                 if rec.position_ref is None:
                     raise ApiError("intent.reduce_only_needs_position", "a reduce-only intent must name its position")
                 raise ApiError("intent.reduce_only_needs_position", f"position_ref {ref!r} was never opened")
+            if existing[0] != inst:
+                raise ApiError("request.invalid", f"position_ref {ref!r} belongs to another contract")
             _, long = existing
             if rec.buy == long:
                 raise ApiError("request.invalid", "a reduce-only intent must trade against the position side")
@@ -433,6 +445,8 @@ class Simulator:
                     raise ApiError("request.invalid", f"position_ref {ref!r} belongs to another contract")
                 if existing[1] != rec.buy:
                     raise ApiError("request.invalid", "an opening intent cannot flip the side of an existing position_ref")
+            else:
+                self.ref_decl[ref] = (inst, rec.buy)
         if qty_eff.is_zero():
             raise Unsupported("the order quantity is zero after the engine's precision rules")
         quote = self.last_quote.get(inst)
@@ -440,11 +454,23 @@ class Simulator:
             raise Unsupported(f"no quote for {inst.symbol} has been seen yet: the engine's behaviour for that case is not modelled")
         bid, ask, _ = quote
         touch = ask if rec.buy else bid
-        # margin: notional against the account's total balance
+        # margin: the notional against the account's free balance (total minus open-position maintenance margin)
         ccy = self.instr_meta[inst].quote
         acct = (engine_venue(inst), ccy)
         price_for_margin = limit_eff if limit_eff is not None else touch
-        if (qty_eff * price_for_margin) > self.accounts[acct]:
+        need = qty_eff * price_for_margin
+        batch = self._batch.get(acct)
+        if batch is None or batch[0] != ns:
+            batch = (ns, self._margin_state(acct))
+            self._batch[acct] = batch
+        engine = self._margin_verdict(rec, qty_eff, need, batch[1])  # the engine checks against the before-batch account
+        sequential = self._margin_verdict(rec, qty_eff, need, self._margin_state(acct))
+        if engine is None or sequential is None:
+            raise Unsupported("the order's margin falls inside the open-position maintenance-margin band, whose price basis is not modelled")
+        if engine != sequential:
+            raise Unsupported("several orders on one account at the same decision time: the engine checks each against the balance "
+                              "before any of them fill, which would accept or deny differently from filling them in order; not modelled")
+        if not engine:
             return result("denied", Decimal(0), "denied", "insufficient free balance for the initial margin")
         # marketability
         if rec.limit is not None:
@@ -489,6 +515,41 @@ class Simulator:
         self.fills.append({"pos": ref, "frame": k, "ccy": ccy, "buy": rec.buy, "qty": qty_eff, "px": touch, "fee": fee})
         status = "filled"
         return result(status, qty_eff, None, None, touch)
+
+    def _margin_state(self, acct: tuple[str, str]) -> tuple:
+        """(total balance, maintenance-margin lower and upper bound, long and short open qty by contract) of one account."""
+        total = self.accounts[acct]
+        lo = hi = Decimal(0)
+        longs: dict[Inst, Decimal] = {}
+        shorts: dict[Inst, Decimal] = {}
+        for p in self.pos.values():
+            if p.net == 0 or (engine_venue(p.inst), p.ccy) != acct:
+                continue
+            q = abs(p.net)
+            (longs if p.net > 0 else shorts)[p.inst] = (longs if p.net > 0 else shorts).get(p.inst, Decimal(0)) + q
+            rate = Decimal(0) if p.inst.market == "spot" else self.maint_margin
+            if rate is None:
+                hi = None
+                continue
+            bid, ask, _ = self.last_quote[p.inst]
+            pxs = [bid, ask] + ([p.entry_notional / p.entry_qty] if p.entry_qty else [])
+            lo += q * min(pxs) * rate
+            if hi is not None:
+                hi += q * max(pxs) * rate
+        return (total, lo, hi, longs, shorts)
+
+    @staticmethod
+    def _margin_verdict(rec: "IntentRec", qty: Decimal, need: Decimal, state: tuple) -> bool | None:
+        """True = passes the margin check, False = denied, None = depends on the unmodelled maintenance price basis."""
+        total, lo, hi, longs, shorts = state
+        opposite = (shorts if rec.buy else longs).get(rec.inst, Decimal(0))
+        if rec.reduce_only or qty <= opposite:
+            return True  # position-reducing orders skip the engine's margin check
+        if hi is not None and need <= total - hi:
+            return True
+        if need > total - lo:
+            return False
+        return None
 
     def _usdt(self, by: dict[str, Decimal], fx: Decimal | None) -> Decimal | None:
         tot = Decimal(0)
@@ -683,7 +744,9 @@ class Simulator:
             "verification": {"engine_recount": "not_applicable", "native_rule_ledger": "not_applicable", "external_python": "not_applicable"},
             "not_applicable_metrics": ["win_rate", "native_rule_ledger"],
             "limitations": ["Independent Decimal simulation of the AlphaKeel execution profile; scan snapshots only, no depth, queue or impact.",
-                            "Margin: an order is denied when its notional exceeds the account's total balance (as observed in the engine)."],
+                            "Margin: an opening order is denied when its notional exceeds the account's free balance (total minus open-position "
+                            "maintenance margin), checked against the account before any same-time order fills (as observed in the engine); "
+                            "orders in the maintenance-margin band or whose same-time outcome would differ are refused, not guessed."],
             "event_log": {"name": "events.jsonl", "sha256": events_sha, "count": n_events}, "problems": problems,
         }
         return res

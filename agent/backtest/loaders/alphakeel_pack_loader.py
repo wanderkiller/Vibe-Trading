@@ -18,6 +18,12 @@ import pandas as pd
 
 from backtest.loaders.base import NoAvailableSourceError
 from backtest.loaders.registry import register
+from src.config.accessor import get_env_value
+
+
+def _pack_dir() -> str:
+    # Un-cached pass-through so a pack directory set at runtime is seen without a restart.
+    return get_env_value("ALPHAKEEL_PACK_DIR", "").strip()
 
 REFUSAL = (
     "alphakeel_pack carries frozen AlphaKeel scans (quotes, funding, settlements), not OHLCV bars, and never falls back "
@@ -33,7 +39,7 @@ class DataLoader:
     requires_auth = False
 
     def is_available(self) -> bool:
-        d = os.environ.get("ALPHAKEEL_PACK_DIR", "").strip()
+        d = _pack_dir()
         if not d or not os.path.isfile(os.path.join(d, "lock.json")):
             return False
         try:
@@ -48,7 +54,7 @@ class DataLoader:
             raise NoAvailableSourceError("alphakeel_pack: no exported pack directory is configured (ALPHAKEEL_PACK_DIR)")
         from alphakeel_research.packfile import Pack
 
-        return Pack.from_directory(os.environ["ALPHAKEEL_PACK_DIR"])
+        return Pack.from_directory(_pack_dir())
 
     def fetch(self, codes: list[str], start_date: str, end_date: str, *, interval: str = "1D",
               fields: list[str] | None = None) -> dict[str, pd.DataFrame]:

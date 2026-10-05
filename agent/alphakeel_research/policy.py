@@ -40,6 +40,10 @@ except Exception:
 runpy.run_module("alphakeel_research.policy_host", run_name="__main__", alter_sys=True)
 """
 _ENV_KEEP = ("PATH", "LANG", "LC_ALL", "TZ")
+#: Largest single protocol frame (one JSON reply line) accepted from the strategy process.
+MAX_FRAME_BYTES = 16 << 20
+#: How much of the strategy's stderr is kept for error messages (older output is dropped, never blocks the child).
+STDERR_TAIL_BYTES = 64 << 10
 
 
 class PolicyHost:
@@ -54,6 +58,8 @@ class PolicyHost:
         self.python = python or sys.executable
         self.proc: subprocess.Popen | None = None
         self._home: str | None = None
+        self._out = bytearray()  # protocol bytes received but not yet consumed as a complete frame
+        self._err = bytearray()  # bounded tail of the strategy's stderr
         self.sandbox: dict[str, Any] = {}
 
     # -- lifecycle ---------------------------------------------------------------------------------------------
@@ -66,8 +72,8 @@ class PolicyHost:
         if self.pack_dir:
             env["ALPHAKEEL_PACK_DIR"] = self.pack_dir
         cmd = [self.python, "-c", _RLIMIT_BOOTSTRAP, str(self.rlimit_as_mb * 1024 * 1024), "512", self.script]
-        kwargs: dict[str, Any] = dict(stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, text=True,
-                                      encoding="utf-8", start_new_session=True, cwd=self._home)
+        kwargs: dict[str, Any] = dict(stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                                      bufsize=0, start_new_session=True, cwd=self._home)
         creds = _sandbox_credentials()
         self.sandbox = {"credentials_in_environment": False, "ephemeral_home": True, "resource_limits": True, "process_group": True,
                         "uid_drop": False, "network_blocked": False, "pack_access": "read-only exported directory" if self.pack_dir else "none"}
@@ -81,6 +87,10 @@ class PolicyHost:
         if proc is None:
             proc = subprocess.Popen(cmd, **kwargs)
         self.proc = proc
+        self._out.clear()
+        self._err.clear()
+        for f in (proc.stdin, proc.stdout, proc.stderr):
+            os.set_blocking(f.fileno(), False)
         r = self._call({"op": "init", "parameters": parameters})
         return r["state_sha256"]
 
@@ -88,11 +98,11 @@ class PolicyHost:
         p = self.proc
         if p is not None and p.poll() is None:
             try:
-                p.stdin.write(json.dumps({"op": "close"}) + "\n")
-                p.stdin.flush()
+                self._send(b'{"op":"close"}\n', time.monotonic() + 2)
                 p.wait(timeout=2)
             except Exception:  # noqa: BLE001
-                self._kill()
+                pass
+            self._kill()
         self.proc = None
         if self._home:
             shutil.rmtree(self._home, ignore_errors=True)
@@ -120,38 +130,121 @@ class PolicyHost:
     # -- protocol ----------------------------------------------------------------------------------------------
 
     def _call(self, msg: dict) -> dict:
+        """Send one request and read one reply frame, all under ONE deadline.
+
+        Every descriptor is non-blocking: a half-written line, a flood of stderr, a child that stops reading stdin or a
+        frame larger than :data:`MAX_FRAME_BYTES` can delay the reply only until the deadline, after which the whole
+        process group is killed. No blocking ``readline()``/``write()`` can outlive ``call_timeout``.
+        """
         p = self.proc
         if p is None or p.poll() is not None:
             raise ApiError("run.interrupted", "the strategy process is not running: " + self._stderr_tail())
-        p.stdin.write(json.dumps(msg, sort_keys=True, separators=(",", ":")) + "\n")
-        p.stdin.flush()
         deadline = time.monotonic() + self.call_timeout
-        while True:
+        self._send((json.dumps(msg, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8"), deadline)
+        line = self._recv_frame(deadline)
+        try:
+            r = json.loads(line)
+        except ValueError:
+            self._kill()
+            raise ApiError("engine.failure", "the strategy process wrote a malformed protocol frame; its process tree was killed: "
+                           + self._stderr_tail()) from None
+        if not isinstance(r, dict):
+            self._kill()
+            raise ApiError("engine.failure", "the strategy process wrote a protocol frame that is not an object; its process tree was killed")
+        if not r.get("ok"):
+            raise ApiError("engine.failure", "the strategy raised: " + str(r.get("error")))
+        return r
+
+    def _timeout(self) -> ApiError:
+        self._kill()
+        return ApiError("policy.timeout", f"the strategy did not answer within {self.call_timeout}s; its process tree was killed")
+
+    def _send(self, data: bytes, deadline: float) -> None:
+        p = self.proc
+        assert p is not None and p.stdin is not None
+        view = memoryview(data)
+        while view:
             left = deadline - time.monotonic()
             if left <= 0:
-                self._kill()
-                raise ApiError("policy.timeout", f"the strategy did not answer within {self.call_timeout}s; its process tree was killed")
-            ready, _, _ = select.select([p.stdout], [], [], min(left, 0.5))
-            if ready:
-                line = p.stdout.readline()
-                if not line:
-                    raise ApiError("run.interrupted", "the strategy process ended: " + self._stderr_tail())
-                r = json.loads(line)
-                if not r.get("ok"):
-                    raise ApiError("engine.failure", "the strategy raised: " + str(r.get("error")))
-                return r
-            if p.poll() is not None:
+                raise self._timeout()
+            # Keep draining the child's output while we wait: a child blocked on a full stderr/stdout pipe would never
+            # get round to reading its stdin.
+            r, w, _ = select.select([p.stdout, p.stderr], [p.stdin], [], min(left, 0.5))
+            self._drain(r)
+            if w:
+                try:
+                    n = os.write(p.stdin.fileno(), view[:65536])
+                except BlockingIOError:
+                    continue
+                except (BrokenPipeError, OSError):
+                    raise ApiError("run.interrupted", "the strategy process ended: " + self._stderr_tail()) from None
+                view = view[n:]
+            elif p.poll() is not None:
                 raise ApiError("run.interrupted", "the strategy process ended: " + self._stderr_tail())
+
+    def _recv_frame(self, deadline: float) -> bytes:
+        p = self.proc
+        assert p is not None
+        while True:
+            nl = self._out.find(b"\n")
+            if nl >= 0:
+                if nl > MAX_FRAME_BYTES:
+                    break
+                line = bytes(self._out[:nl])
+                del self._out[: nl + 1]
+                if line.strip():
+                    return line
+                continue
+            if len(self._out) > MAX_FRAME_BYTES:
+                break
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise self._timeout()
+            r, _, _ = select.select([p.stdout, p.stderr], [], [], min(left, 0.5))
+            if self._drain(r) and not self._out.endswith(b"\n") and p.poll() is not None:
+                raise ApiError("run.interrupted", "the strategy process ended: " + self._stderr_tail())
+            if not r and p.poll() is not None:
+                raise ApiError("run.interrupted", "the strategy process ended: " + self._stderr_tail())
+        self._kill()
+        raise ApiError("engine.failure", f"the strategy process wrote a protocol frame over {MAX_FRAME_BYTES} bytes; its process tree was killed")
+
+    def _drain(self, ready: list) -> bool:
+        """Read whatever is available on the ready descriptors. Returns True when stdout reached end of file."""
+        p = self.proc
+        eof = False
+        if p is None:
+            return eof
+        for f in ready:
+            while True:
+                try:
+                    chunk = os.read(f.fileno(), 65536)
+                except BlockingIOError:
+                    break
+                except OSError:
+                    chunk = b""
+                if not chunk:
+                    if f is p.stdout:
+                        eof = True
+                    break
+                if f is p.stdout:
+                    self._out += chunk
+                    if len(self._out) > MAX_FRAME_BYTES + 1:
+                        break  # the caller reports the oversized frame; stop buffering
+                else:
+                    self._err += chunk
+                    if len(self._err) > STDERR_TAIL_BYTES:
+                        del self._err[: len(self._err) - STDERR_TAIL_BYTES]
+        return eof
 
     def _stderr_tail(self) -> str:
         p = self.proc
-        if p is None or p.stderr is None:
-            return ""
-        try:
-            ready, _, _ = select.select([p.stderr], [], [], 0)
-            return p.stderr.read(2000) if ready else ""
-        except Exception:  # noqa: BLE001
-            return ""
+        if p is not None and p.stderr is not None:
+            try:
+                r, _, _ = select.select([p.stderr], [], [], 0)
+                self._drain(r)
+            except Exception:  # noqa: BLE001
+                pass
+        return bytes(self._err[-2000:]).decode("utf-8", "replace")
 
     def step(self, context: dict) -> dict:
         r = self._call({"op": "step", "context": context})

@@ -17,7 +17,7 @@ from alphakeel_research import strategy as strat, workflow
 from alphakeel_research.client import Client
 from alphakeel_research.errors import ApiError
 from alphakeel_research.policy import response_doc
-from tests.fixtures.alphakeel_server import start
+from tests.fixtures.alphakeel_server import skip_or_fail, start
 
 PIN = Path(__file__).resolve().parents[1] / "alphakeel_research" / "contract" / "openapi.json"
 FIX = Path(__file__).parent / "fixtures" / "alphakeel"
@@ -34,7 +34,7 @@ def server():
 def test_schemathesis_fuzzes_every_operation_of_the_pinned_contract_against_the_live_service(server):
     schemathesis = shutil.which("schemathesis") or str(Path(sys.executable).with_name("schemathesis"))
     if not Path(schemathesis).exists():
-        pytest.skip("schemathesis is not installed")
+        skip_or_fail("schemathesis is not installed (pip install -e '.[dev,alphakeel-dev]')")
     r = subprocess.run([schemathesis, "run", str(PIN), "--url", server.url.rstrip("/"), "-H", f"Authorization: Bearer {server.token}",
                         "--checks", "not_a_server_error,status_code_conformance,content_type_conformance,response_schema_conformance",
                         "--max-examples", "25", "--phases", "fuzzing", "--workers", "1"], capture_output=True, text=True, timeout=900)

@@ -43,6 +43,10 @@ def _load(path: str):
 
 def main() -> int:
     proto = os.fdopen(os.dup(1), "w", buffering=1, encoding="utf-8")
+    # Descriptor 1 itself now points at stderr, so os.write(1, ...), child processes and native libraries that write
+    # "stdout" land in stderr too; only the duplicated descriptor above carries protocol frames.
+    sys.stdout.flush()
+    os.dup2(2, 1)
     sys.stdout = sys.stderr  # print() from the script must not corrupt the protocol channel
     script = sys.argv[1]
     mod = _load(script)

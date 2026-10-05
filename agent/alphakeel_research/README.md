@@ -21,7 +21,8 @@ python -m alphakeel_research check
 | compare two runs | `compare --a RUN --b RUN --mode fixed_intent_replay\|python_policy\|native_strategy` |
 | fault-injection demo | `inject --pack ID --intents intents.json --fault fee\|funding-sign` |
 
-`examples/walkthrough.sh` runs all of them against AlphaKeel's offline fixture server (a separate process). A pass means
+`examples/walkthrough.sh` runs all of them against AlphaKeel's offline fixture server (a separate process; set
+`ALPHAKEEL_FIXTURE_SERVER` or `ALPHAKEEL_REPO`). A pass means
 the engine execution and accounting of the submitted intents agree; it does not certify strategy logic. The policy sandbox
 is process isolation with a scrubbed environment and resource limits, not a security boundary: do not run untrusted code.
 
@@ -30,3 +31,7 @@ source only marks pack-backed data and refuses OHLCV requests (there is no fallb
 
 Contract: `contract/` is a pinned copy of AlphaKeel's OpenAPI, error codes and shared test vectors (`PIN` holds their
 hashes); `models.py` is generated from it (`gen_models.sh`), never edited by hand.
+
+Tests: `agent/tests/test_alphakeel_*.py` (install `.[dev,alphakeel-dev]`). Without the fixture server the cross-process
+tests skip; AlphaKeel's cross-project CI runs them with `ALPHAKEEL_REQUIRE_FIXTURE=1`, where a missing binary or tool
+fails instead, against the Vibe-Trading commit pinned in AlphaKeel's `ci/vibe-trading.ref`.

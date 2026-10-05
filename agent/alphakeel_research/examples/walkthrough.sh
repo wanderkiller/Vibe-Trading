@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Runs every documented command against AlphaKeel's offline fixture server (a separate process, formal HTTP interface only).
 #   ALPHAKEEL_FIXTURE_SERVER=/path/to/research_fixture_server  (cargo build --example research_fixture_server in alphakeel)
+#   or ALPHAKEEL_REPO=/path/to/alphakeel (its debug build is used)
 # Prints each command, then its JSON result. Exit status is non-zero if any command fails or any expected result is missing.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 AGENT="$(cd "$HERE/../.." && pwd)"
-BIN="${ALPHAKEEL_FIXTURE_SERVER:-/home/ubuntu/alphakeel/target/debug/examples/research_fixture_server}"
+BIN="${ALPHAKEEL_FIXTURE_SERVER:-${ALPHAKEEL_REPO:+$ALPHAKEEL_REPO/target/debug/examples/research_fixture_server}}"
+[ -n "$BIN" ] && [ -x "$BIN" ] || { echo "set ALPHAKEEL_FIXTURE_SERVER (or ALPHAKEEL_REPO) to a built research_fixture_server" >&2; exit 2; }
 PY="${PYTHON:-python3}"
 W="$(mktemp -d)"; trap 'kill "$SRV" 2>/dev/null || true; exec 3>&- 2>/dev/null || true; rm -rf "$W"' EXIT
 mkfifo "$W/stdin"; "$BIN" --dir "$W/data" --frames 61 <"$W/stdin" >"$W/info.json" 2>/dev/null & SRV=$!

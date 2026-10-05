@@ -1,8 +1,9 @@
 """Starts AlphaKeel's fixture research server (a Rust example binary) for cross-project tests.
 
 The binary is built by `cargo build --example research_fixture_server` in the AlphaKeel repository. Point
-ALPHAKEEL_FIXTURE_SERVER at it (default: the sibling checkout's debug build). Tests are skipped, with that reason,
-when it is not available; the cross-project evidence in AlphaKeel's docs records the runs where it was.
+ALPHAKEEL_FIXTURE_SERVER at it, or ALPHAKEEL_REPO at an AlphaKeel checkout (its debug build is used). Without either,
+tests are skipped with that reason; with ALPHAKEEL_REQUIRE_FIXTURE=1 (AlphaKeel's cross-project CI) a missing binary
+or tool FAILS instead, so a green run there means the cross-project tests really ran.
 """
 
 from __future__ import annotations
@@ -15,12 +16,22 @@ from pathlib import Path
 
 import pytest
 
-DEFAULT = "/home/ubuntu/alphakeel/target/debug/examples/research_fixture_server"
+def required() -> bool:
+    return os.environ.get("ALPHAKEEL_REQUIRE_FIXTURE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def skip_or_fail(reason: str) -> None:
+    """Skip locally; fail where the cross-project run must not silently skip (ALPHAKEEL_REQUIRE_FIXTURE=1)."""
+    if required():
+        pytest.fail(f"required cross-project prerequisite missing: {reason}", pytrace=False)
+    pytest.skip(reason)
 
 
 def server_binary() -> str | None:
-    p = os.environ.get("ALPHAKEEL_FIXTURE_SERVER", DEFAULT)
-    return p if Path(p).exists() else None
+    p = os.environ.get("ALPHAKEEL_FIXTURE_SERVER", "").strip()
+    if not p and os.environ.get("ALPHAKEEL_REPO", "").strip():
+        p = str(Path(os.environ["ALPHAKEEL_REPO"]) / "target" / "debug" / "examples" / "research_fixture_server")
+    return p if p and Path(p).is_file() else None
 
 
 class Fixture:
@@ -45,7 +56,8 @@ class Fixture:
 def start(frames: int = 61) -> Fixture:
     binary = server_binary()
     if binary is None:
-        pytest.skip("AlphaKeel fixture server binary not built (cargo build --example research_fixture_server)")
+        skip_or_fail("AlphaKeel fixture server binary not found: build it with `cargo build --example research_fixture_server` "
+                     "and set ALPHAKEEL_FIXTURE_SERVER (or ALPHAKEEL_REPO)")
     d = tempfile.mkdtemp(prefix="ak-fixture-")
     proc = subprocess.Popen([binary, "--dir", d, "--frames", str(frames)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     line = proc.stdout.readline()

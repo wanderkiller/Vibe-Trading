@@ -267,10 +267,20 @@ channels = [
 ]
 dev = [
     "black>=24.0,<27",
+    # agent/tests/test_alphakeel_differential.py and test_alphakeel_protocol.py import it directly.
+    "hypothesis>=6.100,<7",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-socket>=0.7.0",
     "ruff>=0.9,<1",
+]
+# Tools the AlphaKeel research-client tests need beyond `dev`. AlphaKeel's cross-project CI installs this extra and runs
+# those tests with ALPHAKEEL_REQUIRE_FIXTURE=1, where a missing tool or fixture binary fails instead of skipping.
+# Codegen output depends on both generator and formatter version: keep them equal to gen_models.sh.
+alphakeel-dev = [
+    "datamodel-code-generator==0.83.0",
+    "ruff==0.16.10",
+    "schemathesis>=4.29,<5",
 ]
 
 [tool.pytest.ini_options]

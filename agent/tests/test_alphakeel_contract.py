@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from alphakeel_research import contract as C
+from tests.fixtures.alphakeel_server import skip_or_fail
 
 ROOT = Path(__file__).resolve().parents[1] / "alphakeel_research"
 PIN_DIR = ROOT / "contract"
@@ -32,8 +33,9 @@ def test_the_pinned_contract_files_match_their_pin():
         assert hashlib.sha256((PIN_DIR / name).read_bytes()).hexdigest() == digest, name
 
 
-@pytest.mark.skipif(shutil.which("datamodel-codegen") is None, reason="datamodel-code-generator is a dev dependency")
 def test_models_are_the_current_generation_of_the_pinned_openapi(tmp_path):
+    if shutil.which("datamodel-codegen") is None:
+        skip_or_fail("datamodel-code-generator is not installed (pip install -e '.[dev,alphakeel-dev]')")
     out = tmp_path / "models.py"
     subprocess.run(
         ["datamodel-codegen", "--input", str(PIN_DIR / "openapi.json"), "--input-file-type", "openapi", "--output", str(out),

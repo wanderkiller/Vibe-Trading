@@ -83,7 +83,8 @@ def review_intents(client: Client, pack: Pack, intents: list[dict], *, profile: 
     run = client.create_run({k: v for k, v in body.items() if v is not None})
     done = client.wait_run(run["run_id"], timeout=wait)
     if done["status"] != "complete":
-        raise ApiError((done.get("error") or {}).get("code", "engine.failure"), (done.get("error") or {}).get("message", done["status"]))
+        raise ApiError((done.get("error") or {}).get("code", "engine.failure"), (done.get("error") or {}).get("message", done["status"]),
+                       job_id=done.get("run_id"))
     cmp = client.compare(reg["run_id"], done["run_id"], "fixed_intent_replay")
     report = client.wait_comparison(cmp["comparison_id"], timeout=wait)
     return {"local_run": reg["run_id"], "alphakeel_run": done["run_id"], "comparison": cmp["comparison_id"], "status": report["status"],
@@ -94,7 +95,8 @@ def native_run(client: Client, pack: Pack, rules: dict, *, profile: dict | None 
     run = client.create_run({"mode": "native_strategy", "pack_id": pack.id, "rules": rules, **({"profile": profile} if profile else {})})
     done = client.wait_run(run["run_id"], timeout=wait)
     if done["status"] != "complete":
-        raise ApiError((done.get("error") or {}).get("code", "engine.failure"), (done.get("error") or {}).get("message", done["status"]))
+        raise ApiError((done.get("error") or {}).get("code", "engine.failure"), (done.get("error") or {}).get("message", done["status"]),
+                       job_id=done.get("run_id"))
     result = json.loads(client.artifact(done["run_id"], "result.json"))
     return {"run_id": done["run_id"], "result": result, "manifest_sha256": done["manifest_sha256"], "facts_sha256": done["facts_sha256"]}
 
