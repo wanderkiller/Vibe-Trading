@@ -55,27 +55,59 @@ def pack(server, client, tmp_path_factory):
 
 
 def intent_lists(start_ms: int):
+    """Random intent sequences that stay mostly inside what both sides model (review F-P2-3: 294 of 504 generated sequences
+    were discarded as reduce_only_needs_position, so only 60 were compared). A reduce-only intent is generated only against
+    an earlier opening intent of the sequence — same contract and position_ref, opposite side, a later frame, at most the
+    opened quantity; with no open position the row becomes an opening intent. A position_ref is never re-bound to another
+    contract/side, and spot is opened long only. Rejections can still happen (margin, an IOC that does not cross) and are
+    accounted for, never counted as agreement."""
     one = st.fixed_dictionaries({
-        "k": st.integers(0, 60),
+        "k": st.integers(0, 59),
         "inst": st.sampled_from([BIN, OKX, SPOT]),
         "side": st.sampled_from(["buy", "sell"]),
         # around the 10 000 per-account balance too: 4999 + 4999 fits, 9950 sits in the maintenance band after a fill
         "qty": st.sampled_from(["1", "10", "33.333", "0.5", "250", "4999", "9950", "9999", "10001", "0.00000001", "0.000000019"]),
         "kind": st.sampled_from(["market", "ioc_cross", "ioc_away"]),
         "reduce": st.booleans(),
+        "pick": st.integers(0, 7),
         "ref": st.sampled_from([None, "p0", "p1"]),
     })
 
+    def price(kind, side):
+        if kind == "ioc_cross":
+            return "1.5" if side == "buy" else "0.5"
+        if kind == "ioc_away":
+            return "0.5" if side == "buy" else "1.5"
+        return None
+
     def build(rows):
         out = []
+        bound: dict[str, tuple[str, str]] = {}  # position_ref -> (instrument key, side)
+        held: list[dict] = []  # opening intents that can be reduced: {inst, side, qty, ref, k}
         for i, r in enumerate(sorted(rows, key=lambda r: r["k"])):
-            px = None
-            if r["kind"] == "ioc_cross":
-                px = "1.5" if r["side"] == "buy" else "0.5"
-            elif r["kind"] == "ioc_away":
-                px = "0.5" if r["side"] == "buy" else "1.5"
-            out.append({"intent_id": f"i{i}", "decision_time_ms": start_ms + 60_000 * r["k"], "instrument": r["inst"], "side": r["side"], "qty": r["qty"],
-                        "order_type": "market" if r["kind"] == "market" else "limit_ioc", "limit_price": px, "reduce_only": r["reduce"], "position_ref": r["ref"]})
+            k, inst, side, qty, kind, ref = r["k"], r["inst"], r["side"], r["qty"], r["kind"], r["ref"]
+            candidates = [h for h in held if h["k"] < k]
+            if r["reduce"] and candidates:
+                h = candidates[r["pick"] % len(candidates)]
+                q = min(Decimal(qty), h["qty"])
+                h["qty"] -= q
+                if h["qty"] <= 0:
+                    held.remove(h)
+                rside = "sell" if h["side"] == "buy" else "buy"
+                out.append({"intent_id": f"i{i}", "decision_time_ms": start_ms + 60_000 * k, "instrument": h["inst"], "side": rside,
+                            "qty": format(q, "f"), "order_type": "market" if kind == "market" else "limit_ioc",
+                            "limit_price": price(kind, rside), "reduce_only": True, "position_ref": h["ref"]})
+                continue
+            if inst is SPOT:
+                side = "buy"  # spot cannot be sold short
+            key = json.dumps(inst, sort_keys=True)
+            if ref is not None and bound.setdefault(ref, (key, side)) != (key, side):
+                ref = None
+            out.append({"intent_id": f"i{i}", "decision_time_ms": start_ms + 60_000 * k, "instrument": inst, "side": side, "qty": qty,
+                        "order_type": "market" if kind == "market" else "limit_ioc", "limit_price": price(kind, side),
+                        "reduce_only": False, "position_ref": ref})
+            if kind != "ioc_away" and (ref is not None or inst is SPOT):
+                held.append({"inst": inst, "side": side, "qty": Decimal(qty), "ref": ref, "k": k})
         return out
 
     return st.lists(one, min_size=1, max_size=5).map(build)
@@ -86,7 +118,7 @@ def test_simulator_and_engine_agree_on_random_intent_sequences(server, client, p
     tally: dict[str, int] = {"generated": 0, "agreed": 0}
     excluded: dict[str, int] = {}
 
-    @settings(max_examples=60, deadline=None, derandomize=True, suppress_health_check=list(HealthCheck))
+    @settings(max_examples=320, deadline=None, derandomize=True, suppress_health_check=list(HealthCheck))
     @given(intent_lists(server.start_ms))
     def prop(intents):
         tally["generated"] += 1
@@ -109,7 +141,8 @@ def test_simulator_and_engine_agree_on_random_intent_sequences(server, client, p
     prop()
     summary = {**tally, "excluded": excluded}
     print("differential summary:", json.dumps(summary, sort_keys=True))
-    assert tally["agreed"] >= 5, f"too few sequences were accepted by both sides for the property to mean anything: {summary}"
+    # The property means something only if most generated sequences are actually compared (review F-P2-3: 60 of 504).
+    assert tally["agreed"] >= 200, f"too few sequences were accepted by both sides for the property to mean anything: {summary}"
 
 
 def test_simulator_unit_golds(server, client, pack):
