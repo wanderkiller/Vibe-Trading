@@ -124,3 +124,53 @@ def test_simulator_unit_golds(server, client, pack):
     r = workflow.python_replay(pack, profile, intents, run_id="gold").result
     # buy at the ask 1, sell at the bid 0.999: price pnl -0.1, fees 0.05 + 0.04995 = 0.09995, no boundary is crossed
     assert r["amounts"]["price_pnl"] == "-0.1" and r["amounts"]["fees"] == "0.09995" and r["amounts"]["funding"] == "0"
+
+
+def _statuses(rev):
+    """order_result status per intent id from the local (Python) evidence of a review."""
+    out = {}
+    for line in (open(f"{rev['run_dir']}/events.jsonl", encoding="utf-8").read().splitlines()[1:]):
+        e = json.loads(line)
+        if e["kind"] == "order_result":
+            out[e["intent_id"]] = (e["data"]["status"], e["data"]["reason_code"], e["order_id"])
+    return out
+
+
+def _open(iid, t, inst, side, qty, ref):
+    return {"intent_id": iid, "decision_time_ms": t, "instrument": inst, "side": side, "qty": qty, "order_type": "market",
+            "limit_price": None, "reduce_only": False, "position_ref": ref}
+
+
+def test_same_instant_opening_orders_are_checked_cumulatively_per_account_like_the_engine(server, client, pack, tmp_path):
+    t = server.start_ms
+    # 10 000 per venue account. Leverage 1: 6000 fits, the next 5000 (cumulative 11 000) is not submitted and is not counted,
+    # so a later 4000 (6000 + 4000 = 10 000) still fits; the OKX account is separate and unaffected.
+    intents = [_open("a", t, BIN, "buy", "6000", "pa"), _open("b", t, BIN, "buy", "5000", "pb"), _open("c", t, BIN, "buy", "4000", "pc"),
+               _open("d", t, OKX, "sell", "6000", "pd")]
+    rev = workflow.review_intents(client, pack, intents, profile={"leverage_perp": "1"}, cache_run_dir=tmp_path)
+    assert rev["report"]["passed"], json.dumps(rev["report"]["first_difference"], indent=1)
+    st = _statuses(rev)
+    assert st["a"][0] == "filled" and st["c"][0] == "filled" and st["d"][0] == "filled"
+    assert st["b"] == ("not_submitted", "not_submitted", None), "a refused order never reached the engine: no order id"
+
+
+def test_perpetual_initial_margin_is_notional_over_leverage_in_the_same_instant_check(server, client, pack, tmp_path):
+    t = server.start_ms
+    # leverage 2: 6000 / 2 + 5000 / 2 = 5500 <= 10 000, so both fit (the engine's own per-order check still sees 6000 and 5000 each)
+    intents = [_open("a", t, BIN, "buy", "6000", "pa"), _open("b", t, BIN, "buy", "5000", "pb")]
+    rev = workflow.review_intents(client, pack, intents, profile={"leverage_perp": "2"}, cache_run_dir=tmp_path)
+    assert rev["report"]["passed"], json.dumps(rev["report"]["first_difference"], indent=1)
+    assert {k: v[0] for k, v in _statuses(rev).items()} == {"a": "filled", "b": "filled"}
+
+
+def test_the_profile_is_v2_and_a_document_without_the_field_is_the_retired_per_order_rule(client, pack):
+    prof = client.render_profile(pack.id, "fixed_intent_replay")["profile"]
+    assert prof["profile_id"] == "ak-top-of-book-ioc-taker-v2"
+    assert prof["account"]["same_instant_margin"] == "cumulative_initial_margin"
+    from alphakeel_research.sim import Simulator
+    from alphakeel_research.packfile import Inst
+
+    legacy = json.loads(json.dumps(prof))
+    del legacy["account"]["same_instant_margin"]
+    assert Simulator(pack, legacy, [Inst.parse(BIN)], run_id="legacy").margin_rule == "per_order_engine"
+    assert Simulator(pack, prof, [Inst.parse(BIN)], run_id="v2").margin_rule == "cumulative_initial_margin"

@@ -263,6 +263,11 @@ class ExecutionProfileAccountPositionMode(StrEnum):
     hedging = "hedging"
 
 
+class ExecutionProfileAccountSameInstantMargin(StrEnum):
+    per_order_engine = "per_order_engine"
+    cumulative_initial_margin = "cumulative_initial_margin"
+
+
 class ExecutionProfileDecisionClockKind(StrEnum):
     scan = "scan"
 
@@ -976,6 +981,7 @@ class ExecutionProfileAccount(BaseModel):
     liquidation: ExecutionProfileAccountLiquidation
     margin_mode: ExecutionProfileAccountMarginMode
     position_mode: ExecutionProfileAccountPositionMode
+    same_instant_margin: ExecutionProfileAccountSameInstantMargin | None = None
     starting_balance_per_venue: PDec
 
 

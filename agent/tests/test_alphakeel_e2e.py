@@ -271,13 +271,14 @@ def test_a_policy_that_reacts_to_a_denied_order_gets_the_engines_real_state_in_b
     d = tmp_path / "retry_policy"
     shutil.copytree(FIX / "retry_policy", d)
     t_close = server.start_ms + server.hour_ms
-    # 150 USDT per venue: the big order (200) is denied by the engine, the small one (100) fills.
+    # 150 USDT per venue: the big order (200) exceeds the free balance, so the same-instant margin check does not submit it
+    # (status "not_submitted", profile v2); the small one (100) fills.
     r = policy_flow.run_both(client, pack, str(d), [BIN], profile={"starting_balance_per_venue": "150"}, seed=1,
                              parameters={"big": "200", "small": "100", "close_at_ms": t_close}, work=tmp_path / "work")
     assert r["passed"] is True, json.dumps(r, indent=1)
     s1 = client.get_step(r["alphakeel_run"], 1)
     statuses = {x["intent_id"]: x["status"] for x in s1["context"]["last_results"]}
-    assert statuses == {"i-big": "denied"} and s1["context"]["positions"] == []
+    assert statuses == {"i-big": "not_submitted"} and s1["context"]["positions"] == []
     s2 = client.get_step(r["alphakeel_run"], 2)
     assert [p["position_ref"] for p in s2["context"]["positions"]] == ["small"]
 

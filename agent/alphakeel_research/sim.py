@@ -1,4 +1,4 @@
-"""Independent Decimal simulator of the AlphaKeel execution profile ``ak-top-of-book-ioc-taker-v1``.
+"""Independent Decimal simulator of the AlphaKeel execution profile ``ak-top-of-book-ioc-taker-v2``.
 
 This is a SEPARATE implementation (not the Rust engine, not Nautilus): orders are immediate-or-cancel at the scan's
 best bid/ask, taker fees per fill, per-venue/currency accounts, funding settled at each venue's boundary on the last
@@ -13,11 +13,22 @@ Facts it reproduces from the engine (found by probing the engine, documented in 
 rounded to 1e-8 half-even; an opening order is denied when its notional (leverage does not reduce it) exceeds the
 account's free balance, i.e. its total balance minus the maintenance margin of the positions open in that account, and
 position-reducing orders skip that check; orders at the same decision time are all checked against the account as it was
-before any of them filled. Where the outcome depends on what is not modelled exactly (the price basis of the maintenance
-margin, or same-time orders whose sequential outcome would differ from that before-batch check) the simulator refuses
-with ``Unsupported`` instead of picking a side; IOC limit orders fill at the touch when marketable and are cancelled otherwise;
-the funding rate of a boundary is the last predicted rate reported for it (or the official event when the profile says
-so); the settlement price is the last mark seen at or before the boundary.
+before any of them filled.
+
+Same-instant margin (profile v2, ``account.same_instant_margin == "cumulative_initial_margin"``): before an opening order is
+submitted, the initial margin of the opening orders of one decision instant on one account (venue x settlement currency;
+perpetual: notional / leverage, spot: full notional; market orders at the touch, limit orders at the limit; fees not
+included) is accumulated in submission order and compared with the account's free balance before the first of them. An
+order that would push the total over it is not submitted (status ``not_submitted``, no order id) and does not count towards
+the total; reduce-only orders are neither checked nor counted. Orders that pass go to the engine, which checks each one
+against the same before-batch account, so no sequential-fill outcome has to be guessed for them. A profile document without
+the field is the retired v1 rule (``per_order_engine``): no cumulative check, and same-time orders whose sequential outcome
+would differ from the before-batch check are refused with ``Unsupported``.
+
+Where the outcome depends on what is not modelled exactly (the price basis of the maintenance margin, which makes the free
+balance a band) the simulator refuses with ``Unsupported`` instead of picking a side; IOC limit orders fill at the touch when
+marketable and are cancelled otherwise; the funding rate of a boundary is the last predicted rate reported for it (or the
+official event when the profile says so); the settlement price is the last mark seen at or before the boundary.
 """
 
 from __future__ import annotations
@@ -171,6 +182,12 @@ class Simulator:
         self.maint_margin: Decimal | None = Decimal(mm) if mm not in (None, "") else None
         # per account: (decision ns, the account as it was before the first order of that decision time)
         self._batch: dict[tuple[str, str], tuple[int, tuple]] = {}
+        # same-instant margin rule: "cumulative_initial_margin" (profile v2) or the retired "per_order_engine" (documents without the field)
+        self.margin_rule: str = profile["account"].get("same_instant_margin") or "per_order_engine"
+        if self.margin_rule not in ("cumulative_initial_margin", "per_order_engine"):
+            raise ApiError("capability.profile", f"same_instant_margin {self.margin_rule!r} is not modelled")
+        # per account: (decision ns, initial margin of the opening orders already admitted at that instant)
+        self._instant: dict[tuple[str, str], tuple[int, Decimal]] = {}
         self.fee_rate = {i: Decimal(fees["fees"][i.venue]["perp" if i.market == "perp" else "spot"]) for i in self.insts}
         self.instr_meta = pack.instruments()
         self.frames = pack.frames(include_warmup=False)
@@ -415,8 +432,8 @@ class Simulator:
         base_data = {"requested_qty": dstr(rec.qty), "effective_qty": dstr(qty_eff), "requested_price": None if rec.limit is None else dstr(rec.limit),
                      "effective_price": None if limit_eff is None else dstr(limit_eff), "adjustments": adj}
 
-        def result(status: str, filled: Decimal, code: str | None, reason: str | None, avg: Decimal | None = None) -> dict:
-            self._emit(ns, 6, "order_result", inst=inst, pair_id=rec.pair_id, intent_id=rec.intent_id, order_id=oid, position_ref=ref,
+        def result(status: str, filled: Decimal, code: str | None, reason: str | None, avg: Decimal | None = None, with_order_id: bool = True) -> dict:
+            self._emit(ns, 6, "order_result", inst=inst, pair_id=rec.pair_id, intent_id=rec.intent_id, order_id=oid if with_order_id else None, position_ref=ref,
                        data={**base_data, "status": status, "filled_qty": dstr(filled), "reason_code": code, "reason": reason})
             return {"intent_id": rec.intent_id, "status": status, "filled_qty": dstr(filled), "avg_price": None if avg is None else dstr(avg),
                     "reason_code": code}
@@ -464,12 +481,21 @@ class Simulator:
             batch = (ns, self._margin_state(acct))
             self._batch[acct] = batch
         engine = self._margin_verdict(rec, qty_eff, need, batch[1])  # the engine checks against the before-batch account
-        sequential = self._margin_verdict(rec, qty_eff, need, self._margin_state(acct))
-        if engine is None or sequential is None:
-            raise Unsupported("the order's margin falls inside the open-position maintenance-margin band, whose price basis is not modelled")
-        if engine != sequential:
-            raise Unsupported("several orders on one account at the same decision time: the engine checks each against the balance "
-                              "before any of them fill, which would accept or deny differently from filling them in order; not modelled")
+        if self.margin_rule == "cumulative_initial_margin":
+            if not rec.reduce_only:
+                refusal = self._cumulative_refusal(acct, inst, need, ns, batch[1])
+                if refusal is not None:
+                    # not submitted to the engine: no order id, no fill; the order does not count towards the instant's total
+                    return result("not_submitted", Decimal(0), "not_submitted", refusal, with_order_id=False)
+            if engine is None:
+                raise Unsupported("the order's margin falls inside the open-position maintenance-margin band, whose price basis is not modelled")
+        else:
+            sequential = self._margin_verdict(rec, qty_eff, need, self._margin_state(acct))
+            if engine is None or sequential is None:
+                raise Unsupported("the order's margin falls inside the open-position maintenance-margin band, whose price basis is not modelled")
+            if engine != sequential:
+                raise Unsupported("several orders on one account at the same decision time: the engine checks each against the balance "
+                                  "before any of them fill, which would accept or deny differently from filling them in order; not modelled")
         if not engine:
             return result("denied", Decimal(0), "denied", "insufficient free balance for the initial margin")
         # marketability
@@ -537,6 +563,25 @@ class Simulator:
             if hi is not None:
                 hi += q * max(pxs) * rate
         return (total, lo, hi, longs, shorts)
+
+    def _cumulative_refusal(self, acct: tuple[str, str], inst: Inst, need: Decimal, ns: int, state: tuple) -> str | None:
+        """Profile v2 same-instant check. None = admitted (and counted); a message = the order is not submitted.
+
+        The free balance of the account before the first order of this instant lies between ``total - hi`` and ``total - lo``
+        (the maintenance-margin price basis is not modelled); an outcome that depends on where in that band it lies is refused.
+        """
+        initial = need / self.leverage if (inst.market == "perp" and self.leverage > 1) else need
+        cur = self._instant.get(acct)
+        used = cur[1] if cur is not None and cur[0] == ns else Decimal(0)
+        total_used = used + initial
+        total, lo, hi, _, _ = state
+        if hi is not None and total_used <= total - hi:
+            self._instant[acct] = (ns, total_used)
+            return None
+        if total_used > total - lo:
+            return (f"same-instant margin: cumulative opening notional {dstr(total_used)} on {acct[0]}/{acct[1]} "
+                    "exceeds the free balance at the decision instant")
+        raise Unsupported("the cumulative same-instant margin falls inside the open-position maintenance-margin band, whose price basis is not modelled")
 
     @staticmethod
     def _margin_verdict(rec: "IntentRec", qty: Decimal, need: Decimal, state: tuple) -> bool | None:
@@ -746,7 +791,11 @@ class Simulator:
             "limitations": ["Independent Decimal simulation of the AlphaKeel execution profile; scan snapshots only, no depth, queue or impact.",
                             "Margin: an opening order is denied when its notional exceeds the account's free balance (total minus open-position "
                             "maintenance margin), checked against the account before any same-time order fills (as observed in the engine); "
-                            "orders in the maintenance-margin band or whose same-time outcome would differ are refused, not guessed."],
+                            + ("opening orders of one decision instant are first checked cumulatively per account (perpetual: notional / leverage, "
+                               "spot: full notional; fees not included): an order over the free balance is not submitted. "
+                               if self.margin_rule == "cumulative_initial_margin" else
+                               "orders whose same-time outcome would differ from that check are refused, not guessed. ")
+                            + "Orders inside the maintenance-margin band are refused, not guessed."],
             "event_log": {"name": "events.jsonl", "sha256": events_sha, "count": n_events}, "problems": problems,
         }
         return res

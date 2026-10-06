@@ -68,7 +68,7 @@ def manifest(directory: str | Path, *, entry: str = "strategy.py", name: str, co
         "entry": {"script": entry, **({"initialize": "initialize", "on_step": "on_step"} if contract_kind == "policy" else {})},
         "parameters": parameters or {}, "requires": {"fields": requires_fields or ["quotes"], "history_len": history_len},
         "supports": {"modes": modes or (["python_policy", "fixed_intent_replay"] if contract_kind == "policy" else ["fixed_intent_replay"]),
-                     "profile_ids": profile_ids or ["ak-top-of-book-ioc-taker-v1"]},
+                     "profile_ids": profile_ids or ["ak-top-of-book-ioc-taker-v2"]},
         "files": listing, "dependency_lock_sha256": lock_sha, "interpreter": f"CPython {platform.python_version()}", "seed": seed,
     }
     return m, bundle

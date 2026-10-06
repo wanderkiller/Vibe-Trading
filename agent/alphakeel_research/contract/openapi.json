@@ -1874,6 +1874,16 @@
           "position_mode": {
             "$ref": "#/components/schemas/ExecutionProfileAccountPositionMode"
           },
+          "same_instant_margin": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionProfileAccountSameInstantMargin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "starting_balance_per_venue": {
             "$ref": "#/components/schemas/PDec"
           }
@@ -1910,6 +1920,14 @@
       "ExecutionProfileAccountPositionMode": {
         "enum": [
           "hedging"
+        ],
+        "type": "string"
+      },
+      "ExecutionProfileAccountSameInstantMargin": {
+        "description": "同一决策时刻多张开仓单的保证金检查（docs/37 §4a）。缺省（旧口径文档没有该字段）= `per_order_engine`。",
+        "enum": [
+          "per_order_engine",
+          "cumulative_initial_margin"
         ],
         "type": "string"
       },

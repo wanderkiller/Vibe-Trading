@@ -49,6 +49,10 @@ def pack_digest(lock: dict) -> str:
     v = json.loads(json.dumps(lock))
     for k in ("pack_id", "pack_sha256", "created_ms"):
         v.pop(k, None)
+    # The service digests ``scans``/``sources``/``funding``/``datasets`` after indexing them mutably, which materialises an
+    # absent key as null (a scan pack has no ``datasets``). Existing pack ids depend on it, so the digest must include it.
+    for k in ("scans", "sources", "funding", "datasets"):
+        v.setdefault(k, None)
     if isinstance(v.get("scans"), dict):  # null for dataset packs (no scan frames)
         v["scans"].pop("committed_last_seq", None)
     for s in v.get("sources", []):

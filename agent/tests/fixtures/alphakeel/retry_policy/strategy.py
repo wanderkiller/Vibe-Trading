@@ -1,4 +1,5 @@
-"""Fixture policy that depends on execution feedback: if the large opening order was denied, retry with a smaller one."""
+"""Fixture policy that depends on execution feedback: if the large opening order was refused (denied by the engine, or not
+submitted by the same-instant margin check), retry with a smaller one."""
 
 BIN = {"venue": "binance", "market": "perp", "symbol": "BTCUSDT"}
 
@@ -11,7 +12,7 @@ def on_step(ctx, state):
     t = ctx["time_ms"]
     st = dict(state)
     intents = []
-    denied = [r for r in ctx["last_results"] if r["status"] in ("denied", "rejected")]
+    denied = [r for r in ctx["last_results"] if r["status"] in ("denied", "rejected", "not_submitted")]
     if st["phase"] == "try_big":
         intents = [{"intent_id": "i-big", "decision_time_ms": t, "instrument": BIN, "side": "buy", "qty": st["big"], "order_type": "limit_ioc",
                     "limit_price": "1", "reduce_only": False, "position_ref": "big"}]
