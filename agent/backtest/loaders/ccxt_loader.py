@@ -17,6 +17,8 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
+from backtest.funding_settlements import attach_settlements
+
 from backtest.loaders.base import (
     cached_loader_fetch,
     check_budget,
@@ -54,7 +56,6 @@ _TIMEFRAME_DELTA = {
 # scheduling is delegated to :mod:`backtest.loaders.base`.
 _CCXT_TIMEOUT_MS = positive_env_int("CCXT_TIMEOUT_MS", 15_000)
 _CCXT_FETCH_BUDGET_S = positive_env_float("CCXT_FETCH_BUDGET_S", 60.0)
-_FUNDING_HOURS = {0, 8, 16}
 
 
 def _parse_ccxt_symbol(code: str) -> tuple[str, str]:
@@ -348,20 +349,18 @@ class DataLoader:
         funding = cls._fetch_funding_history(exchange, symbol, since_ms, end_ms)
         if funding.index.has_duplicates:
             raise ValueError(f"duplicate funding settlement for {symbol}")
-        required = result.index[result.index.hour.isin(_FUNDING_HOURS)]
-        missing = required.difference(funding.index)
-        if not missing.empty:
-            raise ValueError(
-                f"funding settlement data is missing for {symbol}: "
-                f"{', '.join(str(ts) for ts in missing)}"
-            )
-
-        result["funding_rate"] = 0.0
-        result["funding_settlement_time"] = pd.NaT
-        aligned = funding.index.intersection(result.index)
-        if not aligned.empty:
-            result.loc[aligned, "funding_rate"] = funding.loc[aligned, "funding_rate"]
-            result.loc[aligned, "funding_settlement_time"] = aligned
+        # Every 00/08/16 UTC settlement between the first and the last bar open must be present (also the ones that
+        # fall inside a daily bar: the old check only required those on a bar open and then dropped the others).
+        if not result.empty:
+            grid = pd.date_range(result.index[0].ceil("8h"), result.index[-1], freq="8h")
+            missing = grid.difference(funding.index)
+            if not missing.empty:
+                raise ValueError(
+                    f"funding settlement data is missing for {symbol}: "
+                    f"{', '.join(str(ts) for ts in missing)}"
+                )
+        events = [(int(ts.value // 1_000_000), float(r)) for ts, r in funding["funding_rate"].items()]
+        result = attach_settlements(result, events)
 
         if bracket_artifact is not None:
             brackets, version = _validate_bracket_artifact(

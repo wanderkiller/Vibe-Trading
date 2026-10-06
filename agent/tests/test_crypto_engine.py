@@ -3,8 +3,8 @@
 Validates:
   - 24/7 execution (no direction/time restrictions)
   - Fractional position sizing
-  - Maker/Taker fee separation
-  - Funding fee settlement (every 8 hours)
+  - Taker fee on every fill (IOC), exit fee in the valuation
+  - Funding at real settlement instants, pre-fill, from settlement data for perpetuals
   - Forced liquidation (maintenance margin check)
   - Tiered maintenance margin rates
 """
@@ -19,8 +19,8 @@ import pytest
 
 from backtest.engines.crypto import CryptoEngine
 from backtest.engines._market_hooks import (
-    FUNDING_HOURS as _FUNDING_HOURS,
     _maintenance_rate,
+    funding_instants_between,
 )
 from backtest.models import Position
 
@@ -215,7 +215,7 @@ class TestRoundSize:
 
 
 # ---------------------------------------------------------------------------
-# calc_commission: maker/taker
+# calc_commission: taker on every fill (B-P1-1: closes used to be charged maker)
 # ---------------------------------------------------------------------------
 
 
@@ -226,17 +226,24 @@ class TestCommission:
         # 1 BTC × $60000 × 0.0005 = $30
         assert comm == pytest.approx(30.0)
 
-    def test_close_uses_maker(self) -> None:
+    def test_close_is_an_ioc_taker_fill_too(self) -> None:
         engine = _make_engine(taker_rate=0.0005, maker_rate=0.0002)
         comm = engine.calc_commission(1.0, 60000.0, 1, is_open=False)
-        # 1 BTC × $60000 × 0.0002 = $12
-        assert comm == pytest.approx(12.0)
+        # was 1 × 60000 × 0.0002 = $12 (maker); a market/IOC exit pays taker: $30
+        assert comm == pytest.approx(30.0)
 
-    def test_taker_higher_than_maker(self) -> None:
-        engine = _make_engine()
-        open_comm = engine.calc_commission(1.0, 60000.0, 1, is_open=True)
-        close_comm = engine.calc_commission(1.0, 60000.0, 1, is_open=False)
-        assert open_comm > close_comm
+    def test_equity_is_valued_net_of_the_exit_fee(self) -> None:
+        engine = _make_engine(taker_rate=0.0005, slippage=0.0)
+        dates = pd.date_range("2025-01-01", periods=2, freq="1h")
+        engine.positions["BTC-USDT"] = Position("BTC-USDT", 1, 60000.0, dates[0], 1.0, leverage=10.0)
+        engine.capital = 100_000.0
+        close = pd.DataFrame({"BTC-USDT": [60000.0, 60000.0]}, index=dates)
+        engine._close_arr = close.values
+        engine._val_arr = close.values
+        engine._code_to_col = {"BTC-USDT": 0}
+        engine._bar_idx = 1
+        # cash 100 000 + margin 6 000 + pnl 0 − exit taker fee 1 × 60 000 × 0.0005 = 30
+        assert engine._calc_equity(close, dates[1]) == pytest.approx(106_000.0 - 30.0)
 
 
 # ---------------------------------------------------------------------------
@@ -259,141 +266,115 @@ class TestSlippage:
 # ---------------------------------------------------------------------------
 
 
+def _perp_frame(dates: pd.DatetimeIndex, rates: list[float], settled: list) -> pd.DataFrame:
+    return pd.DataFrame(
+        {"open": [60000.0] * len(dates), "high": [60000.0] * len(dates), "low": [60000.0] * len(dates),
+         "close": [60000.0] * len(dates), "volume": [1.0] * len(dates), "funding_rate": rates,
+         "funding_settlement_time": pd.to_datetime(settled), "funding_settlements": [0 if pd.isna(x) else 1 for x in settled]},
+        index=dates,
+    )
+
+
+def _settle_all(engine, code, frame, position):
+    """Drive the pre-fill funding hook over every bar with a position held from before the first bar."""
+    engine.positions[code] = position
+    engine._funding.prepare({code: frame}, [code])
+    before = engine.capital
+    for ts in frame.index:
+        engine.before_rebalance_bar(ts, {code: frame}, [code])
+    return before - engine.capital
+
+
 class TestFundingFee:
-    def test_funding_deducted_at_settlement_hour(self) -> None:
-        engine = _make_engine(funding_rate=0.0001, interval="1H")
-        engine.positions["BTC-USDT"] = Position(
-            "BTC-USDT", 1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0,
-        )
-        initial_capital = engine.capital
-        bar = _make_bar(close=60000.0)
-        ts = pd.Timestamp("2025-01-01 08:00:00")  # settlement hour
-        engine.on_bar("BTC-USDT", bar, ts)
-        # Long pays: 1.0 × 60000 × 0.0001 × 1(long) = $6
-        assert engine.capital == pytest.approx(initial_capital - 6.0)
+    """B-P1-1: funding is charged at the real settlement instants, whatever the bar span."""
 
-    def test_non_settlement_hour_applies_daily_fallback(self) -> None:
-        """Daily interval settles 3x per day (span-based count, #1290)."""
-        engine = _make_engine(funding_rate=0.0001)
-        engine.positions["BTC-USDT"] = Position(
-            "BTC-USDT", 1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0,
-        )
-        initial_capital = engine.capital
-        bar = _make_bar(close=60000.0)
-        ts = pd.Timestamp("2025-01-01 05:00:00")  # not settlement hour
-        engine.on_bar("BTC-USDT", bar, ts)
-        # Daily bars settle 3x per bar regardless of which hour the bar prints
-        assert engine.capital == pytest.approx(initial_capital - 18.0)
+    @pytest.mark.parametrize("freq,bars", [("15min", 96 * 2), ("1h", 48), ("4h", 12), ("1D", 2)])
+    def test_a_fixed_rate_proxy_settles_three_times_a_day_for_every_bar_span(self, freq, bars) -> None:
+        engine = _make_engine(funding_rate=0.0001, interval=freq)
+        dates = pd.date_range("2025-01-01", periods=bars + 1, freq=freq)  # opens over exactly two days
+        frame = pd.DataFrame({"open": [60000.0] * len(dates), "close": [60000.0] * len(dates)}, index=dates)
+        paid = _settle_all(engine, "BTC-USDT", frame, Position("BTC-USDT", 1, 60000.0, pd.Timestamp("2024-12-31"), 1.0, leverage=10.0))
+        # settlements in (first open, last open] = 2025-01-01 08:00, 16:00, 01-02 00:00, 08:00, 16:00, 01-03 00:00 → 6
+        # (the old hook charged a 1H/4H/15m bar 4× a day: three slots plus a "daily fallback")
+        assert paid == pytest.approx(6 * 6.0)
+        assert engine._funding.settlements == 6
 
-    def test_short_receives_funding(self) -> None:
-        engine = _make_engine(funding_rate=0.0001)
-        engine.positions["BTC-USDT"] = Position(
-            "BTC-USDT", -1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0,
-        )
-        initial_capital = engine.capital
-        bar = _make_bar(close=60000.0)
-        ts = pd.Timestamp("2025-01-01 08:00:00")
-        engine.on_bar("BTC-USDT", bar, ts)
-        # Short: direction=-1, fee = notional × rate × direction = negative → capital increases
-        assert engine.capital > initial_capital
+    def test_funding_instants_are_the_utc_grid_in_the_half_open_interval(self) -> None:
+        got = funding_instants_between(pd.Timestamp("2025-01-01 00:00"), pd.Timestamp("2025-01-01 16:00"))
+        assert got == [pd.Timestamp("2025-01-01 08:00"), pd.Timestamp("2025-01-01 16:00")]
+        assert funding_instants_between(pd.Timestamp("2025-01-01 07:59"), pd.Timestamp("2025-01-01 08:00")) == [pd.Timestamp("2025-01-01 08:00")]
+        assert funding_instants_between(pd.Timestamp("2025-01-01 08:00"), pd.Timestamp("2025-01-01 15:59")) == []
 
-    def test_no_double_settlement(self) -> None:
-        engine = _make_engine(funding_rate=0.0001)
-        engine.positions["BTC-USDT"] = Position(
-            "BTC-USDT", 1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0,
-        )
-        bar = _make_bar(close=60000.0)
-        ts = pd.Timestamp("2025-01-01 08:00:00")
-        engine.on_bar("BTC-USDT", bar, ts)
-        capital_after_first = engine.capital
-        # Call again at same hour — should not deduct again
-        engine.on_bar("BTC-USDT", bar, ts)
-        assert engine.capital == capital_after_first
+    def test_a_short_receives_and_no_position_pays_nothing(self) -> None:
+        engine = _make_engine(funding_rate=0.0001, interval="8h")
+        dates = pd.date_range("2025-01-01", periods=2, freq="8h")
+        frame = pd.DataFrame({"open": [60000.0] * 2, "close": [60000.0] * 2}, index=dates)
+        paid = _settle_all(engine, "BTC-USDT", frame, Position("BTC-USDT", -1, 60000.0, pd.Timestamp("2024-12-31"), 1.0, leverage=10.0))
+        assert paid == pytest.approx(-6.0)
+        empty = _make_engine(funding_rate=0.0001, interval="8h")
+        empty._funding.prepare({"BTC-USDT": frame}, ["BTC-USDT"])
+        for ts in dates:
+            empty.before_rebalance_bar(ts, {"BTC-USDT": frame}, ["BTC-USDT"])
+        assert empty.capital == 100_000
 
-    def test_no_funding_without_position(self) -> None:
-        engine = _make_engine()
-        initial_capital = engine.capital
-        bar = _make_bar()
-        ts = pd.Timestamp("2025-01-01 08:00:00")
-        engine.on_bar("BTC-USDT", bar, ts)
-        assert engine.capital == initial_capital
+    def test_a_perpetual_without_settlement_data_is_refused_not_charged_a_default_rate(self) -> None:
+        engine = _make_engine(funding_rate=0.0001, interval="1h")
+        dates = pd.date_range("2025-01-01", periods=3, freq="1h")
+        plain = pd.DataFrame({"open": [1.0] * 3, "close": [1.0] * 3}, index=dates)
+        for code in ("BTC-USDT-PERP", "okx:perp:BTC-USDT-SWAP", "BTC-USDT-SWAP"):
+            with pytest.raises(ValueError, match="no funding settlement data"):
+                engine._funding.prepare({code: plain}, [code])
 
-    def test_daily_bars_apply_each_day(self) -> None:
-        """Regression: daily bars (all hour=0) must apply funding every day, not just day 1."""
-        engine = _make_engine(funding_rate=0.0001)
-        engine.positions["BTC-USDT"] = Position(
-            "BTC-USDT", 1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0,
-        )
-        bar = _make_bar(close=60000.0)
-        initial = engine.capital
 
-        # Day 1
-        engine.on_bar("BTC-USDT", bar, pd.Timestamp("2025-01-01"))
-        after_day1 = engine.capital
-        assert after_day1 < initial  # fee deducted
+class TestHistoricalFundingRate:
+    def test_settlement_data_is_charged_at_the_bar_that_first_opens_after_it(self) -> None:
+        engine = _make_engine(funding_rate=0.0001, interval="1h")
+        dates = pd.date_range("2025-01-01 06:00", periods=4, freq="1h")  # opens 06, 07, 08, 09
+        frame = _perp_frame(dates, [0.0, 0.0, 0.0005, 0.0], [None, None, "2025-01-01 08:00", None])
+        paid = _settle_all(engine, "BTC-USDT-PERP", frame, Position("BTC-USDT-PERP", 1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0))
+        assert paid == pytest.approx(30.0)  # 1 × 60000 × 0.0005, exactly once, no fixed-rate "fallback"
+        assert engine._funding.models == {"BTC-USDT-PERP": "settlement_data"}
 
-        # Day 2 (same hour=0, different date)
-        engine.on_bar("BTC-USDT", bar, pd.Timestamp("2025-01-02"))
-        after_day2 = engine.capital
-        assert after_day2 < after_day1  # fee deducted again
+    def test_negative_settled_funding_pays_longs(self) -> None:
+        engine = _make_engine(interval="1h")
+        dates = pd.date_range("2025-01-01 07:00", periods=2, freq="1h")
+        frame = _perp_frame(dates, [0.0, -0.0002], [None, "2025-01-01 08:00"])
+        paid = _settle_all(engine, "BTC-USDT-PERP", frame, Position("BTC-USDT-PERP", 1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0))
+        assert paid == pytest.approx(-12.0)
 
-        # Day 3
-        engine.on_bar("BTC-USDT", bar, pd.Timestamp("2025-01-03"))
-        after_day3 = engine.capital
-        assert after_day3 < after_day2  # fee deducted again
+    def test_a_missing_rate_is_an_error_not_a_fallback(self) -> None:
+        engine = _make_engine(interval="1h")
+        dates = pd.date_range("2025-01-01 07:00", periods=2, freq="1h")
+        frame = _perp_frame(dates, [0.0, float("nan")], [None, "2025-01-01 08:00"])
+        with pytest.raises(ValueError, match="missing funding rate"):
+            _settle_all(engine, "BTC-USDT-PERP", frame, Position("BTC-USDT-PERP", 1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0))
 
-        # Each day: 3 × 60000 × 0.0001 = $18; three days = $54
-        assert initial - after_day3 == pytest.approx(54.0)
+    def test_a_position_opened_at_the_settlement_open_does_not_pay_it(self) -> None:
+        engine = _make_engine(interval="1h")
+        dates = pd.date_range("2025-01-01 07:00", periods=2, freq="1h")
+        frame = _perp_frame(dates, [0.0, 0.0005], [None, "2025-01-01 08:00"])
+        engine._funding.prepare({"BTC-USDT-PERP": frame}, ["BTC-USDT-PERP"])
+        engine.before_rebalance_bar(dates[0], {"BTC-USDT-PERP": frame}, ["BTC-USDT-PERP"])
+        engine.positions["BTC-USDT-PERP"] = Position("BTC-USDT-PERP", 1, 60000.0, dates[1], 1.0, leverage=10.0)
+        before = engine.capital
+        engine.before_rebalance_bar(dates[1], {"BTC-USDT-PERP": frame}, ["BTC-USDT-PERP"])
+        assert engine.capital == before
 
-    def test_intraday_four_hour_bars_keep_slot_and_fallback(self) -> None:
-        """4H bars are below the span threshold: slot + daily fallback, as before."""
-        engine = _make_engine(funding_rate=0.0001, interval="4H")
-        engine.positions["BTC-USDT"] = Position(
-            "BTC-USDT", 1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0,
-        )
-        initial = engine.capital
-        bar = _make_bar(close=60000.0)
-        # 00:00 slot, 04:00 fallback, 08:00 slot, 16:00 slot -> 4 settlements
-        for hour in (0, 4, 8, 12, 16, 20):
-            engine.on_bar("BTC-USDT", bar, pd.Timestamp(f"2025-01-01 {hour:02d}:00:00"))
-        assert initial - engine.capital == pytest.approx(4 * 6.0)
-
-    def test_interval_span_hours_parser(self) -> None:
-        from backtest.engines._market_hooks import _interval_span_hours
-
-        assert _interval_span_hours("1m") == pytest.approx(1 / 60)
-        assert _interval_span_hours("30m") == pytest.approx(0.5)
-        assert _interval_span_hours("1H") == 1.0
-        assert _interval_span_hours("4H") == 4.0
-        assert _interval_span_hours("1D") == 24.0
-        assert _interval_span_hours("nonsense") is None
-
-    def test_multi_symbol_funding(self) -> None:
-        """Each symbol gets independent funding settlement."""
-        engine = _make_engine(funding_rate=0.0001, interval="1H")
-        engine.positions["BTC-USDT"] = Position(
-            "BTC-USDT", 1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0,
-        )
-        engine.positions["ETH-USDT"] = Position(
-            "ETH-USDT", 1, 3000.0, pd.Timestamp("2025-01-01"), 10.0, leverage=10.0,
-        )
-        initial = engine.capital
-        bar_btc = _make_bar(close=60000.0)
-        bar_eth = _make_bar(close=3000.0)
-        ts = pd.Timestamp("2025-01-01 08:00:00")
-
-        engine.on_bar("BTC-USDT", bar_btc, ts)
-        after_btc = engine.capital
-        engine.on_bar("ETH-USDT", bar_eth, ts)
-        after_both = engine.capital
-
-        # BTC: 1 × 60000 × 0.0001 = $6
-        # ETH: 10 × 3000 × 0.0001 = $3
-        assert initial - after_btc == pytest.approx(6.0)
-        assert initial - after_both == pytest.approx(9.0)
-
-    def test_funding_hours_correct(self) -> None:
-        assert _FUNDING_HOURS == {0, 8, 16}
+    def test_a_cross_venue_hedge_gets_both_legs_funding_from_data(self) -> None:
+        """P11: with settled rates the two legs no longer cancel (the fixed default made them cancel exactly)."""
+        engine = _make_engine(interval="1h")
+        dates = pd.date_range("2025-01-01 07:00", periods=2, freq="1h")
+        long_leg = _perp_frame(dates, [0.0, -0.0003], [None, "2025-01-01 08:00"])
+        short_leg = _perp_frame(dates, [0.0, 0.0002], [None, "2025-01-01 08:00"])
+        data = {"binance:perp:BTCUSDT": long_leg, "okx:perp:BTC-USDT-SWAP": short_leg}
+        engine.positions["binance:perp:BTCUSDT"] = Position("binance:perp:BTCUSDT", 1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0)
+        engine.positions["okx:perp:BTC-USDT-SWAP"] = Position("okx:perp:BTC-USDT-SWAP", -1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0)
+        engine._funding.prepare(data, list(data))
+        before = engine.capital
+        for ts in dates:
+            engine.before_rebalance_bar(ts, data, list(data))
+        # long receives 18, short receives 12 → +30
+        assert engine.capital - before == pytest.approx(30.0)
 
 
 # ---------------------------------------------------------------------------
@@ -513,47 +494,6 @@ class TestMaintenanceRate:
 
     def test_maximum_tier(self) -> None:
         assert _maintenance_rate(100_000_000) == 0.10
-
-
-class TestHistoricalFundingRate:
-    def test_bar_funding_rate_overrides_fixed_rate(self) -> None:
-        """A bar carrying a historical ``funding_rate`` column (USD-M perp
-        data) must be charged at that rate, not the fixed config rate."""
-        engine = _make_engine(funding_rate=0.0001, interval="1H")
-        engine.positions["BTC-USDT-PERP"] = Position(
-            "BTC-USDT-PERP", 1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0,
-        )
-        initial_capital = engine.capital
-        bar = pd.Series({"close": 60000.0, "open": 60000.0, "funding_rate": 0.0005})
-        ts = pd.Timestamp("2025-01-01 08:00:00")
-        engine.on_bar("BTC-USDT-PERP", bar, ts)
-        # Historical rate: 1.0 × 60000 × 0.0005 = $30 (not $6 from the fixed rate)
-        assert engine.capital == pytest.approx(initial_capital - 30.0)
-
-    def test_negative_historical_funding_pays_longs(self) -> None:
-        engine = _make_engine(funding_rate=0.0001, interval="1H")
-        engine.positions["BTC-USDT-PERP"] = Position(
-            "BTC-USDT-PERP", 1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0,
-        )
-        initial_capital = engine.capital
-        bar = pd.Series({"close": 60000.0, "open": 60000.0, "funding_rate": -0.0002})
-        ts = pd.Timestamp("2025-01-01 08:00:00")
-        engine.on_bar("BTC-USDT-PERP", bar, ts)
-        # Negative funding: longs receive
-        assert engine.capital == pytest.approx(initial_capital + 12.0)
-
-    def test_nan_funding_rate_falls_back_to_fixed(self) -> None:
-        """Non-settlement bars carry NaN funding_rate — must fall back to
-        the fixed config rate (daily-fallback path), not charge NaN."""
-        engine = _make_engine(funding_rate=0.0001, interval="1H")
-        engine.positions["BTC-USDT-PERP"] = Position(
-            "BTC-USDT-PERP", 1, 60000.0, pd.Timestamp("2025-01-01"), 1.0, leverage=10.0,
-        )
-        initial_capital = engine.capital
-        bar = pd.Series({"close": 60000.0, "open": 60000.0, "funding_rate": float("nan")})
-        ts = pd.Timestamp("2025-01-01 08:00:00")
-        engine.on_bar("BTC-USDT-PERP", bar, ts)
-        assert engine.capital == pytest.approx(initial_capital - 6.0)
 
 
 class TestStrictPerpetualLifecycle:

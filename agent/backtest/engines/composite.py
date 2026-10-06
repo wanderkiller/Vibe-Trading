@@ -14,13 +14,12 @@ import pandas as pd
 
 from backtest.engines.base import BaseEngine
 from backtest.engines._market_hooks import (
+    CryptoFunding,
     _detect_market,
-    _interval_span_hours,
     _is_china_futures,
     _liquidation_mark,
     _normalize_symbol,
     code_currency,
-    calc_crypto_funding_fee,
     check_crypto_liquidation,
     calc_forex_swap,
 )
@@ -136,9 +135,9 @@ class CompositeEngine(BaseEngine):
         # Build sub-engines (one per market type)
         self._rule_engines = _build_rule_engines(config, codes)
 
-        # Crypto dedup state (owned by CompositeEngine, not sub-engine)
-        self._funding_applied: set = set()
-        self._funding_daily_done: set = set()
+        # Crypto funding at real settlement instants (owned by CompositeEngine, not the sub-engine).
+        crypto = self._rule_engines.get("crypto")
+        self._funding = CryptoFunding(crypto.funding_rate) if crypto is not None else None
 
         # Forex dedup state
         self._last_swap_dates: dict = {}
@@ -264,19 +263,28 @@ class CompositeEngine(BaseEngine):
 
     # ── Stateful hooks (implemented directly, NO delegation) ──
 
+    def _crypto_codes(self, codes: List[str]) -> List[str]:
+        return [c for c in codes if self._symbol_market.get(c) == "crypto"]
+
+    def _execute_bars(self, dates, data_map, close_df, target_pos, codes, close_val_df=None) -> None:
+        if self._funding is not None:
+            self._funding.prepare(data_map, self._crypto_codes(codes))  # refuses a perpetual without settlement data
+        super()._execute_bars(dates, data_map, close_df, target_pos, codes, close_val_df=close_val_df)
+
+    def before_rebalance_bar(self, timestamp: pd.Timestamp, data_map: Dict[str, pd.DataFrame], codes: List[str]) -> bool:
+        if self._funding is not None:
+            for code in self._crypto_codes(codes):
+                frame = data_map.get(code)
+                if frame is not None and timestamp in frame.index:
+                    self.capital -= self._funding.settle(code, frame.loc[timestamp], timestamp, self.positions)
+        return super().before_rebalance_bar(timestamp, data_map, codes)
+
     def on_bar(self, symbol: str, bar: pd.Series, timestamp: pd.Timestamp) -> None:
         """Per-bar hooks dispatched by market type."""
         market = self._symbol_market.get(symbol)
 
         if market == "crypto":
             crypto_sub = self._rule_engines["crypto"]
-            fee = calc_crypto_funding_fee(
-                symbol, bar, timestamp, self.positions,
-                crypto_sub.funding_rate,
-                self._funding_applied, self._funding_daily_done,
-                _interval_span_hours(self._run_interval),
-            )
-            self.capital -= fee
 
             if check_crypto_liquidation(symbol, bar, self.positions):
                 pos = self.positions.get(symbol)

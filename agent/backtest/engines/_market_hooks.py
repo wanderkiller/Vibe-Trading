@@ -360,7 +360,6 @@ _TIER_TABLE = [
     (float("inf"), 0.10),
 ]
 
-FUNDING_HOURS = {0, 8, 16}
 
 
 #: Spans of the calendar-period bars the runner builds from daily ones
@@ -392,74 +391,113 @@ def _maintenance_rate(notional_usd: float) -> float:
     return _TIER_TABLE[-1][1]
 
 
-def calc_crypto_funding_fee(
-    symbol: str,
-    bar: pd.Series,
-    timestamp: pd.Timestamp,
-    positions: Dict[str, Position],
-    funding_rate: float,
-    applied_set: set,
-    daily_done_set: set,
-    bar_span_hours: float | None = None,
-) -> float:
-    """Calculate crypto funding fee for one symbol.
+def is_perp_code(code: str) -> bool:
+    """A perpetual-swap instrument code (``BTC-USDT-PERP``, ``BTC-USDT-SWAP``, ``okx:perp:BTC-USDT-SWAP``)."""
+    u = str(code).strip().upper()
+    return u.endswith("-PERP") or u.endswith("-SWAP") or ":PERP:" in u
 
-    Args:
-        symbol: Instrument code.
-        bar: Current bar data.
-        timestamp: Bar timestamp.
-        positions: Shared positions dict.
-        funding_rate: Fallback fixed rate per settlement, used when the bar
-            carries no historical ``funding_rate`` column.
-        applied_set: (symbol, date, hour) dedup set — mutated.
-        daily_done_set: (symbol, date) dedup set — mutated.
-        bar_span_hours: Bar span in hours when known. At 8h or wider the
-            settlement count comes from the span (``max(1, span // 8)`` per
-            bar), because a daily bar can never land on the 8h/16h slots:
-            without this a daily-bar run charges a third of the documented
-            funding model (#1290). Narrower bars keep the slot logic below
-            unchanged.
 
-    Returns:
-        Fee amount (positive = longs pay, negative = longs receive).
+FUNDING_COLUMNS = ("funding_rate", "funding_settlement_time")
+
+
+def funding_model_for(code: str, frame: pd.DataFrame) -> str:
+    """How funding is charged for ``code``; refuses a perpetual without settlement data.
+
+    * ``settlement_data``: the bars carry the venue's settled rates (``funding_rate`` = sum of the rates settled in
+      ``(previous bar open, this bar open]``, ``funding_settlement_time`` = the last such settlement).
+    * ``assumed_fixed_rate``: a spot-priced proxy (no perpetual market behind it) charged an assumed fixed rate at the
+      00/08/16 UTC instants — a modelling assumption reported in the metrics, never used for a perpetual.
+
+    A perpetual without the funding columns used to fall back to a fixed 0.0001 per settlement, which made a
+    cross-venue hedge's two legs cancel and a receiver's carry look 33 % larger; that silent default is gone.
     """
-    if not hasattr(timestamp, "date"):
-        return 0.0
+    has = all(c in frame.columns for c in FUNDING_COLUMNS)
+    if has:
+        return "settlement_data"
+    if is_perp_code(code):
+        raise ValueError(
+            f"perpetual {code} has no funding settlement data (columns {', '.join(FUNDING_COLUMNS)}); "
+            "load it from an auditable source with settlements (alphakeel_b2) — a fixed funding rate is never assumed for a perpetual"
+        )
+    return "assumed_fixed_rate"
 
-    current_date = timestamp.date()
-    hour = timestamp.hour if hasattr(timestamp, "hour") else 0
 
-    settlements = 1
-    if bar_span_hours is not None and bar_span_hours >= 8:
-        settlements = max(1, int(bar_span_hours // 8))
-        key = (symbol, current_date, hour)
-        if key in applied_set:
-            return 0.0
-        applied_set.add(key)
-    elif hour in FUNDING_HOURS:
-        key = (symbol, current_date, hour)
-        if key in applied_set:
-            return 0.0
-        applied_set.add(key)
-    else:
-        day_key = (symbol, current_date)
-        if day_key in daily_done_set:
-            return 0.0
-        daily_done_set.add(day_key)
+def funding_instants_between(prev_open: pd.Timestamp, open_: pd.Timestamp) -> list[pd.Timestamp]:
+    """The 00/08/16 UTC settlement instants ``s`` with ``prev_open < s <= open_`` (bar-span independent)."""
+    first = (prev_open.floor("8h") + pd.Timedelta(hours=8))
+    out = []
+    t = first
+    while t <= open_:
+        out.append(t)
+        t += pd.Timedelta(hours=8)
+    return out
 
-    pos = positions.get(symbol)
-    if pos is None:
-        return 0.0
 
-    mark_price = float(bar.get("close", pos.entry_price))
-    notional = pos.size * mark_price
-    # Prefer the bar's historical funding rate when the loader supplied one
-    # (USD-M perpetual data via BASE-USDT-PERP); fall back to the fixed
-    # config rate otherwise so spot-proxy runs keep their behaviour.
-    hist = bar.get("funding_rate")
-    if hist is not None and pd.notna(hist):
-        funding_rate = float(hist)
-    return notional * funding_rate * pos.direction * settlements
+class CryptoFunding:
+    """Charges crypto funding at the real settlement instants, at the bar open and before that bar's fills.
+
+    A position present before the fills of the bar opening at ``t`` was held over every settlement in
+    ``(previous bar open of that symbol, t]`` (it was opened at or before the previous open), so it pays/receives
+    exactly those settlements — whatever the bar span (the old hook charged a 1H/4H/15m bar four times a day: three grid
+    slots plus a "daily fallback"). A position opened at ``t`` was not held at a settlement at ``t``; one closed at ``t``
+    was, matching AlphaKeel's engine (open at the boundary: not charged; close at the boundary: charged).
+    """
+
+    def __init__(self, assumed_rate: float):
+        self.assumed_rate = float(assumed_rate)
+        self.models: dict[str, str] = {}
+        self._prev_open: dict[str, pd.Timestamp] = {}
+        self.settlements = 0
+        self.total = 0.0
+
+    def prepare(self, data_map: Dict[str, pd.DataFrame], codes: list) -> None:
+        for c in codes:
+            frame = data_map.get(c)
+            if frame is not None:
+                self.models[c] = funding_model_for(c, frame)
+
+    def settle(self, symbol: str, bar: pd.Series, timestamp: pd.Timestamp, positions: Dict[str, Position]) -> float:
+        """Payment for this bar open (positive = the account pays). Must be called once per (symbol, bar), pre-fill."""
+        ts = pd.Timestamp(timestamp)
+        prev = self._prev_open.get(symbol)
+        if prev is not None and ts <= prev:
+            raise ValueError(f"funding for {symbol} settled out of order ({ts} after {prev})")
+        self._prev_open[symbol] = ts
+        model = self.models.get(symbol)
+        if model is None:
+            raise ValueError(f"funding model for {symbol} was not prepared")
+        pos = positions.get(symbol)
+        price = bar.get("mark_open") if "mark_open" in bar.index else bar.get("open")
+        if model == "settlement_data":
+            rate = bar["funding_rate"]
+            when = bar["funding_settlement_time"]
+            if pd.isna(rate):
+                raise ValueError(f"missing funding rate for {symbol} at {ts}")
+            if pd.isna(when):
+                if float(rate) != 0.0:
+                    raise ValueError(f"funding rate without settlement time for {symbol} at {ts}")
+                return 0.0
+            if pos is None or not (pd.Timestamp(pos.entry_time) < pd.Timestamp(when)):
+                return 0.0
+            total_rate = float(rate)
+            n = int(bar["funding_settlements"]) if "funding_settlements" in bar.index else 1  # ccxt: one settlement per bar row
+        else:
+            if prev is None or pos is None:
+                return 0.0
+            instants = [s for s in funding_instants_between(prev, ts) if pd.Timestamp(pos.entry_time) < s]
+            if not instants:
+                return 0.0
+            total_rate, n = self.assumed_rate * len(instants), len(instants)
+        if price is None or pd.isna(price) or float(price) <= 0:
+            raise ValueError(f"no open price to value the funding of {symbol} at {ts}")
+        payment = pos.direction * pos.size * float(price) * total_rate
+        self.settlements += n
+        self.total += payment
+        return payment
+
+    def summary(self) -> dict:
+        return {"funding_models": dict(sorted(self.models.items())), "funding_settlements": self.settlements,
+                "funding_paid": self.total}
 
 
 def _liquidation_mark(bar: pd.Series, pos: Position) -> float:

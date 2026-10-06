@@ -2,8 +2,10 @@
 
 Market rules:
   - 24/7 trading, no restrictions on direction
-  - Maker/Taker fee separation
-  - Funding fee settlement every 8 hours (00:00/08:00/16:00 UTC)
+  - Taker fees on every fill (orders are market/IOC; a close does not rest as a maker order)
+  - Funding charged at the real settlement instants, at the bar open before that bar's fills; a perpetual needs the
+    venue's settled rates in the bars (no assumed rate for a perpetual)
+  - Equity is valued close-now: open positions net of the taker fee to exit them
   - Forced liquidation when maintenance margin ratio <= 100%
   - Fractional position sizes allowed
 """
@@ -17,9 +19,8 @@ import pandas as pd
 
 from backtest.engines.base import BaseEngine
 from backtest.engines._market_hooks import (
-    _interval_span_hours,
+    CryptoFunding,
     _liquidation_mark,
-    calc_crypto_funding_fee,
     check_crypto_liquidation,
 )
 from backtest.models import Position
@@ -45,11 +46,11 @@ class CryptoEngine(BaseEngine):
 
     Config keys:
       - leverage: default 1.0
-      - maker_rate: default 0.0002
-      - taker_rate: default 0.0005
+      - taker_rate: default 0.0005 (every fill; ``maker_rate`` is accepted for old configs and not used)
       - slippage: default 0.0005
       - margin_mode: "isolated" (default) or "cross"
-      - funding_rate: fixed rate per settlement, default 0.0001
+      - funding_rate: assumed fixed rate per 8h settlement for **spot-priced proxies only** (default 0.0001); a
+        perpetual's funding comes from its settlement data or the run is refused
     """
 
     def __init__(self, config: dict):
@@ -81,8 +82,7 @@ class CryptoEngine(BaseEngine):
         self._risk_frames: dict[str, MarketRiskFrame] = {}
         self._blocked_symbols: set[str] = set()
         self._rebalance_risk_checked = False
-        self._funding_applied: set = set()   # (symbol, date, hour) — per-slot dedup
-        self._funding_daily_done: set = set()  # (symbol, date) — daily fallback dedup
+        self._funding = CryptoFunding(self.funding_rate)
 
     def _validate_strict_resolution(self, config: dict[str, Any]) -> None:
         if not self.perpetual_strict or self.default_leverage < 100:
@@ -117,13 +117,45 @@ class CryptoEngine(BaseEngine):
         return round(max(raw_size, 0.0), 6)
 
     def calc_commission(self, size: float, price: float, _direction: int, is_open: bool) -> float:
-        """Maker/Taker separated. Opens typically hit taker, closes hit maker.
+        """Taker on every fill. The engine fills at the bar open with market/IOC semantics, opens and closes alike; the
+        old "closes hit maker" assumption charged 0.0002 instead of 0.0005 on every exit (optimistic vs AlphaKeel)."""
+        return size * price * self.taker_rate
 
-        ``_direction`` is unused — reserved for future funding-rate asymmetry
-        between long/short legs on perp swaps.
-        """
-        rate = self.taker_rate if self.perpetual_strict or is_open else self.maker_rate
-        return size * price * rate
+    def _exit_fees(self, prices: dict[str, float]) -> float:
+        return sum(pos.size * prices[sym] * self.taker_rate for sym, pos in self.positions.items())
+
+    def _calc_open_equity(self, data_map, close_df, ts) -> float:
+        """Close-now valuation at the open: the positions' value net of the taker fee to exit them (like AlphaKeel)."""
+        equity = super()._calc_open_equity(data_map, close_df, ts)
+        if self.perpetual_strict:  # the strict path keeps its own mark-based collateral accounting (perpetual_risk)
+            return equity
+        prices = {}
+        for sym, pos in self.positions.items():
+            p = self._safe_price(close_df, ts, sym, pos.entry_price, _arr=getattr(self, "_close_arr", None),
+                                 _row=getattr(self, "_bar_idx", None),
+                                 _col=(self._code_to_col.get(sym) if getattr(self, "_code_to_col", None) else None),
+                                 _val_arr=getattr(self, "_val_arr", None))
+            frame = data_map.get(sym)
+            if frame is not None and ts in frame.index:
+                o = self.valuation_open(frame.loc[ts])
+                if pd.notna(o) and float(o) > 0:
+                    p = float(o)
+            prices[sym] = p
+        return equity - self._exit_fees(prices)
+
+    def _calc_equity(self, close_df, ts) -> float:
+        """Close-now valuation at the close: net of the taker fee to exit every open position."""
+        equity = super()._calc_equity(close_df, ts)
+        if self.perpetual_strict:
+            return equity
+        prices = {
+            sym: self._safe_price(close_df, ts, sym, pos.entry_price, _arr=getattr(self, "_close_arr", None),
+                                  _row=getattr(self, "_bar_idx", None),
+                                  _col=(self._code_to_col.get(sym) if getattr(self, "_code_to_col", None) else None),
+                                  _val_arr=getattr(self, "_val_arr", None))
+            for sym, pos in self.positions.items()
+        }
+        return equity - self._exit_fees(prices)
 
     def apply_slippage(self, price: float, direction: int) -> float:
         """Slippage: unfavourable direction."""
@@ -356,6 +388,11 @@ class CryptoEngine(BaseEngine):
         codes: list[str],
     ) -> bool:
         if not self.perpetual_strict:
+            # Funding at the bar open, before this bar's fills, for the settlements since the symbol's previous open.
+            for code in codes:
+                frame = data_map.get(code)
+                if frame is not None and timestamp in frame.index:
+                    self.capital -= self._funding.settle(code, frame.loc[timestamp], timestamp, self.positions)
             return super().before_rebalance_bar(timestamp, data_map, codes)
         self._blocked_symbols.clear()
         self._rebalance_risk_checked = False
@@ -447,6 +484,8 @@ class CryptoEngine(BaseEngine):
         self._risk_after_atomic_mutation(timestamp)
 
     def _execute_bars(self, dates, data_map, close_df, target_pos, codes, close_val_df=None) -> None:
+        if not self.perpetual_strict:
+            self._funding.prepare(data_map, codes)  # refuses a perpetual without settlement data
         if self.perpetual_strict:
             try:
                 close_df = pd.DataFrame(
@@ -569,6 +608,11 @@ class CryptoEngine(BaseEngine):
         codes: list[str],
     ) -> None:
         summary = None
+        if not self.perpetual_strict:
+            f = self._funding.summary()
+            metrics.update({"funding_models": f["funding_models"], "funding_settlements": f["funding_settlements"],
+                            "funding_paid": f["funding_paid"], "fee_model": "taker_every_fill",
+                            "valuation": "close_now_net_of_exit_fee"})
         if self.perpetual_strict:
             summary = build_perpetual_summary(
                 config={**self.config, "interval": self._run_interval},
@@ -603,14 +647,7 @@ class CryptoEngine(BaseEngine):
             write_perpetual_evidence(run_dir, self._perpetual_events, summary)
 
     def on_bar(self, symbol: str, bar: pd.Series, timestamp: pd.Timestamp) -> None:
-        """Crypto per-bar hooks: funding fee + liquidation check."""
-        fee = calc_crypto_funding_fee(
-            symbol, bar, timestamp, self.positions,
-            self.funding_rate, self._funding_applied, self._funding_daily_done,
-            _interval_span_hours(self._run_interval),
-        )
-        self.capital -= fee
-
+        """Crypto per-bar hook after the fills: liquidation check (funding is charged pre-fill at the bar open)."""
         if check_crypto_liquidation(symbol, bar, self.positions):
             pos = self.positions.get(symbol)
             if pos is not None:
