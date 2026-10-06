@@ -65,7 +65,8 @@ def settlement_rows(inst_id: str, n: int = 3) -> list[list]:
 
 
 def build_pack(*, venue="binance", market="perp", symbol="BTCUSDT", start=START, end=START + DAY, klines: list[list] | None = None,
-               settlements: list[list] | None = None) -> tuple[dict, dict[str, bytes]]:
+               settlements: list[list] | None = None, accept_partial: bool = False,
+               funding_coverage: dict | None = None) -> tuple[dict, dict[str, bytes]]:
     objs: list[dict] = []
     blobs: dict[str, bytes] = {}
     datasets = []
@@ -106,17 +107,17 @@ def build_pack(*, venue="binance", market="perp", symbol="BTCUSDT", start=START,
     lock = {
         "schema": "alphakeel.data-lock/1", "pack_id": "pk-pending", "pack_sha256": "0" * 64, "created_ms": 1_700_000_000_000,
         "request": {"window": {"start_ms": start, "end_ms": end}, "warmup_frames": 0, "venues": [venue],
-                    "instruments": [{"venue": venue, "market": market, "symbol": symbol}], "accept_partial": False,
+                    "instruments": [{"venue": venue, "market": market, "symbol": symbol}], "accept_partial": accept_partial,
                     "funding_dataset": None if settlements is not None else "none", "include": {"native": False, "tables": True},
                     "dataset": {"market_dataset": None, "market_tables": tables, "price_kinds": ["trade"]}},
         "windows": {"requested": {"start_ms": start, "end_ms": end}, "actual": {"start_ms": start, "end_ms": end}, "warmup": None},
         "funding": ({"dataset_version": "fund-fixture-v1", "snapshot_sha256": H, "boundary_match": "nearest-within-60s-unique-v1",
-                     "visibility": "historical_reconstruction", "assumed_delay_ms": 0, "conflict_policy": "strict", "watermark_ms": end}
+                     "visibility": "historical_reconstruction", "assumed_delay_ms": 60_000, "conflict_policy": "strict", "watermark_ms": end}
                     if settlements is not None else None),
         "scans": None, "datasets": datasets, "sources": sources,
         "units": {"price": "p", "rate": "r", "quantity": "q", "time": "t", "money": "m"},
         "universe": {"instruments": 1, "selected": 1, "by_venue": {venue: {"perp": 1 if market == "perp" else 0, "spot": 0 if market == "perp" else 1}}, "digest": H},
-        "coverage": {"funding": {"perps": 1, "complete": 1, "partial": 0, "none": 0}, "quotes": {"frames": 0, "frames_all_venues_failed": 0, "rows": 0},
+        "coverage": {"funding": funding_coverage or {"perps": 1, "complete": 1, "partial": 0, "none": 0}, "quotes": {"frames": 0, "frames_all_venues_failed": 0, "rows": 0},
                      "fx": {"points": 0, "frames_without_rate": 0}, "pnl_backtest_complete": False, "reasons": ["dataset pack"]},
         "objects": objs, "transforms": [{"id": "dataset-to-rows", "code_version": "alphakeel-test", "config_sha256": H, "inputs": [H],
                                          "outputs": [o["sha256"] for o in objs if o["role"] != "coverage"]}],
@@ -132,19 +133,33 @@ class FakeClient:
     """A service double: serves one pre-built pack per (klines?, funding?) request shape; can inject errors and corruption."""
 
     def __init__(self, packs: dict[str, tuple[dict, dict[str, bytes]]], *, create_error: ApiError | None = None, corrupt: str | None = None,
-                 swap: dict | None = None):
+                 swap: dict | None = None, pin: dict | None = None):
         self.packs = packs
+        self.pin = contract.local_pin() if pin is None else pin
         self.create_error = create_error
         self.corrupt = corrupt
         self.swap = swap
         self.requests: list[dict] = []
         self.closed = False
 
+    # the real connection check runs against this double's whoami/capabilities
+    from alphakeel_research.client import Client as _Client
+
+    check = _Client.check
+
+    def whoami(self):
+        return {"credential": "tok-fake", "scopes": ["data"], "holdout_days": 60, "holdout_cutoff_ms": 0, "contract_pin": self.pin}
+
+    def capabilities(self):
+        return {"schemas": {"supported_major": contract.MAJOR}, "contract": contract.CONTRACT_ID, "modes": [], "limits": {}}
+
     def create_pack(self, request, *, key=None):
         if self.create_error:
             raise self.create_error
         self.requests.append(request)
         kind = "kline" if request["dataset"].get("market_tables") else "funding"
+        if kind == "kline" and request["funding_dataset"] is None and "perp" in self.packs:
+            kind = "perp"  # a perpetual's bars come with the settlements of the same pack
         lock = self.swap if self.swap else self.packs[kind][0]
         return {"job_id": "pj-1", "status": "ready", "pack_id": lock["pack_id"], "kind": kind}
 
@@ -489,3 +504,163 @@ def test_direct_okx_and_binance_loaders_are_non_auditable_like_ccxt():
     mixed = data_audit.data_audit(["alphakeel_b2", "okx"])
     assert mixed["auditable"] is False and mixed["non_auditable_sources"] == ["okx"]
     assert data_audit.data_audit(["alphakeel_b2"])["auditable"] is True
+
+
+# --- R5 (2026-10-06 review): contract PIN at runtime, perp funding, strict locks, point-in-time view ---------------------
+
+
+def test_the_loader_refuses_a_service_built_from_another_contract():
+    """B-P1-3: the PIN used to be checked only by this test suite; now every client run compares it with the service."""
+    lock, blobs = kline_pack()
+    other = dict(contract.local_pin())
+    other["openapi.json"] = "0" * 64
+    with pytest.raises(NoAvailableSourceError, match=r"contract\.pin_mismatch.*openapi\.json"):
+        loader(FakeClient({"kline": (lock, blobs)}, pin=other)).fetch(["BTC-USDT"], "2023-01-01", "2023-01-01")
+
+    class Old(FakeClient):  # a service that predates the runtime check reports no digest
+        def whoami(self):
+            w = super().whoami()
+            del w["contract_pin"]
+            return w
+
+    with pytest.raises(NoAvailableSourceError, match=r"contract\.pin_mismatch"):
+        loader(Old({"kline": (lock, blobs)})).fetch(["BTC-USDT"], "2023-01-01", "2023-01-01")
+    # the matching service passes
+    assert len(loader(FakeClient({"kline": (lock, blobs)})).fetch(["BTC-USDT"], "2023-01-01", "2023-01-01")["BTC-USDT"]) == 1
+
+
+def test_perpetual_bars_carry_the_settlements_of_the_same_pack_at_the_real_settlement_times():
+    """B-P1-1 (P11): alphakeel_b2 bars had no funding_rate column, so CryptoEngine charged a fixed 0.0001 and a cross-venue
+    hedge's legs cancelled. Settlements at 00:00, 08:00, 16:00 attach to the first bar opening at or after them."""
+    inst_id = "binance:linear:USDT:BTCUSDT"
+    lock, blobs = build_pack(klines=kline_rows("BTCUSDT"), settlements=settlement_rows(inst_id))
+    fc = FakeClient({"perp": (lock, blobs)})
+    df = loader(fc).fetch(["BTC-USDT-PERP"], "2023-01-01", "2023-01-01", interval="4H")["BTC-USDT-PERP"]
+    assert fc.requests[0]["funding_dataset"] is None and fc.requests[0]["dataset"]["market_tables"] == ["kline_1m"]
+    assert len(df) == 6
+    assert df["funding_settlements"].tolist() == [1, 0, 1, 0, 1, 0]
+    assert df["funding_rate"].tolist() == pytest.approx([0.0001, 0.0, -0.00005, 0.0, 0.0001, 0.0])
+    assert df["funding_settlement_time"].iloc[2] == pd.Timestamp(START + 8 * 3_600_000, unit="ms")
+    assert pd.isna(df["funding_settlement_time"].iloc[1])
+    tag = df.attrs["alphakeel_b2"]
+    assert tag["funding"]["source"] == "official_settlements" and tag["funding"]["settlements"] == 3
+    assert tag["bar"] == {"index_label": "bar_open_time", "close_rule": "last 1-minute close of the bar", "complete_bars_only": True, "minutes": 240}
+    # one 1D bar: the three settlements of the day land on the only bar open at or after them → only 00:00 here
+    day = loader(FakeClient({"perp": (lock, blobs)})).fetch(["BTC-USDT-PERP"], "2023-01-01", "2023-01-01", interval="1D")["BTC-USDT-PERP"]
+    assert day["funding_settlements"].tolist() == [1]
+
+
+def test_the_engine_charges_the_loader_settlements_once_each_for_a_cross_venue_hedge():
+    from backtest.engines.crypto import CryptoEngine
+    from backtest.models import Position
+
+    inst_id = "binance:linear:USDT:BTCUSDT"
+    lock, blobs = build_pack(klines=kline_rows("BTCUSDT"), settlements=settlement_rows(inst_id))
+    df = loader(FakeClient({"perp": (lock, blobs)})).fetch(["BTC-USDT-PERP"], "2023-01-01", "2023-01-01", interval="1H")["BTC-USDT-PERP"]
+    eng = CryptoEngine({"initial_cash": 100_000, "leverage": 1.0, "interval": "1H"})
+    eng.positions["BTC-USDT-PERP"] = Position("BTC-USDT-PERP", 1, 100.0, pd.Timestamp("2022-12-31"), 10.0, leverage=1.0)
+    eng._funding.prepare({"BTC-USDT-PERP": df}, ["BTC-USDT-PERP"])
+    before = eng.capital
+    for ts in df.index:
+        eng.before_rebalance_bar(ts, {"BTC-USDT-PERP": df}, ["BTC-USDT-PERP"])
+    # 3 settlements (not 24 × "daily fallback" + slots): 10 × open × rate at the bars opening at 00:00, 08:00, 16:00
+    opens = df["open"]
+    want = 10 * (opens.iloc[0] * 0.0001 + opens.iloc[8] * -0.00005 + opens.iloc[16] * 0.0001)
+    assert before - eng.capital == pytest.approx(want)
+    assert eng._funding.settlements == 3
+
+
+def test_a_lock_with_accept_partial_or_incomplete_funding_coverage_is_not_used():
+    """P8: _check_lock checked window and instruments but not the coverage policy the pack was built with."""
+    lock, blobs = build_pack(market="spot", klines=kline_rows("BTCUSDT"), accept_partial=True)
+    with pytest.raises(NoAvailableSourceError, match="accept_partial"):
+        loader(FakeClient({"kline": (lock, blobs)})).fetch(["BTC-USDT"], "2023-01-01", "2023-01-01")
+    inst_id = "binance:linear:USDT:BTCUSDT"
+    lock, blobs = build_pack(klines=kline_rows("BTCUSDT"), settlements=settlement_rows(inst_id),
+                             funding_coverage={"perps": 1, "complete": 0, "partial": 1, "none": 0})
+    with pytest.raises(NoAvailableSourceError, match="funding coverage is incomplete"):
+        loader(FakeClient({"perp": (lock, blobs)})).fetch(["BTC-USDT-PERP"], "2023-01-01", "2023-01-01")
+
+
+def test_a_kline_whose_close_time_is_not_t_plus_59999_is_an_evidence_error(tmp_path):
+    """P4b: the close time was trusted; an early close_time_ms would expose the bar's close before the minute ended."""
+    rows = kline_rows("BTCUSDT")
+    rows[5][2] = rows[5][0] + 30_000
+    lock, blobs = build_pack(market="spot", klines=rows)
+    with pytest.raises(NoAvailableSourceError, match="close_time_ms"):
+        loader(FakeClient({"kline": (lock, blobs)})).fetch(["BTC-USDT"], "2023-01-01", "2023-01-01")
+    pack = packfile.Pack(lock, packfile.PackCache(tmp_path / "c"), FakeClient({"kline": (lock, blobs)}))
+    with pytest.raises(ApiError, match="close_time_ms"):
+        packfile.Pit(pack, START + DAY - 1).klines(packfile.Inst("binance", "spot", "BTCUSDT"), START)
+
+
+class _StubPack:
+    """Just enough of ``Pack`` for the point-in-time rules (rows are given directly)."""
+
+    def __init__(self, funding, quotes=(), settlements=(), meta=None):
+        self.lock = {"funding": funding}
+        self._q, self._s, self._m = list(quotes), list(settlements), meta
+        self.id = "pk-stub"
+
+    def quotes(self, inst, start, end):
+        return [q for q in self._q if start <= q.t < end]
+
+    def settlements(self, inst, start, end):
+        return [x for x in self._s if start <= x.t < end]
+
+    def instrument_meta(self, inst):
+        return None if self._m is None else dict(self._m)
+
+
+def _settlement(t, available_at=None):
+    return packfile.Settlement(t, "i", Decimal("0.0001"), "regular", 3600, "official", "USDT", "linear", "x", available_at, 0, None, H, True)
+
+
+FUND = {"dataset_version": "v", "assumed_delay_ms": 60_000}
+I = packfile.Inst("binance", "perp", "BTCUSDT")
+
+
+def test_pit_quotes_respect_the_exchange_timestamp_and_settlements_the_conservative_delay():
+    """P6 / P2 / P2c: no 5 s future tolerance for decisions; a settlement without available_at is visible only after the
+    lock's delay (>= 60 s); a lock without a funding block or with delay 0 is refused instead of meaning "delay 0"."""
+    q = [packfile.Quote(START, Decimal(1), Decimal(1), True, None, None, START, 0),
+         packfile.Quote(START + 60_000, Decimal(1), Decimal(1), True, None, None, START + 63_000, 1),
+         packfile.Quote(START + 120_000, Decimal(1), Decimal(1), True, None, None, None, 2)]
+    pit = packfile.Pit(_StubPack(FUND, quotes=q), START + 120_000)
+    assert [x.frame for x in pit.quotes(I, START)] == [0, 1, 2]
+    assert [x.frame for x in packfile.Pit(_StubPack(FUND, quotes=q), START + 62_999).quotes(I, START)] == [0]
+    s = [_settlement(START), _settlement(START + 3_600_000, available_at=START + 3_605_000)]
+    at = lambda t: [x.t for x in packfile.Pit(_StubPack(FUND, settlements=s), t).settlements(I, START - 1)]
+    assert at(START + 59_999) == [] and at(START + 60_000) == [START]
+    assert at(START + 3_604_999) == [START] and at(START + 3_605_000) == [START, START + 3_600_000]
+    with pytest.raises(ApiError, match="below the minimum"):
+        packfile.Pit(_StubPack({"dataset_version": "v", "assumed_delay_ms": 0}), START)
+    with pytest.raises(ApiError, match="funding_missing|no funding"):
+        packfile.Pit(_StubPack(None, settlements=s), START + DAY).settlements(I, START)
+
+
+def test_pit_instrument_meta_hides_future_listing_and_delisting():
+    meta = {"t": START, "symbol": "BTCUSDT", "listed_ms": START + 1000, "delisted_ms": START + 5000, "extra": {}}
+    assert packfile.Pit(_StubPack(FUND, meta=meta), START + 999).instrument_meta(I) is None
+    mid = packfile.Pit(_StubPack(FUND, meta=meta), START + 1000).instrument_meta(I)
+    assert mid["listed_ms"] == START + 1000 and mid["delisted_ms"] is None
+    assert packfile.Pit(_StubPack(FUND, meta=meta), START + 5000).instrument_meta(I)["delisted_ms"] == START + 5000
+
+
+def test_a_lock_without_sources_is_an_evidence_error_not_a_type_error():
+    lock, _ = kline_pack()
+    del lock["sources"]
+    with pytest.raises(packfile.EvidenceError, match="sources"):
+        packfile.pack_digest(lock)
+
+
+def test_a_policy_strategy_gets_only_the_point_in_time_view():
+    """B-P2-9: ctx.pack handed the unfiltered pack to the strategy next to ctx.pit."""
+    import inspect
+
+    from alphakeel_research import policy_host
+
+    src = inspect.getsource(policy_host)
+    assert "ctx.pack" not in src and "ctx.pit = Pit(" in src
+    pit = packfile.Pit(_StubPack(FUND), START)
+    assert not hasattr(pit, "pack") and pit.pack_id == "pk-stub"

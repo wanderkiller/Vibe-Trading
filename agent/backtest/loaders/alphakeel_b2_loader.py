@@ -2,7 +2,13 @@
 
 What it serves
   * OHLCV bars built from the 1-minute klines of AlphaKeel's market dataset (``kline_1m``, trade prices), resampled to
-    the requested interval; only complete bars are returned.
+    the requested interval; only complete bars are returned. The index is the bar **open** time (left label, like every
+    other Vibe-Trading loader); ``df.attrs["alphakeel_b2"]["bar"]`` states it and the bar length, so a consumer never has to
+    guess whether a timestamp is an open or a close.
+  * For perpetual contracts the bars also carry the official funding settlements of the same frozen pack:
+    ``funding_rate`` (sum of the rates settled in ``(previous bar open, this bar open]``, 0.0 when none),
+    ``funding_settlement_time`` (the last such settlement, NaT when none) and ``funding_settlements`` (their count) — the
+    shape ``CryptoEngine`` charges at the bar open, before that bar's fills, exactly at the real settlement times.
   * Funding settlement history (``fetch_funding``) for all nine venues of the funding dataset (binance, okx, bybit,
     bitget, gate, aster, hyperliquid, lighter, backpack), 2019 onwards.
 
@@ -41,6 +47,7 @@ from typing import Any
 import pandas as pd
 
 from backtest.data_audit import record_provenance
+from backtest.funding_settlements import attach_settlements
 from backtest.loaders.base import NoAvailableSourceError, validate_date_range
 from backtest.loaders.registry import register
 from src.config.accessor import get_env_value
@@ -122,6 +129,9 @@ class DataLoader:
     #: Injected by tests; production builds a ``alphakeel_research.client.Client`` from the environment.
     _client_factory = None
 
+    def __init__(self) -> None:
+        self._checked: set[int] = set()
+
     # -- availability (never touches the network) ----------------------------------------------------------------
 
     @staticmethod
@@ -176,6 +186,11 @@ class DataLoader:
         }
         key = key_for("pack", {"request": request, "salt": _env("ALPHAKEEL_B2_PACK_SALT")})
         try:
+            if id(client) not in self._checked:
+                # Runtime contract check (version + digest of every contract file against this client's PIN): a service
+                # built from another contract is refused before any data is used.
+                client.check()
+                self._checked.add(id(client))
             job = client.create_pack(request, key=key)
             if job.get("status") not in ("ready", "failed", "cancelled", "interrupted", "expired"):
                 job = client.wait_pack(job["job_id"])
@@ -211,6 +226,13 @@ class DataLoader:
         )
         if not same:
             raise NoAvailableSourceError("alphakeel_b2: the service returned a pack that does not match the request; refusing to use it")
+        # Strict coverage only: this loader never asks for partial coverage, so a pack that says it accepted gaps, or whose
+        # coverage reports anything incomplete, is not the pack we asked for (the digest proves the lock, not the policy).
+        if req.get("accept_partial") is not False:
+            raise NoAvailableSourceError("alphakeel_b2: the pack was built with accept_partial; this loader only uses completely covered packs")
+        cov = lock["coverage"]["funding"]
+        if funding and (cov["complete"] != cov["perps"] or cov["partial"] or cov["none"]):
+            raise NoAvailableSourceError(f"alphakeel_b2: the pack's funding coverage is incomplete ({cov}); refusing to use it")
         if klines and pack.dataset_version("market") is None:
             raise NoAvailableSourceError("alphakeel_b2: the pack has no market dataset version; refusing to use it")
         if funding and pack.dataset_version("funding") is None:
@@ -226,6 +248,9 @@ class DataLoader:
                           "visibility": d["visibility"]} for d in pack.datasets()],
             "verified": True,
         }
+        if table == "kline_1m":
+            tag["bar"] = {"index_label": "bar_open_time", "close_rule": "last 1-minute close of the bar",
+                          "complete_bars_only": True}
         record_provenance("alphakeel_b2", tag)
         return tag
 
@@ -247,12 +272,17 @@ class DataLoader:
                     venue, market, symbol = parse_code(code, default_venue)
                 except ValueError as e:
                     raise NoAvailableSourceError(f"alphakeel_b2: {e}") from e
-                pack = self._freeze(client, venue, market, symbol, start_ms, end_ms, klines=True, funding=False)
+                perp = market == "perp"
+                pack = self._freeze(client, venue, market, symbol, start_ms, end_ms, klines=True, funding=perp)
                 from alphakeel_research.packfile import Inst
 
-                bars = self._read(lambda: pack.klines(Inst(venue, market, symbol), start_ms, end_ms, price_kind="trade"))
+                inst = Inst(venue, market, symbol)
+                bars = self._read(lambda: pack.klines(inst, start_ms, end_ms, price_kind="trade"))
                 if not bars:
                     raise NoAvailableSourceError(f"alphakeel_b2: no 1-minute bars for {code} in the window")
+                for b in bars:  # the bar is visible only from its close: a wrong close time would leak its price early
+                    if b.close_time_ms != b.t + _MINUTE_MS - 1:
+                        raise NoAvailableSourceError(f"alphakeel_b2: kline {b.t} of {code} has close_time_ms {b.close_time_ms}, not t + 59999")
                 df = pd.DataFrame({
                     "open": [float(b.open) for b in bars], "high": [float(b.high) for b in bars],
                     "low": [float(b.low) for b in bars], "close": [float(b.close) for b in bars],
@@ -262,7 +292,14 @@ class DataLoader:
                 df = resample_klines(df, minutes)
                 if df.empty:
                     raise NoAvailableSourceError(f"alphakeel_b2: the window holds no complete {interval} bar for {code}")
-                df.attrs["alphakeel_b2"] = self._tag(pack, start_ms, end_ms, "kline_1m")
+                tag = self._tag(pack, start_ms, end_ms, "kline_1m")
+                tag["bar"]["minutes"] = minutes
+                if perp:
+                    rows = self._read(lambda: pack.settlements(inst, start_ms, end_ms))
+                    df = attach_settlements(df, [(r.t, float(r.rate)) for r in rows if r.event_kind in ("regular", "special")])
+                    tag["funding"] = {"source": "official_settlements", "dataset_version": pack.dataset_version("funding"),
+                                      "settlements": len(rows), "attribution": "(previous bar open, bar open]"}
+                df.attrs["alphakeel_b2"] = tag
                 result[code] = df
         finally:
             close = getattr(client, "close", None)

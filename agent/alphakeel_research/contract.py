@@ -21,6 +21,30 @@ CONTRACT_ID = "alphakeel.research/1"
 MAJOR = 1
 
 
+def local_pin() -> dict[str, str]:
+    """The contract files this client was built against: ``{relative path: sha256}`` from ``contract/PIN``.
+
+    Every pinned file is re-hashed: a client whose packaged contract files do not match their own PIN refuses to run
+    (it would otherwise validate against something other than what it claims to speak).
+    """
+    import hashlib
+    from pathlib import Path
+
+    root = Path(__file__).parent / "contract"
+    out: dict[str, str] = {}
+    for line in (root / "PIN").read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        digest, name = line.split(maxsplit=1)
+        actual = hashlib.sha256((root / name).read_bytes()).hexdigest()
+        if actual != digest:
+            from .errors import ApiError
+
+            raise ApiError("contract.pin_mismatch", f"the packaged contract file {name} does not match this client's PIN")
+        out[name] = digest
+    return out
+
+
 @dataclass(frozen=True)
 class Violation:
     code: str

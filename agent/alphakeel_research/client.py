@@ -104,15 +104,30 @@ class Client:
         return self.get("/capabilities")
 
     def check(self) -> dict:
-        """Connection check with version negotiation: refuses a service speaking another major contract."""
+        """Connection check: refuses a service speaking another major contract **or another contract build**.
+
+        The service reports the sha256 of every contract file it was built from (``/whoami`` ``contract_pin``: OpenAPI,
+        error codes, shared vectors); they must equal this client's ``contract/PIN`` entry by entry. A service without
+        the digest (older than the runtime check), a missing or extra file, or any differing digest is refused with
+        ``contract.pin_mismatch`` — the models this client validates with would not be the service's.
+        """
         who = self.whoami()
         cap = self.capabilities()
         major = cap.get("schemas", {}).get("supported_major")
         if major != contract.MAJOR:
             raise ApiError("contract.unknown_major", f"the service speaks contract major {major}; this client speaks {contract.MAJOR}")
+        theirs = who.get("contract_pin")
+        if not isinstance(theirs, dict):
+            raise ApiError("contract.pin_mismatch", "the service does not report its contract digest (contract_pin); it predates the runtime contract check")
+        ours = contract.local_pin()
+        if theirs != ours:
+            diff = sorted(k for k in set(ours) | set(theirs) if ours.get(k) != theirs.get(k))
+            raise ApiError("contract.pin_mismatch", f"the service's contract differs from this client's PIN in: {', '.join(diff)}; "
+                           "re-export the contract (tools/export-research-contract.sh) and regenerate the models")
         return {"credential": who["credential"], "scopes": who["scopes"], "build": who.get("build"), "contract": cap["contract"],
                 "modes": cap["modes"], "limits": cap["limits"], "holdout_days": who.get("holdout_days"),
-                "holdout_cutoff_ms": who.get("holdout_cutoff_ms"), "datasets": cap.get("datasets")}
+                "holdout_cutoff_ms": who.get("holdout_cutoff_ms"), "datasets": cap.get("datasets"),
+                "data_horizon": who.get("data_horizon"), "contract_pin": "matched"}
 
     def holdout(self) -> dict:
         """The hold-out of this credential: the most recent ``days`` are invisible; ``cutoff_ms`` is the latest allowed end_ms."""

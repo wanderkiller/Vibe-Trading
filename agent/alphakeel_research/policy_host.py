@@ -83,7 +83,8 @@ def main() -> int:
                 if pack is not None:
                     from .packfile import Pit
 
-                    ctx.pack = pack
+                    # Only the point-in-time view: the unfiltered pack is never handed to the strategy (it held every
+                    # future row next to ctx.pit, so "no look-ahead" was a convention, not a rule).
                     ctx.pit = Pit(pack, int(msg["context"]["time_ms"]))
                 out = mod.on_step(ctx, json.loads(json.dumps(state)))
                 if not isinstance(out, dict) or set(out) != {"intents", "state"}:

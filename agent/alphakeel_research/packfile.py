@@ -53,9 +53,11 @@ def pack_digest(lock: dict) -> str:
     # absent key as null (a scan pack has no ``datasets``). Existing pack ids depend on it, so the digest must include it.
     for k in ("scans", "sources", "funding", "datasets"):
         v.setdefault(k, None)
+    if not isinstance(v["sources"], list):  # every lock names its sources; a lock without them is not evidence
+        raise EvidenceError("evidence.reference", "the data lock has no sources list")
     if isinstance(v.get("scans"), dict):  # null for dataset packs (no scan frames)
         v["scans"].pop("committed_last_seq", None)
-    for s in v.get("sources", []):
+    for s in v["sources"]:
         s.pop("watermark_ms", None)
     if isinstance(v.get("funding"), dict):
         v["funding"].pop("watermark_ms", None)
@@ -546,57 +548,124 @@ class Pack:
         return con
 
 
+#: Minimum assumed publication delay of an official settlement without ``available_at`` (the service's floor). A lock that
+#: declares less (old builds wrote 0) would make a settlement visible at its settlement instant: it is refused.
+MIN_ASSUMED_DELAY_MS = 60_000
+_KLINE_SPAN_MS = 59_999
+
+
 class Pit:
     """The standard point-in-time reader a strategy is given: it exposes only inputs visible at ``as_of_ms``.
 
-    Asking for a window that ends after ``as_of_ms + 1`` raises ``FutureRead``. Official settlements are
-    reconstructed history: a row is visible only when its ``available_at`` (or settlement time plus the lock's assumed
-    delay) is not after ``as_of_ms``. A hash cannot prove an arbitrary script has no look-ahead; this reader is the
-    enforcement point for the data it hands out.
+    It is the *only* data object a strategy receives (the unfiltered ``Pack`` is not handed out). Rules, identical to the
+    service's ``/slice?as_of_ms=``:
+
+    * a window ending after ``as_of_ms + 1`` raises ``FutureRead``;
+    * quotes: the frame time and, when present, the exchange ``quote_ts`` must not be after ``as_of`` (no future
+      tolerance for decisions; the engine's fill-side tolerance is in the execution profile's ``quotes`` section);
+    * official settlements (reconstructed history): visible when ``available_at`` — or, without it, the settlement time
+      plus the lock's ``funding.assumed_delay_ms`` (at least 60 s) — is not after ``as_of``; a pack without a funding
+      block has no settlements and asking for them is an error, never "delay 0";
+    * 1-minute klines: visible from ``close_time_ms``, which must be exactly ``t + 59 999`` (checked, not trusted);
+    * bbo: visible from ``ts_recv_ms``; without it never visible;
+    * instrument metadata: a contract listed after ``as_of`` does not exist yet; a delisting after ``as_of`` is unknown.
+
+    A hash cannot prove an arbitrary script has no look-ahead; this reader is the enforcement point for the data it hands
+    out. It is not a security boundary (Python has no private state), but no API of it returns unfiltered rows.
     """
 
+    __slots__ = ("__pack", "as_of_ms", "_delay")
+
     def __init__(self, pack: Pack, as_of_ms: int):
-        self.pack = pack
-        self.as_of_ms = as_of_ms
+        self.__pack = pack
+        self.as_of_ms = int(as_of_ms)
         f = pack.lock.get("funding")
-        self._delay = f["assumed_delay_ms"] if isinstance(f, dict) else 0
+        if f is None:
+            self._delay: int | None = None
+        else:
+            d = f.get("assumed_delay_ms") if isinstance(f, dict) else None
+            if not isinstance(d, int) or isinstance(d, bool):
+                raise EvidenceError("evidence.reference", "the data lock's funding block has no integer assumed_delay_ms")
+            if d < MIN_ASSUMED_DELAY_MS:
+                raise EvidenceError("evidence.reference", f"the data lock declares funding.assumed_delay_ms = {d}, below the "
+                                    f"minimum {MIN_ASSUMED_DELAY_MS}: settlements would be visible at the settlement instant; rebuild the pack")
+            self._delay = d
+
+    @property
+    def pack_id(self) -> str:
+        return self.__pack.id
 
     def _check(self, end: int) -> None:
         if end > self.as_of_ms + 1:
             raise FutureRead(f"end_ms {end} is after as_of_ms {self.as_of_ms}: only inputs visible at as_of are available")
 
     def quotes(self, inst: Inst, start: int, end: int | None = None) -> list[Quote]:
+        """Scan quotes of frames at or before ``as_of`` whose exchange time (when recorded) is not after ``as_of``."""
         end = self.as_of_ms + 1 if end is None else end
         self._check(end)
-        return self.pack.quotes(inst, start, end)
+        return [q for q in self.__pack.quotes(inst, start, end) if q.quote_ts is None or q.quote_ts <= self.as_of_ms]
 
     def observations(self, inst: Inst, start: int, end: int | None = None) -> list[Observation]:
         end = self.as_of_ms + 1 if end is None else end
         self._check(end)
-        return self.pack.observations(inst, start, end)
+        return self.__pack.observations(inst, start, end)
 
     def settlements(self, inst: Inst, start: int, end: int | None = None) -> list[Settlement]:
         end = self.as_of_ms + 1 if end is None else end
         self._check(end)
-        rows = self.pack.settlements(inst, start, end)
+        if self._delay is None:
+            raise EvidenceError("data.funding_missing", "the pack has no funding dataset block: it holds no settlements")
+        rows = self.__pack.settlements(inst, start, end)
         return [s for s in rows if (s.available_at_ms if s.available_at_ms is not None else s.t + self._delay) <= self.as_of_ms]
 
     def fx(self, start: int, end: int | None = None) -> list[tuple[int, Decimal | None]]:
         end = self.as_of_ms + 1 if end is None else end
         self._check(end)
-        return self.pack.fx(start, end)
+        return self.__pack.fx(start, end)
 
     def klines(self, inst: Inst, start: int, end: int | None = None, *, price_kind: str = "trade") -> list[Kline]:
-        """1-minute bars that are already closed at ``as_of`` (``close_time_ms <= as_of``): an open bar is not visible."""
+        """1-minute bars that are already closed at ``as_of`` (``close_time_ms <= as_of``): an open bar is not visible.
+
+        ``close_time_ms`` must be exactly ``t + 59 999``: a row claiming an earlier close would otherwise leak its
+        close price before the minute ended, so a wrong value is an evidence error.
+        """
         end = self.as_of_ms + 1 if end is None else end
         self._check(end)
-        return [k for k in self.pack.klines(inst, start, end, price_kind=price_kind) if k.close_time_ms <= self.as_of_ms]
+        out = []
+        for k in self.__pack.klines(inst, start, end, price_kind=price_kind):
+            if k.close_time_ms != k.t + _KLINE_SPAN_MS:
+                raise EvidenceError("evidence.reference", f"kline at {k.t} has close_time_ms {k.close_time_ms}, not t + {_KLINE_SPAN_MS}")
+            if k.close_time_ms <= self.as_of_ms:
+                out.append(k)
+        return out
 
     def bbo(self, inst: Inst, start: int, end: int | None = None) -> list[Bbo]:
         """Snapshots received by ``as_of`` (``ts_recv_ms``); a snapshot without a receive time is never visible."""
         end = self.as_of_ms + 1 if end is None else end
         self._check(end)
-        return [b for b in self.pack.bbo(inst, start, end) if b.ts_recv_ms is not None and b.ts_recv_ms <= self.as_of_ms]
+        return [b for b in self.__pack.bbo(inst, start, end) if b.ts_recv_ms is not None and b.ts_recv_ms <= self.as_of_ms]
+
+    def instrument_meta(self, inst: Inst) -> dict | None:
+        """Metadata as known at ``as_of``: not listed yet → ``None``; a later delisting is not known (``delisted_ms`` = None)."""
+        m = self.__pack.instrument_meta(inst)
+        if m is None:
+            return None
+        for k in ("listed_ms", "delisted_ms"):
+            if m[k] is not None and (not isinstance(m[k], int) or isinstance(m[k], bool)):
+                raise EvidenceError("evidence.reference", f"instrument_meta {k} is not an integer")
+        if m["listed_ms"] is not None and m["listed_ms"] > self.as_of_ms:
+            return None
+        if m["delisted_ms"] is not None and m["delisted_ms"] > self.as_of_ms:
+            m = {**m, "delisted_ms": None}
+        return m
+
+    def instruments(self) -> dict[Inst, Instrument]:
+        """Contract identities of the pack (first/last seen are scan facts of the whole window: use with care)."""
+        return self.__pack.instruments()
+
+    def fees(self) -> dict:
+        """The pack's static fee table (it does not change inside a pack)."""
+        return self.__pack.fees()
 
     def latest_quote(self, inst: Inst) -> Quote | None:
         rows = self.quotes(inst, self.as_of_ms - 24 * 3_600_000, self.as_of_ms + 1)
