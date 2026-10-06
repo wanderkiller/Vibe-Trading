@@ -67,7 +67,19 @@ cannot do it (no `unshare`, no privilege, user namespaces disabled, container wi
 `network_blocked: false` and the reason in `network_isolation`. Set `ALPHAKEEL_REQUIRE_NETNS=1` to refuse to start without it.
 
 Contract: `contract/` is a pinned copy of AlphaKeel's OpenAPI, error codes and shared test vectors (`PIN` holds their
-hashes); `models.py` is generated from it (`gen_models.sh`), never edited by hand.
+hashes); `models.py` is generated from it (`gen_models.sh`), never edited by hand. `Client.check()` (and the
+`alphakeel_b2` loader before it freezes anything) compares the service's `/whoami` `contract_pin` with `PIN` entry by entry
+and refuses a different contract build (`contract.pin_mismatch`).
+
+Point in time: a strategy receives only `ctx.pit` (`Pit`), never the unfiltered pack. `Pit` hides quotes whose exchange
+`quote_ts` is after `as_of`, settlements before `available_at` (or settlement time + the lock's `assumed_delay_ms`, at least
+60 s; a lock below that is refused), klines before their close (`close_time_ms` must be `t + 59999`), future listings and
+delistings — the same rules as the service's `/slice?as_of_ms=`.
+
+Hand-off to AlphaKeel: `alphakeel_research.handoff.write_handoff(...)` writes `params.json` (with the required
+`source.window` and `trials {count, evidence}`) and `evidence/handoff-audit.json` (AlphaKeel-convention statistics from
+`backtest.alphakeel_metrics`, the run card's data audit). A run whose data is not auditable (`data_audit.auditable` false,
+e.g. ccxt) is classified **exploratory**.
 
 Tests: `agent/tests/test_alphakeel_*.py` (install `.[dev,alphakeel-dev]`). Without the fixture server the cross-process
 tests skip; AlphaKeel's cross-project CI runs them with `ALPHAKEEL_REQUIRE_FIXTURE=1`, where a missing binary or tool
