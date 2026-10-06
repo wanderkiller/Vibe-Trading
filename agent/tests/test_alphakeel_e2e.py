@@ -394,7 +394,10 @@ def test_strategy_bundles_replay_in_a_clean_directory_with_every_digest_checked(
 
 def test_native_strategy_runs_through_the_service_and_params_are_validated_like_the_gui(server, client, pack):
     good = {"schema": "alphakeel.handoff.params/1", "id": "vt-e2e-0001", "strategy": "cross_venue_carry", "summary": "fixture",
-            "source": {"tool": "vibe-trading"}, "rules": {"max_loss": {"value": "0.015"}, "max_hold_hours": {"value": 48}}}
+            # source.window and trials are required by AlphaKeel's hand-off validation (R2); the window ends before the fixture scans
+            "source": {"tool": "vibe-trading", "window": {"start": "2023-10-01", "end": "2023-11-13"}},
+            "trials": {"count": 1, "evidence": "evidence/handoff-audit.json"},
+            "rules": {"max_loss": {"value": "0.015"}, "max_hold_hours": {"value": 48}}}
     v = client.validate_params(good, pack.id)
     assert v["valid"] is True and v["rules"]["max_loss"] == "0.015"
     bad = dict(good, strategy="momentum", rules={"alpha": {"value": "1"}})

@@ -4,7 +4,12 @@
   "strategy": "cross_venue_carry",
   "summary": "fixed sample",
   "source": {
-    "tool": "vibe-trading"
+    "tool": "vibe-trading",
+    "run_id": "example",
+    "window": {
+      "start": "2023-10-01",
+      "end": "2023-11-13"
+    }
   },
   "rules": {
     "max_loss": {
@@ -13,5 +18,9 @@
     "max_hold_hours": {
       "value": 48
     }
+  },
+  "trials": {
+    "count": 1,
+    "evidence": "evidence/handoff-audit.json"
   }
 }
