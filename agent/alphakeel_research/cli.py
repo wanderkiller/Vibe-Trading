@@ -64,7 +64,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--venue", required=True)
     p.add_argument("--symbol", required=True)
     p.add_argument("--market", default="perp")
-    p.add_argument("--table", default="quotes", choices=["quotes", "observations", "settlements", "klines", "bbo"])
+    p.add_argument("--table", default="quotes", choices=["quotes", "observations", "settlements", "klines", "bbo", "instrument_meta"])
+    p.add_argument("--price-kind", default="trade", choices=["trade", "mark", "index"], help="klines only (dataset packs)")
     p.add_argument("--start-ms", type=int, required=True)
     p.add_argument("--end-ms", type=int, required=True)
     p.add_argument("--as-of-ms", type=int)
@@ -124,8 +125,15 @@ def main(argv: list[str] | None = None) -> int:
             from .packfile import Pit
 
             src = Pit(pack, a.as_of_ms) if a.as_of_ms is not None else pack
-            rows = getattr(src, a.table)(inst, a.start_ms, a.end_ms)
-            _out({"pack_id": pack.id, "table": a.table, "rows": len(rows), "first": [r.__dict__ for r in rows[: a.limit]], "accesses": pack.accesses()})
+            if a.table == "instrument_meta":  # one spec row per contract, no window
+                meta = pack.instrument_meta(inst)
+                rows = [meta] if meta else []
+            elif a.table == "klines":
+                rows = src.klines(inst, a.start_ms, a.end_ms, price_kind=a.price_kind)
+            else:
+                rows = getattr(src, a.table)(inst, a.start_ms, a.end_ms)
+            _out({"pack_id": pack.id, "table": a.table, "rows": len(rows),
+                  "first": [r if isinstance(r, dict) else r.__dict__ for r in rows[: a.limit]], "accesses": pack.accesses()})
         elif a.cmd == "review":
             pack = Pack.open(c, a.pack, a.cache)
             intents = _load(a.intents)

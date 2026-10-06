@@ -45,3 +45,24 @@ def test_the_tool_is_auto_registered_with_the_agent_tools():
     import src.tools.alphakeel_research_tool  # noqa: F401
 
     assert "alphakeel_research" in {c.name for c in BaseTool.__subclasses__() if getattr(c, "name", None)}
+
+
+def test_the_tool_builds_dataset_pack_freeze_and_read_arguments():
+    from src.tools.alphakeel_research_tool import AlphakeelResearchTool, _argv
+
+    inst = [{"venue": "okx", "market": "perp", "symbol": "BTC-USDT-SWAP"}]
+    argv = _argv("freeze", {"start_ms": 1, "end_ms": 2, "instruments": inst, "market_tables": ["kline_1m", "bbo"], "price_kinds": ["trade", "mark"],
+                            "market_dataset": "mkt-v1", "funding": "none", "accept_partial": True})
+    assert argv[:5] == ["freeze", "--start-ms", "1", "--end-ms", "2"]
+    path = argv[argv.index("--instruments") + 1]
+    assert json.load(open(path)) == inst  # the list is written to a file the CLI can load
+    assert argv[argv.index("--market-tables") + 1] == "kline_1m,bbo" and argv[argv.index("--price-kinds") + 1] == "trade,mark"
+    assert argv[argv.index("--market-dataset") + 1] == "mkt-v1" and "--accept-partial" in argv and argv[argv.index("--funding") + 1] == "none"
+    # a path is passed through; a scan-pack freeze has no dataset flags
+    assert _argv("freeze", {"start_ms": 1, "end_ms": 2, "instruments": "/x/inst.json"})[-2:] == ["--instruments", "/x/inst.json"]
+    assert "--instruments" not in _argv("freeze", {"start_ms": 1, "end_ms": 2})
+    # market options without instruments are a clear error, not a silently ignored scan-pack freeze
+    out = json.loads(AlphakeelResearchTool().execute(action="freeze", args={"start_ms": 1, "end_ms": 2, "market_tables": ["bbo"]}))
+    assert out["status"] == "error" and "instruments" in out["error"]
+    rd = _argv("read", {"pack": "p", "venue": "okx", "symbol": "S", "start_ms": 1, "end_ms": 2, "table": "klines", "price_kind": "mark", "market": "perp"})
+    assert rd[rd.index("--table") + 1] == "klines" and rd[rd.index("--price-kind") + 1] == "mark"

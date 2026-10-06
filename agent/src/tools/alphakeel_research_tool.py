@@ -11,12 +11,30 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
+import tempfile
 from typing import Any
 
 from src.agent.tools import BaseTool
 
 _ACTIONS = ("check", "freeze", "read", "review", "policy", "native", "compare")
+#: ``read`` tables: scan packs have quotes/observations/settlements; dataset packs have klines/bbo/instrument_meta (and settlements).
 _MAX_OUT = 20_000
+
+
+def _csv(v: Any) -> str:
+    """A list (or already comma separated string) of names as the CLI's comma list."""
+    return ",".join(str(x).strip() for x in v if str(x).strip()) if isinstance(v, (list, tuple)) else str(v)
+
+
+def _instruments_file(v: Any) -> str:
+    """``instruments`` is a path to a JSON file, or the list itself (``[{venue, market, symbol}]``), which is written to a temp file."""
+    if isinstance(v, (list, dict)):
+        fd, path = tempfile.mkstemp(prefix="ak-instruments-", suffix=".json")
+        with os.fdopen(fd, "w") as f:
+            json.dump(v, f)
+        return path
+    return str(v)
 
 
 def _argv(action: str, a: dict[str, Any]) -> list[str]:
@@ -33,12 +51,23 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
     if action == "freeze":
         add("--start-ms", "start_ms", True), add("--end-ms", "end_ms", True), add("--venues", "venues"), add("--funding", "funding")
         add("--warmup-frames", "warmup_frames")
+        # Dataset pack (no scan frames; any window): funding history and/or market tables for an explicit instrument list.
+        if a.get("instruments") not in (None, "", []):
+            out.extend(["--instruments", _instruments_file(a["instruments"])])
+            if a.get("market_tables"):
+                out.extend(["--market-tables", _csv(a["market_tables"])])
+            if a.get("price_kinds"):
+                out.extend(["--price-kinds", _csv(a["price_kinds"])])
+            add("--market-dataset", "market_dataset")
+        elif any(a.get(k) for k in ("market_tables", "price_kinds", "market_dataset")):
+            raise ValueError("freeze: market_tables / price_kinds / market_dataset need instruments (a dataset pack)")
         if a.get("accept_partial"):
             out.append("--accept-partial")
     elif action == "read":
         for f, k in (("--pack", "pack"), ("--venue", "venue"), ("--symbol", "symbol"), ("--start-ms", "start_ms"), ("--end-ms", "end_ms")):
             add(f, k, True)
         add("--market", "market"), add("--table", "table"), add("--as-of-ms", "as_of_ms"), add("--limit", "limit")
+        add("--price-kind", "price_kind")
     elif action == "review":
         add("--pack", "pack", True), add("--intents", "intents", True), add("--profile", "profile"), add("--instruments", "instruments")
     elif action == "policy":
@@ -58,7 +87,8 @@ class AlphakeelResearchTool(BaseTool):
     name = "alphakeel_research"
     description = (
         "Use AlphaKeel's frozen market data and its Rust/Nautilus engine through the research service: "
-        "'freeze' a data pack for a time window, 'read' point-in-time rows, 'review' a Python backtest's fixed intents "
+        "'freeze' a data pack for a time window (a scan pack, or with args.instruments a dataset pack of funding history and "
+        "market_tables kline_1m/bbo/depth20/instrument_meta for ANY window), 'read' point-in-time rows (quotes, settlements, klines, bbo, instrument_meta), 'review' a Python backtest's fixed intents "
         "against the engine (layered L0-L4 comparison with the first difference), run a Python 'policy' under both a "
         "local simulator and the engine's real state, run the 'native' strategy, or 'compare' two runs. Files for "
         "intents/strategy/profile are paths on disk. Returns ids, digests and summaries only; a pass never certifies "
@@ -68,7 +98,7 @@ class AlphakeelResearchTool(BaseTool):
         "type": "object",
         "properties": {
             "action": {"type": "string", "enum": list(_ACTIONS)},
-            "args": {"type": "object", "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, pack, venue, symbol, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode."},
+            "args": {"type": "object", "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode."},
         },
         "required": ["action"],
     }

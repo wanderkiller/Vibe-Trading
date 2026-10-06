@@ -478,3 +478,14 @@ def test_when_the_host_supports_isolation_the_strategy_really_has_no_network(tmp
     assert r.returncode == 0
     sb = _run_probe_policy(tmp_path)
     assert sb["network_blocked"] is True and "verified" in sb["network_isolation"]
+
+
+def test_direct_okx_and_binance_loaders_are_non_auditable_like_ccxt():
+    for src in ("okx", "binance"):
+        a = data_audit.data_audit([src])
+        assert a["auditable"] is False and a["non_auditable_sources"] == [src]
+        assert "re-read bit for bit" in a["sources"][src]["reason"]
+        assert data_audit.non_auditable_warning(a).startswith("non-auditable data: " + src)
+    mixed = data_audit.data_audit(["alphakeel_b2", "okx"])
+    assert mixed["auditable"] is False and mixed["non_auditable_sources"] == ["okx"]
+    assert data_audit.data_audit(["alphakeel_b2"])["auditable"] is True

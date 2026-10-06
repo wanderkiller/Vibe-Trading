@@ -2,7 +2,7 @@
 
 A source is *auditable* when every row the run read can be tied to a content-addressed, versioned dataset that someone
 else can re-read bit for bit: ``alphakeel_b2`` (frozen AlphaKeel packs, verified on read, tagged with the dataset
-versions) and ``alphakeel_pack`` (an exported pack directory). A live pull straight from an exchange through ccxt is
+versions) and ``alphakeel_pack`` (an exported pack directory). A live pull straight from an exchange (through ccxt, or the direct ``okx`` / ``binance`` loaders) is
 not: the exchange can revise, truncate or rate-limit history, nothing pins the response, and a re-run next week may see
 different rows. Those results stay usable for exploration, but the run card says so instead of implying otherwise.
 
@@ -18,6 +18,14 @@ from typing import Any, Iterable
 NON_AUDITABLE_SOURCES: dict[str, str] = {
     "ccxt": (
         "live pull from an exchange through ccxt: the response is not pinned to a dataset version and cannot be "
+        "re-read bit for bit; use source alphakeel_b2 for an auditable crypto run"
+    ),
+    "okx": (
+        "live pull straight from the OKX public API: the response is not pinned to a dataset version and cannot be "
+        "re-read bit for bit; use source alphakeel_b2 for an auditable crypto run"
+    ),
+    "binance": (
+        "live pull straight from the Binance public API: the response is not pinned to a dataset version and cannot be "
         "re-read bit for bit; use source alphakeel_b2 for an auditable crypto run"
     ),
 }
