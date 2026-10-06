@@ -16,6 +16,7 @@
   "codes": {
     "request.invalid": {"class": "request_invalid", "http": 422, "retryable": false},
     "request.bad_json": {"class": "request_invalid", "http": 400, "retryable": false},
+    "request.bad_query": {"class": "request_invalid", "http": 400, "retryable": false},
     "request.bad_key": {"class": "request_invalid", "http": 422, "retryable": false},
     "request.too_large": {"class": "resource_exhausted", "http": 413, "retryable": false},
     "schema.type": {"class": "request_invalid", "http": 422, "retryable": false},
@@ -32,6 +33,7 @@
     "contract.missing_schema": {"class": "request_invalid", "http": 422, "retryable": false},
     "contract.unknown_kind": {"class": "capability_unsupported", "http": 422, "retryable": false},
     "contract.unknown_major": {"class": "capability_unsupported", "http": 422, "retryable": false},
+    "contract.pin_mismatch": {"class": "capability_unsupported", "http": 422, "retryable": false},
     "auth.missing": {"class": "unauthorized", "http": 401, "retryable": false},
     "auth.invalid": {"class": "unauthorized", "http": 401, "retryable": false},
     "auth.revoked": {"class": "unauthorized", "http": 401, "retryable": false},

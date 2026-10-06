@@ -379,6 +379,10 @@ class ExecutionProfilePrecisionSize(StrEnum):
     fixed_8_places = "fixed_8_places"
 
 
+class ExecutionProfileQuotesDecisionVisibility(StrEnum):
+    quote_ts_not_after_decision = "quote_ts_not_after_decision"
+
+
 class ExecutionProfileSamplingDrawdown(StrEnum):
     close_now_from_zero_peak = "close_now_from_zero_peak"
 
@@ -1072,6 +1076,15 @@ class ExecutionProfilePrecision(BaseModel):
     size: ExecutionProfilePrecisionSize
 
 
+class ExecutionProfileQuotes(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    decision_visibility: ExecutionProfileQuotesDecisionVisibility
+    fill_future_tolerance_ms: Annotated[int, Field(ge=0)]
+    max_age_ms: Annotated[int, Field(ge=0)]
+
+
 class ExecutionProfileSampling(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1345,6 +1358,7 @@ class ExecutionProfile(BaseModel):
     matching: ExecutionProfileMatching
     precision: ExecutionProfilePrecision
     profile_id: Id
+    quotes: ExecutionProfileQuotes | None = None
     sampling: ExecutionProfileSampling
     schema_: Annotated[ExecutionProfileSchema, Field(alias="schema")]
     unsupported: Annotated[list[Text], Field(max_length=40)]

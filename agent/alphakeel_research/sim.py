@@ -44,7 +44,6 @@ from .packfile import Inst, Pack
 
 UNIT = Decimal("0.00000001")
 HOUR_MS = 3_600_000
-QUOTE_FUTURE_TOLERANCE_MS = 5_000
 MAX_QTY = Decimal(30_000_000_000_000)
 SIZE_DP = 8
 BOUNDARY_TOLERANCE_MS = 60_000
@@ -177,7 +176,16 @@ class Simulator:
         self.official = profile["funding"]["mode"] == "official_settlement"
         self.strict = bool(profile["funding"]["strict"])
         fees = pack.fees()
-        self.max_age = int(fees["engine"]["max_quote_age_ms"])
+        # Quote rules come from the execution profile (one source with the engine): the maximum quote age (the pack's
+        # scan configuration) and the engine's fill-side future tolerance. A profile without the section is an old
+        # document whose quote rules are not stated; it is refused rather than simulated with assumed numbers.
+        q = profile.get("quotes")
+        if not isinstance(q, dict):
+            raise ApiError("capability.profile", "the execution profile has no quotes section (max_age_ms, fill_future_tolerance_ms)")
+        self.max_age = int(q["max_age_ms"])
+        self.future_tolerance = int(q["fill_future_tolerance_ms"])
+        if self.max_age != int(fees["engine"]["max_quote_age_ms"]):
+            raise ApiError("evidence.reference", "the profile's quote age differs from the pack's fee table")
         mm = fees["engine"].get("maint_margin")
         self.maint_margin: Decimal | None = Decimal(mm) if mm not in (None, "") else None
         # per account: (decision ns, the account as it was before the first order of that decision time)
@@ -260,7 +268,7 @@ class Simulator:
                     funding = None
                 if not (q.bbo and q.bid > 0 and q.ask >= q.bid and fpx > 0):
                     continue
-                if quote_ms is not None and not (quote_ms <= f.t + QUOTE_FUTURE_TOLERANCE_MS and f.t - quote_ms <= self.max_age):
+                if quote_ms is not None and not (quote_ms <= f.t + self.future_tolerance and f.t - quote_ms <= self.max_age):
                     continue
                 self.snaps[k][inst] = Snap(q.bid, q.ask, fpx, funding)
                 dp = max(dp, dp_of(q.bid), dp_of(q.ask), dp_of(fpx))

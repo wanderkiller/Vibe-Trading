@@ -78,7 +78,9 @@ def test_a_frozen_pack_is_downloaded_verified_and_read_with_exact_decimals(serve
     lock = pack.lock
     assert lock["scans"]["frames"] == 61
     assert lock["funding"]["boundary_match"] == "nearest-within-60s-unique-v1"
-    assert lock["coverage"]["pnl_backtest_complete"] is False  # OKX has no official settlements in the fixture dataset
+    # both perpetuals have official settlements in the fixture dataset, scans are 60 s apart and every scan has a USDC/USDT
+    # rate: the strict coverage policy accepts the pack and it is complete for a P&L backtest
+    assert lock["coverage"]["pnl_backtest_complete"] is True and lock["request"]["accept_partial"] is False
     q = pack.quotes(Inst("binance", "perp", "BTCUSDT"), server.start_ms, server.end_ms)
     assert len(q) == 61 and q[0].bid == Decimal("0.999") and q[0].ask == Decimal("1") and isinstance(q[0].bid, Decimal)
     o = pack.observations(Inst("binance", "perp", "BTCUSDT"), server.start_ms, server.start_ms + 1)[0]

@@ -1811,6 +1811,17 @@
           "profile_id": {
             "$ref": "#/components/schemas/Id"
           },
+          "quotes": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionProfileQuotes",
+                "description": "旧口径文档（2026-10-06 之前）没有该节；新文档总是带它。"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "sampling": {
             "$ref": "#/components/schemas/ExecutionProfileSampling"
           },
@@ -2329,6 +2340,37 @@
         "enum": [
           "inferred_from_intents_max16",
           "fixed_8_places"
+        ],
+        "type": "string"
+      },
+      "ExecutionProfileQuotes": {
+        "additionalProperties": false,
+        "description": "报价口径（审查 B-P2-2 / B-P2-5）：把原先只在代码里的两个数显式写进口径文档、进入口径摘要。\n- `max_age_ms`：引擎接受的报价最大年龄，来自数据包费用表（扫描配置），缺失即拒绝运行（不再回退 600000）。\n- `fill_future_tolerance_ms`：引擎**成交**时接受 `quote_ts` 比决策时刻晚多少（时钟偏差容忍，引擎常量）。\n  决策可见性没有这个容忍（`decision_visibility`）；两者分开写，L1 口径比较会比对它们。",
+        "properties": {
+          "decision_visibility": {
+            "$ref": "#/components/schemas/ExecutionProfileQuotesDecisionVisibility"
+          },
+          "fill_future_tolerance_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_age_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_age_ms",
+          "fill_future_tolerance_ms",
+          "decision_visibility"
+        ],
+        "type": "object"
+      },
+      "ExecutionProfileQuotesDecisionVisibility": {
+        "enum": [
+          "quote_ts_not_after_decision"
         ],
         "type": "string"
       },
