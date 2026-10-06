@@ -578,13 +578,13 @@ def calc_metrics(
     # (e.g. a one-bar backtest) yields NaN and poisons the Sharpe ratio.
     # Guard the small sample the same way ``downside_std`` is guarded below.
     vol = float(port_ret.std()) if len(port_ret) > 1 and returns_finite else 0.0
-    sharpe = (
-        float(port_ret.mean() / (vol + 1e-10) * np.sqrt(bpy))
-        if returns_finite
-        else 0.0
+    # Undefined (fewer than 2 returns, no variance, non-finite returns) is None, not ``mean / (std + 1e-10)``: a flat
+    # curve used to report an astronomically large Sharpe (review D-P2-8).
+    sharpe: float | None = (
+        float(port_ret.mean() / vol * np.sqrt(bpy)) if returns_finite and vol > 0 and np.isfinite(vol) else None
     )
-    if not np.isfinite(sharpe):
-        sharpe = 0.0
+    if sharpe is not None and not np.isfinite(sharpe):
+        sharpe = None
 
     # Drawdown
     # The account starts at ``initial_cash`` before the first recorded bar, so
@@ -597,15 +597,16 @@ def calc_metrics(
 
     calmar = ann_ret / abs(max_dd) if abs(max_dd) > 1e-10 else 0.0
 
-    # Sortino
-    if returns_finite:
-        downside = port_ret[port_ret < 0]
-        downside_std = float(downside.std()) if len(downside) > 1 else 1e-10
-        sortino = float(port_ret.mean() / (downside_std + 1e-10) * np.sqrt(bpy))
-    else:
-        sortino = 0.0
-    if not np.isfinite(sortino):
-        sortino = 0.0
+    # Sortino (Sortino & Price, the AlphaKeel definition): downside deviation sqrt(mean(min(r, 0)^2)) over all returns,
+    # target 0. None when undefined (no downside, non-finite returns) — the old "std of the negative returns, else 1e-10"
+    # gave 7.6e8 for a series with one loss.
+    sortino: float | None = None
+    if returns_finite and len(port_ret) > 0:
+        dd_dev = float(np.sqrt(np.mean(np.minimum(port_ret.to_numpy(dtype=float), 0.0) ** 2)))
+        if dd_dev > 0:
+            sortino = float(port_ret.mean() / dd_dev * np.sqrt(bpy))
+    if sortino is not None and not np.isfinite(sortino):
+        sortino = None
 
     trade_stats = win_rate_and_stats(trades)
 
@@ -662,7 +663,7 @@ def calc_metrics(
         "max_drawdown": max_dd,
         "sharpe": sharpe,
         "calmar": round(calmar, 4),
-        "sortino": round(sortino, 4),
+        "sortino": None if sortino is None else round(sortino, 4),
         "win_rate": trade_stats["win_rate"],
         "profit_loss_ratio": trade_stats["profit_loss_ratio"],
         "profit_factor": trade_stats["profit_factor"],
@@ -684,7 +685,7 @@ def _empty_metrics(initial_cash: float) -> Dict[str, Any]:
     return {
         "final_value": initial_cash,
         "total_return": 0, "annual_return": 0, "max_drawdown": 0,
-        "sharpe": 0, "calmar": 0, "sortino": 0,
+        "sharpe": None, "calmar": 0, "sortino": None,  # undefined without data, not zero
         "win_rate": 0, "profit_loss_ratio": 0, "profit_factor": 0,
         "max_consecutive_loss": 0, "avg_holding_days": 0, "trade_count": 0,
         "benchmark_return": 0, "excess_return": 0, "information_ratio": 0,

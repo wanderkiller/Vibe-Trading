@@ -38,11 +38,10 @@ class TestCompositeEngineFallback:
 
     def test_known_symbols_still_use_correct_engine(self):
         """Known symbols should still route to their dedicated sub-engine."""
-        config = {"initial_cash": 100_000, "maker_rate": 0.001}
+        config = {"initial_cash": 100_000, "taker_rate": 0.001}
         engine = CompositeEngine(config, ["BTC-USDT", "ETH-USDT"])
-        # BTC-USDT should use the crypto sub-engine (maker_rate=0.001 from config)
+        # BTC-USDT routes to the crypto sub-engine: a close is an IOC taker fill at the configured taker rate
         fee = engine.calc_commission(1.0, 50000.0, 1, False)
-        # Crypto maker rate is 0.0002 by default, but config overrides to 0.001
         assert fee == pytest.approx(1.0 * 50000.0 * 0.001)
 
     def test_empty_rule_engines_raises(self):

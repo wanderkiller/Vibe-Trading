@@ -57,9 +57,10 @@ def test_calc_metrics_no_inf_on_zero_equity() -> None:
     """A zero in the equity curve must not produce inf/NaN in any metric."""
     eq = _equity_curve_with_zero()
     m = calc_metrics(eq, [], initial_cash=10000.0)
-    for key in ("sharpe", "sortino", "calmar", "annual_return", "max_drawdown"):
+    for key in ("calmar", "annual_return", "max_drawdown"):
         val = m[key]
         assert np.isfinite(val), f"{key} is not finite: {val}"
+    assert m["sharpe"] is None and m["sortino"] is None  # non-finite returns: undefined, explicitly
 
 
 def test_calc_metrics_no_inf_on_all_zero_equity() -> None:
@@ -69,8 +70,9 @@ def test_calc_metrics_no_inf_on_all_zero_equity() -> None:
         index=pd.date_range("2025-01-01", periods=5, freq="D"),
     )
     m = calc_metrics(eq, [], initial_cash=10000.0)
-    for key in ("sharpe", "sortino", "calmar", "annual_return"):
+    for key in ("calmar", "annual_return"):
         assert np.isfinite(m[key]), f"{key} is not finite: {m[key]}"
+    assert m["sharpe"] is None and m["sortino"] is None
 
 
 # --------------------------------------------------------------------------- #

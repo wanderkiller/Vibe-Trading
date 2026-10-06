@@ -63,6 +63,8 @@ def monte_carlo_test(
 
     pnls = np.array([t.pnl for t in trades])
     actual = _path_metrics(pnls, initial_capital, bars_per_year)
+    if actual["sharpe"] is None:
+        return {"error": "the path's returns have no variance: its Sharpe ratio is undefined", "p_value_sharpe": None}
 
     rng = np.random.default_rng(seed)
     sharpe_count = 0
@@ -78,6 +80,8 @@ def monte_carlo_test(
         if sim_equities is not None:
             sim_equities[i] = initial_capital + np.cumsum(shuffled)
         sim = _path_metrics(shuffled, initial_capital, bars_per_year)
+        if sim["sharpe"] is None:
+            return {"error": "a permuted path has no return variance: its Sharpe ratio is undefined", "p_value_sharpe": None}
         sim_sharpes.append(sim["sharpe"])
         if sim["sharpe"] >= actual["sharpe"]:
             sharpe_count += 1
@@ -119,7 +123,7 @@ def monte_carlo_test(
 
 def _path_metrics(
     pnls: np.ndarray, initial_capital: float, bars_per_year: int = 252
-) -> Dict[str, float]:
+) -> Dict[str, Any]:
     """Compute Sharpe and max drawdown from a PnL sequence."""
     equity = initial_capital + np.cumsum(pnls)
     if len(equity) > 1:
@@ -128,8 +132,7 @@ def _path_metrics(
         returns = np.where(prev != 0, diff / np.where(prev != 0, prev, 1.0), 0.0)
     else:
         returns = np.array([0.0])
-    std = returns.std()
-    sharpe = float(returns.mean() / (std + 1e-10) * np.sqrt(bars_per_year))
+    sharpe = _sharpe(returns, bars_per_year)
     peak = np.maximum.accumulate(equity)
     dd = (equity - peak) / np.where(peak > 0, peak, 1.0)
     max_dd = float(dd.min())
@@ -176,12 +179,22 @@ def bootstrap_sharpe_ci(
         return {"error": "need at least 5 return observations"}
 
     observed = _sharpe(returns, bars_per_year)
+    if observed is None:
+        return {"error": "the returns have no variance: the Sharpe ratio is undefined"}
 
     rng = np.random.default_rng(seed)
     boot_sharpes = []
+    undefined = 0
     for _ in range(n_bootstrap):
         sample = rng.choice(returns, size=len(returns), replace=True)
-        boot_sharpes.append(_sharpe(sample, bars_per_year))
+        s_ = _sharpe(sample, bars_per_year)
+        if s_ is None:
+            undefined += 1
+        else:
+            boot_sharpes.append(s_)
+    if undefined:
+        # A resample without variance has no Sharpe ratio; leaving it out would bias the interval, so none is given.
+        return {"error": f"{undefined} of {n_bootstrap} bootstrap samples have no return variance (too few distinct returns)"}
 
     arr = np.array(boot_sharpes)
     alpha = (1 - confidence) / 2
@@ -203,9 +216,15 @@ def bootstrap_sharpe_ci(
     return result
 
 
-def _sharpe(returns: np.ndarray, bars_per_year: int = 252) -> float:
-    std = returns.std()
-    return float(returns.mean() / (std + 1e-10) * np.sqrt(bars_per_year))
+def _sharpe(returns: np.ndarray, bars_per_year: int = 252) -> float | None:
+    """Annualised Sharpe with the sample std (ddof=1, the same as ``calc_metrics``); ``None`` when it is undefined
+    (fewer than 2 returns or no variance) — never ``mean / (std + 1e-10)``, which turns a flat series into a huge ratio."""
+    if len(returns) < 2:
+        return None
+    std = float(np.std(returns, ddof=1))
+    if std == 0 or not np.isfinite(std):
+        return None
+    return float(returns.mean() / std * np.sqrt(bars_per_year))
 
 
 # ─── Walk-Forward Analysis ───
@@ -252,7 +271,7 @@ def walk_forward_analysis(
         # Per-window metrics
         ret = float(win_eq.iloc[-1] / win_eq.iloc[0] - 1) if win_eq.iloc[0] > 0 else 0.0
         win_returns = win_eq.pct_change().replace([np.inf, -np.inf], 0.0).dropna().values
-        sharpe = _sharpe(win_returns, bars_per_year) if len(win_returns) > 1 else 0.0
+        sharpe = _sharpe(win_returns, bars_per_year)
 
         peak = win_eq.cummax()
         dd = (win_eq - peak) / peak.replace(0, 1)
@@ -267,7 +286,7 @@ def walk_forward_analysis(
                 "start": str(win_start.date()) if hasattr(win_start, "date") else str(win_start),
                 "end": str(win_end.date()) if hasattr(win_end, "date") else str(win_end),
                 "return": round(ret, 6),
-                "sharpe": round(sharpe, 4),
+                "sharpe": None if sharpe is None else round(sharpe, 4),
                 "max_dd": round(max_dd, 6),
                 "trades": len(win_trades),
                 "win_rate": round(win_rate, 4),
@@ -286,8 +305,10 @@ def walk_forward_analysis(
         "consistency_rate": round(profitable_windows / n_windows, 4),
         "return_mean": round(float(np.mean(returns_list)), 6),
         "return_std": round(float(np.std(returns_list)), 6),
-        "sharpe_mean": round(float(np.mean(sharpes_list)), 4),
-        "sharpe_std": round(float(np.std(sharpes_list)), 4),
+        # a window without return variance has no Sharpe; then the mean/std over windows is not defined either
+        "sharpe_mean": None if None in sharpes_list else round(float(np.mean(sharpes_list)), 4),
+        "sharpe_std": None if None in sharpes_list else round(float(np.std(sharpes_list)), 4),
+        "sharpe_undefined_windows": sum(1 for x in sharpes_list if x is None),
     }
 
 

@@ -397,10 +397,10 @@ class TestCalcMetrics:
         eq = pd.Series([1_000_000.0], index=pd.bdate_range("2025-01-01", periods=1))
         bench_ret = pd.Series([0.0], index=eq.index)
         m = calc_metrics(eq, [], 1_000_000, 252, bench_ret=bench_ret)
-        for key in ("sharpe", "sortino", "information_ratio",
-                    "annual_return", "max_drawdown", "calmar"):
+        for key in ("information_ratio", "annual_return", "max_drawdown", "calmar"):
             assert math.isfinite(m[key]), f"{key} is not finite: {m[key]!r}"
-        assert m["sharpe"] == 0.0
+        # one observation: Sharpe/Sortino are undefined — explicit None, never a number made up from 1e-10 (D-P2-8)
+        assert m["sharpe"] is None and m["sortino"] is None
         assert m["information_ratio"] == 0.0
 
     def test_final_value(self) -> None:
@@ -409,9 +409,23 @@ class TestCalcMetrics:
         assert m["final_value"] == pytest.approx(1_200_000, rel=0.01)
 
     def test_sortino_positive_for_growth(self) -> None:
-        eq = self._growing_equity()
-        m = calc_metrics(eq, [], 1_000_000, 252)
+        dates = pd.bdate_range("2025-01-01", periods=60)
+        values = 1_000_000 * np.cumprod(1 + np.where(np.arange(60) % 5 == 0, -0.002, 0.003))
+        m = calc_metrics(pd.Series(values, index=dates), [], 1_000_000, 252)
         assert m["sortino"] > 0
+
+    def test_sortino_is_the_downside_deviation_over_all_returns_and_none_without_downside(self) -> None:
+        """Sortino & Price (AlphaKeel's definition): sqrt(mean(min(r, 0)^2)) over all n; the old definition used the std of
+        the negative returns only and 1e-10 when there was at most one, giving ratios like 7.6e8."""
+        dates = pd.bdate_range("2025-01-01", periods=6)
+        eq = pd.Series(1000.0 * np.cumprod([1, 1.01, 0.98, 1.03, 1.0, 1.02]), index=dates)
+        m = calc_metrics(eq, [], 1000.0, 252)
+        r = eq.pct_change().fillna(0.0)
+        want = r.mean() / np.sqrt(np.mean(np.minimum(r, 0) ** 2)) * np.sqrt(252)
+        assert m["sortino"] == pytest.approx(round(want, 4))
+        assert calc_metrics(self._growing_equity(), [], 1_000_000, 252)["sortino"] is None
+        flat = pd.Series([1000.0] * 5, index=pd.bdate_range("2025-01-01", periods=5))
+        assert calc_metrics(flat, [], 1000.0, 252)["sharpe"] is None
 
     def test_calmar_positive_for_drawdown(self) -> None:
         """Growing equity with a dip should have positive Calmar."""
@@ -495,10 +509,10 @@ class TestCalcMetrics:
         eq = pd.Series([100.0, 0.0, 50.0], index=dates)
         bench = pd.Series([0.0, -1.0, 0.0], index=dates)
         m = calc_metrics(eq, [], 100.0, 252, bench_ret=bench)
-        for key in ("sharpe", "sortino", "information_ratio", "calmar"):
+        for key in ("information_ratio", "calmar"):
             assert math.isfinite(m[key]), f"{key} is not finite: {m[key]!r}"
-        assert m["sharpe"] == 0.0
-        assert m["sortino"] == 0.0
+        assert m["sharpe"] is None and m["sortino"] is None  # undefined, not 0
+        assert m["sortino"] is None
         assert m["information_ratio"] == 0.0
         assert m["total_return"] == pytest.approx(-0.5)
         assert m["max_drawdown"] == pytest.approx(-1.0)
