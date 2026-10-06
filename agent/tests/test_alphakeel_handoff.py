@@ -75,3 +75,13 @@ def test_the_window_must_cover_the_data_the_research_service_handed_out(tmp_path
     assert p["source"]["research_credential"] == "tok-1"
     with pytest.raises(ApiError, match="must cover every day"):
         _write(tmp_path, research_credential=who, window={"start": "2024-01-01", "end": "2026-06-29"})
+
+
+def test_without_a_research_credential_the_window_is_self_reported_and_the_evidence_says_so(tmp_path):
+    _write(tmp_path)
+    ev = json.loads((tmp_path / "evidence" / "handoff-audit.json").read_text())
+    assert any("cannot check the research window" in r for r in ev["reasons"]), ev["reasons"]
+    with pytest.raises(ApiError, match="credential id"):
+        _write(tmp_path, research_credential={"holdout_days": 60})  # no id: AlphaKeel could not check anything
+    with pytest.raises(ApiError, match="credential id"):
+        _write(tmp_path, research_credential={"credential": " tok-1"})

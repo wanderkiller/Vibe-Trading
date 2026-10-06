@@ -10,6 +10,10 @@ hand-off cannot quietly claim more than the research supports (review B-P1-2, D-
 * **Research window** (``source.window``, required): every day of data the research used. When the research read data
   through AlphaKeel's research service, the credential's data horizon (``/whoami`` ``data_horizon``) is the service's own
   record of what it handed out: a window ending before it under-states the data seen and is refused.
+* **Research credential** (``source.research_credential``): written when the research used the research service. AlphaKeel
+  checks it against the service's data-horizon ledger when it accepts the experiment (experiment start at or after the
+  credential's ``review_start_min_ms``, window covering the data handed out). Without it the window is self-reported:
+  AlphaKeel runs the comparison but will not name a winner, and the evidence file says so.
 * **Trials** (``trials {count, evidence}``, required): how many parameter sets were tried for this result and the file in
   the package that shows it (it must exist). AlphaKeel adds ``count`` to its global trial ledger (DSR's N).
 * **AlphaKeel-convention statistics** next to Vibe-Trading's own: UTC-daily returns over an explicit capital base,
@@ -83,11 +87,18 @@ def write_handoff(out_dir: str | Path, *, handoff_id: str, summary: str, rules: 
     ev = Path(trials_evidence)
     if ev.is_absolute() or ".." in ev.parts or not (out / ev).is_file():
         raise _bad(f"trials evidence {trials_evidence!r} must be an existing file inside the package")
+    if research_credential is not None:
+        cred = research_credential.get("credential")
+        if not (isinstance(cred, str) and cred and cred == cred.strip()):
+            raise _bad("research_credential must be the Client.check()/whoami() output with its credential id")
     horizon = (research_credential or {}).get("data_horizon")
     if horizon is not None and _day_end_ms(end) < int(horizon["max_window_end_ms"]):
         raise _bad(f"the research window ends {end} but this credential received data up to {horizon['max_window_end_ms']} ms "
                    "(research service data horizon): the window must cover every day of data the research used")
     audit = classify(run_card)
+    if research_credential is None:
+        audit["reasons"].append("no research-service credential: AlphaKeel cannot check the research window against its "
+                                "data-horizon ledger, so the comparison will not name a winner")
     if not audit["auditable"] and not summary.startswith("EXPLORATORY"):
         summary = "EXPLORATORY (non-auditable data): " + summary
     from backtest.alphakeel_metrics import alphakeel_metrics
