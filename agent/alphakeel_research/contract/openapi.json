@@ -248,6 +248,17 @@
             "minimum": 0,
             "type": "integer"
           },
+          "datasets": {
+            "description": "Versioned datasets pinned at acceptance (dataset packs only).",
+            "items": {
+              "$ref": "#/components/schemas/DataLockDatasetsItem"
+            },
+            "maxItems": 8,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "funding": {
             "oneOf": [
               {
@@ -283,7 +294,15 @@
             "$ref": "#/components/schemas/DataLockRequest"
           },
           "scans": {
-            "$ref": "#/components/schemas/DataLockScans"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DataLockScans",
+                "description": "`null` for `source: \"dataset\"` packs (no scan frames)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "schema": {
             "$ref": "#/components/schemas/DataLockSchema"
@@ -442,6 +461,66 @@
         ],
         "type": "object"
       },
+      "DataLockDatasetsItem": {
+        "additionalProperties": false,
+        "properties": {
+          "dataset_version": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "description": "`funding` or `market`.",
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          },
+          "schema_version": {
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          },
+          "snapshot_sha256": {
+            "$ref": "#/components/schemas/Sha256"
+          },
+          "tables": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "venues": {
+            "items": {
+              "$ref": "#/components/schemas/Venue"
+            },
+            "maxItems": 9,
+            "type": "array"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/DataLockFundingVisibility"
+          },
+          "watermark_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "dataset_version",
+          "snapshot_sha256",
+          "schema_version",
+          "visibility",
+          "tables",
+          "venues",
+          "watermark_ms"
+        ],
+        "type": "object"
+      },
       "DataLockFunding": {
         "additionalProperties": false,
         "properties": {
@@ -503,6 +582,17 @@
         "properties": {
           "accept_partial": {
             "type": "boolean"
+          },
+          "dataset": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DatasetSpec",
+                "description": "Present = a dataset pack (frozen from versioned datasets, no scan frames); absent = scan-archive pack."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "funding_dataset": {
             "type": [
@@ -689,7 +779,8 @@
           "fx",
           "fee",
           "instrument",
-          "config"
+          "config",
+          "market"
         ],
         "type": "string"
       },
@@ -943,9 +1034,38 @@
           "fees",
           "scans",
           "config",
-          "coverage"
+          "coverage",
+          "market"
         ],
         "type": "string"
+      },
+      "DatasetSpec": {
+        "additionalProperties": false,
+        "description": "Dataset-pack options. Funding comes from `funding_dataset` (as for scan packs); market tables from `market_dataset`.",
+        "properties": {
+          "market_dataset": {
+            "description": "Market dataset version; empty = latest when a market dataset is configured and `market_tables` is non-empty.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "market_tables": {
+            "description": "Subset of `kline_1m`, `bbo`, `depth20`, `instrument_meta`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "price_kinds": {
+            "description": "For `kline_1m`: subset of `trade`, `mark`, `index` (default `[\"trade\"]`).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
       },
       "Dec": {
         "description": "精确十进制：可带负号，无指数、无空白。",
@@ -2496,6 +2616,17 @@
         "properties": {
           "accept_partial": {
             "type": "boolean"
+          },
+          "dataset": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DatasetSpec",
+                "description": "Present = a *dataset pack*: frozen from versioned datasets (funding history, market data) for any window,\nwithout scan frames. `instruments` is then required (there is no scan universe to enumerate), `include` is\nignored (no native scans), and the pack cannot drive engine runs."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "funding_dataset": {
             "description": "官方结算数据集版本；空 = 数据集可用时固定为当前最新（解析结果写进数据锁），`\"none\"` = 不含资金费结算。",

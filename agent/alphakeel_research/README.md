@@ -15,6 +15,7 @@ python -m alphakeel_research check
 | Task | Command |
 | --- | --- |
 | freeze / read data | `freeze --start-ms N --end-ms N`, `read --pack ID --venue V --symbol S --start-ms N --end-ms N [--as-of-ms N]` |
+| dataset pack (funding history 2019-, 9 venues; 1m klines / bbo; no scan frames) | `freeze --start-ms N --end-ms N --instruments inst.json [--market-tables kline_1m,bbo] [--price-kinds trade] [--funding none]`, then `read --table settlements\|klines\|bbo` |
 | Python backtest + intent review | `review --pack ID --intents intents.json` |
 | policy under both state sources | `policy --pack ID --strategy DIR --instruments instruments.json --parameters params.json --seed N` |
 | AlphaKeel native strategy | `native --pack ID --params handoff-params.json` |
@@ -28,6 +29,42 @@ is process isolation with a scrubbed environment and resource limits, not a secu
 
 Inside Vibe-Trading the same operations are available as the `alphakeel_research` agent tool; the `alphakeel_pack` data
 source only marks pack-backed data and refuses OHLCV requests (there is no fallback to another source).
+
+## Dataset packs, the `alphakeel_b2` loader and the hold-out
+
+AlphaKeel's scan archive is short (it starts 2026-10-01); its funding history in B2 starts in 2019 (nine venues) and its
+market dataset holds 1-minute klines, bbo, depth and instrument metadata. A **dataset pack** (`dataset` in the pack
+request, `Client.dataset_pack_request(...)`) freezes any window from those versioned datasets without scan frames:
+versions are pinned by the service at acceptance, a gap in any instrument/table is an error (`data.coverage_partial`)
+unless you opt into `accept_partial`, and `pack_id` is the digest of the frozen content. A dataset pack serves research
+reads (`Pack.settlements/klines/bbo/instrument_meta`, `Pit.*` with point-in-time visibility: klines from `close_time_ms`,
+bbo from `ts_recv_ms`, settlements from `available_at`); it cannot drive engine runs (`capability.unsupported`).
+
+The **`alphakeel_b2` loader** (`backtest/loaders/alphakeel_b2_loader.py`) wraps this for Vibe-Trading: `fetch()` builds
+OHLCV from `kline_1m` (1m...1D, complete bars only) and `fetch_funding()` returns official funding settlements for all nine
+venues as exact `Decimal`. It talks only to the research service (no object-store credentials, no exchange), verifies the data
+lock digest and every object it downloads, checks the pack matches the request, tags each frame with
+`df.attrs["alphakeel_b2"]` (pack id and digest, dataset versions and snapshot hashes) and records it for the run card. It is
+explicit-only (never in an `auto` chain) and never falls back to another source. Codes: `venue:market:SYMBOL`
+(`okx:perp:BTC-USDT-SWAP`) or `BTC-USDT` / `BTC-USDT-PERP` on `ALPHAKEEL_B2_VENUE` (default binance; venues whose symbols are
+BASEQUOTE only). Data pulled live through `ccxt` stays available but is marked **non-auditable** in `run_card.json`
+(`data_audit`) because nothing pins it to a dataset version.
+
+**Hold-out**: the service keeps the most recent N days (per credential, default 60; `arb research-service token create
+--holdout-days`) invisible so AlphaKeel's own re-checks stay out-of-sample. A request whose `end_ms` reaches into it is
+refused with `data.holdout` (the message states the latest allowed `end_ms`; `Client.holdout()` returns it). Do not try to
+work around it; ask for an earlier window.
+
+```bash
+python -m alphakeel_research freeze --start-ms 1672531200000 --end-ms 1704067200000 \
+    --instruments inst.json --market-tables kline_1m --out lock.json      # inst.json: [{"venue":"binance","market":"perp","symbol":"BTCUSDT"}]
+```
+
+**Policy sandbox network isolation**: `PolicyHost` tries to start the strategy in its own network namespace (`unshare -n`,
+with uid drop when run as root; `-Urn` for unprivileged users) and only reports `network_blocked: true` after a probe run
+under that exact launch command proved there is no route (only loopback, `connect()` gets ENETUNREACH). When the host
+cannot do it (no `unshare`, no privilege, user namespaces disabled, container without CAP_SYS_ADMIN) it reports
+`network_blocked: false` and the reason in `network_isolation`. Set `ALPHAKEEL_REQUIRE_NETNS=1` to refuse to start without it.
 
 Contract: `contract/` is a pinned copy of AlphaKeel's OpenAPI, error codes and shared test vectors (`PIN` holds their
 hashes); `models.py` is generated from it (`gen_models.sh`), never edited by hand.

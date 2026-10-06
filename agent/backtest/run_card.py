@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from backtest.data_audit import data_audit, non_auditable_warning
+
 
 SCHEMA_VERSION = "1.0"
 # Largest single structured metric the card will carry, counted in BYTES of the
@@ -85,6 +87,11 @@ def write_run_card(
         if strategy_file.exists() and strategy_file.is_file():
             reproducibility["strategy_hash"] = _file_hash(strategy_file)
 
+    audit = data_audit(data_sources or [])
+    card_warnings = list(warnings or [])
+    audit_warning = non_auditable_warning(audit)
+    if audit_warning:
+        card_warnings.append(audit_warning)
     card: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _utc_now(),
@@ -92,8 +99,9 @@ def write_run_card(
         "backtest": _backtest_summary(config),
         "reproducibility": reproducibility,
         "data_sources": list(data_sources or []),
+        "data_audit": audit,
         "metrics": _scalar_metrics(metrics),
-        "warnings": list(warnings or []),
+        "warnings": card_warnings,
         "artifacts": _list_artifacts(run_dir),
     }
     normalized_refs = _normalize_artifact_refs(artifact_refs)
@@ -407,6 +415,20 @@ def _render_markdown(card: Mapping[str, Any]) -> str:
     lines.extend(["", "## Data Sources"])
     data_sources = card.get("data_sources", [])
     lines.extend(f"- {source}" for source in data_sources) if data_sources else lines.append("- None recorded.")
+
+    audit = card.get("data_audit", {})
+    if audit:
+        lines.extend(["", "## Data Audit"])
+        lines.append(f"- auditable: {audit.get('auditable')}")
+        for name, info in (audit.get("sources") or {}).items():
+            if info.get("auditable") is False:
+                lines.append(f"- {name}: NOT AUDITABLE - {info.get('reason')}")
+            elif info.get("auditable"):
+                reads = info.get("reads") or []
+                versions = sorted({f"{d['name']}={d['dataset_version']}" for r in reads for d in r.get("datasets", [])})
+                lines.append(f"- {name}: auditable ({len(reads)} verified pack read(s); {', '.join(versions) or 'no dataset versions recorded'})")
+            else:
+                lines.append(f"- {name}: {info.get('reason')}")
 
     lines.extend(["", "## Metrics"])
     metric_values = card.get("metrics", {})

@@ -111,7 +111,13 @@ class Client:
         if major != contract.MAJOR:
             raise ApiError("contract.unknown_major", f"the service speaks contract major {major}; this client speaks {contract.MAJOR}")
         return {"credential": who["credential"], "scopes": who["scopes"], "build": who.get("build"), "contract": cap["contract"],
-                "modes": cap["modes"], "limits": cap["limits"]}
+                "modes": cap["modes"], "limits": cap["limits"], "holdout_days": who.get("holdout_days"),
+                "holdout_cutoff_ms": who.get("holdout_cutoff_ms"), "datasets": cap.get("datasets")}
+
+    def holdout(self) -> dict:
+        """The hold-out of this credential: the most recent ``days`` are invisible; ``cutoff_ms`` is the latest allowed end_ms."""
+        who = self.whoami()
+        return {"days": who.get("holdout_days"), "cutoff_ms": who.get("holdout_cutoff_ms")}
 
     # -- data packs --------------------------------------------------------------------------------------------
 
@@ -121,6 +127,26 @@ class Client:
     def create_pack(self, request: dict, *, key: str | None = None) -> dict:
         key = key or key_for("pack", request)
         return self.post("/packs", {"key": key, "request": request}, key=key)
+
+    @staticmethod
+    def dataset_pack_request(*, start_ms: int, end_ms: int, instruments: list[dict], funding_dataset: str | None = None,
+                             market_tables: list[str] | None = None, price_kinds: list[str] | None = None,
+                             market_dataset: str | None = None, accept_partial: bool = False) -> dict:
+        """Request body for a *dataset pack*: funding history and/or market tables for any window, no scan frames.
+
+        ``instruments`` is required (``[{venue, market, symbol}]``): there is no scan universe to enumerate. Versions are
+        pinned by the service at acceptance. ``funding_dataset="none"`` drops funding; empty ``market_tables`` drops
+        market data. A window that reaches into the credential's hold-out is refused (``data.holdout``).
+        """
+        spec: dict = {"market_tables": list(market_tables or []), "price_kinds": list(price_kinds or [])}
+        if market_dataset:
+            spec["market_dataset"] = market_dataset
+        return {"window": {"start_ms": start_ms, "end_ms": end_ms}, "warmup_frames": 0, "venues": [], "instruments": instruments,
+                "accept_partial": accept_partial, "funding_dataset": funding_dataset, "include_native": False, "include_tables": True,
+                "dataset": spec}
+
+    def create_dataset_pack(self, **kw: Any) -> dict:
+        return self.create_pack(self.dataset_pack_request(**kw))
 
     def pack(self, job_or_pack_id: str) -> dict:
         return self.get(f"/packs/{job_or_pack_id}")

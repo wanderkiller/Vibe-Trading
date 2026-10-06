@@ -63,6 +63,7 @@ VALID_SOURCES: set[str] = {
     "tickerall",
     "local",
     "alphakeel_pack",
+    "alphakeel_b2",
     "auto",
 }
 
@@ -126,6 +127,7 @@ def _ensure_registered() -> None:
             "backtest.loaders.tickerall_loader",
             "backtest.loaders.local_loader",
             "backtest.loaders.alphakeel_pack_loader",
+            "backtest.loaders.alphakeel_b2_loader",
         ]
         import importlib
 
@@ -155,7 +157,7 @@ def _ensure_registered() -> None:
 # as if it were Toman — a caliber error of about six orders of magnitude, not a
 # missing-data error. An unreachable Iranian endpoint must be visible.
 _NO_NETWORK_FALLBACK_SOURCES: frozenset[str] = frozenset(
-    {"local", "qveris", "tickerall", "fmp", "nobitex", "wallex", "alphakeel_pack"}
+    {"local", "qveris", "tickerall", "fmp", "nobitex", "wallex", "alphakeel_pack", "alphakeel_b2"}
 )  # QVERIS-INTEGRATION
 
 

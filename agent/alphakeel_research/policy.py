@@ -40,17 +40,84 @@ except Exception:
 runpy.run_module("alphakeel_research.policy_host", run_name="__main__", alter_sys=True)
 """
 _ENV_KEEP = ("PATH", "LANG", "LC_ALL", "TZ")
+#: Run by the probe INSIDE the candidate launch command: proves that the process really has no network. Evidence is
+#: the per-namespace ``/proc/net/dev`` (only loopback) and an immediate ENETUNREACH on a connect to a TEST-NET address
+#: (a host with a route would time out or connect). Exit 0 means isolated; anything else means not.
+_NETNS_PROBE = """\
+import errno, socket, sys
+names = [ln.split(":")[0].strip() for ln in open("/proc/net/dev").read().splitlines()[2:] if ":" in ln]
+if any(n != "lo" for n in names):
+    sys.exit(3)
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(0.5)
+try:
+    s.connect(("192.0.2.1", 9))
+except OSError as e:
+    sys.exit(0 if e.errno in (errno.ENETUNREACH, errno.EADDRNOTAVAIL) else 4)
+sys.exit(5)
+"""
 #: Largest single protocol frame (one JSON reply line) accepted from the strategy process.
 MAX_FRAME_BYTES = 16 << 20
 #: How much of the strategy's stderr is kept for error messages (older output is dropped, never blocks the child).
 STDERR_TAIL_BYTES = 64 << 10
 
 
+_NETNS_CACHE: dict[tuple, tuple[bool, str]] = {}
+
+
+def probe_network_isolation(prefix: list[str], python: str | None = None) -> tuple[bool, str]:
+    """Run the probe under ``prefix`` (e.g. ``["unshare", "-n", "--"]``); (True, why) only if it proved no network."""
+    key = (tuple(prefix), python or sys.executable)
+    if key in _NETNS_CACHE:
+        return _NETNS_CACHE[key]
+    cmd = [*prefix, python or sys.executable, "-c", _NETNS_PROBE]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=10, text=True)
+        ok = r.returncode == 0
+        res = (ok, "verified: only loopback present and connect() gets ENETUNREACH" if ok
+               else f"probe exit {r.returncode}: {(r.stderr or '').strip()[-160:] or 'not isolated'}")
+    except (OSError, subprocess.SubprocessError) as e:
+        res = (False, f"{e.__class__.__name__}: {e}")
+    _NETNS_CACHE[key] = res
+    return res
+
+
+def network_isolation_launcher(creds: tuple[str, str] | None, python: str | None = None) -> tuple[list[str], bool, dict[str, Any]]:
+    """Pick a launch prefix that really removes the network, verified by executing the probe under it.
+
+    Returns ``(prefix, uid_dropped_by_prefix, report)``. An empty prefix means no isolation could be established on this
+    host (no ``unshare``, no privilege, user namespaces disabled, container without CAP_SYS_ADMIN...): the caller then
+    reports ``network_blocked: False`` with the reason, and never claims isolation it did not verify.
+    """
+    exe = shutil.which("unshare")
+    if exe is None:
+        return [], False, {"network_blocked": False, "network_isolation": "unshare is not installed"}
+    candidates: list[tuple[list[str], bool, str]] = []
+    if creds is not None:
+        try:
+            import grp
+            import pwd
+
+            uid, gid = pwd.getpwnam(creds[0]).pw_uid, grp.getgrnam(creds[1]).gr_gid
+            candidates.append(([exe, "-n", "-S", str(uid), "-G", str(gid), "--"], True, "network namespace (unshare -n) with uid drop"))
+        except (ImportError, KeyError, OSError):
+            pass
+    candidates.append(([exe, "-n", "--"], False, "network namespace (unshare -n)"))
+    candidates.append(([exe, "-U", "-r", "-n", "--"], False, "user+network namespace (unshare -Urn)"))
+    reasons = []
+    for prefix, drops, label in candidates:
+        ok, why = probe_network_isolation(prefix, python)
+        if ok:
+            return prefix, drops, {"network_blocked": True, "network_isolation": f"{label}; {why}"}
+        reasons.append(f"{label}: {why}")
+    return [], False, {"network_blocked": False, "network_isolation": "not available on this host (" + " | ".join(reasons) + ")"}
+
+
 class PolicyHost:
     """One policy script in one sandboxed child process."""
 
     def __init__(self, script: str | os.PathLike, *, pack_dir: str | os.PathLike | None = None, call_timeout: float = 30.0,
-                 rlimit_as_mb: int = 4096, python: str | None = None):
+                 rlimit_as_mb: int = 4096, python: str | None = None, require_network_isolation: bool | None = None):
         self.script = str(Path(script).resolve())
         self.pack_dir = str(pack_dir) if pack_dir else None
         self.call_timeout = call_timeout
@@ -61,6 +128,9 @@ class PolicyHost:
         self._out = bytearray()  # protocol bytes received but not yet consumed as a complete frame
         self._err = bytearray()  # bounded tail of the strategy's stderr
         self.sandbox: dict[str, Any] = {}
+        # True = refuse to start without verified isolation; None = ALPHAKEEL_REQUIRE_NETNS=1 decides; False = best effort.
+        self.require_network_isolation = (os.environ.get("ALPHAKEEL_REQUIRE_NETNS") == "1"
+                                          if require_network_isolation is None else require_network_isolation)
 
     # -- lifecycle ---------------------------------------------------------------------------------------------
 
@@ -76,9 +146,24 @@ class PolicyHost:
                                       bufsize=0, start_new_session=True, cwd=self._home)
         creds = _sandbox_credentials()
         self.sandbox = {"credentials_in_environment": False, "ephemeral_home": True, "resource_limits": True, "process_group": True,
-                        "uid_drop": False, "network_blocked": False, "pack_access": "read-only exported directory" if self.pack_dir else "none"}
+                        "uid_drop": False, "network_blocked": False, "network_isolation": "not attempted", "pack_access": "read-only exported directory" if self.pack_dir else "none"}
         proc = None
-        if creds is not None:
+        prefix, drops, net = network_isolation_launcher(creds, self.python)
+        self.sandbox.update(net)
+        if not prefix and self.require_network_isolation:
+            raise ApiError("capability.unsupported", "network isolation is required (ALPHAKEEL_REQUIRE_NETNS=1) but could not be "
+                           "established on this host: " + str(net["network_isolation"]))
+        if prefix:
+            try:
+                proc = subprocess.Popen([*prefix, *cmd], **kwargs)
+                self.sandbox["uid_drop"] = drops
+            except OSError as e:
+                # The probe passed but the real launch failed: do not pretend; fall through to the unisolated launch.
+                self.sandbox.update({"network_blocked": False, "network_isolation": f"launch under isolation failed: {e}"})
+                if self.require_network_isolation:
+                    raise ApiError("capability.unsupported", f"network isolation is required but the launch failed: {e}") from e
+                proc = None
+        if proc is None and creds is not None:
             try:
                 proc = subprocess.Popen(cmd, user=creds[0], group=creds[1], **kwargs)
                 self.sandbox["uid_drop"] = True

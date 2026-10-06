@@ -94,6 +94,7 @@ class DataLockSourcesItemRole(StrEnum):
     fee = "fee"
     instrument = "instrument"
     config = "config"
+    market = "market"
 
 
 class DataLockSourcesItemVisibility(StrEnum):
@@ -127,6 +128,29 @@ class DataObjectRole(StrEnum):
     scans = "scans"
     config = "config"
     coverage = "coverage"
+    market = "market"
+
+
+class DatasetSpec(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    market_dataset: Annotated[
+        str | None,
+        Field(
+            description="Market dataset version; empty = latest when a market dataset is configured and `market_tables` is non-empty."
+        ),
+    ] = None
+    market_tables: Annotated[
+        list[str] | None,
+        Field(description="Subset of `kline_1m`, `bbo`, `depth20`, `instrument_meta`."),
+    ] = None
+    price_kinds: Annotated[
+        list[str] | None,
+        Field(
+            description='For `kline_1m`: subset of `trade`, `mark`, `index` (default `["trade"]`).'
+        ),
+    ] = None
 
 
 class Dec(RootModel[str]):
@@ -691,6 +715,22 @@ class DataLockCoverage(BaseModel):
     reasons: Annotated[list[Text], Field(max_length=100)]
 
 
+class DataLockDatasetsItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    dataset_version: Annotated[str, Field(max_length=200, min_length=1)]
+    name: Annotated[
+        str, Field(description="`funding` or `market`.", max_length=40, min_length=1)
+    ]
+    schema_version: Annotated[str, Field(max_length=40, min_length=1)]
+    snapshot_sha256: Sha256
+    tables: Annotated[list[str], Field(max_length=16)]
+    venues: Annotated[list[Venue], Field(max_length=9)]
+    visibility: DataLockFundingVisibility
+    watermark_ms: Annotated[int | None, Field(ge=0)]
+
+
 class DataLockFunding(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1080,6 +1120,7 @@ class PackRequest(BaseModel):
         extra="forbid",
     )
     accept_partial: bool | None = None
+    dataset: DatasetSpec | None = None
     funding_dataset: Annotated[
         str | None,
         Field(
@@ -1254,6 +1295,7 @@ class DataLockRequest(BaseModel):
         extra="forbid",
     )
     accept_partial: bool
+    dataset: DatasetSpec | None = None
     funding_dataset: str | None
     include: DataLockRequestInclude
     instruments: list[InstrumentRef] | None
@@ -1382,13 +1424,20 @@ class DataLock(BaseModel):
     )
     coverage: DataLockCoverage
     created_ms: Annotated[int, Field(ge=0)]
+    datasets: Annotated[
+        list[DataLockDatasetsItem] | None,
+        Field(
+            description="Versioned datasets pinned at acceptance (dataset packs only).",
+            max_length=8,
+        ),
+    ] = None
     funding: DataLockFunding | None
     limits: Annotated[list[Text], Field(max_length=100)]
     objects: Annotated[list[DataObject], Field(max_length=100000, min_length=1)]
     pack_id: Id
     pack_sha256: Sha256
     request: DataLockRequest
-    scans: DataLockScans
+    scans: DataLockScans | None
     schema_: Annotated[DataLockSchema, Field(alias="schema")]
     sources: Annotated[list[DataLockSourcesItem], Field(max_length=64, min_length=1)]
     transforms: Annotated[list[DataLockTransformsItem], Field(max_length=64)]

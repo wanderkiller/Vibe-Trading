@@ -573,6 +573,7 @@ One `get_market_data` call, **29 market-data sources**, one of them the optional
 | `pykrx` | Korea (KRX: KOSPI/KOSDAQ) | none | daily KOSPI / KOSDAQ bars for `.KS` / `.KQ` (optional `krx` extra) |
 | `india_broker` | India (NSE/BSE) | broker login | read-only Zerodha / Shoonya / Dhan bars for `.NS` / `.BO` (fallback-chain tail) |
 | `local` | any | none | your own CSV / Parquet / DuckDB via `local:` prefix |
+| `alphakeel_b2` | crypto (AlphaKeel B2 datasets) | service credential | **explicit-only, auditable**: OHLCV from the 1-minute klines of AlphaKeel's market dataset and funding history for 9 venues, read through the research service as frozen, verified dataset packs (`ALPHAKEEL_RESEARCH_URL`/`_TOKEN`); tagged with dataset versions, never falls back, the most recent hold-out days are refused. `ccxt` crypto data is marked non-auditable in run cards |
 | `alphakeel_pack` | crypto (frozen AlphaKeel scans) | none | **explicit-only** marker for an exported AlphaKeel research pack (`ALPHAKEEL_PACK_DIR`); quotes, funding and settlements, not bars — refuses OHLCV requests and never falls back; read it with `alphakeel_research` |
 
 **Fallback chains (by IP-ban risk):**

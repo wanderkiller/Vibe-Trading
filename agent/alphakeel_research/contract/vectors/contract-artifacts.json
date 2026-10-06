@@ -1272,6 +1272,520 @@
      "reasons": []
     },
     "created_ms": 1700000100000,
+    "datasets": [
+     {
+      "dataset_version": "mkt-fixture-1",
+      "name": "market",
+      "schema_version": "1",
+      "snapshot_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "tables": [
+       "kline_1m"
+      ],
+      "venues": [
+       "binance"
+      ],
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "market/kline_1m/binance/part-00000.jsonl.zst",
+      "role": "market",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.market-kline-1m/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "dataset": {
+      "market_dataset": null,
+      "market_tables": [
+       "kline_1m"
+      ],
+      "price_kinds": [
+       "trade"
+      ]
+     },
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": false,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": null,
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     },
+     {
+      "identity": "market-dataset:mkt-fixture-1/venue=binance/table=kline_1m",
+      "role": "market",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "kind": "data-lock",
+   "name": "data-lock: dataset pack (no scan frames, pinned datasets)",
+   "valid": true
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "datasets": [
+     {
+      "dataset_version": "mkt-fixture-1",
+      "name": "market",
+      "schema_version": "1",
+      "snapshot_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "tables": [
+       "kline_1m"
+      ],
+      "venues": [
+       "binance"
+      ],
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "market/kline_1m/binance/part-00000.jsonl.zst",
+      "role": "market",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.market-kline-1m/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "dataset": {
+      "market_dataset": null,
+      "market_tables": [
+       "kline_1m"
+      ],
+      "price_kinds": [
+       "trade"
+      ]
+     },
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": false,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     },
+     {
+      "identity": "market-dataset:mkt-fixture-1/venue=binance/table=kline_1m",
+      "role": "market",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "schema.required"
+   ],
+   "kind": "data-lock",
+   "name": "data-lock: dataset pack without a scans field is not allowed",
+   "path": "/scans",
+   "valid": false
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
+    "datasets": [
+     {
+      "dataset_version": "mkt-fixture-1",
+      "name": "market",
+      "schema_version": "1",
+      "snapshot_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "tables": [
+       "kline_1m"
+      ],
+      "venues": [
+       "binance"
+      ],
+      "visibility": "wishful",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "funding": {
+     "assumed_delay_ms": 0,
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "conflict_policy": "strict",
+     "dataset_version": "ds-fixture-1",
+     "snapshot_sha256": "abababababababababababababababababababababababababababababababab",
+     "visibility": "historical_reconstruction",
+     "watermark_ms": 1700000050000
+    },
+    "limits": [
+     "scan snapshots only: no order-book depth"
+    ],
+    "objects": [
+     {
+      "codec": "jsonl+zstd",
+      "content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "content_size": 9999,
+      "first_ms": 1700000000000,
+      "last_ms": 1700000060000,
+      "name": "market/kline_1m/binance/part-00000.jsonl.zst",
+      "role": "market",
+      "rows": 120,
+      "rows_sha256": "abababababababababababababababababababababababababababababababab",
+      "schema_id": "alphakeel.rows.market-kline-1m/1",
+      "sha256": "abababababababababababababababababababababababababababababababab",
+      "size": 1234
+     }
+    ],
+    "pack_id": "pk-0123456789abcdef01234567",
+    "pack_sha256": "abababababababababababababababababababababababababababababababab",
+    "request": {
+     "accept_partial": false,
+     "dataset": {
+      "market_dataset": null,
+      "market_tables": [
+       "kline_1m"
+      ],
+      "price_kinds": [
+       "trade"
+      ]
+     },
+     "funding_dataset": "ds-fixture-1",
+     "include": {
+      "native": false,
+      "tables": true
+     },
+     "instruments": null,
+     "venues": [
+      "binance",
+      "okx"
+     ],
+     "warmup_frames": 0,
+     "window": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     }
+    },
+    "scans": null,
+    "schema": "alphakeel.data-lock/1",
+    "sources": [
+     {
+      "identity": "scan-archive:committed:2",
+      "role": "quote",
+      "visibility": "observed_pit",
+      "watermark_ms": 1700000060000
+     },
+     {
+      "identity": "funding-dataset:ds-fixture-1",
+      "note": "backfilled facts are not point-in-time observations",
+      "role": "funding_settlement",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     },
+     {
+      "identity": "market-dataset:mkt-fixture-1/venue=binance/table=kline_1m",
+      "role": "market",
+      "visibility": "historical_reconstruction",
+      "watermark_ms": 1700000050000
+     }
+    ],
+    "transforms": [
+     {
+      "code_version": "alphakeel-0.4.0",
+      "config_sha256": "abababababababababababababababababababababababababababababababab",
+      "id": "scan-to-rows",
+      "inputs": [
+       "abababababababababababababababababababababababababababababababab"
+      ],
+      "outputs": [
+       "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      ]
+     }
+    ],
+    "units": {
+     "money": "settlement currency, decimal strings",
+     "price": "quote currency per 1 base unit (contract multiplier already applied)",
+     "quantity": "base units",
+     "rate": "decimal fraction per settlement period, positive = longs pay shorts",
+     "time": "UTC milliseconds"
+    },
+    "universe": {
+     "by_venue": {
+      "binance": {
+       "perp": 1,
+       "spot": 0
+      },
+      "okx": {
+       "perp": 1,
+       "spot": 0
+      }
+     },
+     "digest": "abababababababababababababababababababababababababababababababab",
+     "instruments": 2,
+     "selected": 2
+    },
+    "windows": {
+     "actual": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "requested": {
+      "end_ms": 1700000120000,
+      "start_ms": 1700000000000
+     },
+     "warmup": null
+    }
+   },
+   "errors": [
+    "schema.enum"
+   ],
+   "kind": "data-lock",
+   "name": "data-lock: unknown dataset visibility",
+   "path": "/datasets/0/visibility",
+   "valid": false
+  },
+  {
+   "doc": {
+    "coverage": {
+     "funding": {
+      "complete": 2,
+      "none": 0,
+      "partial": 0,
+      "perps": 2
+     },
+     "fx": {
+      "frames_without_rate": 2,
+      "points": 0
+     },
+     "pnl_backtest_complete": true,
+     "quotes": {
+      "frames": 2,
+      "frames_all_venues_failed": 0,
+      "rows": 4
+     },
+     "reasons": []
+    },
+    "created_ms": 1700000100000,
     "limits": [
      "scan snapshots only: no order-book depth"
     ],

@@ -49,6 +49,7 @@
     "data.insufficient": {"class": "data_insufficient", "http": 422, "retryable": false},
     "data.window_empty": {"class": "data_insufficient", "http": 422, "retryable": false},
     "data.coverage_partial": {"class": "data_insufficient", "http": 422, "retryable": false},
+    "data.holdout": {"class": "unauthorized", "http": 403, "retryable": false},
     "data.funding_missing": {"class": "data_insufficient", "http": 422, "retryable": false},
     "data.fx_missing": {"class": "data_insufficient", "http": 422, "retryable": false},
     "data.quote_missing": {"class": "data_insufficient", "http": 422, "retryable": false},

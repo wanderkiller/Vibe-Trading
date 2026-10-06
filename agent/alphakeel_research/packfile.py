@@ -49,11 +49,14 @@ def pack_digest(lock: dict) -> str:
     v = json.loads(json.dumps(lock))
     for k in ("pack_id", "pack_sha256", "created_ms"):
         v.pop(k, None)
-    v.get("scans", {}).pop("committed_last_seq", None)
+    if isinstance(v.get("scans"), dict):  # null for dataset packs (no scan frames)
+        v["scans"].pop("committed_last_seq", None)
     for s in v.get("sources", []):
         s.pop("watermark_ms", None)
     if isinstance(v.get("funding"), dict):
         v["funding"].pop("watermark_ms", None)
+    for d in v.get("datasets") or []:
+        d.pop("watermark_ms", None)
     return contract.canonical_sha256(v)
 
 
@@ -143,6 +146,35 @@ class Settlement:
     mark_price: Decimal | None
     raw_body_sha256: str
     in_window: bool
+
+
+@dataclass(frozen=True)
+class Kline:
+    """One 1-minute bar of a dataset pack. ``t`` is the open time; the bar is visible only from ``close_time_ms``."""
+
+    t: int
+    close_time_ms: int
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume_base: Decimal
+    volume_quote: Decimal
+    trades: int | None
+    price_kind: str
+
+
+@dataclass(frozen=True)
+class Bbo:
+    """Best bid/offer snapshot of a dataset pack. ``t`` is the exchange time; visible from ``ts_recv_ms``."""
+
+    t: int
+    ts_recv_ms: int | None
+    bid: Decimal
+    bid_qty: Decimal | None
+    ask: Decimal
+    ask_qty: Decimal | None
+    update_id: int | None
 
 
 @dataclass(frozen=True)
@@ -373,6 +405,58 @@ class Pack:
             self.log.note("settlements", inst, out[0].t, out[-1].t)
         return out
 
+    # -- dataset packs (request.dataset): market tables, no scan frames -----------------------------------------------
+
+    @property
+    def is_dataset(self) -> bool:
+        return self.lock.get("scans") is None
+
+    def datasets(self) -> list[dict]:
+        """The versioned datasets this pack froze (``name``, ``dataset_version``, ``snapshot_sha256``...)."""
+        return list(self.lock.get("datasets") or [])
+
+    def dataset_version(self, name: str) -> str | None:
+        for d in self.datasets():
+            if d["name"] == name:
+                return d["dataset_version"]
+        f = self.lock.get("funding")
+        return f["dataset_version"] if name == "funding" and isinstance(f, dict) else None
+
+    def _market_rows(self, table: str, venue: str, symbol: str, start: int, end: int, chain: Chain | None = None) -> list[list]:
+        tag = f"market/{table}/{venue}/"
+        out: list[list] = []
+        for o in sorted((o for o in self.lock["objects"] if o["role"] == "market" and o["name"].startswith(tag)), key=lambda o: o["name"]):
+            if table != "instrument_meta" and ((o["last_ms"] or 0) < start or (o["first_ms"] or 0) >= end):
+                continue
+            for r in self._read(o["name"]):
+                if r[1] == symbol and (table == "instrument_meta" or start <= r[0] < end):
+                    out.append(r)
+                    if chain is not None:
+                        chain.push(r[0], r)
+        return out
+
+    def klines(self, inst: Inst, start: int, end: int, *, price_kind: str = "trade") -> list[Kline]:
+        rows = self._market_rows("kline_1m", inst.venue, inst.symbol, start, end)
+        if rows:
+            self.log.note("kline_1m", inst, rows[0][0], rows[-1][0])
+        out = [Kline(r[0], r[2], D(r[3]), D(r[4]), D(r[5]), D(r[6]), D(r[7]), D(r[8]), r[9], r[10]) for r in rows if r[10] == price_kind]
+        out.sort(key=lambda k: k.t)
+        return out
+
+    def bbo(self, inst: Inst, start: int, end: int) -> list[Bbo]:
+        rows = self._market_rows("bbo", inst.venue, inst.symbol, start, end)
+        if rows:
+            self.log.note("bbo", inst, rows[0][0], rows[-1][0])
+        return [Bbo(r[0], r[2], D(r[3]), D(r[4]), D(r[5]), D(r[6]), r[7]) for r in rows]
+
+    def instrument_meta(self, inst: Inst) -> dict | None:
+        """Static metadata row as ``{column: value}`` (decimals stay strings; unknown columns under ``extra``)."""
+        rows = self._market_rows("instrument_meta", inst.venue, inst.symbol, 0, 0)
+        if not rows:
+            return None
+        cols = ["t", "symbol", "tick_size", "lot_size", "min_qty", "min_notional", "listed_ms", "delisted_ms", "extra"]
+        return dict(zip(cols, rows[-1]))
+
     def frames(self, *, include_warmup: bool = True) -> list[Frame]:
         rows = self._read("frames/frames.jsonl.zst")
         fr = [Frame(r[0], r[1], r[2], r[3], r[5], r[8], {v[0]: {"ok": v[1], "fetched_ms": v[2], "error": v[3]} for v in r[9]}, D(r[10]), r[11]) for r in rows]
@@ -394,7 +478,8 @@ class Pack:
         return self._json_object("fees/fees.json")
 
     def coverage(self) -> dict:
-        return self._json_object("coverage/funding.json")
+        name = "coverage/datasets.json" if "coverage/datasets.json" in self._objs else "coverage/funding.json"
+        return self._json_object(name)
 
     # -- the inputs this run actually read -----------------------------------------------------------------------
 
@@ -414,6 +499,8 @@ class Pack:
                         for r in self._read(o["name"]):
                             if ins and r[1] == ins.funding_instrument_id and first <= r[0] < last + 1:
                                 ch.push(r[0], r)
+            elif table in ("kline_1m", "bbo") and inst is not None:
+                self._market_rows(table, inst.venue, inst.symbol, first, last + 1, ch)
             elif table == "fx":
                 for r in self._read("fx/fx.jsonl.zst"):
                     if first <= r[0] <= last:
@@ -494,6 +581,18 @@ class Pit:
         end = self.as_of_ms + 1 if end is None else end
         self._check(end)
         return self.pack.fx(start, end)
+
+    def klines(self, inst: Inst, start: int, end: int | None = None, *, price_kind: str = "trade") -> list[Kline]:
+        """1-minute bars that are already closed at ``as_of`` (``close_time_ms <= as_of``): an open bar is not visible."""
+        end = self.as_of_ms + 1 if end is None else end
+        self._check(end)
+        return [k for k in self.pack.klines(inst, start, end, price_kind=price_kind) if k.close_time_ms <= self.as_of_ms]
+
+    def bbo(self, inst: Inst, start: int, end: int | None = None) -> list[Bbo]:
+        """Snapshots received by ``as_of`` (``ts_recv_ms``); a snapshot without a receive time is never visible."""
+        end = self.as_of_ms + 1 if end is None else end
+        self._check(end)
+        return [b for b in self.pack.bbo(inst, start, end) if b.ts_recv_ms is not None and b.ts_recv_ms <= self.as_of_ms]
 
     def latest_quote(self, inst: Inst) -> Quote | None:
         rows = self.quotes(inst, self.as_of_ms - 24 * 3_600_000, self.as_of_ms + 1)

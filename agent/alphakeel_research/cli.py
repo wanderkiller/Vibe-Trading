@@ -2,6 +2,9 @@
 
     python -m alphakeel_research check
     python -m alphakeel_research freeze   --start-ms N --end-ms N [--venues binance,okx] [--funding none|latest] --out pack.json
+    python -m alphakeel_research freeze   --start-ms N --end-ms N --instruments inst.json [--market-tables kline_1m,bbo] [--price-kinds trade]
+                                          (dataset pack: funding history / market data for ANY window, no scan frames; the
+                                           most recent hold-out days are refused with data.holdout)
     python -m alphakeel_research read     --pack PACK_ID --venue binance --symbol BTCUSDT [--market perp] --start-ms N --end-ms N [--as-of-ms N]
     python -m alphakeel_research review   --pack PACK_ID --intents intents.json [--profile profile.json]
     python -m alphakeel_research policy   --pack PACK_ID --strategy DIR --instruments instruments.json [--profile profile.json]
@@ -51,13 +54,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--warmup-frames", type=int, default=0)
     p.add_argument("--funding", default="latest", help="latest (default), none, or a dataset version")
     p.add_argument("--accept-partial", action="store_true")
+    p.add_argument("--instruments", help="JSON list of {venue, market, symbol}: makes this a dataset pack (required for one)")
+    p.add_argument("--market-tables", default="", help="dataset pack: comma list of kline_1m,bbo,depth20,instrument_meta")
+    p.add_argument("--market-dataset", help="dataset pack: market dataset version (default: latest at acceptance)")
+    p.add_argument("--price-kinds", default="", help="dataset pack: comma list of trade,mark,index for kline_1m (default trade)")
     p.add_argument("--out")
     p = sub.add_parser("read")
     p.add_argument("--pack", required=True)
     p.add_argument("--venue", required=True)
     p.add_argument("--symbol", required=True)
     p.add_argument("--market", default="perp")
-    p.add_argument("--table", default="quotes", choices=["quotes", "observations", "settlements"])
+    p.add_argument("--table", default="quotes", choices=["quotes", "observations", "settlements", "klines", "bbo"])
     p.add_argument("--start-ms", type=int, required=True)
     p.add_argument("--end-ms", type=int, required=True)
     p.add_argument("--as-of-ms", type=int)
@@ -99,12 +106,18 @@ def main(argv: list[str] | None = None) -> int:
                    "accept_partial": a.accept_partial}
             if a.funding != "latest":
                 req["funding_dataset"] = a.funding
+            if a.instruments:
+                req = c.dataset_pack_request(start_ms=a.start_ms, end_ms=a.end_ms, instruments=_load(a.instruments),
+                                             funding_dataset=None if a.funding == "latest" else a.funding,
+                                             market_tables=[t for t in a.market_tables.split(",") if t],
+                                             price_kinds=[t for t in a.price_kinds.split(",") if t] or None,
+                                             market_dataset=a.market_dataset, accept_partial=a.accept_partial)
             pack = workflow.freeze_pack(c, req, cache_dir=a.cache)
             lock = pack.lock
             if a.out:
                 Path(a.out).write_bytes(canon.canonical_bytes(lock))
-            _out({"pack_id": pack.id, "pack_sha256": lock["pack_sha256"], "frames": lock["scans"]["frames"], "windows": lock["windows"],
-                  "funding": lock["funding"], "coverage": lock["coverage"], "objects": len(lock["objects"]), "cache": a.cache})
+            _out({"pack_id": pack.id, "pack_sha256": lock["pack_sha256"], "frames": (lock["scans"] or {}).get("frames"), "windows": lock["windows"],
+                  "funding": lock["funding"], "datasets": lock.get("datasets"), "coverage": lock["coverage"], "objects": len(lock["objects"]), "cache": a.cache})
         elif a.cmd == "read":
             pack = Pack.open(c, a.pack, a.cache)
             inst = Inst(a.venue, a.market, a.symbol)
