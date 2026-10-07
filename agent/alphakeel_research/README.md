@@ -98,9 +98,12 @@ same vectors as the Rust crate.
   `PairInvalid`); `decide(ir, frame, state, now_ms)` (§5) returns `{exits, entries, rejected}` in the spec's order.
 - `ir_views.py`: `scan_frame_pairs(pit, frame_index, now_ms)` enumerates one scan frame's pairs from the raw pack tables
   (§4.1a: selected contracts quoted in this frame, same-frame observations, fee table, screener-style ids, sorted).
-- `ir_policy/strategy.py`: a generic `PolicyHost` script. Parameters `{"ir": <document>, "qty_dp": 6}`; entries become two
-  `limit_ioc` orders (long buys at its ask, short sells at its bid, `notional_per_leg / long.ask` rounded down, same qty);
-  exits become reduce-only orders for the engine's real positions of that pair, at the touch. Intents are named as
+- `ir_policy/strategy.py`: a generic `PolicyHost` script. Parameters `{"ir": <document>, "qty_dp": 8}`; entries become two
+  `limit_ioc` orders (long buys at its ask, short sells at its bid, `notional_per_leg / long.ask` rounded half-even to 8
+  places, same qty on both legs, README §5a); exits become reduce-only orders for the engine's real positions of that
+  pair, at THIS frame's touch, and only while both legs have a tradable quote in this frame (no quote row or `bbo = false`
+  on either leg: the pair is held, `max_hold`/`max_loss`/`take_profit` included, until a frame quotes both; an older
+  quote is never used). Intents are named as
   AlphaKeel's Rust `ir_strategy` run names them (README §5a): `n<trade>-<L|S>-<open|close>`, `position_ref p<trade><L|S>`,
   `pair_id pair-<trade>`, `trade` counting from 1 only the entries actually submitted (an entry with a `bbo = false` leg
   is not submitted and takes no number). State (`positions`, `cooldowns`, `next_trade`) is reconciled with
@@ -126,6 +129,64 @@ the IR (a) in Python: `ir_policy` under the local simulator with the execution p
 `first_difference`, `pass_scope` and both sides' opened/closed/realized, writes `DIR/reconciliation.json` (run, comparison
 and pack ids, pack digest, `strategy_id`, `strategy_sha256`, layers, `first_difference`) and ends with the fixed line
 "Decision (paper or not) is yours; this report does not approve anything." It gives no verdict of its own.
+
+## Long-history IR research: `ir backtest` and `ir export`
+
+The scan archive (real top of book, predicted funding) only starts 2026-10. For research over AlphaKeel's long datasets
+(1-minute trade klines and official funding settlements, 2019 onwards, nine venues) there is a separate backtest on a
+**dataset pack**:
+
+```bash
+python -m alphakeel_research ir backtest --ir strategy.json --start-ms N --end-ms N --instruments inst.json \
+    [--step-minutes 2] [--fees fees.json] [--trials N [--trials-evidence trials.csv]] [--capital-base X] \
+    [--accept-partial] [--pack-dir DIR] [--verbose] --out RUN
+python -m alphakeel_research ir export --ir strategy.json --run RUN [--research-credential] --out EXPORT
+```
+
+`inst.json` is `[{"venue", "market", "symbol", "base", "quote"}]` (dataset packs leave base/quote null in their instruments
+table, so declare them); only instruments on the IR's venues and markets are used. `ir backtest`
+(`workflow.ir_backtest`, `ir_backtest.py`) freezes — or, the request key being content-derived, reuses — a dataset pack
+with `kline_1m` (trade) + funding for those instruments over `[start − 1 day, end)` (the extra day feeds the 24 h volume and
+the last settlement), checks it is the pack asked for, then at every instant `start + k·step` that has data builds the
+**dataset view** (`ir_views.dataset_frame_pairs`, `view = "kline_close_synthetic_bbo"`) and calls `ir.decide` with the same
+state handling as `ir_policy` (trade numbering, §5a qty and hold rules, cooldown from the instant after a close). The view's
+approximations, written into every run card:
+
+- touch `bid = ask = close` of the last 1m bar closed at the instant; `bbo = true` is **synthetic** (spread 0, never
+  `price_estimated`); `mark`/`funding_px` = that close; a leg whose last bar is older than 5 minutes is not in the frame;
+- `funding_rate` = the last **official settlement** visible at the instant (`available_at`, or time + the pack's assumed
+  delay): a `last_settled` proxy for the predicted rate a live scan uses. The IR's `assumptions.funding_estimate` stays
+  `predicted`; this is the view's approximation, not a change of the strategy. `interval_hours` from that settlement
+  (unknown → the perp is left out), `next_funding_ms` = settlement + interval;
+- `volume_quote` = 24 h sum over 1440 bars (null if any is missing); `quote_ms` = the bar's close time;
+- `taker_fee` from `--fees` (`{venue: {"perp": "0.0005", "spot": …}}`); default AlphaKeel's public lowest-tier perp taker
+  0.0005 on every venue (stated as an assumption); spot legs need a spot fee and spot klines (otherwise only cross_perp).
+
+Execution is a small separate Decimal simulator (`ir_backtest.Sim`; `sim.Simulator` is bound to scan packs and the engine
+profile): complete fills at the touch, `q8(qty × price × taker_fee)` per fill, funding at each official settlement time on
+open positions `q8(qty × mark × rate)` paid by longs / received by shorts (mark = the last close at that time), equity =
+realized + open pairs valued close-now. **No margin, leverage or liquidation model**, no slippage beyond the synthetic touch,
+USDT legs only. Output in `RUN`: `run_card.json` (`vibe-trading.ir-backtest-run-card/1`: strategy id, pack id/digest/dataset
+versions, window, step, view + approximations, simulator conventions, fee and capital-base assumptions, `data_audit`
+(`alphakeel_b2`, auditable), counts, realized/funding/fees, max drawdown, `alphakeel_metrics` on UTC-daily returns over the
+capital base with `trials`), `trades.jsonl`, `equity.jsonl`, `decisions.jsonl` (per instant: entries/exits/held/rejected
+count; every rejection with `--verbose`). Rows are streamed (klines are spilled per instrument and read back in order),
+so memory does not grow with the window.
+
+`ir export` (`workflow.ir_export`) writes `EXPORT/strategy.json`: the IR **unchanged** plus `strategy_id` and `provenance`
+`{tool: "vibe-trading", run_id, window {start, end} (UTC days of the backtest window), data_window, trials {count,
+evidence}, classification, data_audit, data_view, approximations, backtest {pack_id, pack_sha256, dataset_versions, start_ms,
+end_ms, step_minutes, audit}, research_credential?}`, the trials evidence under `EXPORT/evidence/` (a run without
+`--trials` is refused; `--trials 1` alone generates a one-line `trials.jsonl`) and `evidence/ir-backtest-audit.json` (run
+card + AlphaKeel-convention metrics). `--research-credential` records `Client.check()`'s credential and applies the same
+data-horizon rule as the hand-off (`handoff.check_research_credential`). A non-auditable run card is classified
+`exploratory` in provenance only; the definition (and so the id) never changes, and the export is re-loaded to prove it.
+AlphaKeel imports the file into its registry (`strategy_ir::Ir::parse` + `validate`).
+
+**The long-history run is research evidence, not reconciliation input.** Reconciliation with AlphaKeel's evaluator is
+`ir review` on a scan pack (`reconciliation.json`, accepted by `arb strategy reconcile --from-file`).
+
+The agent tool exposes the four IR commands as actions `ir_validate`, `ir_review`, `ir_backtest`, `ir_export`.
 
 Tests: `agent/tests/test_alphakeel_*.py` (install `.[dev,alphakeel-dev]`). Without the fixture server the cross-process
 tests skip; AlphaKeel's cross-project CI runs them with `ALPHAKEEL_REQUIRE_FIXTURE=1`, where a missing binary or tool

@@ -1,6 +1,6 @@
 """Generic Strategy IR policy: runs any ``alphakeel.strategy-ir/1`` document under ``PolicyHost``.
 
-Parameters: ``{"ir": <IR document>, "qty_dp": <int, default 6>}``.
+Parameters: ``{"ir": <IR document>, "qty_dp": <int, default 8>}``.
 
 Each step:
 1. reconcile the IR positions with the engine's REAL positions (``ctx["positions"]``): a pair whose legs are all gone is
@@ -8,9 +8,12 @@ Each step:
    and is dropped without a cooldown;
 2. build the frame from the point-in-time reader (``ir_views``, README §4.1a) and call ``ir.decide`` (README §5);
 3. exits -> one reduce-only ``limit_ioc`` per engine position of that pair (whatever actually filled, never an
-   assumption that both legs did), at the touch (long closes sell at the bid, short closes buy at the ask);
+   assumption that both legs did), at THIS frame's touch (long closes sell at the bid, short closes buy at the ask).
+   README §5a "no exit without a quote": while either leg of the pair has no tradable quote in this frame (no quote row
+   in the frame, or ``bbo = false``), no exit intent is submitted for the pair -- ``max_hold`` / ``max_loss`` /
+   ``take_profit`` / condition exits all wait for a frame that quotes both legs; an older frame's quote is never used;
    entries -> two ``limit_ioc`` intents: long leg buys at its ask, short leg sells at its bid, the same quantity on both
-   legs: ``notional_per_leg / long.ask`` rounded DOWN to ``qty_dp`` places.
+   legs: ``notional_per_leg / long.ask`` rounded HALF-EVEN to ``qty_dp`` places (README §5a: 8, both sides).
 
 Intent naming (README §5a, the same as AlphaKeel's Rust ``ir_strategy`` run, so the research service's L2 layer can
 compare decision by decision): ``intent_id = n<trade>-<L|S>-<open|close>``, ``position_ref = p<trade><L|S>``,
@@ -27,11 +30,14 @@ Only ``assumptions.funding_estimate = "predicted"`` can be served (the pack's sc
 current/predicted rates); ``last_settled`` is refused at ``initialize`` instead of being silently replaced (README §1).
 """
 
-from decimal import ROUND_DOWN, Decimal
+from decimal import Decimal
 
 from alphakeel_research import ir as IR
 from alphakeel_research import ir_views
 from alphakeel_research.errors import Unsupported
+
+
+QTY_DP = ir_views.QTY_DP  # README §5a: qty = notional_per_leg / long.ask, half-even to 8 places (both sides)
 
 
 def initialize(parameters):
@@ -40,7 +46,7 @@ def initialize(parameters):
     if loaded["assumptions"]["funding_estimate"] != "predicted":
         raise Unsupported("assumptions.funding_estimate = last_settled cannot be served by the scan-frame view (it holds the "
                           "venues' current/predicted funding rates)")
-    qty_dp = parameters.get("qty_dp", 6)
+    qty_dp = parameters.get("qty_dp", QTY_DP)
     if isinstance(qty_dp, bool) or not isinstance(qty_dp, int) or not 0 <= qty_dp <= 18:
         raise ValueError("qty_dp must be an integer in 0..=18")
     return {"ir": loaded.doc, "strategy_id": loaded.strategy_id, "qty_dp": qty_dp, "positions": {}, "cooldowns": {}, "next_trade": 1}
@@ -60,18 +66,6 @@ def _reconcile(state, engine, t):
         else:
             del positions[key]  # the entry never filled on either leg: nothing was held, no cooldown
     return positions, cooldowns
-
-
-def _price(touch, pit, inst, side):
-    q = touch.get((inst["venue"], inst["market"], inst["symbol"]))
-    if q is not None:
-        return q[0] if side == "bid" else q[1]
-    from alphakeel_research.packfile import Inst
-
-    last = pit.latest_quote(Inst(inst["venue"], inst["market"], inst["symbol"]))
-    if last is None:
-        return None
-    return IR.fmt(last.bid if side == "bid" else last.ask)
 
 
 def _pair_net_now(p, engine):
@@ -99,29 +93,33 @@ def on_step(ctx, state):
     decision = IR.decide(IR.Ir(state["ir"]), {"pairs": pairs}, {"positions": views, "cooldowns": cooldowns}, t)
 
     intents = []
+    quoted = ir_views.tradable(legs)
     for x in decision["exits"]:
         p = positions[x["position_id"]]
+        if not ir_views.exit_quoted(p, quoted):
+            continue  # README §5a: a leg has no tradable quote in this frame -> hold; decided again on the next step
         for leg in ("long", "short"):
             ref = p["refs"][leg]
             ep = engine.get(ref)
             if ep is None:
                 continue
             is_long = ep["side"] == "long"
-            px = _price(touch, ctx.pit, ep["instrument"], "bid" if is_long else "ask")
-            if px is None:
-                continue  # no quote to price the close at: the exit is decided again on the next step
+            i = ep["instrument"]
+            q = touch.get((i["venue"], i["market"], i["symbol"]))
+            if q is None:
+                continue  # the engine's leg is not one of this pair's quoted instruments (cannot happen with p's refs)
+            px = q[0] if is_long else q[1]
             intents.append({"intent_id": f"n{p['trade']}-{'L' if leg == 'long' else 'S'}-close", "decision_time_ms": t, "instrument": ep["instrument"],
                             "side": "sell" if is_long else "buy", "qty": ep["qty"], "order_type": "limit_ioc", "limit_price": px,
                             "reduce_only": True, "position_ref": ref, "pair_id": x["position_id"]})
 
     by_id = {p["id"]: p for p in pairs}
-    step = Decimal(1).scaleb(-state["qty_dp"])
     n = state["next_trade"]
     for e in decision["entries"]:
         pair = by_id[e["pair_id"]]
         if not (pair["long"]["bbo"] and pair["short"]["bbo"]):
             continue  # no real top-of-book on a leg: not submitted, takes no trade number (README §5a)
-        qty = (Decimal(e["notional_per_leg"]) / Decimal(pair["long"]["ask"])).quantize(step, rounding=ROUND_DOWN)
+        qty = ir_views.entry_qty(e["notional_per_leg"], pair["long"]["ask"], state["qty_dp"])
         if qty <= 0:
             continue
         trade, n = n, n + 1

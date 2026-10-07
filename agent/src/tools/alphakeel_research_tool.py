@@ -17,7 +17,7 @@ from typing import Any
 
 from src.agent.tools import BaseTool
 
-_ACTIONS = ("check", "freeze", "read", "review", "policy", "native", "compare")
+_ACTIONS = ("check", "freeze", "read", "review", "policy", "native", "compare", "ir_validate", "ir_review", "ir_backtest", "ir_export")
 #: ``read`` tables: scan packs have quotes/observations/settlements; dataset packs have klines/bbo/instrument_meta (and settlements).
 _MAX_OUT = 20_000
 
@@ -38,7 +38,7 @@ def _instruments_file(v: Any) -> str:
 
 
 def _argv(action: str, a: dict[str, Any]) -> list[str]:
-    out: list[str] = [action]
+    out: list[str] = action.split("_", 1) if action.startswith("ir_") else [action]
 
     def add(flag: str, key: str, required: bool = False) -> None:
         v = a.get(key)
@@ -78,7 +78,38 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
         add("--pack", "pack", True), add("--rules", "rules"), add("--params", "params"), add("--profile", "profile")
     elif action == "compare":
         add("--a", "a", True), add("--b", "b", True), add("--mode", "mode", True)
+    # Strategy IR: the document is a path (strategy.json); outputs go to the given directory
+    elif action == "ir_validate":
+        add("--ir", "ir", True), add("--pack", "pack")
+    elif action == "ir_review":
+        add("--pack", "pack", True), add("--ir", "ir", True), add("--out", "out", True), add("--seed", "seed"), add("--profile", "profile")
+    elif action == "ir_backtest":
+        add("--ir", "ir", True), add("--start-ms", "start_ms", True), add("--end-ms", "end_ms", True)
+        if a.get("instruments") in (None, "", []):
+            raise ValueError("ir_backtest needs instruments")
+        out.extend(["--instruments", _instruments_file(a["instruments"])])
+        add("--out", "out", True)
+        for f, k in (("--step-minutes", "step_minutes"), ("--fees", "fees"), ("--trials", "trials"), ("--trials-evidence", "trials_evidence"),
+                     ("--capital-base", "capital_base"), ("--pack-dir", "pack_dir")):
+            add(f, k)
+        out.extend(f for f, k in (("--accept-partial", "accept_partial"), ("--verbose", "verbose")) if a.get(k))
+    elif action == "ir_export":
+        add("--ir", "ir", True), add("--run", "run", True), add("--out", "out", True)
+        if a.get("research_credential"):
+            out.append("--research-credential")
     return out
+
+
+def _ir_review_summary(args: dict[str, Any]) -> dict | None:
+    """``ir review`` prints a text report; the tool returns the references and the comparison from reconciliation.json."""
+    path = os.path.join(str(args.get("out")), "reconciliation.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            r = json.load(f)
+    except (OSError, ValueError):
+        return None
+    keep = ("strategy_id", "pack_id", "local_run", "alphakeel_run", "comparison", "passed", "layers", "first_difference", "pass_scope", "summary")
+    return {**{k: r.get(k) for k in keep}, "reconciliation": path}
 
 
 class AlphakeelResearchTool(BaseTool):
@@ -90,7 +121,11 @@ class AlphakeelResearchTool(BaseTool):
         "'freeze' a data pack for a time window (a scan pack, or with args.instruments a dataset pack of funding history and "
         "market_tables kline_1m/bbo/depth20/instrument_meta for ANY window), 'read' point-in-time rows (quotes, settlements, klines, bbo, instrument_meta), 'review' a Python backtest's fixed intents "
         "against the engine (layered L0-L4 comparison with the first difference), run a Python 'policy' under both a "
-        "local simulator and the engine's real state, run the 'native' strategy, or 'compare' two runs. Files for "
+        "local simulator and the engine's real state, run the 'native' strategy, or 'compare' two runs. Strategy IR "
+        "(strategy.json): 'ir_validate' with AlphaKeel, 'ir_review' (Python vs AlphaKeel's Rust evaluator on a scan pack, "
+        "layered reconciliation), 'ir_backtest' (long-history research backtest on a dataset pack: 1m klines + official "
+        "settlements, synthetic touch; research evidence, not reconciliation), 'ir_export' (strategy.json with strategy_id "
+        "and provenance for AlphaKeel's registry, from an ir_backtest run). Files for "
         "intents/strategy/profile are paths on disk. Returns ids, digests and summaries only; a pass never certifies "
         "strategy logic. Needs ALPHAKEEL_RESEARCH_URL and a service token in the environment."
     )
@@ -98,7 +133,7 @@ class AlphakeelResearchTool(BaseTool):
         "type": "object",
         "properties": {
             "action": {"type": "string", "enum": list(_ACTIONS)},
-            "args": {"type": "object", "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode."},
+            "args": {"type": "object", "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode; IR: ir, out, run, step_minutes, fees, trials, trials_evidence, capital_base, pack_dir, verbose, research_credential."},
         },
         "required": ["action"],
     }
@@ -133,6 +168,6 @@ class AlphakeelResearchTool(BaseTool):
         try:
             result: Any = json.loads(text)
         except ValueError:
-            result = {"output": text[:_MAX_OUT]}
+            result = (_ir_review_summary(args) if action == "ir_review" and rc == 0 else None) or {"output": text[:_MAX_OUT]}
         body = json.dumps({"status": "ok" if rc == 0 else "error", "result": result}, ensure_ascii=False, default=str)
         return body if len(body) <= _MAX_OUT else json.dumps({"status": "ok" if rc == 0 else "error", "truncated": True, "head": body[:_MAX_OUT]})

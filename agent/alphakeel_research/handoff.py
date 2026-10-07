@@ -60,6 +60,47 @@ def classify(run_card: dict) -> dict:
             "sources": sorted((audit.get("sources") or {}).keys()), "non_auditable_sources": non, "reasons": reasons}
 
 
+def check_window(window: dict) -> tuple[str, str]:
+    """``window`` = ``{start, end}`` as UTC days ``YYYY-MM-DD`` (end inclusive, start <= end); returns ``(start, end)``."""
+    start, end = (window or {}).get("start"), (window or {}).get("end")
+    if not (isinstance(start, str) and isinstance(end, str) and _DAY.match(start) and _DAY.match(end) and start <= end):
+        raise _bad("window must be {start, end} as YYYY-MM-DD (UTC days, end inclusive) with start <= end")
+    return start, end
+
+
+def check_trials(out_dir: str | Path, trials_count: int, trials_evidence: str) -> Path:
+    """``trials_count`` >= 1 and ``trials_evidence`` an existing file inside ``out_dir`` (relative path); returns it."""
+    if isinstance(trials_count, bool) or not isinstance(trials_count, int) or trials_count < 1:
+        raise _bad("trials_count must be an integer >= 1: every parameter set tried for this result counts")
+    ev = Path(trials_evidence or "")
+    if not trials_evidence or ev.is_absolute() or ".." in ev.parts or not (Path(out_dir) / ev).is_file():
+        raise _bad(f"trials evidence {trials_evidence!r} must be an existing file inside the package")
+    return ev
+
+
+def check_research_credential(research_credential: dict | None, end_day: str) -> dict | None:
+    """The research-service credential (``Client.check()``/``whoami()`` output) and its data-horizon rule: a window ending
+    before the data the credential received under-states the data seen and is refused. Returns the horizon (or None)."""
+    if research_credential is not None:
+        cred = research_credential.get("credential")
+        if not (isinstance(cred, str) and cred and cred == cred.strip()):
+            raise _bad("research_credential must be the Client.check()/whoami() output with its credential id")
+    horizon = (research_credential or {}).get("data_horizon")
+    if horizon is not None and _day_end_ms(end_day) < int(horizon["max_window_end_ms"]):
+        raise _bad(f"the research window ends {end_day} but this credential received data up to {horizon['max_window_end_ms']} ms "
+                   "(research service data horizon): the window must cover every day of data the research used")
+    return horizon
+
+
+def audit_of(run_card: dict, research_credential: dict | None) -> dict:
+    """:func:`classify` plus the "self-reported window" reason when no research-service credential is given."""
+    audit = classify(run_card)
+    if research_credential is None:
+        audit["reasons"].append("no research-service credential: AlphaKeel cannot check the research window against its "
+                                "data-horizon ledger, so the comparison will not name a winner")
+    return audit
+
+
 def write_handoff(out_dir: str | Path, *, handoff_id: str, summary: str, rules: dict, run_card: dict,
                   window: dict, trials_count: int, trials_evidence: str, run_id: str | None = None,
                   daily_returns: list[float] | None = None, research_credential: dict | None = None) -> dict:
@@ -79,26 +120,10 @@ def write_handoff(out_dir: str | Path, *, handoff_id: str, summary: str, rules: 
             raise _bad(f"{k!r} is not an AlphaKeel rule (a factor must be ported into the screener first)")
         if not isinstance(v, dict) or "value" not in v:
             raise _bad(f"rule {k!r} must be {{\"value\": ..., \"robust\": [...]}}")
-    start, end = window.get("start"), window.get("end")
-    if not (isinstance(start, str) and isinstance(end, str) and _DAY.match(start) and _DAY.match(end) and start <= end):
-        raise _bad("window must be {start, end} as YYYY-MM-DD (UTC days, end inclusive) with start <= end")
-    if isinstance(trials_count, bool) or not isinstance(trials_count, int) or trials_count < 1:
-        raise _bad("trials_count must be an integer >= 1: every parameter set tried for this result counts")
-    ev = Path(trials_evidence)
-    if ev.is_absolute() or ".." in ev.parts or not (out / ev).is_file():
-        raise _bad(f"trials evidence {trials_evidence!r} must be an existing file inside the package")
-    if research_credential is not None:
-        cred = research_credential.get("credential")
-        if not (isinstance(cred, str) and cred and cred == cred.strip()):
-            raise _bad("research_credential must be the Client.check()/whoami() output with its credential id")
-    horizon = (research_credential or {}).get("data_horizon")
-    if horizon is not None and _day_end_ms(end) < int(horizon["max_window_end_ms"]):
-        raise _bad(f"the research window ends {end} but this credential received data up to {horizon['max_window_end_ms']} ms "
-                   "(research service data horizon): the window must cover every day of data the research used")
-    audit = classify(run_card)
-    if research_credential is None:
-        audit["reasons"].append("no research-service credential: AlphaKeel cannot check the research window against its "
-                                "data-horizon ledger, so the comparison will not name a winner")
+    start, end = check_window(window)
+    ev = check_trials(out, trials_count, trials_evidence)
+    horizon = check_research_credential(research_credential, end)
+    audit = audit_of(run_card, research_credential)
     if not audit["auditable"] and not summary.startswith("EXPLORATORY"):
         summary = "EXPLORATORY (non-auditable data): " + summary
     from backtest.alphakeel_metrics import alphakeel_metrics

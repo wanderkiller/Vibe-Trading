@@ -280,7 +280,7 @@ def _side_summary(result: dict) -> dict:
 
 
 def ir_review(client: Client, pack: Pack, ir_doc: dict, *, out_dir: str | Path, profile: dict | None = None, seed: int = 0,
-              qty_dp: int = 6, wait: float = 1800.0) -> dict:
+              qty_dp: int = 8, wait: float = 1800.0) -> dict:
     """Reconcile one Strategy IR between Vibe-Trading and AlphaKeel on one frozen pack.
 
     (a) the generic ``ir_policy`` runs this IR under the LOCAL simulator (the policy flow; evidence in ``out_dir``);
@@ -334,3 +334,25 @@ def ir_review(client: Client, pack: Pack, ir_doc: dict, *, out_dir: str | Path, 
     }
     (out / "reconciliation.json").write_text(json.dumps(doc, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
     return doc
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Strategy IR research side: long-history dataset backtest and the export AlphaKeel's registry imports
+# ---------------------------------------------------------------------------------------------------------------------
+
+def ir_backtest(client: Client | None, ir_doc: dict, instruments: list[dict], *, start_ms: int, end_ms: int, out_dir: str | Path,
+                cache_dir: str | Path | None = None, pack_dir: str | Path | None = None, **kw: Any) -> dict:
+    """Long-history IR backtest on a dataset pack (``ir_backtest.backtest``); returns the run card. Research evidence only:
+    the reconciliation with AlphaKeel's evaluator is :func:`ir_review` on a scan pack."""
+    from . import ir_backtest as bt
+
+    return bt.backtest(client, ir_doc, instruments, start_ms=start_ms, end_ms=end_ms, out_dir=out_dir,
+                       cache_dir=cache_dir or DEFAULT_CACHE, pack_dir=pack_dir, **kw)
+
+
+def ir_export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_credential: dict | None = None) -> dict:
+    """``strategy.json`` (IR + ``strategy_id`` + ``provenance``) and ``evidence/ir-backtest-audit.json`` from an
+    ``ir backtest`` run directory (``ir_backtest.export``)."""
+    from . import ir_backtest as bt
+
+    return bt.export(ir_doc, run_dir, out_dir, research_credential=research_credential)

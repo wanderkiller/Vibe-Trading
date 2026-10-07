@@ -16,6 +16,13 @@
     python -m alphakeel_research ir review   --pack PACK_ID --ir strategy.json [--seed N] [--profile profile.json] --out DIR
                                           (the IR in Python under the local simulator AND in AlphaKeel's Rust evaluator,
                                            compared layer by layer; prints the comparison, writes DIR/reconciliation.json)
+    python -m alphakeel_research ir backtest --ir strategy.json --start-ms N --end-ms N --instruments inst.json [--step-minutes 2]
+                                          [--fees fees.json] [--trials N [--trials-evidence FILE]] [--capital-base X]
+                                          [--accept-partial] [--pack-dir DIR] [--verbose] --out DIR
+                                          (long-history research backtest on a dataset pack: 1m klines + official
+                                           settlements, synthetic touch; research evidence, NOT reconciliation input)
+    python -m alphakeel_research ir export   --ir strategy.json --run DIR [--research-credential] --out DIR
+                                          (strategy.json with strategy_id + provenance for AlphaKeel's registry)
 
 Credential: ALPHAKEEL_RESEARCH_TOKEN or ALPHAKEEL_RESEARCH_TOKEN_FILE; service URL: ALPHAKEEL_RESEARCH_URL.
 Every command prints one JSON document with references (ids, hashes, paths) and summaries; full events stay on disk
@@ -64,6 +71,38 @@ def ir_report(r: dict) -> str:
         lines.append(f"{name:<14}{str(s['positions_opened']):>8}{str(s['positions_closed']):>8}{str(s['positions_open_at_end']):>13}  {s['realized']}")
     lines += ["", f"written: {Path(r['run_dir']).parent / 'reconciliation.json'}", "", IR_FOOTER]
     return "\n".join(lines) + "\n"
+
+
+def _ir_research(a) -> int:
+    """``ir backtest`` / ``ir export``: the service is only contacted when it is needed (freezing, credential)."""
+    from decimal import Decimal
+
+    if a.ir_cmd == "backtest":
+        c = None if a.pack_dir else Client(a.url)
+        try:
+            card = workflow.ir_backtest(c, _load(a.ir), _load(a.instruments), start_ms=a.start_ms, end_ms=a.end_ms, out_dir=a.out,
+                                        cache_dir=a.cache, pack_dir=a.pack_dir, step_minutes=a.step_minutes, fees=_load(a.fees),
+                                        fees_source=a.fees or "default", trials=a.trials, trials_evidence=a.trials_evidence,
+                                        capital_base=Decimal(a.capital_base) if a.capital_base else None,
+                                        accept_partial=a.accept_partial, verbose=a.verbose)
+        finally:
+            if c is not None:
+                c.close()
+        _out({"run_id": card["run_id"], "strategy_id": card["strategy_id"], "pack_id": card["pack"]["pack_id"],
+              "window": card["window"], "view": card["view"], "counts": card["counts"], "amounts": card["amounts"],
+              "max_drawdown": card["max_drawdown"], "trials": card["trials"], "assumptions": card["assumptions"],
+              "run_card": str(Path(a.out) / "run_card.json"), "note": "research evidence (dataset view approximations in the run card); not reconciliation input"})
+        return 0
+    cred = None
+    if a.research_credential:
+        c = Client(a.url)
+        try:
+            cred = c.check()
+        finally:
+            c.close()
+    r = workflow.ir_export(_load(a.ir), a.run, a.out, research_credential=cred)
+    _out(r)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -133,8 +172,29 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--seed", type=int, default=0)
     q.add_argument("--profile")
     q.add_argument("--out", required=True)
+    q = irs.add_parser("backtest")
+    q.add_argument("--ir", required=True)
+    q.add_argument("--start-ms", type=int, required=True)
+    q.add_argument("--end-ms", type=int, required=True)
+    q.add_argument("--instruments", required=True, help="JSON list of {venue, market, symbol, base?, quote?}")
+    q.add_argument("--step-minutes", type=int, default=2)
+    q.add_argument("--fees", help="JSON {venue: {perp: rate, spot: rate}} (default: 0.0005 perp taker on every venue)")
+    q.add_argument("--trials", type=int)
+    q.add_argument("--trials-evidence")
+    q.add_argument("--capital-base", help="capital base of the daily returns (default notional_per_leg x 2 x max_open)")
+    q.add_argument("--accept-partial", action="store_true")
+    q.add_argument("--pack-dir", help="an exported dataset pack directory instead of freezing one through the service")
+    q.add_argument("--verbose", action="store_true", help="write every rejected pair into decisions.jsonl")
+    q.add_argument("--out", required=True)
+    q = irs.add_parser("export")
+    q.add_argument("--ir", required=True)
+    q.add_argument("--run", required=True, help="the `ir backtest` output directory")
+    q.add_argument("--research-credential", action="store_true", help="record the research-service credential (Client.check())")
+    q.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     try:
+        if a.cmd == "ir" and a.ir_cmd in ("backtest", "export"):
+            return _ir_research(a)
         c = Client(a.url)
         work = Path(a.work) if a.work else Path(tempfile.mkdtemp(prefix="ak-research-"))
         if a.cmd == "check":
