@@ -57,3 +57,8 @@ already in the locks) reaches AlphaKeel's research service at http://127.0.0.1:8
 credential in a file readable by the container user and set `ALPHAKEEL_RESEARCH_TOKEN_FILE` (see agent/.env.example); the
 credential is created on the AlphaKeel host with `arb research-service token create`. To turn the integration off, run
 `arb research-service disable` on the AlphaKeel host or remove the variables; no Vibe-Trading data is touched.
+
+Patch layer: every local change over upstream (this overlay, the mobile patches, the AlphaKeel client and its hooks in
+upstream files) is listed by group in `patches/MANIFEST.md`, with the upstream base in `patches/BASE`. Before merging
+another upstream release, follow `patches/UPGRADE.md`: `python patches/check_patches.py --upstream <tag>` assesses the
+release before any rebase, and `python patches/check_patches.py --tests` must pass on the result.

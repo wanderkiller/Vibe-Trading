@@ -1,0 +1,996 @@
+{
+ "schema": 1,
+ "description": "Anchors of the local patch layer over upstream HKUDS/Vibe-Trading. See patches/MANIFEST.md. kind=upstream: upstream code a patch relies on (must exist upstream and here); hook: our change (must exist here); preimage: upstream code a patch replaces (must be absent here; in --upstream mode it must still be present upstream, else upstream changed it and the patch needs re-reading); derived: a file generated from an upstream file plus an overlay block.",
+ "groups": [
+  {
+   "id": "frontend-mobile",
+   "title": "Mobile layout and i18n (frontend)",
+   "files": [
+    "frontend/index.html",
+    "frontend/src/components/chat/AgentAvatar.tsx",
+    "frontend/src/components/layout/Layout.tsx",
+    "frontend/src/components/layout/__tests__/Layout.test.tsx",
+    "frontend/src/pages/Agent.tsx",
+    "frontend/src/i18n/locales/ar.json",
+    "frontend/src/i18n/locales/de.json",
+    "frontend/src/i18n/locales/en.json",
+    "frontend/src/i18n/locales/es.json",
+    "frontend/src/i18n/locales/id.json",
+    "frontend/src/i18n/locales/ja.json",
+    "frontend/src/i18n/locales/ko.json",
+    "frontend/src/i18n/locales/pt-BR.json",
+    "frontend/src/i18n/locales/zh-CN.json"
+   ],
+   "anchors": [
+    {
+     "file": "frontend/index.html",
+     "kind": "upstream",
+     "literal": "<div id=\"root\"></div>"
+    },
+    {
+     "file": "frontend/index.html",
+     "kind": "hook",
+     "literal": "<body class=\"h-dvh overflow-hidden"
+    },
+    {
+     "file": "frontend/index.html",
+     "kind": "preimage",
+     "literal": "<body class=\"min-h-screen bg-background text-foreground antialiased\">"
+    },
+    {
+     "file": "frontend/src/components/chat/AgentAvatar.tsx",
+     "kind": "upstream",
+     "literal": "export function AgentAvatar() {"
+    },
+    {
+     "file": "frontend/src/components/chat/AgentAvatar.tsx",
+     "kind": "hook",
+     "literal": "hidden md:block h-8 w-8"
+    },
+    {
+     "file": "frontend/src/components/chat/AgentAvatar.tsx",
+     "kind": "preimage",
+     "literal": "<div className=\"h-8 w-8 shrink-0 mt-0.5\" aria-hidden=\"true\">"
+    },
+    {
+     "file": "frontend/src/components/layout/Layout.tsx",
+     "kind": "upstream",
+     "literal": "export function Layout() {"
+    },
+    {
+     "file": "frontend/src/components/layout/Layout.tsx",
+     "kind": "upstream",
+     "literal": "const [collapsed, setCollapsed] = useState(() => safeGet(\"qa-sidebar\") === \"collapsed\");"
+    },
+    {
+     "file": "frontend/src/components/layout/Layout.tsx",
+     "kind": "upstream",
+     "literal": "const loadSessions = () => {"
+    },
+    {
+     "file": "frontend/src/components/layout/Layout.tsx",
+     "kind": "hook",
+     "literal": "const MOBILE_SIDEBAR_TRANSITION_MS = 200;"
+    },
+    {
+     "file": "frontend/src/components/layout/Layout.tsx",
+     "kind": "hook",
+     "literal": "const renderSessionsList = (onNavigate?: () => void) => ("
+    },
+    {
+     "file": "frontend/src/pages/Agent.tsx",
+     "kind": "upstream",
+     "literal": "ref={listRef}"
+    },
+    {
+     "file": "frontend/src/pages/Agent.tsx",
+     "kind": "hook",
+     "literal": "chat-scroll-container flex-1 overflow-auto overscroll-contain"
+    },
+    {
+     "file": "frontend/src/pages/Agent.tsx",
+     "kind": "preimage",
+     "literal": "className=\"chat-scroll-container flex-1 overflow-auto p-6 relative\""
+    },
+    {
+     "file": "frontend/src/i18n/locales/ar.json",
+     "kind": "upstream",
+     "literal": "\"skipToMain\":",
+     "note": "layout.* key block the drawer labels sit in"
+    },
+    {
+     "file": "frontend/src/i18n/locales/ar.json",
+     "kind": "hook",
+     "literal": "\"menu\":",
+     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
+    },
+    {
+     "file": "frontend/src/i18n/locales/de.json",
+     "kind": "upstream",
+     "literal": "\"skipToMain\":",
+     "note": "layout.* key block the drawer labels sit in"
+    },
+    {
+     "file": "frontend/src/i18n/locales/de.json",
+     "kind": "hook",
+     "literal": "\"menu\":",
+     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
+    },
+    {
+     "file": "frontend/src/i18n/locales/en.json",
+     "kind": "upstream",
+     "literal": "\"skipToMain\":",
+     "note": "layout.* key block the drawer labels sit in"
+    },
+    {
+     "file": "frontend/src/i18n/locales/en.json",
+     "kind": "hook",
+     "literal": "\"menu\":",
+     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
+    },
+    {
+     "file": "frontend/src/i18n/locales/es.json",
+     "kind": "upstream",
+     "literal": "\"skipToMain\":",
+     "note": "layout.* key block the drawer labels sit in"
+    },
+    {
+     "file": "frontend/src/i18n/locales/es.json",
+     "kind": "hook",
+     "literal": "\"menu\":",
+     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
+    },
+    {
+     "file": "frontend/src/i18n/locales/id.json",
+     "kind": "upstream",
+     "literal": "\"skipToMain\":",
+     "note": "layout.* key block the drawer labels sit in"
+    },
+    {
+     "file": "frontend/src/i18n/locales/id.json",
+     "kind": "hook",
+     "literal": "\"menu\":",
+     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
+    },
+    {
+     "file": "frontend/src/i18n/locales/ja.json",
+     "kind": "upstream",
+     "literal": "\"skipToMain\":",
+     "note": "layout.* key block the drawer labels sit in"
+    },
+    {
+     "file": "frontend/src/i18n/locales/ja.json",
+     "kind": "hook",
+     "literal": "\"menu\":",
+     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
+    },
+    {
+     "file": "frontend/src/i18n/locales/ko.json",
+     "kind": "upstream",
+     "literal": "\"skipToMain\":",
+     "note": "layout.* key block the drawer labels sit in"
+    },
+    {
+     "file": "frontend/src/i18n/locales/ko.json",
+     "kind": "hook",
+     "literal": "\"menu\":",
+     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
+    },
+    {
+     "file": "frontend/src/i18n/locales/pt-BR.json",
+     "kind": "upstream",
+     "literal": "\"skipToMain\":",
+     "note": "layout.* key block the drawer labels sit in"
+    },
+    {
+     "file": "frontend/src/i18n/locales/pt-BR.json",
+     "kind": "hook",
+     "literal": "\"menu\":",
+     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
+    },
+    {
+     "file": "frontend/src/i18n/locales/zh-CN.json",
+     "kind": "upstream",
+     "literal": "\"skipToMain\":",
+     "note": "layout.* key block the drawer labels sit in"
+    },
+    {
+     "file": "frontend/src/i18n/locales/zh-CN.json",
+     "kind": "hook",
+     "literal": "\"menu\":",
+     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
+    }
+   ]
+  },
+  {
+   "id": "local-deploy",
+   "title": "Local deployment overlay",
+   "files": [
+    "Dockerfile.local",
+    "docker-compose.override.yml",
+    "requirements-local-providers-lock.txt",
+    "DEPLOYMENT.local.md"
+   ],
+   "anchors": [
+    {
+     "file": "Dockerfile",
+     "kind": "upstream",
+     "literal": "COPY requirements-channels-lock.txt requirements-channels-lock.txt"
+    },
+    {
+     "file": "Dockerfile",
+     "kind": "upstream",
+     "literal": "RUN pip install --no-cache-dir --no-deps -e .",
+     "note": "the provider overlay is inserted right after this line"
+    },
+    {
+     "file": "Dockerfile.local",
+     "kind": "derived",
+     "source": "Dockerfile",
+     "overlay_begin": "# Deployment adapters, pinned separately from the upstream dependency locks.",
+     "overlay_end": "    && pip check",
+     "note": "Dockerfile.local must equal the upstream Dockerfile plus the provider-overlay block"
+    },
+    {
+     "file": "Dockerfile.local",
+     "kind": "hook",
+     "literal": "pip install --no-cache-dir --require-hashes --no-deps -r requirements-local-providers-lock.txt"
+    },
+    {
+     "file": "docker-compose.yml",
+     "kind": "upstream",
+     "literal": "  vibe-trading:"
+    },
+    {
+     "file": "docker-compose.yml",
+     "kind": "upstream",
+     "literal": "  vibe-home:",
+     "note": "DEPLOYMENT.local.md relies on the vibe-home volume"
+    },
+    {
+     "file": "docker-compose.override.yml",
+     "kind": "hook",
+     "literal": "dockerfile: Dockerfile.local"
+    },
+    {
+     "file": "requirements-lock.txt",
+     "kind": "upstream",
+     "literal": "langchain-core==1.6.1 \\",
+     "note": "the overlay's langchain-core 1.6.3 pin replaces exactly this base pin; a change means regenerating the overlay"
+    },
+    {
+     "file": "requirements-local-providers-lock.txt",
+     "kind": "hook",
+     "literal": "langchain-anthropic==1.7.2"
+    }
+   ]
+  },
+  {
+   "id": "leaf-package",
+   "title": "AlphaKeel research client (leaf package, loaders, tool, tests)",
+   "files": [
+    "agent/alphakeel_research/",
+    "agent/backtest/loaders/alphakeel_pack_loader.py",
+    "agent/backtest/loaders/alphakeel_b2_loader.py",
+    "agent/backtest/alphakeel_metrics.py",
+    "agent/src/tools/alphakeel_research_tool.py",
+    "agent/tests/fixtures/alphakeel/",
+    "agent/tests/fixtures/alphakeel_server.py",
+    "agent/tests/test_alphakeel_b2_loader.py",
+    "agent/tests/test_alphakeel_contract.py",
+    "agent/tests/test_alphakeel_differential.py",
+    "agent/tests/test_alphakeel_e2e.py",
+    "agent/tests/test_alphakeel_handoff.py",
+    "agent/tests/test_alphakeel_ir.py",
+    "agent/tests/test_alphakeel_ir_backtest.py",
+    "agent/tests/test_alphakeel_metrics.py",
+    "agent/tests/test_alphakeel_policy_host.py",
+    "agent/tests/test_alphakeel_protocol.py",
+    "agent/tests/test_alphakeel_registration.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/backtest/loaders/registry.py",
+     "kind": "upstream",
+     "literal": "def register(cls: Type[Any]) -> Type[Any]:",
+     "note": "@register on both alphakeel loaders"
+    },
+    {
+     "file": "agent/backtest/loaders/base.py",
+     "kind": "upstream",
+     "literal": "class NoAvailableSourceError(Exception):"
+    },
+    {
+     "file": "agent/backtest/loaders/base.py",
+     "kind": "upstream",
+     "literal": "def validate_date_range(start_date: str, end_date: str) -> None:"
+    },
+    {
+     "file": "agent/backtest/loaders/base.py",
+     "kind": "upstream",
+     "literal": "class DataLoaderProtocol(Protocol):",
+     "note": "name / markets / requires_auth / is_available / fetch"
+    },
+    {
+     "file": "agent/backtest/loaders/base.py",
+     "kind": "upstream",
+     "regex": "(?m)^    name: str\\n    markets: set\\[str\\]\\n    requires_auth: bool$"
+    },
+    {
+     "file": "agent/src/config/accessor.py",
+     "kind": "upstream",
+     "literal": "def get_env_value(name: str, default: str = \"\") -> str:"
+    },
+    {
+     "file": "agent/src/agent/tools.py",
+     "kind": "upstream",
+     "literal": "class BaseTool(ABC):"
+    },
+    {
+     "file": "agent/src/agent/tools.py",
+     "kind": "upstream",
+     "literal": "    parameters: Dict[str, Any] = {}"
+    },
+    {
+     "file": "agent/src/agent/tools.py",
+     "kind": "upstream",
+     "literal": "    repeatable: bool = False"
+    },
+    {
+     "file": "agent/src/agent/tools.py",
+     "kind": "upstream",
+     "literal": "    is_readonly: bool = True"
+    },
+    {
+     "file": "agent/src/agent/tools.py",
+     "kind": "upstream",
+     "literal": "    def execute(self, **kwargs: Any) -> str:"
+    },
+    {
+     "file": "agent/src/tools/__init__.py",
+     "kind": "upstream",
+     "literal": "pkgutil.iter_modules([pkg_dir])",
+     "note": "the tool is auto-discovered, no registration edit"
+    }
+   ]
+  },
+  {
+   "id": "loader-registry-hooks",
+   "title": "Loader registration hooks (registry, health catalog, annualisation)",
+   "files": [
+    "agent/backtest/loaders/registry.py",
+    "agent/backtest/loader_health.py",
+    "agent/backtest/metrics.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/backtest/loaders/registry.py",
+     "kind": "upstream",
+     "literal": "VALID_SOURCES: set[str] = {"
+    },
+    {
+     "file": "agent/backtest/loaders/registry.py",
+     "kind": "upstream",
+     "literal": "_loader_modules = ["
+    },
+    {
+     "file": "agent/backtest/loaders/registry.py",
+     "kind": "upstream",
+     "literal": "\"backtest.loaders.local_loader\","
+    },
+    {
+     "file": "agent/backtest/loaders/registry.py",
+     "kind": "upstream",
+     "literal": "_NO_NETWORK_FALLBACK_SOURCES: frozenset[str] = frozenset("
+    },
+    {
+     "file": "agent/backtest/loaders/registry.py",
+     "kind": "hook",
+     "regex": "\"local\",\\n    \"alphakeel_pack\",\\n    \"alphakeel_b2\",\\n    \"auto\","
+    },
+    {
+     "file": "agent/backtest/loaders/registry.py",
+     "kind": "hook",
+     "literal": "\"backtest.loaders.alphakeel_pack_loader\","
+    },
+    {
+     "file": "agent/backtest/loaders/registry.py",
+     "kind": "hook",
+     "literal": "\"backtest.loaders.alphakeel_b2_loader\","
+    },
+    {
+     "file": "agent/backtest/loaders/registry.py",
+     "kind": "hook",
+     "literal": "\"nobitex\", \"wallex\", \"alphakeel_pack\", \"alphakeel_b2\"}"
+    },
+    {
+     "file": "agent/backtest/loaders/registry.py",
+     "kind": "preimage",
+     "literal": "{\"local\", \"qveris\", \"tickerall\", \"fmp\", \"nobitex\", \"wallex\"}"
+    },
+    {
+     "file": "agent/backtest/loader_health.py",
+     "kind": "upstream",
+     "literal": "\"local\": \"operator files, not a public endpoint\""
+    },
+    {
+     "file": "agent/backtest/loader_health.py",
+     "kind": "upstream",
+     "literal": "def coverage_errors() -> list[str]:",
+     "note": "catalog drift check: every source is canaried or excluded"
+    },
+    {
+     "file": "agent/backtest/loader_health.py",
+     "kind": "hook",
+     "literal": "\"alphakeel_pack\": \"frozen AlphaKeel pack directory"
+    },
+    {
+     "file": "agent/backtest/loader_health.py",
+     "kind": "preimage",
+     "literal": "EXCLUDED_PUBLIC_SOURCES = {\"local\": \"operator files, not a public endpoint\"}"
+    },
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "upstream",
+     "literal": "_TRADING_DAYS = {"
+    },
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "upstream",
+     "literal": "_BARS_PER_DAY = {"
+    },
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "upstream",
+     "literal": "\"nobitex\": 365, \"wallex\": 365,"
+    },
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "hook",
+     "literal": "\"alphakeel_pack\": 365, \"alphakeel_b2\": 365,"
+    },
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "hook",
+     "literal": "\"nobitex\": 1440, \"wallex\": 1440, \"alphakeel_pack\": 1440, \"alphakeel_b2\": 1440,"
+    }
+   ]
+  },
+  {
+   "id": "crypto-funding",
+   "title": "Crypto engine funding, fee and valuation semantics",
+   "files": [
+    "agent/backtest/engines/_market_hooks.py",
+    "agent/backtest/engines/crypto.py",
+    "agent/backtest/engines/composite.py",
+    "agent/backtest/loaders/ccxt_loader.py",
+    "agent/backtest/funding_settlements.py",
+    "agent/tests/test_crypto_engine.py",
+    "agent/tests/test_composite_engine_fallback.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "    def before_rebalance_bar(\n        self,\n        timestamp: pd.Timestamp,\n        data_map: Dict[str, pd.DataFrame],\n        codes: List[str],\n    ) -> bool:",
+     "note": "funding is charged here, pre-fill"
+    },
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "stop_run = self.before_rebalance_bar(ts, data_map, codes)",
+     "note": "called before the open valuation and the fills"
+    },
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "equity = self._calc_open_equity(data_map, close_df, ts)"
+    },
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "self.on_bar(code, data_map[code].loc[timestamp], timestamp)",
+     "note": "on_bar runs post-fill (after_rebalance_bar); liquidation only"
+    },
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "    def _calc_equity(self, close_df: pd.DataFrame, ts: pd.Timestamp) -> float:"
+    },
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "    def _calc_open_equity(\n        self,\n        data_map: Dict[str, pd.DataFrame],\n        close_df: pd.DataFrame,\n        ts: pd.Timestamp,\n    ) -> float:"
+    },
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "        close_val_df: Optional[pd.DataFrame] = None,\n    ) -> None:",
+     "note": "_execute_bars(dates, data_map, close_df, target_pos, codes, close_val_df=None)"
+    },
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "    def calc_commission(self, size: float, price: float, direction: int, is_open: bool) -> float:"
+    },
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "    def valuation_open(self, bar: pd.Series) -> float:"
+    },
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "        _val_arr: \"np.ndarray | None\" = None,",
+     "note": "_safe_price keyword-only fast-path args used by the close-now valuation"
+    },
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "self._close_arr = _close_arr"
+    },
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "self._code_to_col = _code_to_col"
+    },
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "self._bar_idx = i"
+    },
+    {
+     "file": "agent/backtest/engines/base.py",
+     "kind": "upstream",
+     "literal": "    def _write_artifacts(\n        self,\n        run_dir: Path,"
+    },
+    {
+     "file": "agent/backtest/engines/crypto.py",
+     "kind": "upstream",
+     "literal": "self.perpetual_strict = bool(config.get(\"perpetual_strict\", False))",
+     "note": "the strict perpetual path keeps upstream accounting; our hooks only run when not strict"
+    },
+    {
+     "file": "agent/backtest/engines/crypto.py",
+     "kind": "hook",
+     "literal": "self._funding = CryptoFunding(self.funding_rate)"
+    },
+    {
+     "file": "agent/backtest/engines/crypto.py",
+     "kind": "hook",
+     "literal": "        return size * price * self.taker_rate"
+    },
+    {
+     "file": "agent/backtest/engines/crypto.py",
+     "kind": "hook",
+     "literal": "    def _exit_fees(self, prices: dict[str, float]) -> float:"
+    },
+    {
+     "file": "agent/backtest/engines/crypto.py",
+     "kind": "hook",
+     "literal": "\"valuation\": \"close_now_net_of_exit_fee\""
+    },
+    {
+     "file": "agent/backtest/engines/crypto.py",
+     "kind": "preimage",
+     "literal": "rate = self.taker_rate if self.perpetual_strict or is_open else self.maker_rate"
+    },
+    {
+     "file": "agent/backtest/engines/crypto.py",
+     "kind": "preimage",
+     "literal": "self._funding_daily_done: set = set()"
+    },
+    {
+     "file": "agent/backtest/engines/composite.py",
+     "kind": "upstream",
+     "literal": "self._rule_engines = _build_rule_engines(config, codes)"
+    },
+    {
+     "file": "agent/backtest/engines/composite.py",
+     "kind": "upstream",
+     "literal": "market = self._symbol_market.get(symbol)"
+    },
+    {
+     "file": "agent/backtest/engines/composite.py",
+     "kind": "hook",
+     "literal": "self._funding = CryptoFunding(crypto.funding_rate) if crypto is not None else None"
+    },
+    {
+     "file": "agent/backtest/engines/composite.py",
+     "kind": "hook",
+     "literal": "self.capital -= self._funding.settle(code, frame.loc[timestamp], timestamp, self.positions)"
+    },
+    {
+     "file": "agent/backtest/engines/composite.py",
+     "kind": "preimage",
+     "literal": "self._funding_daily_done: set = set()"
+    },
+    {
+     "file": "agent/backtest/engines/_market_hooks.py",
+     "kind": "upstream",
+     "literal": "def check_crypto_liquidation("
+    },
+    {
+     "file": "agent/backtest/engines/_market_hooks.py",
+     "kind": "upstream",
+     "literal": "def _liquidation_mark(bar: pd.Series, pos: Position) -> float:"
+    },
+    {
+     "file": "agent/backtest/engines/_market_hooks.py",
+     "kind": "hook",
+     "literal": "class CryptoFunding:"
+    },
+    {
+     "file": "agent/backtest/engines/_market_hooks.py",
+     "kind": "hook",
+     "literal": "def funding_model_for(code: str, frame: pd.DataFrame) -> str:"
+    },
+    {
+     "file": "agent/backtest/engines/_market_hooks.py",
+     "kind": "preimage",
+     "literal": "def calc_crypto_funding_fee("
+    },
+    {
+     "file": "agent/backtest/engines/_market_hooks.py",
+     "kind": "preimage",
+     "literal": "FUNDING_HOURS = {0, 8, 16}"
+    },
+    {
+     "file": "agent/backtest/loaders/ccxt_loader.py",
+     "kind": "upstream",
+     "literal": "funding = cls._fetch_funding_history(exchange, symbol, since_ms, end_ms)"
+    },
+    {
+     "file": "agent/backtest/loaders/ccxt_loader.py",
+     "kind": "upstream",
+     "literal": "if bracket_artifact is not None:"
+    },
+    {
+     "file": "agent/backtest/loaders/ccxt_loader.py",
+     "kind": "hook",
+     "literal": "result = attach_settlements(result, events)"
+    },
+    {
+     "file": "agent/backtest/loaders/ccxt_loader.py",
+     "kind": "preimage",
+     "literal": "_FUNDING_HOURS = {0, 8, 16}"
+    }
+   ]
+  },
+  {
+   "id": "metrics-conventions",
+   "title": "Metrics conventions (undefined ratios are None; Sortino definition)",
+   "files": [
+    "agent/backtest/metrics.py",
+    "agent/backtest/validation.py",
+    "agent/tests/test_metrics.py",
+    "agent/tests/test_metrics_inf_zero_equity.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "upstream",
+     "literal": "def calc_metrics("
+    },
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "upstream",
+     "literal": "vol = float(port_ret.std()) if len(port_ret) > 1 and returns_finite else 0.0"
+    },
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "upstream",
+     "literal": "def _empty_metrics(initial_cash: float) -> Dict[str, Any]:"
+    },
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "hook",
+     "literal": "sharpe: float | None = ("
+    },
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "hook",
+     "literal": "sortino: float | None = None"
+    },
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "hook",
+     "literal": "\"sharpe\": None, \"calmar\": 0, \"sortino\": None,"
+    },
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "preimage",
+     "literal": "float(port_ret.mean() / (vol + 1e-10) * np.sqrt(bpy))"
+    },
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "preimage",
+     "literal": "downside_std = float(downside.std()) if len(downside) > 1 else 1e-10"
+    },
+    {
+     "file": "agent/backtest/metrics.py",
+     "kind": "preimage",
+     "literal": "\"sharpe\": 0, \"calmar\": 0, \"sortino\": 0,"
+    },
+    {
+     "file": "agent/backtest/validation.py",
+     "kind": "upstream",
+     "literal": "def monte_carlo_test("
+    },
+    {
+     "file": "agent/backtest/validation.py",
+     "kind": "upstream",
+     "literal": "def bootstrap_sharpe_ci("
+    },
+    {
+     "file": "agent/backtest/validation.py",
+     "kind": "upstream",
+     "literal": "def walk_forward_analysis("
+    },
+    {
+     "file": "agent/backtest/validation.py",
+     "kind": "upstream",
+     "literal": "def _path_metrics("
+    },
+    {
+     "file": "agent/backtest/validation.py",
+     "kind": "hook",
+     "literal": "def _sharpe(returns: np.ndarray, bars_per_year: int = 252) -> float | None:"
+    },
+    {
+     "file": "agent/backtest/validation.py",
+     "kind": "hook",
+     "literal": "\"sharpe_undefined_windows\""
+    },
+    {
+     "file": "agent/backtest/validation.py",
+     "kind": "preimage",
+     "literal": "def _sharpe(returns: np.ndarray, bars_per_year: int = 252) -> float:"
+    },
+    {
+     "file": "agent/backtest/validation.py",
+     "kind": "preimage",
+     "literal": "sharpe = float(returns.mean() / (std + 1e-10) * np.sqrt(bars_per_year))"
+    }
+   ]
+  },
+  {
+   "id": "run-card-data-audit",
+   "title": "Run card data audit (auditable vs non-auditable sources)",
+   "files": [
+    "agent/backtest/run_card.py",
+    "agent/backtest/data_audit.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/backtest/run_card.py",
+     "kind": "upstream",
+     "literal": "def write_run_card("
+    },
+    {
+     "file": "agent/backtest/run_card.py",
+     "kind": "upstream",
+     "literal": "    data_sources: Sequence[str] | None = None,"
+    },
+    {
+     "file": "agent/backtest/run_card.py",
+     "kind": "upstream",
+     "literal": "\"data_sources\": list(data_sources or []),"
+    },
+    {
+     "file": "agent/backtest/run_card.py",
+     "kind": "upstream",
+     "literal": "def _render_markdown(card: Mapping[str, Any]) -> str:"
+    },
+    {
+     "file": "agent/backtest/run_card.py",
+     "kind": "upstream",
+     "literal": "lines.extend([\"\", \"## Metrics\"])"
+    },
+    {
+     "file": "agent/backtest/run_card.py",
+     "kind": "hook",
+     "literal": "from backtest.data_audit import data_audit, non_auditable_warning"
+    },
+    {
+     "file": "agent/backtest/run_card.py",
+     "kind": "hook",
+     "literal": "\"data_audit\": audit,"
+    },
+    {
+     "file": "agent/backtest/run_card.py",
+     "kind": "hook",
+     "literal": "\"## Data Audit\""
+    },
+    {
+     "file": "agent/backtest/run_card.py",
+     "kind": "preimage",
+     "literal": "\"warnings\": list(warnings or []),"
+    }
+   ]
+  },
+  {
+   "id": "packaging-docs",
+   "title": "Packaging and documentation",
+   "files": [
+    "pyproject.toml",
+    "agent/SKILL.md",
+    ".gitignore",
+    "agent/.env.example",
+    "README.md",
+    "README_ar.md",
+    "README_es.md",
+    "README_id.md",
+    "README_ja.md",
+    "README_ko.md",
+    "README_zh.md",
+    "patches/",
+    "agent/tests/test_alphakeel_patch_layer.py"
+   ],
+   "anchors": [
+    {
+     "file": "pyproject.toml",
+     "kind": "upstream",
+     "literal": "[tool.setuptools.packages.find]"
+    },
+    {
+     "file": "pyproject.toml",
+     "kind": "upstream",
+     "literal": "\"backtest\" = [\"*.py\"]"
+    },
+    {
+     "file": "pyproject.toml",
+     "kind": "upstream",
+     "literal": "dev = ["
+    },
+    {
+     "file": "pyproject.toml",
+     "kind": "hook",
+     "literal": "\"evals*\", \"alphakeel_research*\"]"
+    },
+    {
+     "file": "pyproject.toml",
+     "kind": "hook",
+     "literal": "\"alphakeel_research\" = ["
+    },
+    {
+     "file": "pyproject.toml",
+     "kind": "hook",
+     "literal": "alphakeel-dev = ["
+    },
+    {
+     "file": "pyproject.toml",
+     "kind": "hook",
+     "literal": "\"hypothesis>=6.100,<7\","
+    },
+    {
+     "file": "pyproject.toml",
+     "kind": "preimage",
+     "literal": "include = [\"src*\", \"backtest*\", \"cli*\", \"evals*\"]"
+    },
+    {
+     "file": "agent/SKILL.md",
+     "kind": "upstream",
+     "literal": "- **China A-shares** via AKShare"
+    },
+    {
+     "file": "agent/SKILL.md",
+     "kind": "upstream",
+     "literal": "| `get_market_data` | Fetch OHLCV data"
+    },
+    {
+     "file": "agent/SKILL.md",
+     "kind": "hook",
+     "literal": "explicit-only alphakeel_pack and alphakeel_b2"
+    },
+    {
+     "file": "agent/SKILL.md",
+     "kind": "hook",
+     "literal": "\"source\": \"alphakeel_b2\""
+    },
+    {
+     "file": "agent/SKILL.md",
+     "kind": "preimage",
+     "literal": "- **Cryptocurrency** via OKX or CCXT/100+ exchanges (free, no API key)"
+    },
+    {
+     "file": ".gitignore",
+     "kind": "upstream",
+     "literal": ".idea/*"
+    },
+    {
+     "file": ".gitignore",
+     "kind": "hook",
+     "literal": "agent/alphakeel_research/*.egg-info/"
+    },
+    {
+     "file": "agent/.env.example",
+     "kind": "upstream",
+     "literal": "# ETORO_USER_KEY=your_user_key"
+    },
+    {
+     "file": "agent/.env.example",
+     "kind": "hook",
+     "literal": "# ALPHAKEEL_RESEARCH_URL="
+    },
+    {
+     "file": "README.md",
+     "kind": "upstream",
+     "regex": "(?m)^\\| `local` \\|",
+     "note": "source-table row the alphakeel rows follow"
+    },
+    {
+     "file": "README.md",
+     "kind": "hook",
+     "literal": "| `alphakeel_pack` |"
+    },
+    {
+     "file": "README_ar.md",
+     "kind": "upstream",
+     "regex": "(?m)^\\| `local` \\|",
+     "note": "source-table row the alphakeel rows follow"
+    },
+    {
+     "file": "README_ar.md",
+     "kind": "hook",
+     "literal": "| `alphakeel_pack` |"
+    },
+    {
+     "file": "README_es.md",
+     "kind": "upstream",
+     "regex": "(?m)^\\| `local` \\|",
+     "note": "source-table row the alphakeel rows follow"
+    },
+    {
+     "file": "README_es.md",
+     "kind": "hook",
+     "literal": "| `alphakeel_pack` |"
+    },
+    {
+     "file": "README_id.md",
+     "kind": "upstream",
+     "regex": "(?m)^\\| `local` \\|",
+     "note": "source-table row the alphakeel rows follow"
+    },
+    {
+     "file": "README_id.md",
+     "kind": "hook",
+     "literal": "| `alphakeel_pack` |"
+    },
+    {
+     "file": "README_ja.md",
+     "kind": "upstream",
+     "regex": "(?m)^\\| `local` \\|",
+     "note": "source-table row the alphakeel rows follow"
+    },
+    {
+     "file": "README_ja.md",
+     "kind": "hook",
+     "literal": "| `alphakeel_pack` |"
+    },
+    {
+     "file": "README_ko.md",
+     "kind": "upstream",
+     "regex": "(?m)^\\| `local` \\|",
+     "note": "source-table row the alphakeel rows follow"
+    },
+    {
+     "file": "README_ko.md",
+     "kind": "hook",
+     "literal": "| `alphakeel_pack` |"
+    },
+    {
+     "file": "README_zh.md",
+     "kind": "upstream",
+     "regex": "(?m)^\\| `local` \\|",
+     "note": "source-table row the alphakeel rows follow"
+    },
+    {
+     "file": "README_zh.md",
+     "kind": "hook",
+     "literal": "| `alphakeel_pack` |"
+    }
+   ]
+  }
+ ]
+}
