@@ -115,8 +115,8 @@ documents the build, backup and upgrade rules.
 - `DEPLOYMENT.local.md`
 
 **Commits.** `8cfc14f0` (Dockerfile.local, compose override, DEPLOYMENT.local.md), `e0245ca9` (AlphaKeel paragraph in
-DEPLOYMENT.local.md), merge `98e8248e` (`requirements-local-providers-lock.txt` exists only in that merge), and the
-T8 commit (pointer to `patches/`).
+DEPLOYMENT.local.md), merge `98e8248e` (`requirements-local-providers-lock.txt` exists only in that merge), and
+`7d8b0772` (T8, pointer to `patches/`).
 
 **Upstreamable.** No, local-only (host networking, local listener, extra providers).
 
@@ -163,7 +163,8 @@ reachable are the next groups.
 - `agent/tests/test_alphakeel_registration.py`
 
 **Commits.** `e0245ca9` `220330b0` `83ea7c2a` `5370ab12` `e0141135` `b703f994` `22e33c58` `83af5312` `41f8c94b`
-(alphakeel_metrics) `9257a920` `a379d8d2` `a232931b` `1e17c469` `bc7d3464` `0d9afe7d`.
+(alphakeel_metrics) `9257a920` `a379d8d2` `a232931b` `1e17c469` `bc7d3464` `0d9afe7d` `dbcea0e6` (T9b contract re-export:
+`strategy-ir/README.md` and its `PIN` line).
 
 **Upstreamable.** No, local-only (talks to a private service, mirrors a private contract).
 
@@ -375,14 +376,17 @@ environment variables in `agent/.env.example`, ignores build artifacts; and this
 - `patches/`
 - `agent/tests/test_alphakeel_patch_layer.py`
 
-**Commits.** `e0245ca9` `220330b0` `1f83ef6f` `83ea7c2a` `9257a920`, and the T8 commit (`patches/`).
+**Commits.** `e0245ca9` `220330b0` `1f83ef6f` `83ea7c2a` `9257a920`, `7d8b0772` (T8, `patches/`), `456b918f`
+(upgrade-rehearsal record), `ff1d0f04` (T9b: `alphakeel_b2` in every README, 30 sources; cherry-picked from the
+rehearsal's `66327a89`), `2a92d711` (T9b verification record) and the commit that adds these lists.
 
 **Upstreamable.** No, local-only.
 
-**Anchors.** The READMEs' counts ("28 → 29 market-data sources", "107 → 108 agent tools", the `loaders/` list) are
+**Anchors.** The READMEs' counts ("28 → 30 market-data sources", "107 → 108 agent tools", the `loaders/` list) are
 not anchored: upstream edits these lines constantly (41 commits to README.md since BASE). On upgrade take upstream's
-text and re-derive the counts (upstream count + 2 sources, + 1 tool). Note the current text says 29 sources although
-two are added, and only README.md has the `alphakeel_b2` row.
+text and re-derive the counts (upstream count + 2 sources, + 1 tool). Until `ff1d0f04` the text said 29 sources and only
+README.md had the `alphakeel_b2` row; every README and SKILL.md now say 30 and list `alphakeel_b2` in the table and
+the `loaders/` tree line.
 - upstream `pyproject.toml`: `[tool.setuptools.packages.find]`
 - upstream `pyproject.toml`: `"backtest" = ["*.py"]`
 - upstream `pyproject.toml`: `dev = [`
