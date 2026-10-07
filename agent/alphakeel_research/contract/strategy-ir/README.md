@@ -237,6 +237,9 @@ Decision { exits: [{position_id, reason}],
   `entries` 次序各占一个号；`L` = 做多腿，`S` = 做空腿；任一腿没有真实一档买卖价（`bbo = false`）或缺汇率的进场决定**不提交意图、不占号**，
   与 Rust `paper::open_planned` 的拒绝一致），`position_ref = p<trade><L|S>`，`pair_id = pair-<trade>`。研究服务的
   L2 决策层按 `intent_id` 逐条对比，命名不同就无法对账。
+- **意图数量**：两腿同量，`qty = notional_per_leg ÷ long.ask`，**半偶舍入到 8 位小数**（两侧相同；本地模拟器的数量精度也是 8 位）。
+- **缺报价时不退出**：持仓的任一腿在本帧没有可成交报价（没有本帧报价行、`bbo = false` 或缺汇率）时，本帧**不提交该组合的退出意图**
+  （即使 `max_hold` 已到），等下一帧有报价再退出；与 Rust 纸上执行“估值冻结时不出场”一致。不得用旧帧报价定价退出。
 - **`net_now`（§5 的持仓立即平仓净额）**：两侧同一公式 = 触及价盈亏（多腿 `qty × (bid − avg_entry)`，空腿
   `qty × (avg_entry − ask)`）+ 该仓位已结算的资金费 − 入场手续费 − 触及价平仓 taker 费；单位为腿的计价币（v1 只允许 USDT）。
   研究服务的 policy 上下文按**腿**给出 `positions[].net_now`（同一公式按腿计），策略把同一 `pair` 两腿相加得到组合的 `net_now`；
@@ -271,3 +274,9 @@ Decision { exits: [{position_id, reason}],
 
 需要历史序列的特征（z-score、资金费持续性、回本时间 `payback_hours`）、跨计价币换汇、`kind` 以外的策略形态、参数占位符。
 schema 不为它们占位，两侧也不做假实现。
+
+**运行时守卫不属于 IR。** 在线 paper（`arb screen --paper-state … --strategy <id>`）与跨所执行器（`arb cross-live run --strategy <id>`）
+加载 IR 时，在 IR 的退出规则之外加一道运行时守卫：任一腿标记价进入强平价的 `paper.liq_buffer` 范围即平仓（与内置规则的
+`liquidation_risk` 同一判断 `screener::paper::near_liquidation`，平仓原因 `liquidation_risk`、`strategy_reason = runtime:liq_buffer`）。
+守卫只在这两个运行环境打开（`IrDecider::with_runtime_guards`）；回测与研究服务的 `ir_strategy` 保持纯 IR 语义，Python 侧也不实现它，
+所以守卫产生的退出在对账（L2）里看不到，是运行环境的安全措施而不是策略的一部分，也不进 `strategy_id`。
