@@ -1,0 +1,6 @@
+# alphakeel.strategy-ir/1 contract pin (copied from AlphaKeel commit b2605d8, docs/contracts/strategy-ir; do not edit)
+cad49e29fabde7d177ed83fbb623340f7e6b12387b07e8e4b7e9a912e528b9e7  README.md
+f90473329f61dea73d1ab29ea3e2a3531c2042885187359a4ee91b9049bd66ee  schema.json
+5c0d67eeeba3d4b00c478c1fcea62b451b2899356a1307bc153212ec0b340397  vectors/canonical.json
+89b6015784f398e8d13d960212a95ae515da5b1091653035952fc76a1ad46f6d  vectors/decisions.json
+90b073731d944b868a7c36dff4e6b44191ec892409dfbd7a485882fd4708c652  vectors/features.json

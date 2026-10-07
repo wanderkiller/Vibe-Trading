@@ -1,0 +1,392 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://alphakeel.local/contracts/strategy-ir/1/schema.json",
+ "title": "alphakeel.strategy-ir/1",
+ "description": "Strategy IR v1. Shape only; cross-field rules (parameter paths, pair/shape consistency, lo <= hi, declared strategy_id) are in README.md section 3.",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "schema",
+  "name",
+  "kind",
+  "universe",
+  "assumptions",
+  "entry",
+  "exit",
+  "sizing",
+  "parameters",
+  "provenance"
+ ],
+ "properties": {
+  "schema": {
+   "const": "alphakeel.strategy-ir/1"
+  },
+  "strategy_id": {
+   "type": "string",
+   "pattern": "^ir-[0-9a-f]{24}$"
+  },
+  "name": {
+   "type": "string",
+   "minLength": 1
+  },
+  "kind": {
+   "const": "cross_venue_carry"
+  },
+  "universe": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "pairs",
+    "shape",
+    "excluded_bases"
+   ],
+   "properties": {
+    "pairs": {
+     "oneOf": [
+      {
+       "const": "any"
+      },
+      {
+       "type": "array",
+       "minItems": 1,
+       "uniqueItems": true,
+       "items": {
+        "type": "array",
+        "prefixItems": [
+         {
+          "$ref": "#/$defs/venue"
+         },
+         {
+          "$ref": "#/$defs/venue"
+         }
+        ],
+        "minItems": 2,
+        "maxItems": 2
+       }
+      }
+     ]
+    },
+    "shape": {
+     "enum": [
+      "cross_perp",
+      "spot_perp"
+     ]
+    },
+    "excluded_bases": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "pattern": "^[A-Z0-9]+$"
+     }
+    },
+    "quote_ccys": {
+     "type": "array",
+     "minItems": 1,
+     "uniqueItems": true,
+     "items": {
+      "type": "string",
+      "pattern": "^[A-Z0-9]+$"
+     },
+     "default": [
+      "USDT"
+     ]
+    }
+   }
+  },
+  "assumptions": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "horizon_hours",
+    "basis_stress",
+    "funding_estimate"
+   ],
+   "properties": {
+    "horizon_hours": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 4294967295
+    },
+    "basis_stress": {
+     "$ref": "#/$defs/decimal",
+     "description": "fraction in [0, 1)"
+    },
+    "funding_estimate": {
+     "enum": [
+      "predicted",
+      "last_settled"
+     ]
+    }
+   }
+  },
+  "entry": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "conditions",
+    "rank_by",
+    "candidate_limit",
+    "cooldown_minutes",
+    "one_per_base"
+   ],
+   "properties": {
+    "conditions": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/condition"
+     }
+    },
+    "rank_by": {
+     "$ref": "#/$defs/feature"
+    },
+    "candidate_limit": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 200
+    },
+    "cooldown_minutes": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 4294967295
+    },
+    "one_per_base": {
+     "const": true
+    }
+   }
+  },
+  "exit": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "max_hold_hours",
+    "max_loss",
+    "take_profit",
+    "conditions"
+   ],
+   "properties": {
+    "max_hold_hours": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 4294967295
+    },
+    "max_loss": {
+     "$ref": "#/$defs/decimal",
+     "description": "quote amount > 0"
+    },
+    "take_profit": {
+     "oneOf": [
+      {
+       "$ref": "#/$defs/decimal"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "description": "quote amount > 0, or null"
+    },
+    "conditions": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/condition"
+     }
+    }
+   }
+  },
+  "sizing": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "notional_per_leg",
+    "max_open",
+    "leverage"
+   ],
+   "properties": {
+    "notional_per_leg": {
+     "$ref": "#/$defs/decimal",
+     "description": "quote amount > 0"
+    },
+    "max_open": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 50
+    },
+    "leverage": {
+     "oneOf": [
+      {
+       "$ref": "#/$defs/decimal"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "description": "> 0, or null = runtime value"
+    }
+   }
+  },
+  "parameters": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "value",
+     "robust",
+     "path"
+    ],
+    "properties": {
+     "value": {
+      "$ref": "#/$defs/decimal"
+     },
+     "robust": {
+      "type": "array",
+      "prefixItems": [
+       {
+        "$ref": "#/$defs/decimal"
+       },
+       {
+        "$ref": "#/$defs/decimal"
+       }
+      ],
+      "minItems": 2,
+      "maxItems": 2
+     },
+     "path": {
+      "type": "string",
+      "pattern": "^(entry|exit|sizing|assumptions)(\\[[0-9]+\\])*(\\.[a-z_]+(\\[[0-9]+\\])*)*$"
+     }
+    }
+   }
+  },
+  "provenance": {
+   "type": "object",
+   "required": [
+    "tool",
+    "window"
+   ],
+   "properties": {
+    "tool": {
+     "type": "string",
+     "minLength": 1
+    },
+    "window": {
+     "type": "object",
+     "required": [
+      "start",
+      "end"
+     ],
+     "properties": {
+      "start": {
+       "type": "string"
+      },
+      "end": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  }
+ },
+ "$defs": {
+  "decimal": {
+   "type": "string",
+   "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+   "not": {
+    "const": "-0"
+   }
+  },
+  "venue": {
+   "enum": [
+    "binance",
+    "okx",
+    "bybit",
+    "bitget",
+    "gate",
+    "aster",
+    "hyperliquid",
+    "lighter",
+    "backpack"
+   ]
+  },
+  "feature": {
+   "enum": [
+    "funding_hourly_net",
+    "funding_apr",
+    "funding",
+    "basis",
+    "spread",
+    "fees",
+    "stress",
+    "net_expected",
+    "net_conservative",
+    "volume_min",
+    "quote_age_ms",
+    "leg_skew_ms",
+    "price_estimated"
+   ]
+  },
+  "condition": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "feature",
+    "op",
+    "value"
+   ],
+   "properties": {
+    "feature": {
+     "$ref": "#/$defs/feature"
+    },
+    "op": {
+     "enum": [
+      ">=",
+      "<=",
+      ">",
+      "<",
+      "between"
+     ]
+    },
+    "value": {
+     "oneOf": [
+      {
+       "$ref": "#/$defs/decimal"
+      },
+      {
+       "type": "array",
+       "prefixItems": [
+        {
+         "$ref": "#/$defs/decimal"
+        },
+        {
+         "$ref": "#/$defs/decimal"
+        }
+       ],
+       "minItems": 2,
+       "maxItems": 2
+      }
+     ]
+    }
+   },
+   "if": {
+    "properties": {
+     "op": {
+      "const": "between"
+     }
+    }
+   },
+   "then": {
+    "properties": {
+     "value": {
+      "type": "array"
+     }
+    }
+   },
+   "else": {
+    "properties": {
+     "value": {
+      "type": "string"
+     }
+    }
+   }
+  }
+ }
+}

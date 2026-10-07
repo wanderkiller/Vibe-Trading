@@ -1,0 +1,23 @@
+{
+  "schema": "alphakeel.strategy-ir/1",
+  "name": "fixture-btc-carry",
+  "kind": "cross_venue_carry",
+  "universe": {"pairs": [["binance", "okx"]], "shape": "cross_perp", "excluded_bases": [], "quote_ccys": ["USDT"]},
+  "assumptions": {"horizon_hours": 8, "basis_stress": "0.0005", "funding_estimate": "predicted"},
+  "entry": {
+    "conditions": [
+      {"feature": "net_conservative", "op": ">=", "value": "0.001"},
+      {"feature": "quote_age_ms", "op": "<=", "value": "5000"}
+    ],
+    "rank_by": "net_conservative", "candidate_limit": 5, "cooldown_minutes": 60, "one_per_base": true
+  },
+  "exit": {"max_hold_hours": 1, "max_loss": "50", "take_profit": null,
+           "conditions": [{"feature": "funding_hourly_net", "op": "<", "value": "0"}]},
+  "sizing": {"notional_per_leg": "100", "max_open": 1, "leverage": null},
+  "parameters": {
+    "min_net": {"value": "0.001", "robust": ["0.0005", "0.002"], "path": "entry.conditions[0].value"},
+    "max_hold_hours": {"value": "1", "robust": ["1", "2"], "path": "exit.max_hold_hours"}
+  },
+  "provenance": {"tool": "vibe-trading", "run_id": "example", "note": "placeholder provenance for the fixture pack example",
+                 "window": {"start": "fixture", "end": "fixture"}}
+}

@@ -81,6 +81,30 @@ Hand-off to AlphaKeel: `alphakeel_research.handoff.write_handoff(...)` writes `p
 `backtest.alphakeel_metrics`, the run card's data audit). A run whose data is not auditable (`data_audit.auditable` false,
 e.g. ccxt) is classified **exploratory**.
 
+## Strategy IR
+
+A strategy can also be a declarative document, `alphakeel.strategy-ir/1` (`strategy.json`): the single definition of a
+cross-venue carry strategy that Vibe-Trading researches and AlphaKeel runs. `contract/strategy-ir/` is a pinned copy of
+AlphaKeel's spec (`README.md` is the source of truth), `schema.json` and shared gold vectors (`PIN` holds their hashes).
+This package is an independent implementation of that text, checked against the same vectors as the Rust crate.
+
+- `ir.py` (standard library only): `load(text_or_dict)` validates (§1–§3) and raises `IrError` with a rule-group code
+  (`ir.shape`, `ir.schema`, `ir.kind`, `ir.invalid`, `ir.parameter_path`, `ir.parameter_mismatch`,
+  `ir.strategy_id_mismatch`); `validate(doc)` returns the problem as a list instead; `strategy_id(doc)` is
+  `ir-` + sha256 of the canonical definition (provenance and `strategy_id` removed, `quote_ccys` default inserted);
+  `compute_features(pair, assumptions, now_ms)` (§4, exact decimals, unavailable = `None`, invalid pair raises
+  `PairInvalid`); `decide(ir, frame, state, now_ms)` (§5) returns `{exits, entries, rejected}` in the spec's order.
+- `ir_views.py`: `scan_frame_pairs(pit, frame_index, now_ms)` enumerates one scan frame's pairs from the raw pack tables
+  (§4.1a: selected contracts quoted in this frame, same-frame observations, fee table, screener-style ids, sorted).
+- `ir_policy/strategy.py`: a generic `PolicyHost` script. Parameters `{"ir": <document>, "qty_dp": 6}`; entries become two
+  `limit_ioc` orders (long buys at its ask, short sells at its bid, `notional_per_leg / long.ask` rounded down, same qty);
+  exits become reduce-only orders for the engine's real positions of that pair, at the touch. State (`positions`,
+  `cooldowns`, `next_trade`) is reconciled with `ctx["positions"]` every step. The policy context has no mark-to-market
+  P&L, so `net_now` is `None` and `exit.max_loss` / `exit.take_profit` never fire in Python policy mode; only
+  `funding_estimate: "predicted"` is served (`last_settled` is refused at `initialize`).
+- `examples/ir/strategy.json`: an example for the fixture pack (Binance vs OKX BTC perpetuals; enters on the first frame,
+  leaves on `max_hold_hours: 1` at the last).
+
 Tests: `agent/tests/test_alphakeel_*.py` (install `.[dev,alphakeel-dev]`). Without the fixture server the cross-process
 tests skip; AlphaKeel's cross-project CI runs them with `ALPHAKEEL_REQUIRE_FIXTURE=1`, where a missing binary or tool
 fails instead, against the Vibe-Trading commit pinned in AlphaKeel's `ci/vibe-trading.ref`.

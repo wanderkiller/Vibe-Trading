@@ -1,0 +1,897 @@
+{
+ "cases": [
+  {
+   "assumptions": {
+    "basis_stress": "0.0005",
+    "funding_estimate": "predicted",
+    "horizon_hours": 72
+   },
+   "expected": {
+    "basis": "0",
+    "fees": "0.00079996",
+    "funding": "0.00449978",
+    "funding_apr": "0.547473",
+    "funding_hourly_net": "0.0000624969",
+    "leg_skew_ms": 0,
+    "net_conservative": "0.00074995",
+    "net_expected": "0.00349984",
+    "price_estimated": false,
+    "quote_age_ms": 1000,
+    "spread": "0.00019998",
+    "stress": "0.0005",
+    "volume_min": "50000000"
+   },
+   "name": "cross perp positive carry",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "BTC",
+    "id": "cross:BTC:binance:BTCUSDT>okx:BTC-USDT-SWAP",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0001",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "BTCUSDT",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0006",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "BTC-USDT-SWAP",
+     "taker_fee": "0.0002",
+     "venue": "okx",
+     "volume_quote": "50000000"
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0.0005",
+    "funding_estimate": "predicted",
+    "horizon_hours": 72
+   },
+   "expected": {
+    "basis": "0",
+    "fees": "0.00079996",
+    "funding": "-0.00269987",
+    "funding_apr": "-0.328484",
+    "funding_hourly_net": "-0.0000374981",
+    "leg_skew_ms": 0,
+    "net_conservative": "-0.00419981",
+    "net_expected": "-0.00369981",
+    "price_estimated": false,
+    "quote_age_ms": 1000,
+    "spread": "0.00019998",
+    "stress": "0.0005",
+    "volume_min": "50000000"
+   },
+   "name": "negative short funding makes funding negative",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "ETH",
+    "id": "cross:ETH:binance:ETHUSDT>okx:ETH-USDT-SWAP",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0001",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "ETHUSDT",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "-0.0002",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "ETH-USDT-SWAP",
+     "taker_fee": "0.0002",
+     "venue": "okx",
+     "volume_quote": "50000000"
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0.0005",
+    "funding_estimate": "predicted",
+    "horizon_hours": 72
+   },
+   "expected": {
+    "basis": "0",
+    "fees": "0.00079996",
+    "funding": "0.00179991",
+    "funding_apr": "0.218989",
+    "funding_hourly_net": "0.0000249988",
+    "leg_skew_ms": 0,
+    "net_conservative": "-0.00059999",
+    "net_expected": "0.00079997",
+    "price_estimated": false,
+    "quote_age_ms": 1000,
+    "spread": "0.00019998",
+    "stress": "0.0005",
+    "volume_min": "50000000"
+   },
+   "name": "both legs negative funding",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "SOL",
+    "id": "cross:SOL:binance:SOLUSDT>okx:SOL-USDT-SWAP",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "-0.0003",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "SOLUSDT",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "-0.0001",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "SOL-USDT-SWAP",
+     "taker_fee": "0.0002",
+     "venue": "okx",
+     "volume_quote": "50000000"
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0.0005",
+    "funding_estimate": "predicted",
+    "horizon_hours": 72
+   },
+   "expected": {
+    "basis": "0",
+    "fees": "0.00079996",
+    "funding": "0.0045535",
+    "funding_apr": "0.554009",
+    "funding_hourly_net": "0.0000632431",
+    "leg_skew_ms": 0,
+    "net_conservative": "0.00077681",
+    "net_expected": "0.00355356",
+    "price_estimated": false,
+    "quote_age_ms": 1000,
+    "spread": "0.00019998",
+    "stress": "0.0005",
+    "volume_min": "50000000"
+   },
+   "name": "funding_px used instead of mid",
+   "note": "short leg funding notional = funding_px 101, long leg falls back to mid",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "BTC",
+    "id": "cross:BTC:binance:BTCUSDT>okx:BTC-USDT-SWAP",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0001",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "BTCUSDT",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": "101",
+     "funding_rate": "0.0006",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "BTC-USDT-SWAP",
+     "taker_fee": "0.0002",
+     "venue": "okx",
+     "volume_quote": "50000000"
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0.0005",
+    "funding_estimate": "predicted",
+    "horizon_hours": 72
+   },
+   "expected": {
+    "basis": "0.0004995",
+    "fees": "0.0007998",
+    "funding": "0.00288036",
+    "funding_apr": "0.350444",
+    "funding_hourly_net": "0.000040005",
+    "leg_skew_ms": 0,
+    "net_conservative": "-0.00185762",
+    "net_expected": "0.00058206",
+    "price_estimated": false,
+    "quote_age_ms": 1000,
+    "spread": "0.001998",
+    "stress": "0.0005",
+    "volume_min": "50000000"
+   },
+   "name": "different settlement intervals",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "DOGE",
+    "id": "cross:DOGE:hyperliquid:DOGE>bybit:DOGEUSDT",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "0.2002",
+     "bbo": true,
+     "bid": "0.2",
+     "funding_px": null,
+     "funding_rate": "0.00001",
+     "interval_hours": 1,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "DOGE",
+     "taker_fee": "0.0002",
+     "venue": "hyperliquid",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "0.2003",
+     "bbo": true,
+     "bid": "0.2001",
+     "funding_px": null,
+     "funding_rate": "0.0002",
+     "interval_hours": 4,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "DOGEUSDT",
+     "taker_fee": "0.0002",
+     "venue": "bybit",
+     "volume_quote": "50000000"
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0.0005",
+    "funding_estimate": "predicted",
+    "horizon_hours": 72
+   },
+   "expected": {
+    "basis": "0",
+    "fees": "0.00079996",
+    "funding": "0.00179991",
+    "funding_apr": "0.218989",
+    "funding_hourly_net": "0.0000249988",
+    "leg_skew_ms": 0,
+    "net_conservative": "-0.00059999",
+    "net_expected": "0.00079997",
+    "price_estimated": false,
+    "quote_age_ms": 1000,
+    "spread": "0.00019998",
+    "stress": "0.0005",
+    "volume_min": null
+   },
+   "name": "missing volume on one leg",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "XRP",
+    "id": "cross:XRP:binance:XRPUSDT>okx:XRP-USDT-SWAP",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0001",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "XRPUSDT",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0003",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "XRP-USDT-SWAP",
+     "taker_fee": "0.0002",
+     "venue": "okx",
+     "volume_quote": null
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0.0005",
+    "funding_estimate": "predicted",
+    "horizon_hours": 72
+   },
+   "expected": {
+    "basis": "0",
+    "fees": "0.00079996",
+    "funding": "0.00179991",
+    "funding_apr": "0.218989",
+    "funding_hourly_net": "0.0000249988",
+    "leg_skew_ms": null,
+    "net_conservative": "-0.00059999",
+    "net_expected": "0.00079997",
+    "price_estimated": false,
+    "quote_age_ms": null,
+    "spread": "0.00019998",
+    "stress": "0.0005",
+    "volume_min": "50000000"
+   },
+   "name": "missing quote_ms on one leg",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "XRP",
+    "id": "cross:XRP:binance:XRPUSDT>okx:XRP-USDT-SWAP",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0001",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "XRPUSDT",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0003",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": null,
+     "symbol": "XRP-USDT-SWAP",
+     "taker_fee": "0.0002",
+     "venue": "okx",
+     "volume_quote": "50000000"
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0.0005",
+    "funding_estimate": "predicted",
+    "horizon_hours": 72
+   },
+   "expected": {
+    "basis": "0",
+    "fees": "0.00079996",
+    "funding": "0.00179991",
+    "funding_apr": "0.218989",
+    "funding_hourly_net": "0.0000249988",
+    "leg_skew_ms": 3000,
+    "net_conservative": "-0.00059999",
+    "net_expected": "0.00079997",
+    "price_estimated": false,
+    "quote_age_ms": 1000,
+    "spread": "0.00019998",
+    "stress": "0.0005",
+    "volume_min": "50000000"
+   },
+   "name": "quote time in the future clamps age at zero",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "ADA",
+    "id": "cross:ADA:binance:ADAUSDT>okx:ADA-USDT-SWAP",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0001",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "ADAUSDT",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0003",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1790000002000,
+     "symbol": "ADA-USDT-SWAP",
+     "taker_fee": "0.0002",
+     "venue": "okx",
+     "volume_quote": "50000000"
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0.0005",
+    "funding_estimate": "predicted",
+    "horizon_hours": 72
+   },
+   "expected": {
+    "basis": null,
+    "fees": null,
+    "funding": null,
+    "funding_apr": null,
+    "funding_hourly_net": null,
+    "leg_skew_ms": 0,
+    "net_conservative": null,
+    "net_expected": null,
+    "price_estimated": false,
+    "quote_age_ms": 1000,
+    "spread": null,
+    "stress": null,
+    "volume_min": "50000000"
+   },
+   "name": "missing funding rate makes economics unavailable",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "LTC",
+    "id": "cross:LTC:binance:LTCUSDT>okx:LTC-USDT-SWAP",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0001",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "LTCUSDT",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": null,
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "LTC-USDT-SWAP",
+     "taker_fee": "0.0002",
+     "venue": "okx",
+     "volume_quote": "50000000"
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0.0005",
+    "funding_estimate": "predicted",
+    "horizon_hours": 72
+   },
+   "expected": {
+    "basis": "0",
+    "fees": "0.00079996",
+    "funding": "0.00179991",
+    "funding_apr": "0.218989",
+    "funding_hourly_net": "0.0000249988",
+    "leg_skew_ms": 0,
+    "net_conservative": "-0.00059999",
+    "net_expected": "0.00079997",
+    "price_estimated": true,
+    "quote_age_ms": 1000,
+    "spread": "0.00019998",
+    "stress": "0.0005",
+    "volume_min": "50000000"
+   },
+   "name": "price estimated when a leg has no bbo",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "LINK",
+    "id": "cross:LINK:binance:LINKUSDT>okx:LINK-USDT-SWAP",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0001",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "LINKUSDT",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "100.01",
+     "bbo": false,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0003",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "LINK-USDT-SWAP",
+     "taker_fee": "0.0002",
+     "venue": "okx",
+     "volume_quote": "50000000"
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0.0005",
+    "funding_estimate": "predicted",
+    "horizon_hours": 72
+   },
+   "expected": {
+    "basis": "0.00054995",
+    "fees": "0.0024001",
+    "funding": "0.00090045",
+    "funding_apr": "0.109555",
+    "funding_hourly_net": "0.0000125062",
+    "leg_skew_ms": 500,
+    "net_conservative": "-0.00274985",
+    "net_expected": "-0.00124968",
+    "price_estimated": false,
+    "quote_age_ms": 1000,
+    "spread": "0.00029997",
+    "stress": "0.0005",
+    "volume_min": "50000000"
+   },
+   "name": "spot perp same venue",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "BTC",
+    "id": "spot:BTC:binance:BTCUSDT>binance:BTCUSDT",
+    "kind": "spot_perp",
+    "long": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": null,
+     "interval_hours": null,
+     "market": "spot",
+     "next_funding_ms": null,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999500,
+     "symbol": "BTCUSDT",
+     "taker_fee": "0.001",
+     "venue": "binance",
+     "volume_quote": "80000000"
+    },
+    "short": {
+     "ask": "100.07",
+     "bbo": true,
+     "bid": "100.05",
+     "funding_px": null,
+     "funding_rate": "0.0001",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "BTCUSDT",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0.0005",
+    "funding_estimate": "predicted",
+    "horizon_hours": 72
+   },
+   "error": "quote_ccy_mismatch",
+   "name": "unequal quote currencies are rejected",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "BTC",
+    "id": "cross:BTC:binance:BTCUSDT>okx:BTC-USDT-SWAP",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0001",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "BTCUSDT",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0003",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDC",
+     "quote_ms": 1789999999000,
+     "symbol": "BTC-USDT-SWAP",
+     "taker_fee": "0.0002",
+     "venue": "okx",
+     "volume_quote": "50000000"
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0.0005",
+    "funding_estimate": "predicted",
+    "horizon_hours": 72
+   },
+   "error": "shape_mismatch",
+   "name": "cross perp on one venue is a shape mismatch",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "BTC",
+    "id": "cross:BTC:binance:BTCUSDT>binance:BTC-USDT-SWAP",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0001",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "BTCUSDT",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0003",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "BTC-USDT-SWAP",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0",
+    "funding_estimate": "predicted",
+    "horizon_hours": 8
+   },
+   "expected": {
+    "basis": "0",
+    "fees": "0",
+    "funding": "0",
+    "funding_apr": "0",
+    "funding_hourly_net": "0",
+    "leg_skew_ms": 0,
+    "net_conservative": "0",
+    "net_expected": "0",
+    "price_estimated": false,
+    "quote_age_ms": 1000,
+    "spread": "0",
+    "stress": "0",
+    "volume_min": "50000000"
+   },
+   "name": "tie at the 8th place rounds half to even",
+   "note": "spread = 0.000000005 → 0 (half-even), not 0.00000001",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "TIE",
+    "id": "cross:TIE:binance:TIEUSDT>okx:TIE-USDT-SWAP",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "1",
+     "bbo": true,
+     "bid": "0.999999995",
+     "funding_px": null,
+     "funding_rate": "0",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "TIEUSDT",
+     "taker_fee": "0",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "1",
+     "bbo": true,
+     "bid": "1",
+     "funding_px": null,
+     "funding_rate": "0",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "TIE-USDT-SWAP",
+     "taker_fee": "0",
+     "venue": "okx",
+     "volume_quote": "50000000"
+    }
+   }
+  },
+  {
+   "assumptions": {
+    "basis_stress": "0.001",
+    "funding_estimate": "last_settled",
+    "horizon_hours": 168
+   },
+   "expected": {
+    "basis": "0",
+    "fees": "0.00079996",
+    "funding": "0.01049948",
+    "funding_apr": "0.547473",
+    "funding_hourly_net": "0.0000624969",
+    "leg_skew_ms": 0,
+    "net_conservative": "0.0032498",
+    "net_expected": "0.00949954",
+    "price_estimated": false,
+    "quote_age_ms": 1000,
+    "spread": "0.00019998",
+    "stress": "0.001",
+    "volume_min": "50000000"
+   },
+   "name": "longer horizon scales funding not hourly",
+   "now_ms": 1790000000000,
+   "pair": {
+    "base": "BTC",
+    "id": "cross:BTC:binance:BTCUSDT>okx:BTC-USDT-SWAP",
+    "kind": "cross_perp",
+    "long": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0001",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "BTCUSDT",
+     "taker_fee": "0.0002",
+     "venue": "binance",
+     "volume_quote": "50000000"
+    },
+    "short": {
+     "ask": "100.01",
+     "bbo": true,
+     "bid": "100",
+     "funding_px": null,
+     "funding_rate": "0.0006",
+     "interval_hours": 8,
+     "market": "perp",
+     "next_funding_ms": 1790003600000,
+     "quote_ccy": "USDT",
+     "quote_ms": 1789999999000,
+     "symbol": "BTC-USDT-SWAP",
+     "taker_fee": "0.0002",
+     "venue": "okx",
+     "volume_quote": "50000000"
+    }
+   }
+  }
+ ],
+ "description": "compute(pair, assumptions, now_ms) → features, or error for a malformed pair.",
+ "generator": "tools/gen-strategy-ir-vectors.py",
+ "schema": "alphakeel.strategy-ir/1",
+ "spec": "docs/contracts/strategy-ir/README.md"
+}

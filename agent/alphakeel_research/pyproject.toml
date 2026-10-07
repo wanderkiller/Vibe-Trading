@@ -23,4 +23,5 @@ packages = ["alphakeel_research"]
 package-dir = {"alphakeel_research" = "."}
 
 [tool.setuptools.package-data]
-alphakeel_research = ["contract/*.json", "contract/PIN", "contract/vectors/*.json"]
+alphakeel_research = ["contract/*.json", "contract/PIN", "contract/vectors/*.json", "contract/strategy-ir/*.json", "contract/strategy-ir/*.md",
+                      "contract/strategy-ir/PIN", "contract/strategy-ir/vectors/*.json", "ir_policy/*.py", "examples/ir/*.json"]
