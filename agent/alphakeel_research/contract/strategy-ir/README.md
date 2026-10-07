@@ -89,6 +89,11 @@ JSON 整数只用于计数、小时、分钟（`horizon_hours`、`candidate_limi
    `exit.max_hold_hours`、`sizing.notional_per_leg`）。路径必须指向十进制串或整数，且数值等于 `value`；`robust` 满足 `lo ≤ value ≤ hi`。
 6. `provenance` 形状。
 7. 文档带 `strategy_id` 时必须等于 §2 的计算值。
+8. `provenance` 内部不参与 id，可以含浮点数；其它任何位置出现浮点数都拒绝（金额/比例必须是十进制串）。
+
+**错误码（两侧相同，报告第一个失败的规则）**：`ir.shape`（第 1 条）、`ir.schema`、`ir.kind`（第 2 条）、`ir.invalid`（第 3、4、6 条，附路径）、
+`ir.parameter_path`、`ir.parameter_mismatch`（第 5 条）、`ir.strategy_id_mismatch`（第 7 条）。Rust `IrError::code()` 与 Python
+`IrError.code` 返回同一字符串。
 
 ## 4. 决策视图与特征
 
@@ -104,7 +109,7 @@ LegView  { venue, symbol, market: perp | spot, quote_ccy, bid, ask, bbo: bool,
 
 `?` 字段可缺失或为 `null`，表示“视图里没有”，**不是 0**。`id` 在帧内唯一（筛选器的写法是
 `cross|spot:BASE:long_venue:long_symbol>short_venue:short_symbol`，但语义上只要求唯一，用作排序次序）。
-`funding_px` 是平台用来算资金费的名义价格（标记价 / Hyperliquid oracle / Lighter index），对应筛选器 `PerpQuote` 的
+Python 实现用 60 位精度、Rust 用 `rust_decimal`（约 28 位有效数字）：只在第 28 位之后的舍入平局上可能不同，向量不覆盖该情形，视为已知边界。`funding_px` 是平台用来算资金费的名义价格（标记价 / Hyperliquid oracle / Lighter index），对应筛选器 `PerpQuote` 的
 `funding_px` 或 `mark`；`next_funding_ms` v1 特征不用。
 
 **组合不合法**（不是特征不可用，整对拒绝，原因 `invalid:<code>`）：
@@ -119,7 +124,8 @@ Python（`Pit`）与 Rust（扫描帧 / `QuoteIndex`）各自从**原始报价**
 
 1. 决策时刻 `now_ms` = 该帧的决策时间 `t`。腿 = 本帧有报价行（`quotes.frame == 本帧序号`）的合约；资金费字段取**同一帧**的
    `observations` 行（永续没有本帧观测 → `funding_rate`/`interval_hours`/`next_funding_ms`/`funding_px` 缺失，特征按不可用处理）。
-   旧帧的报价不延用：不在本帧的合约不进帧。
+   旧帧的报价不延用：不在本帧的合约不进帧。报价行带交易所时间 `quote_ts` 且 `quote_ts > now_ms` 的腿**不进帧**
+   （决策可见性没有未来容忍，与 docs/37 点时间规则一致；Python `Pit` 本就隐藏它，Rust 侧必须同样丢弃）。
 2. `base`、`quote_ccy` 取自数据包 `instruments` 表的 `base`、`quote` 列；只用 `selected == true` 的合约。
 3. `taker_fee` 取数据包费用表 `fees[venue].perp|spot`；缺失 → 该腿不进帧。`quote_ms` = 报价行 `quote_ts`（可空），`bbo`
    = 报价行 `bbo`，`funding_px` = 观测行 `funding_px`，缺失时退回报价行 `mark`，再缺失则为空（§4.2 用中间价）。
@@ -224,6 +230,17 @@ Decision { exits: [{position_id, reason}],
 
 输出次序：`exits` 按 `position_id` 升序；`entries` 按排名；`rejected` 按 `pair_id` 升序，每个组合只报第一个原因。
 `entries[].notional_per_leg` 就是 `sizing.notional_per_leg`，`features` 是 §4 的完整特征（含 `null`）。
+
+### 5a. 对账用的意图命名与 `net_now`（两侧一致）
+
+- **意图 id**：Python `ir_policy` 与 Rust `ir_strategy` 运行都用 `n<trade>-<L|S>-<open|close>`（`trade` 从 1 起，每个进场决定按
+  `entries` 次序各占一个号；`L` = 做多腿，`S` = 做空腿；任一腿没有真实一档买卖价（`bbo = false`）或缺汇率的进场决定**不提交意图、不占号**，
+  与 Rust `paper::open_planned` 的拒绝一致），`position_ref = p<trade><L|S>`，`pair_id = pair-<trade>`。研究服务的
+  L2 决策层按 `intent_id` 逐条对比，命名不同就无法对账。
+- **`net_now`（§5 的持仓立即平仓净额）**：两侧同一公式 = 触及价盈亏（多腿 `qty × (bid − avg_entry)`，空腿
+  `qty × (avg_entry − ask)`）+ 该仓位已结算的资金费 − 入场手续费 − 触及价平仓 taker 费；单位为腿的计价币（v1 只允许 USDT）。
+  研究服务的 policy 上下文按**腿**给出 `positions[].net_now`（同一公式按腿计），策略把同一 `pair` 两腿相加得到组合的 `net_now`；
+  paper/回测的 Rust 决策器用 `Mark.net_if_closed`（同一公式按组合计）。任一腿缺可成交报价 → 该组合 `net_now` 未知（null）。
 
 ## 6. 向量
 

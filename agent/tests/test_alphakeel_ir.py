@@ -34,15 +34,16 @@ def _base_doc() -> dict:
 
 # --- pin ---------------------------------------------------------------------------------------------------------------
 
-def test_the_pinned_strategy_ir_contract_files_match_their_pin():
-    text = (PIN_DIR / "PIN").read_text()
-    assert "b2605d8" in text.splitlines()[0]
-    lines = [x for x in text.splitlines() if x and not x.startswith("#")]
-    names = {line.split(None, 1)[1] for line in lines}
-    assert names == {"README.md", "schema.json", "vectors/canonical.json", "vectors/decisions.json", "vectors/features.json"}
-    for line in lines:
-        digest, name = line.split(None, 1)
-        assert hashlib.sha256((PIN_DIR / name).read_bytes()).hexdigest() == digest, name
+def test_the_strategy_ir_contract_files_are_covered_by_the_one_research_contract_pin():
+    # exported together with the research contract (tools/export-research-contract.sh): one PIN, the same keys as the
+    # service's /whoami contract_pin, so Client.check() refuses a service built from another IR spec
+    assert not (PIN_DIR / "PIN").exists()
+    text = (ROOT / "contract" / "PIN").read_text()
+    pinned = {line.split(None, 1)[1]: line.split(None, 1)[0] for line in text.splitlines() if line and not line.startswith("#")}
+    names = {"README.md", "schema.json", "vectors/canonical.json", "vectors/decisions.json", "vectors/features.json"}
+    assert {k for k in pinned if k.startswith("strategy-ir/")} == {f"strategy-ir/{n}" for n in names}
+    for n in names:
+        assert hashlib.sha256((PIN_DIR / n).read_bytes()).hexdigest() == pinned[f"strategy-ir/{n}"], n
 
 
 # --- (a) shared vectors ------------------------------------------------------------------------------------------------
@@ -338,8 +339,9 @@ def test_the_policy_enters_both_legs_and_exits_only_what_the_engine_holds():
     pit = _fake_pit()
     out = pol.on_step(_ctx(T, [], pit), state)
     ints = out["intents"]
-    assert [(i["instrument"]["venue"], i["side"], i["qty"], i["limit_price"], i["position_ref"], i["pair_id"]) for i in ints] == [
-        ("binance", "buy", "9.999", "100.01", "p1L", "pair-1"), ("okx", "sell", "9.999", "100.02", "p1S", "pair-1")]  # 1000/100.01 down to 3 dp
+    assert [(i["intent_id"], i["instrument"]["venue"], i["side"], i["qty"], i["limit_price"], i["position_ref"], i["pair_id"]) for i in ints] == [
+        ("n1-L-open", "binance", "buy", "9.999", "100.01", "p1L", "pair-1"),
+        ("n1-S-open", "okx", "sell", "9.999", "100.02", "p1S", "pair-1")]  # 1000/100.01 down to 3 dp; README §5a names
     assert all(i["order_type"] == "limit_ioc" and i["reduce_only"] is False and i["decision_time_ms"] == T for i in ints)
     st = out["state"]
     json.dumps(st)
@@ -353,8 +355,8 @@ def test_the_policy_enters_both_legs_and_exits_only_what_the_engine_holds():
              "avg_entry": "100.01"}]
     t2 = T + 3_600_000
     out2 = pol.on_step(_ctx(t2, held, pit2), st)
-    assert [(i["side"], i["qty"], i["limit_price"], i["reduce_only"], i["position_ref"], i["pair_id"]) for i in out2["intents"]] == [
-        ("sell", "9.999", "100", True, "p1L", "pair-1")]
+    assert [(i["intent_id"], i["side"], i["qty"], i["limit_price"], i["reduce_only"], i["position_ref"], i["pair_id"]) for i in out2["intents"]] == [
+        ("n1-L-close", "sell", "9.999", "100", True, "p1L", "pair-1")]
     # the close filled: the pair is gone from the engine -> closed, base cools down from this step
     out3 = pol.on_step(_ctx(t2 + 60_000, [], pit2), out2["state"])
     assert out3["state"]["positions"] == {} and out3["state"]["cooldowns"] == {"BTC": t2 + 60_000}
@@ -373,12 +375,107 @@ def test_an_entry_that_never_filled_is_dropped_without_a_cooldown():
     assert out2["state"]["cooldowns"] == {} and out2["state"]["next_trade"] == 3  # re-entered as pair-2
 
 
+def _carry_doc(**exit_):
+    doc = _base_doc()
+    doc["universe"]["pairs"] = [["binance", "okx"]]
+    doc["entry"]["conditions"] = []
+    doc["entry"]["rank_by"] = "funding_hourly_net"
+    doc["parameters"] = {}
+    doc["exit"].update(exit_)
+    return doc
+
+
+def test_an_entry_with_an_estimated_leg_price_is_not_submitted_and_takes_no_trade_number():
+    pol = _policy()
+    st = pol.initialize({"ir": _carry_doc()})
+    pit = _fake_pit()
+    ok = Inst("okx", "perp", "BTC-USDT-SWAP")
+    pit.rows[ok] = [Quote(q.t, q.bid, q.ask, False, q.mark, q.volume_quote, q.quote_ts, q.frame) for q in pit.rows[ok]]
+    out = pol.on_step(_ctx(T, [], pit), st)
+    assert out["intents"] == [] and out["state"]["positions"] == {} and out["state"]["next_trade"] == 1
+    # the next submitted entry is trade 1 (Rust paper::open_planned refuses the same entry and opens nothing)
+    out2 = pol.on_step(_ctx(T, [], _fake_pit()), out["state"])
+    assert [i["intent_id"] for i in out2["intents"]] == ["n1-L-open", "n1-S-open"] and out2["state"]["next_trade"] == 2
+
+
+def _held(net_l, net_s):
+    return [{"position_ref": "p1L", "instrument": {"venue": "binance", "market": "perp", "symbol": "BTCUSDT"}, "side": "long", "qty": "9.999",
+             "avg_entry": "100.01", "net_now": net_l},
+            {"position_ref": "p1S", "instrument": {"venue": "okx", "market": "perp", "symbol": "BTC-USDT-SWAP"}, "side": "short", "qty": "9.999",
+             "avg_entry": "100.02", "net_now": net_s}]
+
+
+def test_pair_net_now_is_the_sum_of_the_engines_leg_values_and_unknown_if_either_leg_is():
+    pol = _policy()
+    # max_loss 20: the pair closes when its close-now net is <= -20 (README §5); exit conditions off, max_hold far away
+    doc = _carry_doc(max_loss="20", conditions=[], max_hold_hours=72)
+    out = pol.on_step(_ctx(T, [], _fake_pit()), pol.initialize({"ir": doc, "qty_dp": 3}))
+    st = out["state"]
+    t = T + 60_000
+    pit = _fake_pit()
+    for rows in pit.rows.values():
+        rows[:] = [Quote(q.t + 60_000, q.bid, q.ask, q.bbo, q.mark, q.volume_quote, q.quote_ts, q.frame + 1) for q in rows]
+    for rows in pit.obs.values():
+        rows[:] = [Observation(o.t + 60_000, o.funding_rate, o.interval_hours, o.next_funding_ms, o.funding_px, o.funding_px_kind, o.frame + 1) for o in rows]
+    assert pol._pair_net_now(st["positions"]["pair-1"], {p["position_ref"]: p for p in _held("-12.5", "-7.5")}) == "-20"
+    closes = pol.on_step(_ctx(t, _held("-12.5", "-7.5"), pit), st)["intents"]
+    assert [i["intent_id"] for i in closes] == ["n1-L-close", "n1-S-close"]
+    assert pol.on_step(_ctx(t, _held("-12.5", "-7.4"), pit), st)["intents"] == []  # -19.9: held
+    # one leg's value unknown (no quote for it in this frame) or one leg not held: the pair's net_now is unknown -> no max_loss
+    assert pol._pair_net_now(st["positions"]["pair-1"], {p["position_ref"]: p for p in _held("-30", None)}) is None
+    assert pol.on_step(_ctx(t, _held("-30", None), pit), st)["intents"] == []
+    only_long = _held("-30", "0")[:1]
+    assert pol._pair_net_now(st["positions"]["pair-1"], {p["position_ref"]: p for p in only_long}) is None
+
+
 def test_the_policy_refuses_a_funding_source_it_cannot_serve():
     pol = _policy()
     doc = _set(_base_doc(), ["assumptions", "funding_estimate"], "last_settled")
     with pytest.raises(Exception) as e:
         pol.initialize({"ir": doc})
     assert getattr(e.value, "code", "") == "capability.unsupported"
+
+
+# --- the local simulator's policy context carries the engine's per-leg net_now (README §5a) -----------------------------
+
+def _sim_with(pos, quote, fee="0.0005"):
+    from alphakeel_research import sim as S
+
+    bn = Inst("binance", "perp", "BTCUSDT")
+    s = S.Simulator.__new__(S.Simulator)
+    s.pos, s.fee_rate, s.last_quote = {pos.ref: pos}, {bn: Decimal(fee)}, {} if quote is None else {bn: quote}
+    s.accounts, s.run_id, s.profile = {}, "py-x", {"decision_clock": {"history_len": 0}}
+    return s, bn
+
+
+class _F:
+    t, seq = T, 1
+
+
+def test_sim_net_now_reproduces_the_rust_hand_value_and_its_null_rule():
+    from alphakeel_research import sim as S
+
+    bn = Inst("binance", "perp", "BTCUSDT")
+    # AlphaKeel tests/research_service.rs: long 10 @ 1 (entry fee 10 x 1 x 0.0005), this frame's bid 0.999, no funding yet:
+    # 10 x (0.999 - 1) + 0 - 0.005 - 10 x 0.999 x 0.0005 = -0.019995
+    p = S.Pos("p1", bn, True, "USDT", net=Decimal(10), entry_qty=Decimal(10), entry_notional=Decimal(10), fees=Decimal("0.005"),
+              fees_buy=Decimal("0.005"))
+    sim, _ = _sim_with(p, (Decimal("0.999"), Decimal("1.001"), 3))
+    view = sim._view(3, _F, [])
+    assert view["positions"] == [{"position_ref": "p1", "instrument": bn.ref(), "side": "long", "qty": "10", "avg_entry": "1",
+                                  "net_now": "-0.019995"}]
+    # the quote is from an earlier frame (the engine's quote is not stamped with this decision time): unknown, not stale-valued
+    assert sim._view(4, _F, [])["positions"][0]["net_now"] is None
+    # short leg: qty x (avg - ask) + settled funding - entry-direction (sell) fees only - exit taker fee; a reducing buy's fee
+    # is not an entry fee. 4 x (2 - 2.01) + 0.3 - 0.004 - 4 x 2.01 x 0.0005 = -0.04 + 0.3 - 0.004 - 0.00402 = 0.25198
+    q = S.Pos("p2", bn, False, "USDT", net=Decimal(-4), entry_qty=Decimal(5), entry_notional=Decimal(10), fees=Decimal("0.006"),
+              fees_sell=Decimal("0.004"), fees_buy=Decimal("0.002"), funding=Decimal("0.3"))
+    sim, _ = _sim_with(q, (Decimal("2"), Decimal("2.01"), 0))
+    assert sim._view(0, _F, [])["positions"][0]["net_now"] == "0.25198"
+    # normalised decimal text like the service (no trailing zeros, no exponent)
+    r = S.Pos("p3", bn, True, "USDT", net=Decimal(1), entry_qty=Decimal(1), entry_notional=Decimal("0.5"))
+    sim, _ = _sim_with(r, (Decimal("1.5"), Decimal("1.6"), 0), fee="0")
+    assert sim._view(0, _F, [])["positions"][0]["net_now"] == "1"
 
 
 # --- (e) the example IR under the local simulator, on AlphaKeel's fixture pack --------------------------------------------

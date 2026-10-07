@@ -445,6 +445,7 @@ class Mode(StrEnum):
     native_strategy = "native_strategy"
     fixed_intent_replay = "fixed_intent_replay"
     python_policy = "python_policy"
+    ir_strategy = "ir_strategy"
 
 
 class Ns(RootModel[str]):
@@ -657,6 +658,37 @@ class UDec(RootModel[str]):
     ]
 
 
+class ValidateIrProblem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Annotated[str, Field(max_length=80, min_length=3)]
+    message: Text
+
+
+class ValidateIrRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    ir: Annotated[
+        dict[str, Any],
+        Field(
+            description="The full `alphakeel.strategy-ir/1` document (shape: `docs/contracts/strategy-ir/schema.json`). Kept as raw JSON\nhere so that a malformed document is reported as a problem with its `ir.*` code instead of a 400."
+        ),
+    ]
+    pack_id: Id | None = None
+
+
+class ValidateIrResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    problems: Annotated[list[ValidateIrProblem], Field(max_length=20)]
+    strategy_id: Id | None
+    strategy_sha256: Sha256 | None
+    valid: bool
+
+
 class Venue(StrEnum):
     binance = "binance"
     okx = "okx"
@@ -675,6 +707,7 @@ class Verification(BaseModel):
     )
     engine_recount: Status
     external_python: Status
+    ir_ledger: Status | None = None
     native_rule_ledger: Status
 
 
@@ -1176,6 +1209,7 @@ class PolicyContextPositionsItem(BaseModel):
     )
     avg_entry: PDec
     instrument: InstrumentRef
+    net_now: Dec | None
     position_ref: Id
     qty: PDec
     side: PolicyContextPositionsItemSide
@@ -1265,6 +1299,8 @@ class RunResult(BaseModel):
     run_id: Id
     schema_: Annotated[ResultSchema, Field(alias="schema")]
     side: RunManifestSide
+    strategy_id: Id | None = None
+    strategy_sha256: Sha256 | None = None
     verification: Verification
 
 

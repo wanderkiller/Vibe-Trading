@@ -233,3 +233,104 @@ def inject_fault(client: Client, pack: Pack, intents: list[dict], fault: str, *,
                          "now": target["data"]["fee" if fault == "fee" else "amount"]},
             "local_run": reg["run_id"], "alphakeel_run": run["run_id"], "passed": rep.get("passed"),
             "layers": {k: v["status"] for k, v in rep.get("layers", {}).items()}, "first_difference": rep.get("first_difference"), "pass_scope": rep.get("pass_scope")}
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Strategy IR: the same IR in Python (ir_policy under the local simulator) and in AlphaKeel's Rust evaluator
+# ---------------------------------------------------------------------------------------------------------------------
+
+IR_POLICY_DIR = Path(__file__).parent / "ir_policy"
+
+
+def validate_ir(client: Client, ir_doc: dict, pack_id: str | None = None) -> dict:
+    """``POST /validate/ir``: AlphaKeel's own check of the document (and, with a pack, against that pack's scans)."""
+    return client.validate_ir(ir_doc, pack_id)
+
+
+def ir_instruments(pack: Pack, ir_doc: dict) -> list[dict]:
+    """The contracts an IR can trade on this pack: selected, of the IR's shape and quote currencies, on its venues, base
+    not excluded, with a taker fee in the pack's fee table (README §4.1a); declared to the local simulator up front."""
+    from . import ir as IR
+
+    loaded = IR.load(ir_doc)
+    u = loaded.universe
+    markets = {"cross_perp": {"perp"}, "spot_perp": {"spot", "perp"}}[u["shape"]]
+    venues = None if u["pairs"] == "any" else {v for pair in u["pairs"] for v in pair}
+    excluded = {IR.ascii_upper(b) for b in u.get("excluded_bases", [])}
+    fees = pack.fees().get("fees", {})
+    out = []
+    for inst, meta in sorted(pack.instruments().items(), key=lambda kv: kv[0].leg()):
+        if not meta.selected or inst.market not in markets or meta.quote not in u["quote_ccys"]:
+            continue
+        if (venues is not None and inst.venue not in venues) or IR.ascii_upper(meta.base) in excluded:
+            continue
+        if fees.get(inst.venue, {}).get(inst.market) in (None, ""):
+            continue
+        out.append(inst.ref())
+    if not out:
+        raise ApiError("data.insufficient", "the pack has no contract this IR could trade")
+    return out
+
+
+def _side_summary(result: dict) -> dict:
+    c, a = result.get("counts", {}), result.get("amounts", {})
+    closed, still = c.get("positions_closed"), c.get("positions_open_at_end")
+    return {"positions_opened": None if closed is None or still is None else closed + still, "positions_closed": closed,
+            "positions_open_at_end": still, "intents": c.get("intents"), "fills": c.get("fills"), "realized": a.get("realized")}
+
+
+def ir_review(client: Client, pack: Pack, ir_doc: dict, *, out_dir: str | Path, profile: dict | None = None, seed: int = 0,
+              qty_dp: int = 6, wait: float = 1800.0) -> dict:
+    """Reconcile one Strategy IR between Vibe-Trading and AlphaKeel on one frozen pack.
+
+    (a) the generic ``ir_policy`` runs this IR under the LOCAL simulator (the policy flow; evidence in ``out_dir``);
+    (b) AlphaKeel runs the same IR with its Rust evaluator (``mode: ir_strategy``) on the same pack;
+    (c) the local run is registered as an external ``ir_strategy`` run and the service compares the two layer by layer.
+    The execution profile is the one the service renders for ``ir_strategy`` (so L1 is comparable). Returns, and writes as
+    ``reconciliation.json``, the references and the comparison output; it approves nothing.
+    """
+    from . import ir as IR
+    from . import strategy as strat
+
+    loaded = IR.load(ir_doc)
+    sid, ssha = loaded.strategy_id, canon.canonical_sha256(loaded.definition)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    prof_doc = client.render_profile(pack.id, "ir_strategy", profile)["profile"]
+    insts = ir_instruments(pack, loaded.doc)
+    params = {"ir": loaded.doc, "qty_dp": qty_dp}
+    manifest, bundle = strat.manifest(IR_POLICY_DIR, name="ir_policy", parameters=params, seed=seed)
+    pack_dir = pack.export(out / "pack")
+    local_id = f"py-{sid}-{int(time.time())}"
+    sim, steps, sandbox = run_policy_local(pack, prof_doc, IR_POLICY_DIR, manifest, insts, run_id=local_id, pack_dir=pack_dir)
+    man, res = evidence.build_manifest(sim, pack=pack, run_id=local_id, mode="ir_strategy",
+                                       parameters={"profile": profile or {}, "ir": loaded.doc, "instruments": insts,
+                                                   "policy": {"script": "ir_policy", "content_sha256": manifest["content_sha256"], "qty_dp": qty_dp}},
+                                       strategy={"strategy_id": sid, "content_sha256": ssha}, seed=seed, sandbox=sandbox,
+                                       claims=["Python Strategy IR implementation (ir_policy) decided under the local Decimal simulator's state",
+                                               "does not certify the research backtest the IR came from"])
+    run_dir = evidence.write_run_dir(out / local_id, man, res, sim, steps=steps, strategy_manifest=manifest, strategy_bundle=bundle)
+    reg = evidence.register(client, run_dir, pack.id)
+    body = {"mode": "ir_strategy", "pack_id": pack.id, "ir": loaded.doc}
+    if profile:
+        body["profile"] = profile
+    run = client.wait_run(client.create_run(body)["run_id"], timeout=wait)
+    if run["status"] != "complete":
+        raise ApiError((run.get("error") or {}).get("code", "engine.failure"), (run.get("error") or {}).get("message", run["status"]),
+                       job_id=run.get("run_id"))
+    remote = json.loads(client.artifact(run["run_id"], "result.json"))
+    cmp = client.compare(reg["run_id"], run["run_id"], "ir_strategy")
+    rep = client.wait_comparison(cmp["comparison_id"], timeout=wait).get("report") or {}
+    doc = {
+        "schema": "vibe-trading.ir-reconciliation/1", "strategy_id": sid, "strategy_sha256": ssha,
+        "pack_id": pack.id, "pack_sha256": pack.lock["pack_sha256"],
+        "local_run": reg["run_id"], "alphakeel_run": run["run_id"], "comparison": cmp["comparison_id"],
+        "alphakeel_result": {"mode": remote.get("mode"), "strategy_id": remote.get("strategy_id"), "strategy_sha256": remote.get("strategy_sha256"),
+                             "verification": remote.get("verification")},
+        "passed": rep.get("passed"), "layers": {k: v["status"] for k, v in rep.get("layers", {}).items()},
+        "first_difference": rep.get("first_difference"), "pass_scope": rep.get("pass_scope"), "notes": rep.get("notes", []),
+        "summary": {"python_local": _side_summary(res), "alphakeel": _side_summary(remote)},
+        "run_dir": str(run_dir), "sandbox": sandbox,
+    }
+    (out / "reconciliation.json").write_text(json.dumps(doc, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+    return doc

@@ -2637,7 +2637,8 @@
         "enum": [
           "native_strategy",
           "fixed_intent_replay",
-          "python_policy"
+          "python_policy",
+          "ir_strategy"
         ],
         "type": "string"
       },
@@ -2897,6 +2898,17 @@
           "instrument": {
             "$ref": "#/components/schemas/InstrumentRef"
           },
+          "net_now": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Dec",
+                "description": "Net of closing this leg now at the touch, in the leg's settlement currency (strategy-ir README §5a):\nlong `qty × (bid − avg_entry)` / short `qty × (avg_entry − ask)` + funding settled on this position\n− its entry fees − `qty × touch × taker_fee`. Null when the instrument has no quote at this decision time."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "position_ref": {
             "$ref": "#/components/schemas/Id"
           },
@@ -2912,7 +2924,8 @@
           "instrument",
           "side",
           "qty",
-          "avg_entry"
+          "avg_entry",
+          "net_now"
         ],
         "type": "object"
       },
@@ -3522,6 +3535,28 @@
           "side": {
             "$ref": "#/components/schemas/RunManifestSide"
           },
+          "strategy_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "`ir_strategy` only: the IR's `strategy_id` (`ir-` + 24 hex of the canonical definition's SHA-256)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strategy_sha256": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Sha256",
+                "description": "`ir_strategy` only: SHA-256 of the IR's canonical definition (strategy-ir README §2)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "verification": {
             "$ref": "#/components/schemas/Verification"
           }
@@ -3760,6 +3795,94 @@
         "pattern": "^[0-9]{1,40}(\\.[0-9]{1,40})?$",
         "type": "string"
       },
+      "ValidateIrProblem": {
+        "additionalProperties": false,
+        "description": "One problem found by `/validate/ir`: an `ir.*` code (strategy-ir README §3), `capability.unsupported` or\n`request.invalid`, with a human-readable message.",
+        "properties": {
+          "code": {
+            "maxLength": 80,
+            "minLength": 3,
+            "type": "string"
+          },
+          "message": {
+            "$ref": "#/components/schemas/Text"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "ValidateIrRequest": {
+        "additionalProperties": false,
+        "description": "`POST /validate/ir`: check a Strategy IR document with the same validation `ir_strategy` runs use.",
+        "properties": {
+          "ir": {
+            "description": "The full `alphakeel.strategy-ir/1` document (shape: `docs/contracts/strategy-ir/schema.json`). Kept as raw JSON\nhere so that a malformed document is reported as a problem with its `ir.*` code instead of a 400.",
+            "type": "object"
+          },
+          "pack_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "Optional scan pack: also check that the IR can run on it (scan pack, runtime capabilities, sizing on its config)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "ir"
+        ],
+        "type": "object"
+      },
+      "ValidateIrResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "problems": {
+            "items": {
+              "$ref": "#/components/schemas/ValidateIrProblem"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "strategy_id": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Id",
+                "description": "The computed `strategy_id` when the document parses and validates."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strategy_sha256": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Sha256",
+                "description": "SHA-256 of the canonical definition when the document parses and validates."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid",
+          "strategy_id",
+          "strategy_sha256",
+          "problems"
+        ],
+        "type": "object"
+      },
       "Venue": {
         "enum": [
           "binance",
@@ -3782,6 +3905,17 @@
           },
           "external_python": {
             "$ref": "#/components/schemas/Status"
+          },
+          "ir_ledger": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Status",
+                "description": "`ir_strategy` only: the IR decision ledger (the paper book the IR evaluator drove) recounted against the\nengine's execution and accounting (`native_rule_ledger` is `not_applicable` in that mode). Absent in other modes."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "native_rule_ledger": {
             "$ref": "#/components/schemas/Status"
@@ -7014,7 +7148,7 @@
             "serviceCredential": []
           }
         ],
-        "summary": "Create a run: native_strategy, fixed_intent_replay or python_policy; idempotent by key",
+        "summary": "Create a run: native_strategy, ir_strategy (body.ir = a Strategy IR document), fixed_intent_replay or python_policy; idempotent by key",
         "tags": [
           "research"
         ]
@@ -9276,6 +9410,196 @@
           }
         ],
         "summary": "Upload evidence (X-Content-SHA256 header required; verified by content)",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research/validate/ir": {
+      "post": {
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 16,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateIrRequest"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateIrResponse"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "created"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "accepted"
+          },
+          "206": {
+            "description": "partial content"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "bad request body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "missing, invalid or revoked credential"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not found for this credential"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "state or idempotency conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "expired"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "too large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "request invalid or unsupported"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "a bound was hit; retry later"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "engine failure"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "unavailable or switched off"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "disk"
+          }
+        },
+        "security": [
+          {
+            "serviceCredential": []
+          }
+        ],
+        "summary": "Validate a Strategy IR (alphakeel.strategy-ir/1) with the checks ir_strategy runs use; optionally against a pack",
         "tags": [
           "research"
         ]

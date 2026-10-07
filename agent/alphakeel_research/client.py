@@ -207,6 +207,11 @@ class Client:
     def validate_params(self, params: dict, pack_id: str | None = None) -> dict:
         return self.post("/validate/params", {"params": params, "pack_id": pack_id})
 
+    def validate_ir(self, ir: dict, pack_id: str | None = None) -> dict:
+        """``POST /validate/ir``: ``{valid, strategy_id, strategy_sha256, problems: [{code, message}]}`` (a bad document is
+        ``valid: false`` with ``ir.*`` codes, not an HTTP error)."""
+        return self.post("/validate/ir", {"ir": ir, **({"pack_id": pack_id} if pack_id else {})})
+
     def create_run(self, body: dict, *, key: str | None = None) -> dict:
         body = dict(body)
         key = key or key_for("run", body)

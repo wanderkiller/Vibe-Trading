@@ -131,6 +131,8 @@ class Pos:
     entry_notional: Decimal = Decimal(0)
     cash: Decimal = Decimal(0)
     fees: Decimal = Decimal(0)
+    fees_buy: Decimal = Decimal(0)  # fees of the buy fills / of the sell fills: the entry-direction fees for net_now
+    fees_sell: Decimal = Decimal(0)
     funding: Decimal = Decimal(0)
     fees_usdt: Decimal = Decimal(0)
     closed_frame: int | None = None
@@ -374,11 +376,34 @@ class Simulator:
         positions = []
         for ref, p in sorted(self.pos.items()):
             if not p.net.is_zero() and p.entry_qty > 0:
+                avg = p.entry_notional / p.entry_qty
+                net_now = self._net_now(p, k, avg)
                 positions.append({"position_ref": ref, "instrument": p.inst.ref(), "side": "long" if p.net > 0 else "short", "qty": dstr(abs(p.net)),
-                                  "avg_entry": dstr(p.entry_notional / p.entry_qty)})
+                                  "avg_entry": dstr(avg), "net_now": None if net_now is None else dstr(net_now)})
         return {"schema": "alphakeel.policy-context/1", "session_id": self.run_id, "step_seq": k, "time_ms": f.t, "time_ns": str(f.t * 1_000_000),
                 "history_len": int(self.profile["decision_clock"]["history_len"]), "data_refs": {"frame_index": k, "frame_seq": f.seq, "decided_ms": f.t},
                 "accounts": accounts, "positions": positions, "last_results": last_results}
+
+    def _net_now(self, p: Pos, k: int, avg_entry: Decimal) -> Decimal | None:
+        """This leg's net if closed now at the touch (Strategy IR README §5a, per leg; the engine's ``PositionView::net_now``).
+
+        ``qty x (bid - avg_entry)`` long / ``qty x (avg_entry - ask)`` short + funding settled on this position - the fees of
+        its entry-direction fills - ``qty x touch x taker_fee``. ``None`` when the engine has no quote for the contract
+        stamped with THIS frame's decision time (only an older one) or the touch is not positive. Exact, not rounded.
+        """
+        quote = self.last_quote.get(p.inst)
+        if quote is None or quote[2] != k:
+            return None
+        bid, ask, _ = quote
+        long = p.net > 0
+        qty = abs(p.net)
+        touch = bid if long else ask
+        if touch <= 0:
+            return None
+        net = qty * ((touch - avg_entry) if long else (avg_entry - touch))
+        net -= p.fees_buy if long else p.fees_sell
+        net += p.funding
+        return net - qty * touch * self.fee_rate[p.inst]
 
     def _parse(self, raw: dict, k: int, t: int) -> IntentRec:
         iid = raw.get("intent_id")
@@ -526,6 +551,10 @@ class Simulator:
         cash = qty_eff * touch
         p.cash += -cash if rec.buy else cash
         p.fees += fee
+        if rec.buy:
+            p.fees_buy += fee
+        else:
+            p.fees_sell += fee
         one_usdt = self._usdt({ccy: fee}, fx)
         if one_usdt is None:
             raise ApiError("data.fx_missing", "a USDC fill has no USDC/USDT rate")

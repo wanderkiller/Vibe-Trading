@@ -85,8 +85,10 @@ e.g. ccxt) is classified **exploratory**.
 
 A strategy can also be a declarative document, `alphakeel.strategy-ir/1` (`strategy.json`): the single definition of a
 cross-venue carry strategy that Vibe-Trading researches and AlphaKeel runs. `contract/strategy-ir/` is a pinned copy of
-AlphaKeel's spec (`README.md` is the source of truth), `schema.json` and shared gold vectors (`PIN` holds their hashes).
-This package is an independent implementation of that text, checked against the same vectors as the Rust crate.
+AlphaKeel's spec (`README.md` is the source of truth), `schema.json` and shared gold vectors, exported together with the
+research contract: their hashes are in the one `contract/PIN` (keys `strategy-ir/...`), so `Client.check()` also refuses
+a service built from another IR spec. This package is an independent implementation of that text, checked against the
+same vectors as the Rust crate.
 
 - `ir.py` (standard library only): `load(text_or_dict)` validates (§1–§3) and raises `IrError` with a rule-group code
   (`ir.shape`, `ir.schema`, `ir.kind`, `ir.invalid`, `ir.parameter_path`, `ir.parameter_mismatch`,
@@ -98,12 +100,32 @@ This package is an independent implementation of that text, checked against the 
   (§4.1a: selected contracts quoted in this frame, same-frame observations, fee table, screener-style ids, sorted).
 - `ir_policy/strategy.py`: a generic `PolicyHost` script. Parameters `{"ir": <document>, "qty_dp": 6}`; entries become two
   `limit_ioc` orders (long buys at its ask, short sells at its bid, `notional_per_leg / long.ask` rounded down, same qty);
-  exits become reduce-only orders for the engine's real positions of that pair, at the touch. State (`positions`,
-  `cooldowns`, `next_trade`) is reconciled with `ctx["positions"]` every step. The policy context has no mark-to-market
-  P&L, so `net_now` is `None` and `exit.max_loss` / `exit.take_profit` never fire in Python policy mode; only
-  `funding_estimate: "predicted"` is served (`last_settled` is refused at `initialize`).
+  exits become reduce-only orders for the engine's real positions of that pair, at the touch. Intents are named as
+  AlphaKeel's Rust `ir_strategy` run names them (README §5a): `n<trade>-<L|S>-<open|close>`, `position_ref p<trade><L|S>`,
+  `pair_id pair-<trade>`, `trade` counting from 1 only the entries actually submitted (an entry with a `bbo = false` leg
+  is not submitted and takes no number). State (`positions`, `cooldowns`, `next_trade`) is reconciled with
+  `ctx["positions"]` every step. A pair's `net_now` is the sum of its legs' `ctx["positions"][].net_now` (the engine's
+  per-leg close-now net; `null` if either leg's is), so `exit.max_loss` / `exit.take_profit` fire on the engine's state.
+  The local simulator gives the same per-leg `net_now` (same formula, null rule and decimal text) as the service's session.
+  Only `funding_estimate: "predicted"` is served (`last_settled` is refused at `initialize`).
 - `examples/ir/strategy.json`: an example for the fixture pack (Binance vs OKX BTC perpetuals; enters on the first frame,
   leaves on `max_hold_hours: 1` at the last).
+
+Two commands against the research service:
+
+```bash
+python -m alphakeel_research ir validate --ir strategy.json [--pack PACK_ID]
+python -m alphakeel_research ir review   --pack PACK_ID --ir strategy.json [--seed N] [--profile profile.json] --out DIR
+```
+
+`ir validate` is AlphaKeel's own check (`POST /validate/ir`: `valid`, `strategy_id`, `strategy_sha256`, `problems[]`
+with `ir.*` codes; exit 2 when invalid). `ir review` (also `workflow.ir_review(...)`, which returns the same dict) runs
+the IR (a) in Python: `ir_policy` under the local simulator with the execution profile the service renders for
+`ir_strategy`, evidence in `DIR`; (b) in AlphaKeel's Rust evaluator: a `mode: "ir_strategy"` run on the same pack;
+(c) registers (a) as an external `ir_strategy` run and asks for the layered comparison. It prints the layer table,
+`first_difference`, `pass_scope` and both sides' opened/closed/realized, writes `DIR/reconciliation.json` (run, comparison
+and pack ids, pack digest, `strategy_id`, `strategy_sha256`, layers, `first_difference`) and ends with the fixed line
+"Decision (paper or not) is yours; this report does not approve anything." It gives no verdict of its own.
 
 Tests: `agent/tests/test_alphakeel_*.py` (install `.[dev,alphakeel-dev]`). Without the fixture server the cross-process
 tests skip; AlphaKeel's cross-project CI runs them with `ALPHAKEEL_REQUIRE_FIXTURE=1`, where a missing binary or tool

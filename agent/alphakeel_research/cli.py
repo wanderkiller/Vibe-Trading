@@ -11,10 +11,15 @@
     python -m alphakeel_research native   --pack PACK_ID --rules rules.json            (or --params handoff.json)
     python -m alphakeel_research inject   --pack PACK_ID --intents intents.json --fault fee|funding-sign
     python -m alphakeel_research inject   --pack PACK_ID --intents intents.json --fault fee|funding-sign
-    python -m alphakeel_research compare  --a RUN --b RUN --mode fixed_intent_replay|python_policy|native_strategy
+    python -m alphakeel_research compare  --a RUN --b RUN --mode fixed_intent_replay|python_policy|native_strategy|ir_strategy
+    python -m alphakeel_research ir validate --ir strategy.json [--pack PACK_ID]
+    python -m alphakeel_research ir review   --pack PACK_ID --ir strategy.json [--seed N] [--profile profile.json] --out DIR
+                                          (the IR in Python under the local simulator AND in AlphaKeel's Rust evaluator,
+                                           compared layer by layer; prints the comparison, writes DIR/reconciliation.json)
 
 Credential: ALPHAKEEL_RESEARCH_TOKEN or ALPHAKEEL_RESEARCH_TOKEN_FILE; service URL: ALPHAKEEL_RESEARCH_URL.
-Every command prints one JSON document with references (ids, hashes, paths) and summaries; full events stay on disk.
+Every command prints one JSON document with references (ids, hashes, paths) and summaries; full events stay on disk
+(except `ir review`, which prints a plain-text report; its JSON is reconciliation.json).
 """
 
 from __future__ import annotations
@@ -38,6 +43,27 @@ def _out(obj) -> None:
 
 def _load(path: str | None):
     return None if not path else json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+IR_FOOTER = "Decision (paper or not) is yours; this report does not approve anything."
+
+
+def ir_report(r: dict) -> str:
+    """Plain-text rendering of ``workflow.ir_review``: only the comparison's own output, both sides' summaries, the
+    references, and the fixed footer. No verdict or recommendation of its own."""
+    lines = [f"Strategy IR reconciliation  {r['strategy_id']}  (definition sha256 {r['strategy_sha256']})",
+             f"pack {r['pack_id']}  (sha256 {r['pack_sha256']})",
+             f"python run {r['local_run']}   alphakeel run {r['alphakeel_run']} (mode {r['alphakeel_result']['mode']})   comparison {r['comparison']}",
+             "", "layer  status"]
+    lines += [f"{k:<6} {v}" for k, v in sorted(r["layers"].items())]
+    lines += ["", "first_difference: " + json.dumps(r["first_difference"], sort_keys=True, default=str),
+              "pass_scope: " + str(r["pass_scope"]), "",
+              f"{'':<14}{'opened':>8}{'closed':>8}{'open_at_end':>13}  realized"]
+    for name, key in (("python_local", "python_local"), ("alphakeel", "alphakeel")):
+        s = r["summary"][key]
+        lines.append(f"{name:<14}{str(s['positions_opened']):>8}{str(s['positions_closed']):>8}{str(s['positions_open_at_end']):>13}  {s['realized']}")
+    lines += ["", f"written: {Path(r['run_dir']).parent / 'reconciliation.json'}", "", IR_FOOTER]
+    return "\n".join(lines) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -96,6 +122,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--a", required=True)
     p.add_argument("--b", required=True)
     p.add_argument("--mode", required=True)
+    p = sub.add_parser("ir", help="Strategy IR: validate with AlphaKeel, reconcile Python vs AlphaKeel's Rust evaluator")
+    irs = p.add_subparsers(dest="ir_cmd", required=True)
+    q = irs.add_parser("validate")
+    q.add_argument("--ir", required=True)
+    q.add_argument("--pack")
+    q = irs.add_parser("review")
+    q.add_argument("--pack", required=True)
+    q.add_argument("--ir", required=True)
+    q.add_argument("--seed", type=int, default=0)
+    q.add_argument("--profile")
+    q.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     try:
         c = Client(a.url)
@@ -165,6 +202,14 @@ def main(argv: list[str] | None = None) -> int:
             r = workflow.native_run(c, pack, rules, profile=_load(a.profile))
             _out({"run_id": r["run_id"], "amounts": r["result"]["amounts"], "verification": r["result"]["verification"], "counts": r["result"]["counts"],
                   "facts_sha256": r["facts_sha256"]})
+        elif a.cmd == "ir" and a.ir_cmd == "validate":
+            v = workflow.validate_ir(c, _load(a.ir), a.pack)
+            _out(v)
+            return 0 if v["valid"] else 2
+        elif a.cmd == "ir":
+            pack = Pack.open(c, a.pack, a.cache)
+            r = workflow.ir_review(c, pack, _load(a.ir), out_dir=a.out, profile=_load(a.profile), seed=a.seed)
+            sys.stdout.write(ir_report(r))
         elif a.cmd == "compare":
             cmp = c.compare(a.a, a.b, a.mode)
             rep = c.wait_comparison(cmp["comparison_id"])

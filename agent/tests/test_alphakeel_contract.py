@@ -33,6 +33,23 @@ def test_the_pinned_contract_files_match_their_pin():
         assert hashlib.sha256((PIN_DIR / name).read_bytes()).hexdigest() == digest, name
 
 
+def test_the_one_pin_also_covers_the_strategy_ir_spec_like_the_services_contract_pin():
+    # the same 10 keys as /whoami contract_pin (Client.check compares them all): research contract + Strategy IR spec
+    pinned = set(C.local_pin())
+    assert pinned == {"openapi.json", "error-codes.json", "vectors/canonical.json", "vectors/contract-artifacts.json", "vectors/numeric-gold.json",
+                      "strategy-ir/README.md", "strategy-ir/schema.json", "strategy-ir/vectors/canonical.json",
+                      "strategy-ir/vectors/decisions.json", "strategy-ir/vectors/features.json"}
+    assert not (PIN_DIR / "strategy-ir" / "PIN").exists()  # one pin mechanism
+
+
+def test_policy_context_positions_carry_net_now_always_present_maybe_null():
+    cases = {c["name"]: c for c in _load("contract-artifacts.json")["cases"]}
+    assert _verdict(cases["context: net_now null without a quote"]) == []
+    assert "schema.required" in {v.code for v in _verdict(cases["context: net_now missing"])}
+    base = cases["policy-context: valid"]["doc"]
+    assert all("net_now" in p for p in base["positions"]) and base["positions"]
+
+
 def test_models_are_the_current_generation_of_the_pinned_openapi(tmp_path):
     if shutil.which("datamodel-codegen") is None:
         skip_or_fail("datamodel-code-generator is not installed (pip install -e '.[dev,alphakeel-dev]')")

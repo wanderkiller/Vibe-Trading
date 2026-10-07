@@ -557,6 +557,7 @@
        "symbol": "BTCUSDT",
        "venue": "binance"
       },
+      "net_now": "-0.15",
       "position_ref": "p-1",
       "qty": "100",
       "side": "long"
@@ -7080,6 +7081,108 @@
        "symbol": "BTCUSDT",
        "venue": "binance"
       },
+      "net_now": null,
+      "position_ref": "p-1",
+      "qty": "100",
+      "side": "long"
+     }
+    ],
+    "schema": "alphakeel.policy-context/1",
+    "session_id": "run-1",
+    "step_seq": 0,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000000"
+   },
+   "kind": "policy-context",
+   "name": "context: net_now null without a quote",
+   "valid": true
+  },
+  {
+   "doc": {
+    "accounts": [
+     {
+      "account": "BINANCE",
+      "ccy": "USDT",
+      "free": "10000",
+      "total": "10000"
+     }
+    ],
+    "data_refs": {
+     "decided_ms": 1700000000000,
+     "frame_index": 0,
+     "frame_seq": 1
+    },
+    "history_len": 0,
+    "last_results": [
+     {
+      "avg_price": "1",
+      "filled_qty": "100",
+      "intent_id": "i-1",
+      "reason_code": null,
+      "status": "filled"
+     }
+    ],
+    "positions": [
+     {
+      "avg_entry": "1",
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "position_ref": "p-1",
+      "qty": "100",
+      "side": "long"
+     }
+    ],
+    "schema": "alphakeel.policy-context/1",
+    "session_id": "run-1",
+    "step_seq": 0,
+    "time_ms": 1700000000000,
+    "time_ns": "1700000000000000000"
+   },
+   "errors": [
+    "schema.required"
+   ],
+   "kind": "policy-context",
+   "name": "context: net_now missing",
+   "path": "/positions/0/net_now",
+   "valid": false
+  },
+  {
+   "doc": {
+    "accounts": [
+     {
+      "account": "BINANCE",
+      "ccy": "USDT",
+      "free": "10000",
+      "total": "10000"
+     }
+    ],
+    "data_refs": {
+     "decided_ms": 1700000000000,
+     "frame_index": 0,
+     "frame_seq": 1
+    },
+    "history_len": 0,
+    "last_results": [
+     {
+      "avg_price": "1",
+      "filled_qty": "100",
+      "intent_id": "i-1",
+      "reason_code": null,
+      "status": "filled"
+     }
+    ],
+    "positions": [
+     {
+      "avg_entry": "1",
+      "instrument": {
+       "market": "perp",
+       "symbol": "BTCUSDT",
+       "venue": "binance"
+      },
+      "net_now": "-0.15",
       "position_ref": "p-1",
       "qty": "100",
       "side": "long"
@@ -7132,6 +7235,7 @@
        "symbol": "BTCUSDT",
        "venue": "binance"
       },
+      "net_now": "-0.15",
       "position_ref": "p-1",
       "qty": "100",
       "side": "long"

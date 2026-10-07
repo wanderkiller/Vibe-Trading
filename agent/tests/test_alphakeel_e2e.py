@@ -66,7 +66,7 @@ def round_trip(server):
 def test_connection_check_negotiates_the_contract_and_never_shows_the_credential(server, client):
     info = client.check()
     assert info["contract"] == "alphakeel.research/1"
-    assert set(info["modes"]) == {"native_strategy", "fixed_intent_replay", "python_policy"}
+    assert set(info["modes"]) == {"native_strategy", "ir_strategy", "fixed_intent_replay", "python_policy"}
     assert server.token not in repr(client) and server.token not in json.dumps(info)
     bad = Client(server.url, "ak_rs_tok-000000000000.ffff")
     with pytest.raises(ApiError) as e:
@@ -410,6 +410,92 @@ def test_native_strategy_runs_through_the_service_and_params_are_validated_like_
     # same rules, same pack, same profile: the engine facts are identical
     again = workflow.native_run(client, pack, v["rules"], profile={"funding": {"mode": "estimate"}})
     assert again["facts_sha256"] == r["facts_sha256"]
+
+
+# ------------------------------------------------------------------------------------------------------ Strategy IR
+
+IR_EXAMPLE = Path(__file__).resolve().parents[1] / "alphakeel_research" / "examples" / "ir" / "strategy.json"
+
+
+def test_the_same_ir_runs_in_python_and_in_alphakeels_rust_evaluator_and_reconciles(server, client, pack, tmp_path):
+    from alphakeel_research import ir
+
+    doc = json.loads(IR_EXAMPLE.read_text())
+    sid = ir.load(doc).strategy_id
+    v = workflow.validate_ir(client, doc, pack.id)
+    assert v["valid"] is True and v["strategy_id"] == sid and v["problems"] == []
+    out = tmp_path / "review"
+    r = workflow.ir_review(client, pack, doc, out_dir=out, seed=1)
+    assert r["alphakeel_result"]["mode"] == "ir_strategy" and r["alphakeel_result"]["strategy_id"] == sid == r["strategy_id"]
+    assert r["alphakeel_result"]["strategy_sha256"] == r["strategy_sha256"]
+    assert [r["layers"][k] for k in ("L0", "L1", "L2", "L3", "L4")] == ["matched"] * 5, json.dumps(r, indent=1)
+    assert r["passed"] is True and r["first_difference"] is None
+    assert "Rust IR evaluator decided, executed and accounted independently" in r["pass_scope"]
+    # both sides: one pair (two legs) opened at the first frame, closed on max_hold one hour later; the carry gold
+    assert r["summary"]["python_local"] == r["summary"]["alphakeel"]
+    assert r["summary"]["alphakeel"]["positions_opened"] == 2 and r["summary"]["alphakeel"]["positions_closed"] == 2
+    assert r["summary"]["alphakeel"]["realized"] == "1.6"
+    rec = json.loads((out / "reconciliation.json").read_text())
+    assert rec["local_run"] == r["local_run"] and rec["alphakeel_run"] == r["alphakeel_run"] and rec["comparison"] == r["comparison"]
+    assert rec["pack_id"] == pack.id and rec["pack_sha256"] == pack.lock["pack_sha256"] and rec["strategy_id"] == sid
+    # README §5a names on both sides; the remote decisions are the ones the local policy made
+    steps = json.loads((Path(r["run_dir"]) / "steps.json").read_text())
+    local_ids = [i["intent_id"] for s in steps for i in s["response"]["intents"]]
+    assert local_ids == ["n1-L-open", "n1-S-open", "n1-L-close", "n1-S-close"]
+    remote_ids = [json.loads(ln)["intent_id"] for ln in client.artifact(r["alphakeel_run"], "events.jsonl").splitlines()
+                  if ln and json.loads(ln).get("kind") == "intent"]
+    assert remote_ids == local_ids
+    # the local context carried the engine-formula net_now of each held leg (the same text the service's session gives)
+    held = next(s["context"]["positions"] for s in steps if s["context"]["positions"])
+    assert [p["position_ref"] for p in held] == ["p1L", "p1S"] and all(p["net_now"] is not None for p in held)
+
+
+def test_the_policy_context_net_now_is_byte_identical_in_the_local_simulator_and_the_service_session(server, client, pack, tmp_path):
+    from alphakeel_research import policy_flow
+    import shutil
+
+    d = tmp_path / "carry_policy"
+    shutil.copytree(FIX / "carry_policy", d)
+    r = policy_flow.run_both(client, pack, str(d), [BIN, OKX], profile=None, seed=7,
+                             parameters={"qty": "100", "close_at_ms": server.start_ms + server.hour_ms}, work=tmp_path / "work")
+    assert r["passed"] is True, json.dumps(r, indent=1)
+    remote = client.get_step(r["alphakeel_run"], 1)["context"]["positions"]
+    local = json.loads((Path(r["run_dir"]) / "steps.json").read_text())[1]["context"]["positions"]
+    assert remote == local and [p["position_ref"] for p in remote] == ["pl", "ps"]
+    # hand value: long Binance 100 @ 1, bid 0.999 -> 100 x (0.999 - 1) - 0.05 entry fee - 100 x 0.999 x 0.0005 = -0.19995
+    assert remote[0]["net_now"] == "-0.19995"
+
+
+def test_validate_ir_rejects_a_bad_document_with_an_ir_code(client, pack):
+    doc = json.loads(IR_EXAMPLE.read_text())
+    doc["kind"] = "momentum"
+    v = workflow.validate_ir(client, doc, pack.id)
+    assert v["valid"] is False and v["strategy_id"] is None and v["problems"]
+    assert all(p["code"].startswith("ir.") for p in v["problems"]), v
+
+
+def test_ir_cli_validates_and_reviews_and_prints_only_the_comparison(server, pack, tmp_path, monkeypatch, capsys):
+    from alphakeel_research import cli
+
+    monkeypatch.setenv("ALPHAKEEL_RESEARCH_URL", server.url)
+    monkeypatch.setenv("ALPHAKEEL_RESEARCH_TOKEN", server.token)
+    base = ["--cache", str(pack.cache.root)]
+    assert cli.main(base + ["ir", "validate", "--ir", str(IR_EXAMPLE), "--pack", pack.id]) == 0
+    v = json.loads(capsys.readouterr().out)
+    assert v["valid"] is True and v["strategy_id"].startswith("ir-")
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(dict(json.loads(IR_EXAMPLE.read_text()), schema="alphakeel.strategy-ir/2")))
+    assert cli.main(base + ["ir", "validate", "--ir", str(bad)]) == 2
+    assert json.loads(capsys.readouterr().out)["problems"][0]["code"].startswith("ir.")
+    out = tmp_path / "rev"
+    assert cli.main(base + ["ir", "review", "--pack", pack.id, "--ir", str(IR_EXAMPLE), "--seed", "1", "--out", str(out)]) == 0
+    text = capsys.readouterr().out
+    for layer in ("L0", "L1", "L2", "L3", "L4"):
+        assert f"{layer:<6} matched" in text
+    assert "first_difference: null" in text and "pass_scope: " in text and "python_local" in text and "alphakeel" in text
+    assert text.rstrip().endswith(cli.IR_FOOTER)
+    assert "recommend" not in text.lower()
+    assert (out / "reconciliation.json").is_file()
 
 
 # ------------------------------------------------------------------------------------------------------ client rules
