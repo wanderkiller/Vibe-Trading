@@ -161,11 +161,14 @@ reachable are the next groups.
 - `agent/tests/test_alphakeel_policy_host.py`
 - `agent/tests/test_alphakeel_protocol.py`
 - `agent/tests/test_alphakeel_registration.py`
+- `agent/tests/test_alphakeel_sim_funding_gaps.py`
 
 **Commits.** `e0245ca9` `220330b0` `83ea7c2a` `5370ab12` `e0141135` `b703f994` `22e33c58` `83af5312` `41f8c94b`
 (alphakeel_metrics) `9257a920` `a379d8d2` `a232931b` `1e17c469` `bc7d3464` `0d9afe7d` `dbcea0e6` (T9b contract re-export:
 `strategy-ir/README.md` and its `PIN` line), `2c8d1143` (dataset-pack market objects read per venue *and* market,
-`instrument_meta` point in time by snapshot day; pairs with AlphaKeel `fix/harden-pack`).
+`instrument_meta` point in time by snapshot day; pairs with AlphaKeel `fix/harden-pack`), and `b2c37e39` (scan-gap funding
+fix: `sim.py` `funding_feed_plan` settles boundaries a scan gap skipped, ambiguous gaps are counted and strict-failed; same
+rule as AlphaKeel's engine feed; no contract change).
 
 **Upstreamable.** No, local-only (talks to a private service, mirrors a private contract).
 

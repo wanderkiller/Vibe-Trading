@@ -29,6 +29,14 @@ Where the outcome depends on what is not modelled exactly (the price basis of th
 balance a band) the simulator refuses with ``Unsupported`` instead of picking a side; IOC limit orders fill at the touch when
 marketable and are cancelled otherwise; the funding rate of a boundary is the last predicted rate reported for it (or the
 official event when the profile says so); the settlement price is the last mark seen at or before the boundary.
+
+Funding boundaries a scan gap skipped (same rule as the engine feed, ``funding_feed_plan``): each scan reports only the
+next boundary, so a 1h contract scanned at 07:55 and then at 09:05 never reports 09:00. When the gap is unambiguous (same
+interval on both sides, the new boundary on the old schedule) every passed boundary in between is settled with the last
+observed predicted rate (or the official event), flagged as an estimate exactly like any other non-official settlement.
+When it is ambiguous (interval changed across the gap, misaligned boundary) nothing is guessed: a gap on a contract held at
+the last boundary before it or when it is seen is counted as ``data_quality.unobserved_funding_gaps`` (present only when
+non-zero) and fails a strict official run with ``data.funding_missing``.
 """
 
 from __future__ import annotations
@@ -89,6 +97,48 @@ def aligned_after(after: int, hours: int) -> int:
 
 def next_boundary(now: int, hours: int, nxt: int | None) -> int:
     return nxt if (nxt is not None and nxt > now) else aligned_after(now, hours)
+
+
+def funding_feed_plan(obs: list[tuple[int, int, int, int]]) -> tuple[dict[int, list[int]], list[dict]]:
+    """Settlement boundaries a scan gap skipped, for ONE instrument (the engine feed's ``funding_feed_plan``, same rule).
+
+    ``obs`` are the instrument's funding observations in frame order: ``(frame index, frame time, interval hours, reported
+    boundary)``. Each frame reports only its next boundary, so when consecutive observations are more than one interval
+    apart (07:55 reports 08:00, the next scan at 09:05 reports 10:00) the boundaries in between (09:00) were never reported.
+    With ``last`` the previous observation's boundary, ``iv`` its interval and ``new`` this observation's boundary:
+
+    - unambiguous (same interval on both sides and ``(new - last) % iv == 0``): every ``b = last + iv, last + 2 iv, ...`` with
+      ``b < new`` and ``b <= this frame's time`` (already passed, unobserved) is returned under the PREVIOUS observation's
+      frame index, so it is fed with that frame's data (rate: the last observed predicted rate, or the official rate);
+    - ambiguous (the interval changed across the gap, or ``new`` is not on the old schedule) and a boundary may have passed
+      unobserved (under the old schedule ``last + iv_old < new`` and ``<= t``, or under the new one ``new - iv_new > last``
+      and ``<= t``): nothing is guessed; the span is returned as a gap ``{k_from, k_to, after_ms, before_ms, seen_ms,
+      hours_before, hours_after}``.
+    """
+    extra: dict[int, list[int]] = {}
+    gaps: list[dict] = []
+    prev: tuple[int, int, int, int] | None = None
+    for k, t, hours, b in obs:
+        if prev is not None:
+            pk, _pt, last, ph = prev
+            if b > last:
+                iv_old = max(ph, 1) * HOUR_MS
+                iv_new = max(hours, 1) * HOUR_MS
+                first = last + iv_old
+                gap = {"k_from": pk, "k_to": k, "after_ms": last, "before_ms": b, "seen_ms": t, "hours_before": ph, "hours_after": hours}
+                if first < b and first <= t:
+                    if ph == hours and (b - last) % iv_old == 0:
+                        x, out = first, []
+                        while x < b and x <= t:
+                            out.append(x)
+                            x += iv_old
+                        extra.setdefault(pk, []).extend(out)
+                    else:
+                        gaps.append(gap)
+                elif last < b - iv_new <= t:
+                    gaps.append(gap)
+        prev = (k, t, b, hours)
+    return extra, gaps
 
 
 def engine_venue(inst: Inst) -> str:
@@ -277,6 +327,22 @@ class Simulator:
             self.price_dp[inst] = min(dp, 16)
         # settlement boundaries the venue changed before they happened are never settled (same rule as the engine feed)
         self._cancelled = self._cancelled_boundaries()
+        # boundaries a scan gap skipped (fed with the last observation before the gap) and ambiguous gaps (counted, never guessed)
+        self._extra: dict[tuple[int, Inst], list[int]] = {}
+        self._gaps: list[dict] = []
+        for inst in self.insts:
+            obs = []
+            for k, f in enumerate(self.frames):
+                s = self.snaps[k].get(inst)
+                if s is not None and s.funding is not None:
+                    _, hours, nxt = s.funding
+                    obs.append((k, f.t, hours, next_boundary(f.t, hours, nxt)))
+            extra, gaps = funding_feed_plan(obs)
+            for k, bs in extra.items():
+                self._extra[(k, inst)] = bs
+            for g in gaps:
+                self._gaps.append({**g, "inst": inst, "held": False})
+        self.unobserved_funding: list[dict] = []
         self._official_tables: dict[Inst, list[tuple[int, Decimal]]] = {}
         if self.official:
             for inst in self.insts:
@@ -334,20 +400,26 @@ class Simulator:
             for (inst, b) in sorted([x for x in pending if (prev_t is None or x[1] > prev_t) and x[1] <= f.t], key=lambda x: (x[1], x[0].leg())):
                 rate = pending.pop((inst, b))
                 self._settle(inst, b, rate, last_mark_at=(f if b == f.t else frames[k - 1]), k=k)
+            # an ambiguous gap matters only while the instrument is held: at its last boundary (state of the first frame at or
+            # after it, before that frame's orders) or when the gap is seen (before that frame's orders)
+            for g in self._gaps:
+                if not g["held"] and (k == g["k_to"] or (g["after_ms"] <= f.t and (k == 0 or frames[k - 1].t < g["after_ms"]))):
+                    g["held"] = any(p.inst == g["inst"] and p.net != 0 for p in self.pos.values())
             # 2. data at t_k
             for inst, s in self.snaps[k].items():
                 self.last_quote[inst] = (s.bid, s.ask, k)
                 last_mark[inst] = s.mark
                 if s.funding is not None:
                     rate, hours, nxt = s.funding
-                    b = next_boundary(f.t, hours, nxt)
-                    if (inst, b) not in self._cancelled:
-                        r = rate
-                        official = self._official_rate(inst, b) if self.official else None
-                        if official is not None:
-                            r = official
-                        self.fed_official[(inst.leg(), b)] = official is not None
-                        pending[(inst, b)] = r
+                    # the reported boundary, then the boundaries the next scan gap of this instrument skips (same rate source)
+                    for b in [next_boundary(f.t, hours, nxt), *self._extra.get((k, inst), [])]:
+                        if (inst, b) not in self._cancelled:
+                            r = rate
+                            official = self._official_rate(inst, b) if self.official else None
+                            if official is not None:
+                                r = official
+                            self.fed_official[(inst.leg(), b)] = official is not None
+                            pending[(inst, b)] = r
             fx_last = f.fx if f.fx is not None else fx_last
             # 3. decision and orders (+1 ns)
             view = self._view(k, f, last_results)
@@ -719,6 +791,13 @@ class Simulator:
     # ------------------------------------------------------------------ outputs
 
     def _finish(self, frames, fx_by_frame, state_hashes) -> SimResult:
+        # scan gaps whose skipped boundaries cannot be placed (interval change / misaligned) while the instrument was held
+        self.unobserved_funding = [g for g in self._gaps if g["held"]]
+        if self.official and self.strict and self.unobserved_funding:
+            g = self.unobserved_funding[0]
+            raise ApiError("data.funding_missing", f"strict official settlement: {len(self.unobserved_funding)} scan gap(s) on a held contract may hide "
+                           f"funding settlement(s) that cannot be placed (interval change or misaligned boundary; first: {g['inst'].leg()} "
+                           f"after {g['after_ms']} before {g['before_ms']}); nothing was guessed")
         # strict official funding: every applied settlement must come from an official event
         if self.official and self.strict and self.estimate_fallbacks:
             raise ApiError("data.funding_missing", f"strict official settlement: {self.estimate_fallbacks} settlement(s) have no unique official event; nothing was estimated")
@@ -822,7 +901,8 @@ class Simulator:
             "drawdown": {"max": d8(max_dd) if any(p is not None for p in points) else None, "points": sum(1 for p in points if p is not None)},
             "capital": {"peak_margin_usdt": d8(peak_capital)},
             "counts": counts, "data_quality": {"stale_points": sum(1 for v in self.valuations if v["stale"] and any(p.net != 0 for p in self.pos.values())),
-                                               "official_settlements": self.official_n, "estimate_fallbacks": self.estimate_fallbacks},
+                                               "official_settlements": self.official_n, "estimate_fallbacks": self.estimate_fallbacks,
+                                               **({"unobserved_funding_gaps": len(self.unobserved_funding)} if self.unobserved_funding else {})},
             "verification": {"engine_recount": "not_applicable", "native_rule_ledger": "not_applicable", "external_python": "not_applicable"},
             "not_applicable_metrics": ["win_rate", "native_rule_ledger"],
             "limitations": ["Independent Decimal simulation of the AlphaKeel execution profile; scan snapshots only, no depth, queue or impact.",
