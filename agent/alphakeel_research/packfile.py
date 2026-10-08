@@ -428,8 +428,17 @@ class Pack:
         f = self.lock.get("funding")
         return f["dataset_version"] if name == "funding" and isinstance(f, dict) else None
 
-    def _market_rows(self, table: str, venue: str, symbol: str, start: int, end: int, chain: Chain | None = None) -> list[list]:
-        tag = f"market/{table}/{venue}/"
+    def _market_rows(self, table: str, inst: Inst, start: int, end: int, chain: Chain | None = None) -> list[list]:
+        """Rows of one contract (venue + market + symbol). Objects are ``market/<table>/<venue>/<market>/part-N``: spot and
+        perp contracts of a venue can share a symbol (Binance BTCUSDT) and a row carries only the symbol. A pack in the
+        older layout (``market/<table>/<venue>/part-N``, both markets in one object) cannot tell them apart and is refused.
+        ``instrument_meta`` is not windowed (``t`` is the snapshot day; point-in-time filtering is the caller's)."""
+        legacy = f"market/{table}/{inst.venue}/part-"
+        if any(o["role"] == "market" and o["name"].startswith(legacy) for o in self.lock["objects"]):
+            raise EvidenceError("evidence.reference", f"this pack stores {table} rows of {inst.venue} spot and perp contracts in one object "
+                                "(layout before market-separated objects): a symbol listed on both markets cannot be told apart; rebuild the pack")
+        tag = f"market/{table}/{inst.venue}/{inst.market}/"
+        symbol = inst.symbol
         out: list[list] = []
         for o in sorted((o for o in self.lock["objects"] if o["role"] == "market" and o["name"].startswith(tag)), key=lambda o: o["name"]):
             if table != "instrument_meta" and ((o["last_ms"] or 0) < start or (o["first_ms"] or 0) >= end):
@@ -442,7 +451,7 @@ class Pack:
         return out
 
     def klines(self, inst: Inst, start: int, end: int, *, price_kind: str = "trade") -> list[Kline]:
-        rows = self._market_rows("kline_1m", inst.venue, inst.symbol, start, end)
+        rows = self._market_rows("kline_1m", inst, start, end)
         if rows:
             self.log.note("kline_1m", inst, rows[0][0], rows[-1][0])
         out = [Kline(r[0], r[2], D(r[3]), D(r[4]), D(r[5]), D(r[6]), D(r[7]), D(r[8]), r[9], r[10]) for r in rows if r[10] == price_kind]
@@ -450,18 +459,28 @@ class Pack:
         return out
 
     def bbo(self, inst: Inst, start: int, end: int) -> list[Bbo]:
-        rows = self._market_rows("bbo", inst.venue, inst.symbol, start, end)
+        rows = self._market_rows("bbo", inst, start, end)
         if rows:
             self.log.note("bbo", inst, rows[0][0], rows[-1][0])
         return [Bbo(r[0], r[2], D(r[3]), D(r[4]), D(r[5]), D(r[6]), r[7]) for r in rows]
 
+    _META_COLS = ("t", "symbol", "tick_size", "lot_size", "min_qty", "min_notional", "listed_ms", "delisted_ms", "extra")
+
+    def instrument_meta_history(self, inst: Inst) -> list[dict]:
+        """Every metadata snapshot of the pack, in time order, as ``{column: value}`` (decimals stay strings; unknown
+        columns, e.g. ``contract_value``, under ``extra``). ``t`` is the snapshot day: the snapshot is known from then on.
+        The pack holds the snapshot in effect at the window start plus each one inside the window."""
+        rows = self._market_rows("instrument_meta", inst, 0, 0)
+        for r in rows:
+            if not isinstance(r[0], int) or isinstance(r[0], bool):
+                raise EvidenceError("evidence.reference", "instrument_meta t is not an integer")
+        return [dict(zip(self._META_COLS, r)) for r in sorted(rows, key=lambda r: r[0])]
+
     def instrument_meta(self, inst: Inst) -> dict | None:
-        """Static metadata row as ``{column: value}`` (decimals stay strings; unknown columns under ``extra``)."""
-        rows = self._market_rows("instrument_meta", inst.venue, inst.symbol, 0, 0)
-        if not rows:
-            return None
-        cols = ["t", "symbol", "tick_size", "lot_size", "min_qty", "min_notional", "listed_ms", "delisted_ms", "extra"]
-        return dict(zip(cols, rows[-1]))
+        """The LATEST metadata snapshot of the pack (not point-in-time: specs changed later in the window show here;
+        strategies get ``Pit.instrument_meta``, which returns the snapshot known at ``as_of``)."""
+        rows = self.instrument_meta_history(inst)
+        return rows[-1] if rows else None
 
     def frames(self, *, include_warmup: bool = True) -> list[Frame]:
         rows = self._read("frames/frames.jsonl.zst")
@@ -506,7 +525,7 @@ class Pack:
                             if ins and r[1] == ins.funding_instrument_id and first <= r[0] < last + 1:
                                 ch.push(r[0], r)
             elif table in ("kline_1m", "bbo") and inst is not None:
-                self._market_rows(table, inst.venue, inst.symbol, first, last + 1, ch)
+                self._market_rows(table, inst, first, last + 1, ch)
             elif table == "fx":
                 for r in self._read("fx/fx.jsonl.zst"):
                     if first <= r[0] <= last:
@@ -566,9 +585,11 @@ class Pit:
     * official settlements (reconstructed history): visible when ``available_at`` — or, without it, the settlement time
       plus the lock's ``funding.assumed_delay_ms`` (at least 60 s) — is not after ``as_of``; a pack without a funding
       block has no settlements and asking for them is an error, never "delay 0";
-    * 1-minute klines: visible from ``close_time_ms``, which must be exactly ``t + 59 999`` (checked, not trusted);
+    * 1-minute klines: visible when ``close_time_ms <= as_of`` (the service's ``/slice`` uses the same comparison);
+      ``close_time_ms`` must be exactly ``t + 59 999`` (checked, not trusted);
     * bbo: visible from ``ts_recv_ms``; without it never visible;
-    * instrument metadata: a contract listed after ``as_of`` does not exist yet; a delisting after ``as_of`` is unknown.
+    * instrument metadata: the last snapshot whose ``t`` (snapshot day) is not after ``as_of`` — later spec changes are
+      unknown; a contract listed after ``as_of`` does not exist yet; a delisting after ``as_of`` is unknown.
 
     A hash cannot prove an arbitrary script has no look-ahead; this reader is the enforcement point for the data it hands
     out. It is not a security boundary (Python has no private state), but no API of it returns unfiltered rows.
@@ -646,10 +667,12 @@ class Pit:
         return [b for b in self.__pack.bbo(inst, start, end) if b.ts_recv_ms is not None and b.ts_recv_ms <= self.as_of_ms]
 
     def instrument_meta(self, inst: Inst) -> dict | None:
-        """Metadata as known at ``as_of``: not listed yet → ``None``; a later delisting is not known (``delisted_ms`` = None)."""
-        m = self.__pack.instrument_meta(inst)
-        if m is None:
+        """Metadata as known at ``as_of``: the last snapshot with ``t <= as_of`` (none yet → ``None``); not listed yet →
+        ``None``; a later delisting is not known (``delisted_ms`` = None)."""
+        known = [m for m in self.__pack.instrument_meta_history(inst) if m["t"] <= self.as_of_ms]
+        if not known:
             return None
+        m = known[-1]
         for k in ("listed_ms", "delisted_ms"):
             if m[k] is not None and (not isinstance(m[k], int) or isinstance(m[k], bool)):
                 raise EvidenceError("evidence.reference", f"instrument_meta {k} is not an integer")

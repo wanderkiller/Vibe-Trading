@@ -38,7 +38,10 @@ request, `Client.dataset_pack_request(...)`) freezes any window from those versi
 versions are pinned by the service at acceptance, a gap in any instrument/table is an error (`data.coverage_partial`)
 unless you opt into `accept_partial`, and `pack_id` is the digest of the frozen content. A dataset pack serves research
 reads (`Pack.settlements/klines/bbo/instrument_meta`, `Pit.*` with point-in-time visibility: klines from `close_time_ms`,
-bbo from `ts_recv_ms`, settlements from `available_at`); it cannot drive engine runs (`capability.unsupported`).
+bbo from `ts_recv_ms`, settlements from `available_at`, instrument metadata = the last snapshot whose snapshot day is not
+after `as_of`); it cannot drive engine runs (`capability.unsupported`). Market objects are per venue *and* market
+(`market/<table>/<venue>/<market>/part-N`: spot and perp can share a symbol); quantities are base units (OKX perpetual
+contract counts are converted by the service with the snapshot's `contract_value`).
 
 The **`alphakeel_b2` loader** (`backtest/loaders/alphakeel_b2_loader.py`) wraps this for Vibe-Trading: `fetch()` builds
 OHLCV from `kline_1m` (1m...1D, complete bars only) and `fetch_funding()` returns official funding settlements for all nine

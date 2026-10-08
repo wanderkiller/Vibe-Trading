@@ -73,7 +73,7 @@ def build_pack(*, venue="binance", market="perp", symbol="BTCUSDT", start=START,
     sources = []
     tables = []
     if klines is not None:
-        o, b = _obj(f"market/kline_1m/{venue}/part-00000.jsonl.zst", "market", "alphakeel.rows.market-kline-1m/1",
+        o, b = _obj(f"market/kline_1m/{venue}/{market}/part-00000.jsonl.zst", "market", "alphakeel.rows.market-kline-1m/1",
                     {"schema": "alphakeel.rows.market-kline-1m/1", "table": "kline_1m", "columns": ["t", "symbol", "close_time_ms"]}, klines)
         objs.append(o)
         blobs[o["name"]] = b
@@ -302,7 +302,7 @@ def test_every_failure_is_a_source_error_with_the_service_code_and_no_fallback(t
             loader(FakeClient({}, create_error=ApiError(code, "x"))).fetch(["BTC-USDT"], "2023-01-01", "2023-01-01")
     # a corrupted object fails its digest on read
     with pytest.raises(NoAvailableSourceError, match="evidence"):
-        loader(FakeClient({"kline": (lock, blobs)}, corrupt="market/kline_1m/binance/part-00000.jsonl.zst")).fetch(["BTC-USDT"], "2023-01-01", "2023-01-01")
+        loader(FakeClient({"kline": (lock, blobs)}, corrupt="market/kline_1m/binance/spot/part-00000.jsonl.zst")).fetch(["BTC-USDT"], "2023-01-01", "2023-01-01")
     # a pack for another window/instrument is refused
     other, _ = build_pack(symbol="ETHUSDT", market="spot", klines=kline_rows("ETHUSDT"))
     with pytest.raises(NoAvailableSourceError, match="does not match the request"):
@@ -611,6 +611,9 @@ class _StubPack:
     def instrument_meta(self, inst):
         return None if self._m is None else dict(self._m)
 
+    def instrument_meta_history(self, inst):
+        return [] if self._m is None else [dict(self._m)]
+
 
 def _settlement(t, available_at=None):
     return packfile.Settlement(t, "i", Decimal("0.0001"), "regular", 3600, "official", "USDT", "linear", "x", available_at, 0, None, H, True)
@@ -645,6 +648,63 @@ def test_pit_instrument_meta_hides_future_listing_and_delisting():
     mid = packfile.Pit(_StubPack(FUND, meta=meta), START + 1000).instrument_meta(I)
     assert mid["listed_ms"] == START + 1000 and mid["delisted_ms"] is None
     assert packfile.Pit(_StubPack(FUND, meta=meta), START + 5000).instrument_meta(I)["delisted_ms"] == START + 5000
+
+
+def _market_pack(objects: dict[str, list[list]]) -> packfile.Pack:
+    """A dataset pack with the given market objects ({name: rows}) on top of a kline pack, opened from memory."""
+    lock, blobs = kline_pack(market="perp")
+    lock = copy.deepcopy(lock)
+    for name, rows in objects.items():
+        o, b = _obj(name, "market", "alphakeel.rows.market-x/1", {"schema": "alphakeel.rows.market-x/1"}, rows)
+        lock["objects"].append(o)
+        blobs[name] = b
+    lock["objects"].sort(key=lambda o: o["name"])
+    lock["transforms"][0]["outputs"] = [o["sha256"] for o in lock["objects"] if o["role"] != "coverage"]
+    digest = packfile.pack_digest(lock)
+    lock["pack_sha256"], lock["pack_id"] = digest, f"pk-{digest[:24]}"
+    return packfile.Pack(lock, packfile.PackCache(Path(os.environ.get("PYTEST_TMP", "/tmp")) / f"c-{digest[:8]}"), FakeClient({"x": (lock, blobs)}))
+
+
+def _bbo_row(t, symbol, px):
+    return [t, symbol, t + 5, px, "1", px, "1", t]
+
+
+def test_spot_and_perp_rows_of_the_same_symbol_are_never_mixed(tmp_path, monkeypatch):
+    """Binance spot BTCUSDT and perp BTCUSDT share a symbol; rows carry only the symbol, so the market is in the object path."""
+    monkeypatch.setenv("PYTEST_TMP", str(tmp_path))
+    pack = _market_pack({"market/bbo/binance/perp/part-00000.jsonl.zst": [_bbo_row(START + 2_000, "BTCUSDT", "100")],
+                         "market/bbo/binance/spot/part-00000.jsonl.zst": [_bbo_row(START + 1_000, "BTCUSDT", "99"),
+                                                                          _bbo_row(START + 3_000, "BTCUSDT", "99.5")]})
+    perp = [b.bid for b in pack.bbo(packfile.Inst("binance", "perp", "BTCUSDT"), START, START + DAY)]
+    spot = [b.bid for b in pack.bbo(packfile.Inst("binance", "spot", "BTCUSDT"), START, START + DAY)]
+    assert perp == [Decimal("100")] and spot == [Decimal("99"), Decimal("99.5")]
+    assert {a["instrument"]["market"]: a["rows"] for a in pack.accesses() if a["table"] == "bbo"} == {"perp": 1, "spot": 2}
+
+
+def test_a_pack_with_spot_and_perp_rows_in_one_object_is_refused(tmp_path, monkeypatch):
+    """The layout before market-separated objects cannot tell the two markets apart: an evidence error, not a guess."""
+    monkeypatch.setenv("PYTEST_TMP", str(tmp_path))
+    pack = _market_pack({"market/bbo/binance/part-00000.jsonl.zst": [_bbo_row(START + 1_000, "BTCUSDT", "99")]})
+    with pytest.raises(packfile.EvidenceError, match="rebuild the pack"):
+        pack.bbo(packfile.Inst("binance", "perp", "BTCUSDT"), START, START + DAY)
+
+
+def _meta_row(t, tick, listed=None, delisted=None):
+    return [t, "BTCUSDT", tick, "0.001", "0.001", None, listed, delisted, {"contract_value": "1"}]
+
+
+def test_pit_instrument_meta_is_the_last_snapshot_known_at_as_of(tmp_path, monkeypatch):
+    """A later spec change (tick/lot/contract_value/status) must not leak back to an earlier as_of."""
+    monkeypatch.setenv("PYTEST_TMP", str(tmp_path))
+    pack = _market_pack({"market/instrument_meta/binance/perp/part-00000.jsonl.zst":
+                         [_meta_row(START - DAY, "0.1"), _meta_row(START + DAY, "0.01")]})
+    inst = packfile.Inst("binance", "perp", "BTCUSDT")
+    assert pack.instrument_meta(inst)["tick_size"] == "0.01"  # the unfiltered pack: latest snapshot of the window
+    assert [m["tick_size"] for m in pack.instrument_meta_history(inst)] == ["0.1", "0.01"]
+    assert packfile.Pit(pack, START).instrument_meta(inst)["tick_size"] == "0.1"
+    assert packfile.Pit(pack, START + DAY - 1).instrument_meta(inst)["tick_size"] == "0.1"
+    assert packfile.Pit(pack, START + DAY).instrument_meta(inst)["tick_size"] == "0.01"
+    assert packfile.Pit(pack, START - DAY - 1).instrument_meta(inst) is None  # no snapshot known yet
 
 
 def test_a_lock_without_sources_is_an_evidence_error_not_a_type_error():

@@ -77,11 +77,13 @@ def build(instruments, klines: dict, settlements: dict, *, lo=LO, hi=END):
         contents[o[0]["content_sha256"]] = o[2]
 
     venues = sorted({d["venue"] for d in instruments})
+    market_of = {(d["venue"], d["symbol"]): d["market"] for d in instruments}
     for v in venues:
-        rows = [r for (vv, _s), rs in sorted(klines.items()) if vv == v for r in rs]
-        if rows:
-            add(_obj(f"market/kline_1m/{v}/part-00000.jsonl.zst", "market", "alphakeel.rows.market-kline-1m/1",
-                     {"schema": "alphakeel.rows.market-kline-1m/1", "table": "kline_1m", "columns": ["t", "symbol", "close_time_ms"]}, rows))
+        for m in ("perp", "spot"):  # the service writes one object per (table, venue, market)
+            rows = [r for (vv, s), rs in sorted(klines.items()) if vv == v and market_of.get((vv, s), "perp") == m for r in rs]
+            if rows:
+                add(_obj(f"market/kline_1m/{v}/{m}/part-00000.jsonl.zst", "market", "alphakeel.rows.market-kline-1m/1",
+                         {"schema": "alphakeel.rows.market-kline-1m/1", "table": "kline_1m", "columns": ["t", "symbol", "close_time_ms"]}, rows))
         if settlements.get(v):
             add(_obj(f"settlements/{v}/part-00000.jsonl.zst", "settlements", "alphakeel.rows.settlements/1",
                      {"schema": "alphakeel.rows.settlements/1", "venue": v}, settlements[v]))

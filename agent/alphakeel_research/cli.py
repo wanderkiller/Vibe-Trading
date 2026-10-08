@@ -222,9 +222,12 @@ def main(argv: list[str] | None = None) -> int:
             from .packfile import Pit
 
             src = Pit(pack, a.as_of_ms) if a.as_of_ms is not None else pack
-            if a.table == "instrument_meta":  # one spec row per contract, no window
-                meta = pack.instrument_meta(inst)
-                rows = [meta] if meta else []
+            if a.table == "instrument_meta":  # spec snapshots (t = snapshot day); with --as-of-ms only the one known then
+                if a.as_of_ms is not None:
+                    meta = src.instrument_meta(inst)
+                    rows = [meta] if meta else []
+                else:
+                    rows = pack.instrument_meta_history(inst)
             elif a.table == "klines":
                 rows = src.klines(inst, a.start_ms, a.end_ms, price_kind=a.price_kind)
             else:
