@@ -142,8 +142,11 @@ def exit_quoted(p, quoted):
 # * ``funding_rate`` = the last OFFICIAL settlement visible at ``now`` (``available_at`` -- or settlement time + the lock's
 #   assumed delay -- ``<= now``): a ``last_settled`` proxy for the venues' predicted rate a live scan would show. The IR's
 #   ``assumptions.funding_estimate`` is NOT changed (it stays ``predicted``); this is the view's approximation, stated as such;
-# * ``interval_hours`` from that settlement's ``interval_seconds`` (a perp without a known whole-hour interval is left out);
-#   ``next_funding_ms`` = settlement time + interval;
+# * ``interval_hours`` from that settlement's ``interval_seconds``; when the dataset leaves it null (Binance, OKX, Bybit,
+#   Bitget, Gate and Aster history never state it), INFERRED point-in-time from the gap between the two latest visible
+#   settlements, accepted only when it is exactly 1, 2, 4 or 8 h (``INFERABLE_INTERVALS``). A perp with neither is left
+#   out. After a venue changes a contract's interval the inference lags one settlement. ``next_funding_ms`` = settlement
+#   time + interval;
 # * ``volume_quote`` = sum of ``volume_quote`` over the 1440 one-minute bars of the 24 h ending with the last closed bar
 #   (``None`` unless all 1440 are present);
 # * ``quote_ms`` = the bar's ``close_time_ms``; a leg whose last closed bar is older than ``DATASET_MAX_BAR_AGE_MS`` is not in
@@ -163,6 +166,8 @@ DEFAULT_PERP_TAKER_FEE = "0.0005"
 SETTLEMENT_KINDS = ("regular", "special")
 SETTLEMENT_LOOKBACK_MS = 86_400_000  # longest funding interval of the nine venues is 8 h
 KLINE_SPAN_MS = 59_999
+#: settlement gaps accepted as a contract's interval when the dataset does not state it (seconds)
+INFERABLE_INTERVALS = (3600, 7200, 14400, 28800)
 _MIN_MS = 60_000
 
 
@@ -210,8 +215,20 @@ def dataset_leg(*, venue: str, market: str, symbol: str, base: str, quote_ccy: s
         "quote_ms": close_time_ms}}
 
 
-def _settlement_tuple(s) -> tuple[Decimal, int, int | None]:
-    return (s.rate, s.t, s.interval_seconds)
+def inferred_interval_seconds(prev_t: int | None, last_t: int) -> int | None:
+    """The interval implied by two consecutive visible settlements, or None unless it is one of ``INFERABLE_INTERVALS``."""
+    if prev_t is None:
+        return None
+    gap, rem = divmod(last_t - prev_t, 1000)
+    return gap if rem == 0 and gap in INFERABLE_INTERVALS else None
+
+
+def settlement_tuple(last, prev=None) -> tuple[Decimal, int, int | None]:
+    """``(rate, t, interval_seconds)`` of the last visible settlement; a null interval is inferred from ``prev``."""
+    iv = last.interval_seconds
+    if iv is None:
+        iv = inferred_interval_seconds(None if prev is None else prev.t, last.t)
+    return (last.rate, last.t, iv)
 
 
 def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict | None = None, view: str = DATASET_VIEW) -> list[dict]:
@@ -253,7 +270,7 @@ def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict | No
         st = None
         if inst.market == "perp":
             rows = [s for s in pit.settlements(inst, max(0, now_ms - SETTLEMENT_LOOKBACK_MS), now_ms + 1) if s.event_kind in SETTLEMENT_KINDS]
-            st = _settlement_tuple(rows[-1]) if rows else None
+            st = settlement_tuple(rows[-1], rows[-2] if len(rows) > 1 else None) if rows else None
         leg = dataset_leg(venue=inst.venue, market=inst.market, symbol=inst.symbol, base=base, quote_ccy=quote, close=last.close,
                           close_time_ms=last.close_time_ms, volume_quote=vol, settlement=st, taker_fee=fee)
         if leg is not None:

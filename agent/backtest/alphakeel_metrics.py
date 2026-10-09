@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import random
 import statistics
 from typing import Sequence
 
@@ -132,6 +133,35 @@ def dsr(x: Sequence[float], n_trials: int, variant_sharpes: Sequence[float] = ()
 
 def block_length(n: int) -> int:
     return max(2, math.ceil(n ** (1 / 3)))
+
+
+def stationary_bootstrap_mean_ci(x: Sequence[float], *, seed: int, resamples: int = 2000, confidence: float = 0.95,
+                                 block: int | None = None) -> dict | None:
+    """Politis–Romano stationary bootstrap of the mean daily return: each resample walks the series circularly from a
+    uniform random start, jumping to a new uniform start with probability 1/``block`` before every next draw (geometric
+    block lengths, mean ``block`` = :func:`block_length` by default). Percentile interval (nearest rank). ``random.Random(seed)``
+    makes it deterministic. None with fewer than 2 points. (``quantlib.timeseries.bootstrap_statistic`` is the i.i.d.
+    bootstrap; daily P&L of a carry book is autocorrelated, which an i.i.d. resample understates.)"""
+    n = len(x)
+    if n < 2 or resamples < 1 or not 0 < confidence < 1:
+        return None
+    blk = block or block_length(n)
+    p = 1.0 / blk
+    rng = random.Random(seed)
+    means = []
+    for _ in range(resamples):
+        i = rng.randrange(n)
+        acc = [x[i]]
+        for _k in range(n - 1):
+            i = rng.randrange(n) if rng.random() < p else (i + 1) % n
+            acc.append(x[i])
+        means.append(math.fsum(acc) / n)
+    means.sort()
+    a = (1 - confidence) / 2
+    lo = means[max(0, math.ceil(a * resamples) - 1)]
+    hi = means[min(resamples - 1, math.ceil((1 - a) * resamples) - 1)]
+    return {"method": "stationary_bootstrap/politis-romano", "statistic": "mean_daily_return", "mean": _mean(x), "ci_lower": lo,
+            "ci_upper": hi, "confidence": confidence, "resamples": resamples, "block_days": blk, "seed": seed}
 
 
 def pbo_cscv(variant_returns: Sequence[Sequence[float]], s_blocks: int) -> float | None:

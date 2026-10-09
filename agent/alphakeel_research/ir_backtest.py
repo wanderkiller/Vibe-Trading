@@ -59,9 +59,13 @@ APPROXIMATIONS = [
     "mark / funding_px = that close (no mark or index series)",
     "funding_rate = the last official settlement visible at the decision time (available_at, or settlement time + the pack's "
     "assumed delay): a last_settled proxy for the predicted rate live scans use; the IR's assumptions.funding_estimate is unchanged",
-    "interval_hours from that settlement's interval_seconds (perps without a known whole-hour interval are left out); "
+    "interval_hours from that settlement's interval_seconds; when the dataset leaves it null (Binance/OKX/Bybit/Bitget/Gate/"
+    "Aster history) it is INFERRED from the gap between the two latest visible settlements, accepted only at exactly 1, 2, 4 "
+    "or 8 h (perps with neither are left out; after an interval change the inference lags one settlement); "
     "next_funding_ms = settlement time + interval",
     "volume_quote = sum of volume_quote over the 1440 bars of the 24 h ending with the last closed bar (null unless all 1440 exist)",
+    "a funding settlement on an open leg with no 1m bar in the 5 minutes before it and no mark price in the settlement row "
+    "is NOT booked (counts.funding_unpriced); a leg that stops trading is valued at its last close (stale) and cannot exit",
     f"a leg whose last closed bar is older than {ir_views.DATASET_MAX_BAR_AGE_MS // MINUTE_MS} minutes is not in the frame",
     "base / quote_ccy from the pack's instruments table, or from the declared instrument when the dataset pack leaves them null",
 ]
@@ -97,6 +101,15 @@ def _jsonl(f, doc: dict) -> None:
 # instruments and the dataset pack
 # ---------------------------------------------------------------------------------------------------------------------
 
+_SCALE_PREFIX = __import__("re").compile(r"^(?:10{3,6}|1M)(?=[A-Z])|^k(?=[A-Z])")
+
+
+def scaled_symbol(symbol: str) -> bool:
+    """A contract whose price unit is a multiple of its coin (Binance ``1000PEPEUSDT``, ``1MBABYDOGEUSDT``, Hyperliquid
+    ``kPEPE``): the same prefixes AlphaKeel's ``screener::classify_base`` treats as scaled."""
+    return bool(_SCALE_PREFIX.match(symbol))
+
+
 def universe_instruments(ir_doc: dict, declared: list[dict]) -> list[dict]:
     """The declared instruments the IR can trade: on its venues (``universe.pairs``), of its shape's markets. Keeps any
     declared ``base``/``quote``; ``{venue, market, symbol}`` order is (venue, market, symbol)."""
@@ -112,6 +125,9 @@ def universe_instruments(ir_doc: dict, declared: list[dict]) -> list[dict]:
             raise ApiError("request.invalid", "instruments must be [{venue, market, symbol, base?, quote?}]", field="instruments")
         if d["venue"] not in IR.VENUES or d["market"] not in markets or (venues is not None and d["venue"] not in venues):
             continue
+        if scaled_symbol(d["symbol"]):
+            raise Unsupported(f"{d['venue']}:{d['symbol']} is a price-scaled contract (1000x / 1M / k prefix): the dataset view pairs "
+                              "legs by base and gives both the same quantity, it has no price-scale model -- leave it out")
         out[(d["venue"], d["market"], d["symbol"])] = {k: d[k] for k in ("venue", "market", "symbol", "base", "quote") if d.get(k) is not None}
     if not out:
         raise ApiError("data.insufficient", "none of the declared instruments is on the IR's venues and markets", field="instruments")
@@ -278,6 +294,7 @@ class DatasetCursor:
         self._vis = {i: sorted(v, key=lambda s: (s.visible_ms, s.t)) for i, v in self.settles.items()}
         self._vis_ptr = {i: 0 for i in self._vis}
         self._vis_last: dict[Inst, _Settle | None] = {i: None for i in self._vis}
+        self._vis_prev: dict[Inst, _Settle | None] = {i: None for i in self._vis}
         self.now = None
 
     def advance(self, now: int) -> None:
@@ -290,7 +307,10 @@ class DatasetCursor:
             k = self._vis_ptr[i]
             while k < len(rows) and rows[k].visible_ms <= now:
                 cur = self._vis_last[i]
-                if cur is None or rows[k].t >= cur.t:
+                if cur is None or rows[k].t > cur.t:
+                    self._vis_prev[i] = cur
+                    self._vis_last[i] = rows[k]
+                elif rows[k].t == cur.t:
                     self._vis_last[i] = rows[k]
                 k += 1
             self._vis_ptr[i] = k
@@ -312,7 +332,10 @@ class DatasetCursor:
                 s = self._vis_last[i]
                 if s is not None and s.t < now - ir_views.SETTLEMENT_LOOKBACK_MS:
                     s = None  # same lookback as the point-in-time function
-                st = None if s is None else (s.rate, s.t, s.interval_seconds)
+                prev = self._vis_prev[i]
+                if prev is not None and prev.t < now - ir_views.SETTLEMENT_LOOKBACK_MS:
+                    prev = None
+                st = None if s is None else ir_views.settlement_tuple(s, prev)
             base, quote = self.identity[i]
             leg = ir_views.dataset_leg(venue=i.venue, market=i.market, symbol=i.symbol, base=base, quote_ccy=quote, close=b.last[2],
                                        close_time_ms=b.last[1], volume_quote=b.volume(), settlement=st, taker_fee=fee)
@@ -525,9 +548,10 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
     counts = {"instants": 0, "instants_without_data": 0, "entries_decided": 0, "entries_skipped_qty0": 0, "entries_skipped_no_bbo": 0,
               "exits_decided": 0, "exits_held_no_quote": 0}
     daily: dict[str, Decimal] = {}
+    # the run starts flat with equity 0: that is the first peak (entry fees of the first trades are already a drawdown)
     peak = Decimal(0)
     dd = {"amount": Decimal(0), "peak_ms": None, "trough_ms": None}
-    peak_t = None
+    peak_t = start_ms
     last_settled_t: int | None = None
     t0 = time.monotonic()
     ftr = open(out / "trades.jsonl", "w", encoding="utf-8")
@@ -551,7 +575,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
             eq = sim.realized + unreal
             _jsonl(feq, {"t": t, "equity": _s(eq), "realized": _s(sim.realized), "unrealized": _s(unreal), "open_pairs": len(sim.open)})
             daily[utc_day(t)] = eq
-            if peak_t is None or eq > peak:
+            if eq > peak:
                 peak, peak_t = eq, t
             if peak - eq > dd["amount"]:
                 dd.update(amount=peak - eq, peak_ms=peak_t, trough_ms=t)
@@ -632,6 +656,14 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
 
     from backtest.alphakeel_metrics import alphakeel_metrics, daily_returns
 
+    # every UTC day of the window is a point: a day without any data instant carries the previous day's equity (no
+    # valuation that day), instead of silently dropping out and folding its P&L into the next day's return
+    prev_eq = Decimal(0)
+    day = start_ms - start_ms % DAY_MS
+    while day < end_ms:
+        k = utc_day(day)
+        prev_eq = daily.setdefault(k, prev_eq)
+        day += DAY_MS
     days = sorted(daily)
     series = pd.Series([float(daily[d]) for d in days], index=pd.to_datetime(days))
     rets = daily_returns(series, float(capital_base), 0.0)
@@ -664,7 +696,11 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                         "capital_base": _s(capital_base), "capital_base_source": capital_source},
         "instruments": [{**d, "base": cursor.identity[Inst(d["venue"], d["market"], d["symbol"])][0],
                          "quote": cursor.identity[Inst(d["venue"], d["market"], d["symbol"])][1]} for d in insts],
-        "data_audit": {"auditable": True, "sources": {"alphakeel_b2": {"pack_id": psum["pack_id"], "pack_sha256": psum["pack_sha256"],
+        "data_audit": {"auditable": not psum["accept_partial"], "coverage_partial": psum["accept_partial"],
+                       "coverage_note": ("the pack was frozen with accept_partial: some (instrument, table) coverage is not complete; "
+                                         "the window is the requested one, the data inside it has gaps (pack coverage report)")
+                       if psum["accept_partial"] else None,
+                       "sources": {"alphakeel_b2": {"pack_id": psum["pack_id"], "pack_sha256": psum["pack_sha256"],
                                                                        "datasets": psum["datasets"], "verified": True}},
                        "non_auditable_sources": []},
         "inputs": cursor.inputs(pack),
@@ -678,7 +714,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         "trials": trials_doc,
         "alphakeel_metrics": ak,
         "metrics": {"total_return_on_capital": _s(q8(final_eq / capital_base)), "days": len(days), "trades_closed": sim.closed,
-                    "sharpe_daily_annualised": ak.get("sharpe") if isinstance(ak, dict) else None},
+                    "sharpe_daily_annualised": ak.get("sharpe_annualised") if isinstance(ak, dict) else None},
         "research_service": research_service or {"used": False},
     }
     (out / "run_card.json").write_text(json.dumps(card, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")

@@ -2488,7 +2488,8 @@
           "settlements",
           "fx",
           "instruments",
-          "frames"
+          "frames",
+          "kline_1m"
         ],
         "type": "string"
       },

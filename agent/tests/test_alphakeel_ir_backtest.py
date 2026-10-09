@@ -501,3 +501,53 @@ def test_the_exported_document_is_accepted_by_alphakeels_rust_validator(tmp_path
         client.close()
         server.stop()
     assert v["valid"] is True and v["problems"] == [] and v["strategy_id"] == doc["strategy_id"]
+
+
+def test_a_null_settlement_interval_is_inferred_point_in_time_only_at_standard_periods():
+    """Binance/OKX/Bybit/Bitget/Gate/Aster history rows carry no interval: before the inference every such perp was
+    left out of the dataset frame and the backtest traded nothing, silently."""
+    from types import SimpleNamespace as S
+
+    from alphakeel_research import ir_views as V
+
+    h = 3_600_000
+    assert V.inferred_interval_seconds(0, 8 * h) == 28_800
+    assert V.inferred_interval_seconds(0, 4 * h) == 14_400
+    assert V.inferred_interval_seconds(0, 16 * h) is None  # a skipped settlement is not a period
+    assert V.inferred_interval_seconds(0, 3 * h) is None
+    assert V.inferred_interval_seconds(None, 8 * h) is None
+    last, prev = S(rate=Decimal("0.0001"), t=16 * h, interval_seconds=None), S(t=8 * h)
+    assert V.settlement_tuple(last, prev) == (Decimal("0.0001"), 16 * h, 28_800)
+    assert V.settlement_tuple(S(rate=Decimal(1), t=5, interval_seconds=3600), None)[2] == 3600  # a stated interval wins
+    leg = V.dataset_leg(venue="binance", market="perp", symbol="BTCUSDT", base="BTC", quote_ccy="USDT", close=Decimal(100),
+                        close_time_ms=16 * h + 59_999, volume_quote=None, settlement=V.settlement_tuple(last, prev), taker_fee="0.0005")
+    assert leg is not None and leg["view"]["interval_hours"] == 8 and leg["view"]["next_funding_ms"] == 24 * h
+
+
+def test_price_scaled_contracts_are_refused_by_the_dataset_view():
+    from alphakeel_research import ir_backtest as B
+
+    assert B.scaled_symbol("1000PEPEUSDT") and B.scaled_symbol("1MBABYDOGEUSDT") and B.scaled_symbol("kPEPE")
+    assert not any(B.scaled_symbol(s) for s in ("BTCUSDT", "1INCHUSDT", "PEPE-USDT-SWAP", "100XUSDT"))
+
+
+def test_the_crosscheck_matches_alphakeel_events_to_vt_trades_and_locates_a_difference(tmp_path):
+    from alphakeel_research import ir_crosscheck as X
+
+    inst = {"venue": "binance", "market": "perp", "symbol": "BTCUSDT"}
+    leg = lambda side, px_in, px_out, fund: {"position_ref": "", "instrument": inst, "side": side, "qty": "10", "entry_price": px_in,
+                                             "exit_price": px_out, "entry_fee": "0.5", "exit_fee": "0.5", "funding": fund}
+    t = {"trade": 1, "opened_ms": 1_000, "closed_ms": 61_000, "long": leg("long", "100", "101", "-0.1"),
+         "short": leg("short", "100", "101", "0.3")}
+    (tmp_path / "trades.jsonl").write_text(json.dumps(t) + "\n")
+    fill = lambda iid, ns, px: {"kind": "fill", "intent_id": iid, "ns": str(ns), "instrument": inst,
+                                "data": {"qty": "10", "price": px, "fee": "0.5"}}
+    ev = [fill("n1-L-open", 1_000_000_001, "100"), fill("n1-S-open", 1_000_000_001, "100"),
+          {"kind": "funding", "position_ref": "p1L", "data": {"amount": "-0.1"}},
+          {"kind": "funding", "position_ref": "p1S", "data": {"amount": "0.3"}},
+          fill("n1-L-close", 61_000_000_001, "101"), fill("n1-S-close", 61_000_000_001, "101")]
+    r = X.compare(X.vt_trades(tmp_path), X.ak_trades(ev))
+    assert (r["trades_matched"], r["differences"]) == (1, 0), r
+    ev[3]["data"]["amount"] = "0.29"
+    r = X.compare(X.vt_trades(tmp_path), X.ak_trades(ev))
+    assert r["differences"] == 1 and r["first_differences"][0]["field"] == "funding" and r["first_differences"][0]["leg"] == "S"

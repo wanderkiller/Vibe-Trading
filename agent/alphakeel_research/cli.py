@@ -21,8 +21,19 @@
                                           [--accept-partial] [--pack-dir DIR] [--verbose] --out DIR
                                           (long-history research backtest on a dataset pack: 1m klines + official
                                            settlements, synthetic touch; research evidence, NOT reconciliation input)
+    python -m alphakeel_research ir crosscheck --ir strategy.json --run DIR [--timeout-s 7200]
+                                          (the same dataset pack, window, step, fees and instruments as the `ir backtest` run
+                                           in DIR, run by AlphaKeel's engine (ir_strategy + dataset_view); trade-by-trade
+                                           comparison written to DIR/alphakeel-check.json)
     python -m alphakeel_research ir export   --ir strategy.json --run DIR [--research-credential] --out DIR
                                           (strategy.json with strategy_id + provenance for AlphaKeel's registry)
+    python -m alphakeel_research ir robustness --ir strategy.json --pack-dir DIR --instruments inst.json --is-start-ms N --is-end-ms N
+                                          [--oos-start-ms N --oos-end-ms N [--oos-pack-dir DIR]] [--fees fees.json] [--filter filter.json]
+                                          [--permutations 30] [--seed 7] [--workers 2] [--step-minutes 5] [--capital-base X]
+                                          [--prior-trials N] --out DIR
+                                          (reliability battery on an exported dataset pack: cost stress, parameter neighbours,
+                                           sub-periods, OOS, filter permutation test, honest trial count; grade A-F with the
+                                           rule table; writes DIR/robustness.json, robustness.md, trials.jsonl; no network)
 
 Credential: ALPHAKEEL_RESEARCH_TOKEN or ALPHAKEEL_RESEARCH_TOKEN_FILE; service URL: ALPHAKEEL_RESEARCH_URL.
 Every command prints one JSON document with references (ids, hashes, paths) and summaries; full events stay on disk
@@ -77,6 +88,35 @@ def _ir_research(a) -> int:
     """``ir backtest`` / ``ir export``: the service is only contacted when it is needed (freezing, credential)."""
     from decimal import Decimal
 
+    if a.ir_cmd == "robustness":
+        from . import robustness
+
+        if (a.oos_start_ms is None) != (a.oos_end_ms is None):
+            raise ApiError("request.invalid", "--oos-start-ms and --oos-end-ms go together", field="oos_window")
+        pack = Pack.from_directory(a.pack_dir)
+        oos = None if a.oos_start_ms is None else (a.oos_start_ms, a.oos_end_ms)
+        doc = robustness.battery(_load(a.ir), pack, _load(a.instruments), is_window=(a.is_start_ms, a.is_end_ms), oos_window=oos,
+                                 oos_pack=Pack.from_directory(a.oos_pack_dir) if a.oos_pack_dir else None, out_dir=a.out,
+                                 fees=_load(a.fees), filter_spec=_load(a.filter), permutations=a.permutations, seed=a.seed,
+                                 step_minutes=a.step_minutes, capital_base=Decimal(a.capital_base) if a.capital_base else None,
+                                 workers=a.workers, prior_trials=a.prior_trials)
+        r = doc["rating"]
+        _out({"strategy_id": doc["strategy_id"], "grade": r["grade"], "score": r["score"], "caps": [c["id"] for c in r["caps"]],
+              "reasons": r["reasons"], "trials": doc["trials"]["count"], "runs": len(doc["runs"]),
+              "report": str(Path(a.out) / "robustness.md"), "json": str(Path(a.out) / "robustness.json"),
+              "note": "research evidence on the synthetic-touch dataset view; not an approval"})
+        return 0
+    if a.ir_cmd == "crosscheck":
+        from . import ir_crosscheck
+
+        c = Client(a.url)
+        try:
+            c.check()
+            doc = ir_crosscheck.alphakeel_check(c, _load(a.ir), a.run, timeout=a.timeout_s)
+        finally:
+            c.close()
+        _out({k: doc.get(k) for k in ("passed", "alphakeel_run_id", "alphakeel_status", "comparison", "totals", "error")})
+        return 0 if doc.get("passed") else 1
     if a.ir_cmd == "backtest":
         c = None if a.pack_dir else Client(a.url)
         try:
@@ -186,6 +226,28 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--pack-dir", help="an exported dataset pack directory instead of freezing one through the service")
     q.add_argument("--verbose", action="store_true", help="write every rejected pair into decisions.jsonl")
     q.add_argument("--out", required=True)
+    q = irs.add_parser("robustness", help="reliability battery + confidence grade on an exported dataset pack (no network)")
+    q.add_argument("--ir", required=True)
+    q.add_argument("--pack-dir", required=True, help="exported dataset pack directory (lock.json + content/)")
+    q.add_argument("--instruments", required=True, help="JSON list of {venue, market, symbol, base?, quote?}")
+    q.add_argument("--is-start-ms", type=int, required=True)
+    q.add_argument("--is-end-ms", type=int, required=True)
+    q.add_argument("--oos-start-ms", type=int)
+    q.add_argument("--oos-end-ms", type=int)
+    q.add_argument("--oos-pack-dir", help="exported pack for the OOS window (default: --pack-dir)")
+    q.add_argument("--fees", help="JSON {venue: {perp: rate, spot: rate}} (default: 0.0005 perp taker on every venue)")
+    q.add_argument("--filter", help='JSON {"kind": "excluded_bases", "bases": ["XYZ", ...]}: the filter under test')
+    q.add_argument("--permutations", type=int, default=30)
+    q.add_argument("--seed", type=int, default=7)
+    q.add_argument("--workers", type=int, default=2)
+    q.add_argument("--step-minutes", type=int, default=5)
+    q.add_argument("--capital-base", help="capital base shared by every variant (default notional_per_leg x 2 x max_open of the IR)")
+    q.add_argument("--prior-trials", type=int, default=0, help="variants tried BEFORE this battery (self-declared; added to the DSR count)")
+    q.add_argument("--out", required=True)
+    q = irs.add_parser("crosscheck", help="the same dataset backtest run by AlphaKeel's engine, compared trade by trade")
+    q.add_argument("--ir", required=True)
+    q.add_argument("--run", required=True, help="the `ir backtest` output directory")
+    q.add_argument("--timeout-s", type=float, default=7200.0)
     q = irs.add_parser("export")
     q.add_argument("--ir", required=True)
     q.add_argument("--run", required=True, help="the `ir backtest` output directory")
@@ -193,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     try:
-        if a.cmd == "ir" and a.ir_cmd in ("backtest", "export"):
+        if a.cmd == "ir" and a.ir_cmd in ("backtest", "export", "robustness", "crosscheck"):
             return _ir_research(a)
         c = Client(a.url)
         work = Path(a.work) if a.work else Path(tempfile.mkdtemp(prefix="ak-research-"))

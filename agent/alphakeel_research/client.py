@@ -112,6 +112,10 @@ class Client:
         ``contract.pin_mismatch`` — the models this client validates with would not be the service's.
         """
         who = self.whoami()
+        if who.get("review"):
+            # AlphaKeel's own out-of-sample review credential reads exactly the data research must never see.
+            raise ApiError("auth.scope", "this is an AlphaKeel review credential (token create --review): it is for AlphaKeel's "
+                           "own out-of-sample checks; a research client must use a research credential with a hold-out")
         cap = self.capabilities()
         major = cap.get("schemas", {}).get("supported_major")
         if major != contract.MAJOR:

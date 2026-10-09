@@ -430,6 +430,7 @@ class InputAccessTable(StrEnum):
     fx = "fx"
     instruments = "instruments"
     frames = "frames"
+    kline_1m = "kline_1m"
 
 
 class IntentsSchema(StrEnum):

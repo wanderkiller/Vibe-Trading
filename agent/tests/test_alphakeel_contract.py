@@ -134,3 +134,18 @@ def test_strict_validation_does_not_coerce_types():
     assert any(v.code == "schema.type" for v in C.validate_def("intent", bad))
     bad = dict(base, reduce_only="false")
     assert any(v.code == "schema.type" for v in C.validate_def("intent", bad))
+
+
+def test_check_refuses_alphakeel_review_credential():
+    """A review credential (AlphaKeel ``token create --review``) reads the out-of-sample window research must never
+    see: the research client refuses it before anything else."""
+    import pytest
+
+    from alphakeel_research.client import Client
+    from alphakeel_research.errors import ApiError
+
+    c = Client.__new__(Client)
+    c.whoami = lambda: {"credential": "tok-r", "scopes": ["data"], "review": True, "contract_pin": C.local_pin()}
+    c.capabilities = lambda: {"schemas": {"supported_major": C.MAJOR}}
+    with pytest.raises(ApiError, match="review credential"):
+        c.check()

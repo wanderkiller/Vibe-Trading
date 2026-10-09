@@ -101,7 +101,7 @@ The `langchain-core==1.6.1` anchor fails when upstream moves that pin; then the 
 
 **Purpose.** Everything AlphaKeel-specific that lives in new files: the `alphakeel_research` package (contract pin and
 vectors, research-service client and CLI, dataset packs and pack reader, simulator, policy sandbox host, hand-off
-writer, Strategy IR mirror and the long-history IR backtest), the `alphakeel_pack` and `alphakeel_b2` loaders, the
+writer, Strategy IR mirror, the long-history IR backtest and its robustness battery), the `alphakeel_pack` and `alphakeel_b2` loaders, the
 AlphaKeel-convention statistics (`backtest/alphakeel_metrics.py`), the `alphakeel_research` agent tool, and their
 tests and fixtures. It only *uses* upstream code through the anchors below; the edits to upstream files that make it
 reachable are the next groups.
@@ -125,6 +125,7 @@ reachable are the next groups.
 - `agent/tests/test_alphakeel_policy_host.py`
 - `agent/tests/test_alphakeel_protocol.py`
 - `agent/tests/test_alphakeel_registration.py`
+- `agent/tests/test_alphakeel_robustness.py`
 - `agent/tests/test_alphakeel_sim_funding_gaps.py`
 
 **Commits.** `e0245ca9` `220330b0` `83ea7c2a` `5370ab12` `e0141135` `b703f994` `22e33c58` `83af5312` `41f8c94b`
