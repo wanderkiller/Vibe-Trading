@@ -50,7 +50,7 @@ Caps -- each triggered cap is a ceiling on the grade:
   few_trades                   fewer than 30 closed trades in the base run                          C
   short_window                 fewer than 60 days in the base IS window                             C
   funding_unpriced             more than 1% of funding settlements on open legs could not be priced C
-  filter_not_better_than_random a filter is under test and its permutation p-value > 0.10            C
+  filter_not_better_than_random the graded IR contains the filter and its permutation p-value > 0.10 C
   synthetic_view               the data view is the synthetic-touch dataset view                    B
   ===========================  ===================================================================  =====
 
@@ -66,7 +66,7 @@ demonstrated"):
   bootstrap_ci            stationary-bootstrap 95% CI lower bound of mean daily > 0    always
   segments                >= 75% of the k equal sub-periods have positive net          always
   parameter_neighbours    >= 75% of parameter neighbours have positive net             the IR has parameters
-  filter_permutation      filter permutation p-value <= 0.05                           a filter is under test
+  filter_permutation      filter permutation p-value <= 0.05                           the graded IR contains the filter
   concentration           top coin's share of closed-trade net <= 50%                  always
   oos_degradation         OOS net per day >= 50% of IS net per day                     an OOS window was run
   ======================  ===========================================================  ===========================
@@ -121,7 +121,7 @@ RULES = {
         {"id": "few_trades", "condition": "fewer than 30 closed trades in the base run", "max_grade": "C"},
         {"id": "short_window", "condition": "fewer than 60 days in the base IS window", "max_grade": "C"},
         {"id": "funding_unpriced", "condition": "more than 1% of funding settlements on open legs could not be priced", "max_grade": "C"},
-        {"id": "filter_not_better_than_random", "condition": "a filter is under test and its permutation p-value > 0.10", "max_grade": "C"},
+        {"id": "filter_not_better_than_random", "condition": "the graded IR contains the filter under test and its permutation p-value > 0.10", "max_grade": "C"},
         {"id": "synthetic_view", "condition": "the data view is the synthetic-touch dataset view", "max_grade": "B"},
     ],
     "components": [
@@ -131,7 +131,7 @@ RULES = {
         {"id": "bootstrap_ci", "pass_when": "stationary-bootstrap 95% CI lower bound of the mean daily return > 0", "applicable": "always"},
         {"id": "segments", "pass_when": ">= 75% of the k equal sub-periods have positive net", "applicable": "always"},
         {"id": "parameter_neighbours", "pass_when": ">= 75% of parameter neighbours have positive net", "applicable": "the IR has parameters"},
-        {"id": "filter_permutation", "pass_when": "filter permutation p-value <= 0.05", "applicable": "a filter is under test"},
+        {"id": "filter_permutation", "pass_when": "filter permutation p-value <= 0.05", "applicable": "the graded IR contains the filter under test"},
         {"id": "concentration", "pass_when": "top coin's share of closed-trade net <= 50%", "applicable": "always"},
         {"id": "oos_degradation", "pass_when": "OOS net per day >= 50% of IS net per day", "applicable": "an OOS window was run"},
     ],
@@ -736,7 +736,11 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         "base_net": _s(b_net), "oos_net": oos_doc["net"] if oos_doc else None, "cost_x2_net": cost_doc["2"]["net"],
         "coverage_partial": any(bool(c["data_audit"].get("coverage_partial", c["pack"].get("accept_partial"))) for c in all_cards),
         "trades_closed": counts["closed"], "days": len(b_days), "funding_unpriced_fraction": fu_frac,
-        "filter_tested": bases_f is not None, "filter_p": (filt or {}).get("permutation", {}).get("p_value") if filt else None,
+        # the filter counts toward the grade only when it is PART of the graded IR (its bases are in excluded_bases);
+        # a candidate filter tested against an IR without it is decision support, not evidence about that IR
+        "filter_tested": bases_f is not None and set(bases_f) <= set(base_doc["universe"]["excluded_bases"]),
+        "filter_candidate_only": bases_f is not None and not set(bases_f) <= set(base_doc["universe"]["excluded_bases"]),
+        "filter_p": (filt or {}).get("permutation", {}).get("p_value") if filt else None,
         "synthetic_view": base_card["view"] == ir_views.DATASET_VIEW, "dsr": ak["dsr"], "psr": ak["psr_vs_zero"], "pbo": pbo,
         "bootstrap_lower": None if boot is None else boot["ci_lower"], "segments_positive_fraction": seg_frac,
         "has_parameters": bool(base_doc["parameters"]), "neighbours_positive_fraction": params_doc["positive_fraction"],
