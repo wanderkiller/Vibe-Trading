@@ -29,6 +29,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `local-deploy` | none (new files only; derived from `Dockerfile`) | local-only |
 | `leaf-package` | none (new files only) | local-only |
 | `loader-registry-hooks` | registry, loader_health, metrics tables | local-only (follows the leaf package) |
+| `alpha-bench-universe` | alpha_bench_tool, factors/cli_handlers | local-only (follows the leaf package) |
 | `crypto-funding` | engines/_market_hooks, crypto, composite; ccxt_loader | upstreamable as a bug-fix PR (see below) |
 | `metrics-conventions` | metrics, validation | partly upstreamed already; rest upstreamable |
 | `run-card-data-audit` | run_card | local-only as written; a generic provenance hook is upstreamable |
@@ -101,7 +102,8 @@ The `langchain-core==1.6.1` anchor fails when upstream moves that pin; then the 
 
 **Purpose.** Everything AlphaKeel-specific that lives in new files: the `alphakeel_research` package (contract pin and
 vectors, research-service client and CLI, dataset packs and pack reader, simulator, policy sandbox host, hand-off
-writer, Strategy IR mirror, the long-history IR backtest and its robustness battery), the `alphakeel_pack` and `alphakeel_b2` loaders, the
+writer, Strategy IR mirror, the long-history IR backtest and its robustness battery), the `alphakeel:<spec>` alpha-bench universe
+(`src/factors/alphakeel_universe.py`), the `alphakeel_pack` and `alphakeel_b2` loaders, the
 AlphaKeel-convention statistics (`backtest/alphakeel_metrics.py`), the `alphakeel_research` agent tool, and their
 tests and fixtures. It only *uses* upstream code through the anchors below; the edits to upstream files that make it
 reachable are the next groups.
@@ -112,6 +114,7 @@ reachable are the next groups.
 - `agent/backtest/loaders/alphakeel_b2_loader.py`
 - `agent/backtest/alphakeel_metrics.py`
 - `agent/src/tools/alphakeel_research_tool.py`
+- `agent/src/factors/alphakeel_universe.py`
 - `agent/tests/fixtures/alphakeel/`
 - `agent/tests/fixtures/alphakeel_server.py`
 - `agent/tests/test_alphakeel_b2_loader.py`
@@ -127,6 +130,7 @@ reachable are the next groups.
 - `agent/tests/test_alphakeel_registration.py`
 - `agent/tests/test_alphakeel_robustness.py`
 - `agent/tests/test_alphakeel_sim_funding_gaps.py`
+- `agent/tests/test_alphakeel_universe.py`
 
 **Commits.** `e0245ca9` `220330b0` `83ea7c2a` `5370ab12` `e0141135` `b703f994` `22e33c58` `83af5312` `41f8c94b`
 (alphakeel_metrics) `9257a920` `a379d8d2` `a232931b` `1e17c469` `bc7d3464` `0d9afe7d` `dbcea0e6` (T9b contract re-export:
@@ -188,6 +192,41 @@ declares `requires_auth = True`, and `coverage_errors()` only maps public source
 - upstream `agent/backtest/metrics.py`: `"nobitex": 365, "wallex": 365,`
 - hook `agent/backtest/metrics.py`: `"alphakeel_pack": 365, "alphakeel_b2": 365,`
 - hook `agent/backtest/metrics.py`: `"nobitex": 1440, "wallex": 1440, "alphakeel_pack": 1440, "alphakeel_b2": 1440,`
+
+## `alpha-bench-universe` — `alphakeel:<spec>` universe in the alpha bench
+
+**Purpose.** Lets the alpha zoo run on a crypto perpetual cross-section (audit 2026-10-09, U1): a universe
+`alphakeel:<universe.json | inline JSON>` whose panel `src/factors/alphakeel_universe.py` (leaf package) builds from a
+frozen AlphaKeel dataset pack (`kline_1m` trade bars → complete UTC 1h/4h/1d OHLCV + quote amount + vwap per base,
+official funding settlements by visibility time), with the bases filter of the Strategy IR (`universe.bases` /
+`excluded_bases`, optionally read from the IR itself). Three small edits make it reachable: `_load_universe_panel`
+dispatches `alphakeel:` before its universe check and its pickle cache (every bench path goes through it: the
+`alpha_bench` tool, `vibe-trading alpha bench|compare`, the strict and compare runners, MCP); the CLI's
+`_UNIVERSE_CHOICES` is a `UniverseChoices` list that also accepts `alphakeel:<spec>`; the tool's `universe` parameter
+description names it so the agent can pick it. The REST routes (`src/api/alpha_routes.py`, `_BENCH_UNIVERSES`) are
+deliberately unchanged: a file path in a web request is not offered.
+
+**Files.**
+- `agent/src/tools/alpha_bench_tool.py`
+- `agent/src/factors/cli_handlers.py`
+
+**Commits.** `445c7889` (module, hooks, tests), plus the README section that follows it.
+
+**Upstreamable.** No; it follows the leaf package. (A generic "universe provider" hook in `_load_universe_panel` would be.)
+
+**Anchors.** On upgrade re-read `_load_universe_panel` and `_compute_forward_returns`: the panel's point-in-time rule
+(a row holds what is visible at its bar close; the forward return is the next close over this one) assumes both.
+- upstream `agent/src/tools/alpha_bench_tool.py`: `def _load_universe_panel(\n    universe: str, period: str, *, use_cache: bool = True\n) -> dict[str, pd.DataFrame]:` — every bench path (tool, CLI, strict and compare runners, MCP) loads its panel here
+- upstream `agent/src/tools/alpha_bench_tool.py`: `def _parse_period(period: str) -> tuple[str, str]:`
+- upstream `agent/src/tools/alpha_bench_tool.py`: `    if universe not in _UNIVERSE_TAG:` — the alphakeel dispatch sits right before this check (and before the pickle cache)
+- upstream `agent/src/tools/alpha_bench_tool.py`: `fwd = close.pct_change(fill_method=None).shift(-1)` — forward return = next bar's close over this close: the panel's point-in-time rule (row = values visible at the bar close) relies on it
+- hook `agent/src/tools/alpha_bench_tool.py`: `if isinstance(universe, str) and universe.startswith("alphakeel:"):  # AlphaKeel patch layer`
+- hook `agent/src/tools/alpha_bench_tool.py`: `"alphakeel:<universe.json or inline JSON> (crypto cross-section from an AlphaKeel dataset pack; "`
+- preimage `agent/src/tools/alpha_bench_tool.py`: `"description": "csi300 | sp500 | btc-usdt (resolved via existing data tools).",`
+- upstream `agent/src/factors/cli_handlers.py`: `        choices=_UNIVERSE_CHOICES,` — argparse checks `value in choices`; UniverseChoices.__contains__ also accepts alphakeel:<spec>
+- hook `agent/src/factors/cli_handlers.py`: `_UNIVERSE_CHOICES = UniverseChoices(["csi300", "sp500", "btc-usdt"])`
+- hook `agent/src/factors/cli_handlers.py`: `from src.factors.alphakeel_universe import UniverseChoices  # AlphaKeel patch layer`
+- preimage `agent/src/factors/cli_handlers.py`: `_UNIVERSE_CHOICES = ["csi300", "sp500", "btc-usdt"]`
 
 ## `crypto-funding` — crypto engine funding, fee and valuation semantics
 
