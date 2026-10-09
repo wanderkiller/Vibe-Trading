@@ -104,12 +104,13 @@ same vectors as the Rust crate.
 - `ir_policy/strategy.py`: a generic `PolicyHost` script. Parameters `{"ir": <document>, "qty_dp": 8}`; entries become two
   `limit_ioc` orders (long buys at its ask, short sells at its bid, `notional_per_leg / long.ask` rounded half-even to 8
   places, same qty on both legs, README §5a); exits become reduce-only orders for the engine's real positions of that
-  pair, at THIS frame's touch, and only while both legs have a tradable quote in this frame (no quote row or `bbo = false`
-  on either leg: the pair is held, `max_hold`/`max_loss`/`take_profit` included, until a frame quotes both; an older
-  quote is never used). Intents are named as
+  pair (for the entry's IR quantity), at THIS frame's touch, and only while both legs have a tradable quote in this frame
+  (README §5a: a quote row with `bbo = true`, sane numbers, and a quote time -- `quote_ts`, else the venue's fetch time --
+  within the pack's `engine.max_quote_age_ms`; otherwise the pair is held, `max_hold`/`max_loss`/`take_profit` included,
+  until a frame quotes both; an older quote is never used). Intents are named as
   AlphaKeel's Rust `ir_strategy` run names them (README §5a): `n<trade>-<L|S>-<open|close>`, `position_ref p<trade><L|S>`,
-  `pair_id pair-<trade>`, `trade` counting from 1 only the entries actually submitted (an entry with a `bbo = false` leg
-  is not submitted and takes no number). State (`positions`, `cooldowns`, `next_trade`) is reconciled with
+  `pair_id pair-<trade>`, `trade` counting from 1 only the entries actually submitted (an entry with a `bbo = false` or
+  invalid-quote leg, or a zero quantity, is not submitted and takes no number). State (`positions`, `cooldowns`, `next_trade`) is reconciled with
   `ctx["positions"]` every step. A pair's `net_now` is the sum of its legs' `ctx["positions"][].net_now` (the engine's
   per-leg close-now net; `null` if either leg's is), so `exit.max_loss` / `exit.take_profit` fire on the engine's state.
   The local simulator gives the same per-leg `net_now` (same formula, null rule and decimal text) as the service's session.
@@ -128,7 +129,9 @@ python -m alphakeel_research ir review   --pack PACK_ID --ir strategy.json [--se
 with `ir.*` codes; exit 2 when invalid). `ir review` (also `workflow.ir_review(...)`, which returns the same dict) runs
 the IR (a) in Python: `ir_policy` under the local simulator with the execution profile the service renders for
 `ir_strategy`, evidence in `DIR`; (b) in AlphaKeel's Rust evaluator: a `mode: "ir_strategy"` run on the same pack;
-(c) registers (a) as an external `ir_strategy` run and asks for the layered comparison. It prints the layer table,
+(c) registers (a) as an external `ir_strategy` run and asks for the layered comparison. A non-null `sizing.leverage` is
+passed as the profile's `leverage_perp` (both sides use it; a contradicting `--profile` value is refused), and when the
+engine's quantity precision cap (README §5a) binds, the local run is repeated with the engine's per-trade quantity. It prints the layer table,
 `first_difference`, `pass_scope` and both sides' opened/closed/realized, writes `DIR/reconciliation.json` (run, comparison
 and pack ids, pack digest, `strategy_id`, `strategy_sha256`, layers, `first_difference`) and ends with the fixed line
 "Decision (paper or not) is yours; this report does not approve anything." It gives no verdict of its own.
@@ -168,7 +171,9 @@ approximations, written into every run card:
 Execution is a small separate Decimal simulator (`ir_backtest.Sim`; `sim.Simulator` is bound to scan packs and the engine
 profile): complete fills at the touch, `q8(qty × price × taker_fee)` per fill, funding at each official settlement time on
 open positions `q8(qty × mark × rate)` paid by longs / received by shorts (mark = the last close at that time), equity =
-realized + open pairs valued close-now. **No margin, leverage or liquidation model**, no slippage beyond the synthetic touch,
+realized + open pairs valued close-now; after the run every trade's fills, fees and funding are redone at the quantity
+AlphaKeel's engine executes (README §5a precision cap; `ir_qty` on the trade record when it differs, usually never).
+**No margin, leverage or liquidation model**, no slippage beyond the synthetic touch,
 USDT legs only. Output in `RUN`: `run_card.json` (`vibe-trading.ir-backtest-run-card/1`: strategy id, pack id/digest/dataset
 versions, window, step, view + approximations, simulator conventions, fee and capital-base assumptions, `data_audit`
 (`alphakeel_b2`, auditable), counts, realized/funding/fees, max drawdown, `alphakeel_metrics` on UTC-daily returns over the

@@ -74,7 +74,9 @@ SIM_CONVENTIONS = {
     "fee": "q8(qty * price * taker_fee) per fill, taker_fee from the view's fee table",
     "funding": "at each official settlement time t on open positions of that contract: q8(qty * mark * rate), paid by longs and "
                "received by shorts for a positive rate; mark = close of the last 1m bar closed at or before t (else the settlement's mark)",
-    "rounding": "q8 = half-even to 1e-8; quantity half-even to 8 places (README §5a)",
+    "rounding": "q8 = half-even to 1e-8; quantity half-even to 8 places (README §5a); the trade's executed quantity is that "
+                "quantity truncated toward zero to the decimals AlphaKeel's engine can hold exactly (README §5a engine precision: a "
+                "contract's largest position x 10^dp <= 2^43); decisions and the equity series before the last point use the IR quantity",
     "equity": "realized + open pairs valued close-now (README §5a net_now formula at the touch; a leg without a quote at its last close)",
     "not_modelled": ["margin", "leverage", "liquidation", "partial fills", "latency", "slippage beyond the synthetic touch",
                      "FX (USDT legs only)", "funding on spot legs"],
@@ -378,6 +380,10 @@ class Leg:
     funding: Decimal = Decimal(0)
     exit_px: Decimal | None = None
     exit_fee: Decimal = Decimal(0)
+    #: every funding booking ``(mark, signed rate)`` so the amounts can be redone at the engine's quantity
+    settles: list = field(default_factory=list)
+    #: the IR's quantity (README §5a, 8 places) when the engine executes a different one (precision cap), else None
+    ir_qty: Decimal | None = None
 
     def price_pnl(self, px: Decimal) -> Decimal:
         return self.qty * ((px - self.entry_px) if self.long else (self.entry_px - px))
@@ -409,6 +415,7 @@ class Trade:
     def record(self) -> dict:
         def leg(x: Leg) -> dict:
             return {"position_ref": x.ref, "instrument": x.inst.ref(), "side": "long" if x.long else "short", "qty": _s(x.qty),
+                    **({"ir_qty": _s(x.ir_qty)} if x.ir_qty is not None else {}),
                     "entry_price": _s(x.entry_px), "exit_price": None if x.exit_px is None else _s(x.exit_px), "entry_fee": _s(x.entry_fee),
                     "exit_fee": _s(x.exit_fee), "funding": _s(x.funding),
                     "price_pnl": None if x.exit_px is None else _s(x.price_pnl(x.exit_px))}
@@ -431,6 +438,8 @@ class Sim:
         self.funding_unpriced = 0
         self.opened = 0
         self.closed = 0
+        self.closed_trades: list[Trade] = []
+        self.qty_adjusted = 0
 
     def open_pair(self, n: int, pair: dict, qty: Decimal, t: int, features: dict | None = None) -> Trade:
         legs = []
@@ -457,6 +466,7 @@ class Sim:
         tr.closed_ms, tr.reason = t, reason
         self.realized += tr.realized()
         self.closed += 1
+        self.closed_trades.append(tr)
         return tr
 
     def settle(self, inst: Inst, rate: Decimal, mark: Decimal | None) -> None:
@@ -467,10 +477,39 @@ class Sim:
                 if mark is None:
                     self.funding_unpriced += 1
                     continue
-                amount = q8(leg.qty * mark * rate * (Decimal(-1) if leg.long else Decimal(1)))
+                signed = rate * (Decimal(-1) if leg.long else Decimal(1))
+                amount = q8(leg.qty * mark * signed)
+                leg.settles.append((mark, signed))
                 leg.funding += amount
                 self.funding += amount
                 self.funding_events += 1
+
+    def apply_engine_qty(self) -> None:
+        """README §5a (engine quantity precision): AlphaKeel's engine executes each trade with its quantity truncated toward
+        zero to the decimals its contracts can hold exactly (``sim.engine_trade_dps`` over the WHOLE run: a contract's cap
+        depends on its largest position). Decisions used the IR quantity (as AlphaKeel's decision ledger does); the trades'
+        fills, fees, funding and the totals are redone at the executed quantity. Usually a no-op (the cap binds only for
+        hundreds of thousands of a coin at 8 places)."""
+        from .sim import engine_trade_dps, order_quantity
+
+        trades = self.closed_trades + sorted(self.open.values(), key=lambda x: x.trade)
+        dps = engine_trade_dps([(tr.trade, [(leg.inst, leg.qty) for leg in tr.legs()]) for tr in trades])
+        for tr in trades:
+            for leg in tr.legs():
+                q = order_quantity(leg.qty, dps[tr.trade])
+                if q == leg.qty:
+                    continue
+                self.qty_adjusted += 1
+                leg.ir_qty, leg.qty = leg.qty, q
+                leg.entry_fee = q8(q * leg.entry_px * leg.fee_rate)
+                if leg.exit_px is not None:
+                    leg.exit_fee = q8(q * leg.exit_px * leg.fee_rate)
+                leg.funding = sum((q8(q * mk * r) for mk, r in leg.settles), Decimal(0))
+        closed = [tr for tr in trades if tr.closed_ms is not None]
+        self.fees = sum((leg.entry_fee + leg.exit_fee for tr in trades for leg in tr.legs()), Decimal(0))
+        self.funding = sum((leg.funding for tr in trades for leg in tr.legs()), Decimal(0))
+        self.realized = sum((tr.realized() for tr in closed), Decimal(0))
+        self.price_pnl = sum((leg.price_pnl(leg.exit_px) for tr in closed for leg in tr.legs()), Decimal(0))
 
     def pair_net_now(self, tr: Trade, touch: dict, quoted: set) -> Decimal | None:
         total = Decimal(0)
@@ -615,14 +654,14 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                     continue
                 done = sim.close_pair(x["position_id"], touch, t, x["reason"])
                 closed_pending.append(done)
-                _jsonl(ftr, done.record())
                 rec["exits"].append({"position_id": x["position_id"], "reason": x["reason"], "intents": [f"n{done.trade}-L-close", f"n{done.trade}-S-close"]})
             by_id = {p["id"]: p for p in pairs}
+            valid = {ir_views.key_of(x) for x in legs if ir_views.valid(x)}
             counts["entries_decided"] += len(decision["entries"])
             for e in decision["entries"]:
                 pair = by_id[e["pair_id"]]
-                if not (pair["long"]["bbo"] and pair["short"]["bbo"]):
-                    counts["entries_skipped_no_bbo"] += 1
+                if not all((pair[leg]["venue"], pair[leg]["market"], pair[leg]["symbol"]) in valid for leg in ("long", "short")):
+                    counts["entries_skipped_no_bbo"] += 1  # README §5a: no real top of book or an invalid quote; no trade number
                     continue
                 qty = ir_views.entry_qty(e["notional_per_leg"], pair["long"]["ask"])
                 if qty <= 0:
@@ -641,8 +680,10 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         settle_until(end_ms - 1)
         cursor.advance(end_ms - 1)
         final_touch = ir_views.touch(cursor.legs())
+        # the engine's executed quantities (known only once every trade of the run is): fills, fees, funding, totals
+        sim.apply_engine_qty()
         final_eq = equity_point(end_ms - 1, final_touch)
-        for tr in sorted(sim.open.values(), key=lambda x: x.trade):
+        for tr in sim.closed_trades + sorted(sim.open.values(), key=lambda x: x.trade):
             _jsonl(ftr, tr.record())
     finally:
         ftr.close()
@@ -705,7 +746,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                        "non_auditable_sources": []},
         "inputs": cursor.inputs(pack),
         "counts": {**counts, "opened": sim.opened, "closed": sim.closed, "open_at_end": len(sim.open), "funding_events": sim.funding_events,
-                   "funding_unpriced": sim.funding_unpriced},
+                   "funding_unpriced": sim.funding_unpriced, "legs_engine_qty_adjusted": sim.qty_adjusted},
         "amounts": {"realized": _s(sim.realized), "price_pnl_closed": _s(sim.price_pnl), "funding": _s(sim.funding), "fees": _s(sim.fees),
                     "equity_end": _s(final_eq), "unrealized_end": _s(final_eq - sim.realized), "ccy": "USDT"},
         "max_drawdown": {"amount": _s(dd["amount"]), "peak_ms": dd["peak_ms"], "trough_ms": dd["trough_ms"],

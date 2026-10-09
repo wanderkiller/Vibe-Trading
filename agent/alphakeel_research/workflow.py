@@ -11,10 +11,10 @@ from typing import Any
 
 from . import canon, evidence
 from .client import Client, key_for
-from .errors import ApiError
+from .errors import ApiError, Unsupported
 from .packfile import Inst, Pack
 from .policy import PolicyHost, StepJournal, response_doc
-from .sim import Simulator, dp_of
+from .sim import Simulator, dp_of, engine_trade_dps, order_quantity
 
 DEFAULT_CACHE = Path(os.environ.get("ALPHAKEEL_RESEARCH_CACHE", Path.home() / ".vibe-trading" / "alphakeel" / "packs"))
 
@@ -107,10 +107,46 @@ def native_run(client: Client, pack: Pack, rules: dict, *, profile: dict | None 
 # ---------------------------------------------------------------------------------------------------------------------
 
 def run_policy_local(pack: Pack, profile: dict, strategy_dir: str | Path, strategy_manifest: dict, instruments: list[dict], *, run_id: str,
-                     pack_dir: str | Path, call_timeout: float = 30.0) -> tuple[Any, list[dict], dict]:
-    """The policy against the LOCAL simulator's state (same context contract as the remote session)."""
+                     pack_dir: str | Path, call_timeout: float = 30.0, engine_qty_cap: bool = False) -> tuple[Any, list[dict], dict]:
+    """The policy against the LOCAL simulator's state (same context contract as the remote session).
+
+    ``engine_qty_cap`` (Strategy IR runs): AlphaKeel replays an ``ir_strategy`` run's decisions with every trade's quantity
+    truncated to the decimals its contracts can hold exactly, a cap set by each contract's LARGEST position over the whole
+    run (README §5a, ``sim.engine_trade_dps``). The first pass learns the opening quantities; when the cap binds anywhere
+    the run is repeated with those per-trade decimals (the decisions must come out the same, else it is refused).
+    """
+    res, steps, sandbox = _policy_local_once(pack, profile, strategy_dir, strategy_manifest, instruments, run_id=run_id,
+                                             pack_dir=pack_dir, call_timeout=call_timeout, trade_qty_dp=None)
+    if not engine_qty_cap:
+        return res, steps, sandbox
+    dps = _capped_trades(steps)
+    if not dps:
+        return res, steps, sandbox
+    res2, steps2, sandbox2 = _policy_local_once(pack, profile, strategy_dir, strategy_manifest, instruments, run_id=run_id,
+                                                pack_dir=pack_dir, call_timeout=call_timeout, trade_qty_dp=dps)
+    if _opening(steps2) != _opening(steps):
+        raise Unsupported("the engine's quantity precision cap changed the policy's own decisions; not modelled")
+    return res2, steps2, sandbox2
+
+
+def _opening(steps: list[dict]) -> list[tuple]:
+    return [(i["pair_id"], i["instrument"]["venue"], i["instrument"]["market"], i["instrument"]["symbol"], i["qty"])
+            for st in steps for i in st["response"]["intents"] if not i.get("reduce_only")]
+
+
+def _capped_trades(steps: list[dict]) -> dict[str, int]:
+    """``pair_id -> decimals`` of the trades whose IR quantity the engine truncates (README §5a precision cap)."""
+    trades: dict[str, list] = {}
+    for pid, venue, market, symbol, qty in _opening(steps):
+        trades.setdefault(pid, []).append((Inst(venue, market, symbol), Decimal(qty)))
+    dps = engine_trade_dps(list(trades.items()))
+    return {pid: dp for pid, dp in dps.items() if any(order_quantity(q, dp) != q for _, q in trades[pid])}
+
+
+def _policy_local_once(pack: Pack, profile: dict, strategy_dir: str | Path, strategy_manifest: dict, instruments: list[dict], *,
+                       run_id: str, pack_dir: str | Path, call_timeout: float, trade_qty_dp: dict[str, int] | None) -> tuple[Any, list[dict], dict]:
     insts = [Inst.parse(i) for i in instruments]
-    sim = Simulator(pack, profile, insts, run_id=run_id)
+    sim = Simulator(pack, profile, insts, run_id=run_id, trade_qty_dp=trade_qty_dp)
     steps: list[dict] = []
     states: list[str | None] = []
     host = PolicyHost(Path(strategy_dir) / strategy_manifest["entry"]["script"], pack_dir=pack_dir, call_timeout=call_timeout)
@@ -280,6 +316,21 @@ def _side_summary(result: dict) -> dict:
             "positions_open_at_end": still, "intents": c.get("intents"), "fills": c.get("fills"), "realized": a.get("realized")}
 
 
+def ir_profile(ir_doc: dict, profile: dict | None) -> dict | None:
+    """README §5a: a research run's environment is its execution profile, and a non-null ``sizing.leverage`` overrides
+    the profile's ``leverage_perp`` (AlphaKeel writes it into the ``ir_strategy`` run's profile). The local simulator reads
+    leverage from the profile the service renders, so the override is passed explicitly; a given ``leverage_perp`` that
+    contradicts the IR is refused, as the service refuses it."""
+    lev = ir_doc["sizing"].get("leverage")
+    if lev is None:
+        return profile
+    given = (profile or {}).get("leverage_perp")
+    if given is not None and Decimal(str(given)) != Decimal(lev):
+        raise ApiError("request.invalid", f"the IR fixes sizing.leverage = {lev}; profile.leverage_perp = {given} contradicts it",
+                       field="profile.leverage_perp")
+    return {**(profile or {}), "leverage_perp": lev}
+
+
 def ir_review(client: Client, pack: Pack, ir_doc: dict, *, out_dir: str | Path, profile: dict | None = None, seed: int = 0,
               qty_dp: int = 8, wait: float = 1800.0) -> dict:
     """Reconcile one Strategy IR between Vibe-Trading and AlphaKeel on one frozen pack.
@@ -297,13 +348,15 @@ def ir_review(client: Client, pack: Pack, ir_doc: dict, *, out_dir: str | Path, 
     sid, ssha = loaded.strategy_id, canon.canonical_sha256(loaded.definition)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    profile = ir_profile(loaded.doc, profile)
     prof_doc = client.render_profile(pack.id, "ir_strategy", profile)["profile"]
     insts = ir_instruments(pack, loaded.doc)
     params = {"ir": loaded.doc, "qty_dp": qty_dp}
     manifest, bundle = strat.manifest(IR_POLICY_DIR, name="ir_policy", parameters=params, seed=seed)
     pack_dir = pack.export(out / "pack")
     local_id = f"py-{sid}-{int(time.time())}"
-    sim, steps, sandbox = run_policy_local(pack, prof_doc, IR_POLICY_DIR, manifest, insts, run_id=local_id, pack_dir=pack_dir)
+    sim, steps, sandbox = run_policy_local(pack, prof_doc, IR_POLICY_DIR, manifest, insts, run_id=local_id, pack_dir=pack_dir,
+                                           engine_qty_cap=True)
     man, res = evidence.build_manifest(sim, pack=pack, run_id=local_id, mode="ir_strategy",
                                        parameters={"profile": profile or {}, "ir": loaded.doc, "instruments": insts,
                                                    "policy": {"script": "ir_policy", "content_sha256": manifest["content_sha256"], "qty_dp": qty_dp}},

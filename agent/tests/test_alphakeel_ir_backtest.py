@@ -9,6 +9,7 @@ service double. Gold numbers are hand-calculated in the test that uses them.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
 import types
@@ -223,6 +224,82 @@ def test_no_exit_while_a_leg_has_no_tradable_quote_in_this_frame():
     # both legs quoted again: both closes at this frame's touch
     out = pol.on_step(_ctx(t + 120_000, held, _frame_at(t + 120_000)), out["state"])
     assert [(i["intent_id"], i["side"], i["limit_price"]) for i in out["intents"]] == [("n1-L-close", "sell", "100"), ("n1-S-close", "buy", "100.03")]
+
+
+def _held_pair():
+    return [{"position_ref": "p1L", "instrument": {"venue": "binance", "market": "perp", "symbol": "BTCUSDT"}, "side": "long",
+             "qty": "9.9990001", "avg_entry": "100.01", "net_now": "0"},
+            {"position_ref": "p1S", "instrument": {"venue": "okx", "market": "perp", "symbol": "BTC-USDT-SWAP"}, "side": "short",
+             "qty": "9.9990001", "avg_entry": "100.02", "net_now": "0"}]
+
+
+def test_no_exit_while_a_leg_quote_is_older_than_the_runs_quote_age():
+    """README §5a (review R2-6): a quote in this frame that is older than the run's quote age (pack fee table
+    ``engine.max_quote_age_ms`` = profile ``quotes.max_age_ms``, 5 s here) is not tradable: AlphaKeel's ledger freezes the
+    position and its engine does not take the quote, so the policy holds even a due ``max_hold``. A quote without an
+    exchange time is as old as the venue's fetch in this frame."""
+    pol = _policy()
+    st = pol.on_step(_ctx(T, [], _fake_pit()), pol.initialize({"ir": _carry_doc(max_hold_hours=1, conditions=[])}))["state"]
+    ok = Inst("okx", "perp", "BTC-USDT-SWAP")
+    t = T + 2 * 3_600_000
+    aged = _frame_at(t)
+    aged.rows[ok] = [dataclasses.replace(q, quote_ts=t - 5_001) for q in aged.rows[ok]]
+    assert pol.on_step(_ctx(t, _held_pair(), aged), st)["intents"] == []
+    edge = _frame_at(t)
+    edge.rows[ok] = [dataclasses.replace(q, quote_ts=t - 5_000) for q in edge.rows[ok]]
+    assert len(pol.on_step(_ctx(t, _held_pair(), edge), st)["intents"]) == 2  # exactly at the limit: still tradable
+    fetched = _frame_at(t)
+    fetched.rows[ok] = [dataclasses.replace(q, quote_ts=None) for q in fetched.rows[ok]]
+    fetched.fetched["okx"] = t - 10_000
+    assert pol.on_step(_ctx(t, _held_pair(), fetched), st)["intents"] == []
+    fetched.fetched["okx"] = t - 1_000
+    assert len(pol.on_step(_ctx(t, _held_pair(), fetched), st)["intents"]) == 2
+
+
+def test_the_views_quote_time_is_the_exchange_time_and_staleness_falls_back_to_the_fetch():
+    """README §4.1a rule 3 (review R2-5): ``quote_ms`` is the quote row's ``quote_ts``, null when the venue gave none --
+    never the fetch time, so ``quote_age_ms`` is unavailable then; the tradability age (§5a) does use the fetch time."""
+    pit = _fake_pit()
+    pit.fetched["bybit"] = T - 2_000
+    legs = {ir_views.key_of(x): x for x in ir_views.frame_legs(pit, 7, T)}
+    by = legs[("bybit", "perp", "BTCUSDT")]
+    assert by["view"]["quote_ms"] is None and by["quote_time"] == T - 2_000
+    bn = legs[("binance", "perp", "BTCUSDT")]
+    assert bn["view"]["quote_ms"] == T - 1000 and bn["quote_time"] == T - 1000 and bn["mark"] == "100.005"
+    pair = next(p for p in ir_views.pairs_of_legs(list(legs.values())) if p["id"] == "cross:BTC:bybit:BTCUSDT>okx:BTC-USDT-SWAP")
+    f = ir.compute_features(pair, {"horizon_hours": 8, "basis_stress": "0", "funding_estimate": "predicted"}, T)
+    assert f["quote_age_ms"] is None and f["leg_skew_ms"] is None
+
+
+@pytest.mark.parametrize("bid,ask,mark,rate", [("100", "99.99", None, None), ("0", "100", None, None), ("100", "100.01", "0", None),
+                                               ("100", "100.01", None, "1.5")])
+def test_an_entry_on_an_invalid_quote_is_not_submitted_and_takes_no_trade_number(bid, ask, mark, rate):
+    """README §5a (review R2-10): bid <= 0, ask < bid, mark <= 0 or |funding_rate| > 1 on a leg -> the entry submits nothing
+    and takes no number (AlphaKeel ``paper::open_planned``), like ``bbo = false``."""
+    pol = _policy()
+    st = pol.initialize({"ir": _carry_doc()})
+    pit = _fake_pit()
+    bn = Inst("binance", "perp", "BTCUSDT")
+    pit.rows[bn] = [dataclasses.replace(q, bid=Decimal(bid), ask=Decimal(ask), mark=None if mark is None else Decimal(mark)) for q in pit.rows[bn]]
+    if rate is not None:
+        pit.obs[bn] = [dataclasses.replace(o, funding_rate=Decimal(rate)) for o in pit.obs[bn]]
+    out = pol.on_step(_ctx(T, [], pit), st)
+    assert out["intents"] == [] and out["state"]["positions"] == {} and out["state"]["next_trade"] == 1
+    nxt = pol.on_step(_ctx(T, [], _fake_pit()), out["state"])
+    assert [i["intent_id"] for i in nxt["intents"]] == ["n1-L-open", "n1-S-open"]
+
+
+def test_ir_review_passes_the_irs_leverage_as_the_profile_leverage():
+    """README §5a (review R2-8): a non-null ``sizing.leverage`` is the run's ``leverage_perp`` on both sides; the local
+    simulator reads it from the profile the service renders, so ``ir_review`` passes it; a contradicting value is refused."""
+    doc = _carry_doc()
+    assert workflow.ir_profile(doc, None) is None and workflow.ir_profile(doc, {"leverage_perp": "4"}) == {"leverage_perp": "4"}
+    doc["sizing"]["leverage"] = "3"
+    assert workflow.ir_profile(doc, None) == {"leverage_perp": "3"}
+    assert workflow.ir_profile(doc, {"history_len": 2, "leverage_perp": "3.0"}) == {"history_len": 2, "leverage_perp": "3"}
+    with pytest.raises(ApiError) as e:
+        workflow.ir_profile(doc, {"leverage_perp": "2"})
+    assert (e.value.code, e.value.field) == ("request.invalid", "profile.leverage_perp")
 
 
 # --- (2) the dataset view --------------------------------------------------------------------------------------------------
@@ -555,3 +632,88 @@ def test_the_crosscheck_matches_alphakeel_events_to_vt_trades_and_locates_a_diff
     ev[3]["data"]["amount"] = "0.29"
     r = X.compare(X.vt_trades(tmp_path), X.ak_trades(ev))
     assert r["differences"] == 1 and r["first_differences"][0]["field"] == "funding" and r["first_differences"][0]["leg"] == "S"
+
+
+# --- README §5a engine quantity precision (review U11): the simulators execute what AlphaKeel's engine executes --------------
+
+def test_the_engine_quantity_cap_matches_alphakeels_numbers():
+    from alphakeel_research import sim as S
+
+    # AlphaKeel ab_backtest precision tests: 373692.08 coins -> 7 places; 0.08 -> 14; 1 -> 12; 2^43 -> 0; above -> refused
+    assert S.engine_size_dp_cap(Decimal("373692.077727952167")) == 7
+    assert (S.engine_size_dp_cap(Decimal("0.08")), S.engine_size_dp_cap(Decimal("1"))) == (14, 12)
+    assert S.engine_size_dp_cap(Decimal(8796093022208)) == 0
+    with pytest.raises(Exception):
+        S.engine_size_dp_cap(Decimal(8796093022209))
+    a, b = Inst("binance", "perp", "PUMPUSDT"), Inst("okx", "perp", "PUMP-USDT-SWAP")
+    c = Inst("binance", "perp", "BTCUSDT")
+    # the cap is per contract, set by its LARGEST position over the run; a trade takes the smaller of its legs' decimals
+    dps = S.engine_trade_dps([(1, [(a, Decimal("730000.12345678")), (b, Decimal("730000.12345678"))]),
+                              (2, [(a, Decimal("1.5")), (c, Decimal("1.5"))]),
+                              (3, [(c, Decimal("0.01234567")), (b, Decimal("0.01234567"))])])
+    assert dps == {1: 7, 2: 7, 3: 7}  # contract decimals: PUMP legs 7 (capped), BTC 8 (its quantities need 8)
+    assert S.order_quantity(Decimal("730000.12345678"), 7) == Decimal("730000.1234567")
+    assert S.order_quantity(Decimal("0.01234567"), 7) == Decimal("0.0123456")  # the PUMP leg's cap binds the BTC leg too
+
+
+def test_the_dataset_simulator_executes_the_engines_quantity_and_redoes_the_amounts():
+    """Two legs of 730 000.12345678 coins at 0.0013699 (notional 1000): the engine holds 7 places, so it executes
+    730 000.1234567; fees and funding are redone at that quantity, the IR quantity is kept on the record."""
+    sim = ir_backtest.Sim()
+    pair = {"id": "cross:PUMP:binance:PUMPUSDT>okx:PUMP-USDT-SWAP", "base": "PUMP",
+            "long": {"venue": "binance", "market": "perp", "symbol": "PUMPUSDT", "ask": "0.0013699", "taker_fee": "0.0005"},
+            "short": {"venue": "okx", "market": "perp", "symbol": "PUMP-USDT-SWAP", "bid": "0.0013699", "taker_fee": "0.0005"}}
+    qty = Decimal("730000.12345678")
+    tr = sim.open_pair(1, pair, qty, 0)
+    sim.settle(tr.long.inst, Decimal("0.001"), Decimal("0.0014"))
+    sim.close_pair("pair-1", {("binance", "perp", "PUMPUSDT"): ("0.0014", "0.0014"),
+                              ("okx", "perp", "PUMP-USDT-SWAP"): ("0.0014", "0.0014")}, 60_000, "max_hold")
+    sim.apply_engine_qty()
+    e = Decimal("730000.1234567")
+    assert (tr.long.qty, tr.long.ir_qty, tr.short.qty) == (e, qty, e) and sim.qty_adjusted == 2
+    q8 = ir_backtest.q8
+    assert tr.long.entry_fee == q8(e * Decimal("0.0013699") * Decimal("0.0005"))
+    assert tr.long.funding == q8(e * Decimal("0.0014") * Decimal("-0.001")) and tr.short.funding == 0
+    assert sim.realized == tr.realized() and sim.fees == sum(leg.entry_fee + leg.exit_fee for leg in tr.legs())
+    rec = tr.record()
+    assert rec["long"]["qty"] == "730000.1234567" and rec["long"]["ir_qty"] == "730000.12345678"
+    # a quantity the engine holds exactly is untouched
+    sim2 = ir_backtest.Sim()
+    tr2 = sim2.open_pair(1, pair, Decimal("729.99"), 0)
+    sim2.apply_engine_qty()
+    assert (tr2.long.qty, tr2.long.ir_qty, sim2.qty_adjusted) == (Decimal("729.99"), None, 0)
+
+
+def test_the_crosscheck_has_no_known_quantity_difference_any_more(tmp_path):
+    from alphakeel_research import ir_crosscheck as X
+
+    inst = {"venue": "binance", "market": "perp", "symbol": "PUMPUSDT"}
+    def leg(side, qty):
+        return {"position_ref": "", "instrument": inst, "side": side, "qty": qty, "entry_price": "0.001", "exit_price": "0.001",
+                "entry_fee": "0", "exit_fee": "0", "funding": "0"}
+    t = {"trade": 1, "opened_ms": 1_000, "closed_ms": 61_000, "long": leg("long", "730000.1234567"), "short": leg("short", "730000.1234567")}
+    (tmp_path / "trades.jsonl").write_text(json.dumps(t) + "\n")
+    def fill(iid, ns, qty):
+        return {"kind": "fill", "intent_id": iid, "time_ms": ns // 1_000_000, "time_ns": str(ns), "instrument": inst,
+                "data": {"qty": qty, "price": "0.001", "fee": "0"}}
+    ev = [fill("n1-L-open", 1_000_000_001, "730000.1234567"), fill("n1-S-open", 1_000_000_001, "730000.1234567"),
+          fill("n1-L-close", 61_000_000_001, "730000.1234567"), fill("n1-S-close", 61_000_000_001, "730000.1234567")]
+    r = X.compare(X.vt_trades(tmp_path), X.ak_trades(ev))
+    assert (r["trades_matched"], r["differences"]) == (1, 0) and "known_precision_differences" not in r
+    # the simulator's 8-place quantity against the engine's 7 places is now an ordinary difference
+    t["long"]["qty"] = t["short"]["qty"] = "730000.12345678"
+    (tmp_path / "trades.jsonl").write_text(json.dumps(t) + "\n")
+    r = X.compare(X.vt_trades(tmp_path), X.ak_trades(ev))
+    assert r["differences"] == 2 and {d["field"] for d in r["first_differences"]} == {"qty"}
+
+
+def test_ir_review_repeats_the_local_run_with_the_engines_quantity_when_the_cap_binds():
+    def step(*intents):
+        return {"response": {"intents": list(intents)}}
+    def it(pid, venue, sym, qty, ro=False):
+        return {"pair_id": pid, "instrument": {"venue": venue, "market": "perp", "symbol": sym}, "qty": qty, "reduce_only": ro}
+    steps = [step(it("pair-1", "binance", "PUMPUSDT", "730000.12345678"), it("pair-1", "okx", "PUMP-USDT-SWAP", "730000.12345678")),
+             step(it("pair-2", "binance", "BTCUSDT", "0.01"), it("pair-2", "okx", "BTC-USDT-SWAP", "0.01")),
+             step(it("pair-1", "binance", "PUMPUSDT", "730000.12345678", True))]
+    assert workflow._capped_trades(steps) == {"pair-1": 7}
+    assert workflow._capped_trades(steps[1:2]) == {}

@@ -8,18 +8,24 @@ Each step:
    and is dropped without a cooldown;
 2. build the frame from the point-in-time reader (``ir_views``, README §4.1a) and call ``ir.decide`` (README §5);
 3. exits -> one reduce-only ``limit_ioc`` per engine position of that pair (whatever actually filled, never an
-   assumption that both legs did), at THIS frame's touch (long closes sell at the bid, short closes buy at the ask).
-   README §5a "no exit without a quote": while either leg of the pair has no tradable quote in this frame (no quote row
-   in the frame, or ``bbo = false``), no exit intent is submitted for the pair -- ``max_hold`` / ``max_loss`` /
-   ``take_profit`` / condition exits all wait for a frame that quotes both legs; an older frame's quote is never used;
+   assumption that both legs did) for the entry's IR quantity, at THIS frame's touch (long closes sell at the bid, short
+   closes buy at the ask).
+   README §5a "no exit without a tradable quote": while either leg of the pair has no tradable quote in this frame, no
+   exit intent is submitted for the pair -- ``max_hold`` / ``max_loss`` / ``take_profit`` / condition exits all wait for
+   a frame that quotes both legs; an older frame's quote is never used. Tradable (``ir_views.tradable``): a quote row in
+   this frame, ``bbo = true``, sane numbers (bid > 0, ask >= bid, mark > 0, |funding_rate| <= 1) and a quote time
+   (``quote_ts``, else the venue's fetch time in this frame) at most the run's quote age old (the pack fee table's
+   ``engine.max_quote_age_ms`` = the execution profile's ``quotes.max_age_ms``) and at most 5 s ahead -- the rule
+   AlphaKeel's ledger freezes a position by and its engine takes quotes by;
    entries -> two ``limit_ioc`` intents: long leg buys at its ask, short leg sells at its bid, the same quantity on both
    legs: ``notional_per_leg / long.ask`` rounded HALF-EVEN to ``qty_dp`` places (README §5a: 8, both sides).
 
 Intent naming (README §5a, the same as AlphaKeel's Rust ``ir_strategy`` run, so the research service's L2 layer can
 compare decision by decision): ``intent_id = n<trade>-<L|S>-<open|close>``, ``position_ref = p<trade><L|S>``,
 ``pair_id = pair-<trade>``. ``trade`` counts from 1 the entries actually submitted, in ``entries`` order; an entry whose
-leg has no real top-of-book quote (``bbo = false``) or whose quantity rounds to zero submits nothing and takes no number
-(Rust ``paper::open_planned`` refuses the same entries). v1 legs are USDT only, so the "no FX rate" refusal never applies.
+leg has no real top-of-book quote (``bbo = false``) or an invalid quote (``ir_views.valid``), or whose quantity rounds to
+zero, submits nothing and takes no number (Rust ``paper::open_planned`` refuses the same entries; quote age is not an
+entry rule). v1 legs are USDT only, so the "no FX rate" refusal never applies.
 
 ``net_now`` of a held pair is the sum of its two legs' ``ctx["positions"][].net_now`` (the engine's per-leg close-now net,
 README §5a); it is ``None`` when either leg's value is ``None`` (no quote for that contract in this frame) or either leg
@@ -95,7 +101,7 @@ def on_step(ctx, state):
     decision = IR.decide(IR.Ir(state["ir"]), {"pairs": pairs}, {"positions": views, "cooldowns": cooldowns}, t)
 
     intents = []
-    quoted = ir_views.tradable(legs)
+    quoted = ir_views.tradable(legs, t, int(ctx.pit.fees()["engine"]["max_quote_age_ms"]))
     for x in decision["exits"]:
         p = positions[x["position_id"]]
         if not ir_views.exit_quoted(p, quoted):
@@ -112,16 +118,19 @@ def on_step(ctx, state):
             if q is None:
                 continue  # the engine's leg is not one of this pair's quoted instruments (cannot happen with p's refs)
             px = q[0] if is_long else q[1]
+            # the IR quantity (README §5a), as AlphaKeel's ledger closes it; the engine truncates it to the position it
+            # holds (precision cap) exactly as it truncated the open, so the order is never larger than the position
             intents.append({"intent_id": f"n{p['trade']}-{'L' if leg == 'long' else 'S'}-close", "decision_time_ms": t, "instrument": ep["instrument"],
-                            "side": "sell" if is_long else "buy", "qty": ep["qty"], "order_type": "limit_ioc", "limit_price": px,
+                            "side": "sell" if is_long else "buy", "qty": p["qty"], "order_type": "limit_ioc", "limit_price": px,
                             "reduce_only": True, "position_ref": ref, "pair_id": x["position_id"]})
 
     by_id = {p["id"]: p for p in pairs}
+    valid = {ir_views.key_of(x) for x in legs if ir_views.valid(x)}
     n = state["next_trade"]
     for e in decision["entries"]:
         pair = by_id[e["pair_id"]]
-        if not (pair["long"]["bbo"] and pair["short"]["bbo"]):
-            continue  # no real top-of-book on a leg: not submitted, takes no trade number (README §5a)
+        if not all((pair[leg]["venue"], pair[leg]["market"], pair[leg]["symbol"]) in valid for leg in ("long", "short")):
+            continue  # no real top-of-book or an invalid quote on a leg: not submitted, takes no trade number (README §5a)
         qty = ir_views.entry_qty(e["notional_per_leg"], pair["long"]["ask"], state["qty_dp"])
         if qty <= 0:
             continue
@@ -135,7 +144,7 @@ def on_step(ctx, state):
         intents.append({"intent_id": f"n{trade}-S-open", "decision_time_ms": t, "instrument": si, "side": "sell", "qty": q,
                         "order_type": "limit_ioc", "limit_price": pair["short"]["bid"], "reduce_only": False, "position_ref": rs, "pair_id": key})
         positions[key] = {"pair_id": pair["id"], "base": pair["base"], "long": li, "short": si, "opened_ms": t,
-                          "trade": trade, "refs": {"long": rl, "short": rs}, "seen": False}
+                          "trade": trade, "refs": {"long": rl, "short": rs}, "seen": False, "qty": q}
 
     new_state = dict(state, positions=positions, cooldowns=cooldowns, next_trade=n)
     return {"intents": intents, "state": new_state}

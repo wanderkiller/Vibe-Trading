@@ -128,7 +128,8 @@ Python（`Pit`）与 Rust（扫描帧 / `QuoteIndex`）各自从**原始报价**
    旧帧的报价不延用：不在本帧的合约不进帧。报价行带交易所时间 `quote_ts` 且 `quote_ts > now_ms` 的腿**不进帧**
    （决策可见性没有未来容忍，与 docs/37 点时间规则一致；Python `Pit` 本就隐藏它，Rust 侧必须同样丢弃）。
 2. `base`、`quote_ccy` 取自数据包 `instruments` 表的 `base`、`quote` 列；只用 `selected == true` 的合约。
-3. `taker_fee` 取数据包费用表 `fees[venue].perp|spot`；缺失 → 该腿不进帧。`quote_ms` = 报价行 `quote_ts`（可空），`bbo`
+3. `taker_fee` 取数据包费用表 `fees[venue].perp|spot`；缺失 → 该腿不进帧。`quote_ms` = 报价行 `quote_ts`（平台给出的行情时间，可空；
+   **不**回退到抓取时刻：平台没给时 `quote_age_ms`/`leg_skew_ms` 不可用。Rust 扫描帧用 `Obs::exchange_ms`，在线 paper/实盘同一口径），`bbo`
    = 报价行 `bbo`，`funding_px` = 观测行 `funding_px`，缺失时退回报价行 `mark`，再缺失则为空（§4.2 用中间价）。
 4. `cross_perp`：同一 `base`、同一 `quote_ccy`、两个不同平台的永续，**有序**对 (long, short) 都枚举（A>B 与 B>A 是两个组合）。
    `spot_perp`：同平台、同 `base`、同 `quote_ccy` 的 (spot 多腿, perp 空腿)。`id` 用筛选器写法
@@ -233,19 +234,38 @@ Decision { exits: [{position_id, reason}],
 输出次序：`exits` 按 `position_id` 升序；`entries` 按排名；`rejected` 按 `pair_id` 升序，每个组合只报第一个原因。
 `entries[].notional_per_leg` 就是 `sizing.notional_per_leg`，`features` 是 §4 的完整特征（含 `null`）。
 
-### 5a. 对账用的意图命名与 `net_now`（两侧一致）
+### 5a. 对账用的意图命名、执行规则与 `net_now`（两侧一致）
 
 - **意图 id**：Python `ir_policy` 与 Rust `ir_strategy` 运行都用 `n<trade>-<L|S>-<open|close>`（`trade` 从 1 起，每个进场决定按
-  `entries` 次序各占一个号；`L` = 做多腿，`S` = 做空腿；任一腿没有真实一档买卖价（`bbo = false`）或缺汇率的进场决定**不提交意图、不占号**，
-  与 Rust `paper::open_planned` 的拒绝一致），`position_ref = p<trade><L|S>`，`pair_id = pair-<trade>`。研究服务的
-  L2 决策层按 `intent_id` 逐条对比，命名不同就无法对账。
-- **意图数量**：两腿同量，`qty = notional_per_leg ÷ long.ask`，**半偶舍入到 8 位小数**（两侧相同；本地模拟器的数量精度也是 8 位）。
-- **缺报价时不退出**：持仓的任一腿在本帧没有可成交报价（没有本帧报价行、`bbo = false` 或缺汇率）时，本帧**不提交该组合的退出意图**
-  （即使 `max_hold` 已到），等下一帧有报价再退出；与 Rust 纸上执行“估值冻结时不出场”一致。不得用旧帧报价定价退出。
+  `entries` 次序各占一个号；`L` = 做多腿，`S` = 做空腿），`position_ref = p<trade><L|S>`，`pair_id = pair-<trade>`。研究服务的
+  L2 决策层按 `intent_id` 逐条对比，命名不同就无法对账。下列进场决定**不提交意图、不占号**（与 Rust `paper::open_planned` 的拒绝一致）：
+  任一腿没有真实一档买卖价（`bbo = false`）；任一腿报价数值不合法——买一 ≤ 0、卖一 < 买一、标记价 ≤ 0（报价行没有标记价时用中间价）、
+  永续 |`funding_rate`| > 1；缺汇率（v1 只有 USDT，不会发生）；数量舍入为 0。报价新旧**不是**进场规则（要限制请在 IR 里写
+  `quote_age_ms` 条件）。
+- **意图数量**：两腿同量，`qty = notional_per_leg ÷ long.ask`，**半偶舍入到 8 位小数**（两侧相同）。平仓意图的数量是同一个 `qty`。
+  决策（`net_now`、意图）一律用它。
+- **引擎成交数量（例外，2026-10-09）**：AlphaKeel 引擎的持仓用 f64 累加成交数量，为保证精确记账，每个合约的数量小数位受上限约束
+  （docs/29 §16）。运行的全部决策确定之后，每笔交易按下式取得**成交数量**，两侧的成交、手续费、资金费都按它计算：
+  - 合约 c 的小数位 `dp_c = min(clamp(c 上全部意图数量的最大小数位, 1, 16), cap(Q_c))`，`Q_c` = 整个运行里 c 上单个持仓的最大开仓数量，
+    `cap(Q)` = 满足 `Q × 10^d ≤ 2^43` 的最大 `d`（≤ 16；`Q > 2^43` 时运行被拒绝）；
+  - 交易 t 的小数位 `dp_t` = 它两条腿 `dp_c` 的较小值；成交数量 = `qty` **向零截断**到 `dp_t` 位。
+  只在单腿数量超过约 87 961 个币（`2^43 ÷ 10^8`）时生效（例：73 万个 PUMP 只有 7 位）。上限取决于整个运行，所以 Python 侧在运行结束后
+  （数据集回测）或第二遍（扫描包 `ir review` 的本地模拟器）套用；`ir crosscheck` 的数量逐腿必须相等，不再有“已知精度差”。
+- **缺可成交报价时不退出**：持仓的任一腿在本帧没有**可成交报价**时，本帧**不提交该组合的退出意图**（即使 `max_hold` 已到），等下一帧
+  再退出；不得用旧帧报价定价退出。可成交报价 = 本帧有该合约的报价行、`bbo = true`、数值合法（同上：买一 > 0、卖一 ≥ 买一、标记价 > 0、
+  永续 |费率| ≤ 1）、含 USDC 腿有汇率，且**足够新**：报价时间（`quote_ts`；为空时用该平台本帧的抓取时刻，即数据包帧表里该平台的
+  `fetched_ms`）不早于 `now_ms − max_age`、不晚于 `now_ms + 5000`。`max_age` = 运行环境的报价年龄上限：研究运行（`ir_strategy`、
+  `ir_policy`）= 执行口径 `quotes.max_age_ms`（= 数据包费用表 `engine.max_quote_age_ms`；数据集视图 = K 线年龄上限 5 分钟）；在线
+  paper/实盘 = 运行配置的估值年龄（`valuation_max_age_ms` 与 `max_quote_age_ms` 取大者）。这就是 Rust 纸上账本“估值冻结”的条件，
+  也是引擎收报价的条件（不可成交的腿引擎不估值、`net_now` 为 null）。
+- **研究运行的运行环境 = 执行口径**：`ir_strategy` 运行的杠杆、维持保证金与报价年龄上限都取本次运行的执行口径（与 Python 本地模拟器读的是
+  同一份口径文档）。IR 的 `sizing.leverage` 非空时它就是口径的 `leverage_perp`（服务写进口径；VT `ir review` 作为口径覆盖传给服务与
+  本地模拟器），请求里显式给出另一个 `leverage_perp` 是矛盾的，拒绝（`request.invalid`）。
 - **`net_now`（§5 的持仓立即平仓净额）**：两侧同一公式 = 触及价盈亏（多腿 `qty × (bid − avg_entry)`，空腿
-  `qty × (avg_entry − ask)`）+ 该仓位已结算的资金费 − 入场手续费 − 触及价平仓 taker 费；单位为腿的计价币（v1 只允许 USDT）。
-  研究服务的 policy 上下文按**腿**给出 `positions[].net_now`（同一公式按腿计），策略把同一 `pair` 两腿相加得到组合的 `net_now`；
-  paper/回测的 Rust 决策器用 `Mark.net_if_closed`（同一公式按组合计）。任一腿缺可成交报价 → 该组合 `net_now` 未知（null）。
+  `qty × (avg_entry − ask)`）+ 该仓位**全部**已结算的资金费（含结算前缺新鲜报价、金额按最后观察值估算的结算）− 入场手续费 − 触及价平仓
+  taker 费；单位为腿的计价币（v1 只允许 USDT）。研究服务的 policy 上下文按**腿**给出 `positions[].net_now`（同一公式按腿计），策略把
+  同一 `pair` 两腿相加得到组合的 `net_now`；paper/回测的 Rust 决策器用 `Mark.net_incl_estimated`（同一公式按组合计）。任一腿缺可成交
+  报价 → 该组合 `net_now` 未知（null）。
 
 ## 6. 向量
 

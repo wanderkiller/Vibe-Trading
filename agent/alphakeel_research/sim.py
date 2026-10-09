@@ -90,6 +90,41 @@ def order_quantity(x: Decimal, dp: int = SIZE_DP) -> Decimal:
     raise Unsupported(f"quantity {x} cannot be represented exactly", "intent.overflow")
 
 
+#: AlphaKeel ``ab_backtest::ENGINE_EXACT_STEPS`` (docs/29 §16): a contract's largest position quantity x 10^decimals must
+#: not exceed it, so the engine's f64 position accounting stays exact; the contract's quantity decimals are capped to fit
+ENGINE_EXACT_STEPS = 1 << 43
+ENGINE_MAX_DP = 16
+
+
+def engine_size_dp_cap(max_qty: Decimal) -> int:
+    """The most quantity decimals a contract whose largest single position is ``max_qty`` can carry (AlphaKeel
+    ``engine_size_dp_cap``); above ``ENGINE_EXACT_STEPS`` at 0 decimals the engine refuses the run."""
+    q = abs(max_qty)
+    if q > ENGINE_EXACT_STEPS:
+        raise Unsupported(f"quantity {q} exceeds what the engine can account exactly ({ENGINE_EXACT_STEPS} steps at 0 decimals)",
+                          "intent.overflow")
+    cap = 0
+    while cap < ENGINE_MAX_DP and q * Decimal(10) ** (cap + 1) <= ENGINE_EXACT_STEPS:
+        cap += 1
+    return cap
+
+
+def engine_trade_dps(trades: list[tuple[int, list[tuple[object, Decimal]]]]) -> dict[int, int]:
+    """Strategy IR README §5a (engine quantity precision): the quantity decimals each trade executes with on AlphaKeel's
+    engine when the decisions are replayed (``fit_engine_size_dp`` + ``trade_qty_dps``). ``trades`` = ``[(trade,
+    [(contract, opening qty) per leg])]`` of the WHOLE run. Per contract: decimals = clamp(max decimals of its quantities,
+    1, 16), capped by :func:`engine_size_dp_cap` of its largest position; per trade: the smallest over its legs. The
+    executed quantity is ``order_quantity(qty, dp)`` (toward zero)."""
+    big: dict = {}
+    dps: dict = {}
+    for _, legs in trades:
+        for inst, q in legs:
+            big[inst] = max(big.get(inst, Decimal(0)), q)
+            dps[inst] = max(dps.get(inst, 0), dp_of(q))
+    size = {i: min(min(max(dps[i], 1), ENGINE_MAX_DP), engine_size_dp_cap(big[i])) for i in big}
+    return {n: min(size[i] for i, _ in legs) for n, legs in trades}
+
+
 def aligned_after(after: int, hours: int) -> int:
     iv = max(hours, 1) * HOUR_MS
     return (after // iv + 1) * iv
@@ -216,7 +251,8 @@ class SimResult:
 class Simulator:
     """Frame-by-frame execution. ``decide(frame_index, time_ms, view) -> list[dict]`` supplies intent documents."""
 
-    def __init__(self, pack: Pack, profile: dict, instruments: list[Inst], *, run_id: str, intent_price_dp: dict[str, int] | None = None):
+    def __init__(self, pack: Pack, profile: dict, instruments: list[Inst], *, run_id: str, intent_price_dp: dict[str, int] | None = None,
+                 trade_qty_dp: dict[str, int] | None = None):
         if not instruments:
             raise ApiError("request.invalid", "declare at least one tradable contract")
         self.pack = pack
@@ -254,6 +290,9 @@ class Simulator:
         if not self.frames:
             raise ApiError("data.window_empty", "the pack has no frames inside its window")
         self.intent_price_dp = intent_price_dp or {}
+        # ``pair_id`` -> quantity decimals the engine executes that trade with (``engine_trade_dps``; Strategy IR runs, whose
+        # decisions AlphaKeel replays with the whole run's precision cap); other orders keep ``SIZE_DP``
+        self.trade_qty_dp = trade_qty_dp or {}
         self._load_market()
         self.accounts: dict[tuple[str, str], Decimal] = {}
         self.peak_exposure: dict[tuple[str, str], Decimal] = {}
@@ -522,7 +561,7 @@ class Simulator:
     def _execute(self, rec: IntentRec, k: int, t: int, ns: int, fx: Decimal | None) -> dict:
         inst = rec.inst
         pdp = self.price_dp[inst]
-        qty_eff = order_quantity(rec.qty)
+        qty_eff = order_quantity(rec.qty, self.trade_qty_dp.get(rec.pair_id, SIZE_DP))
         adj = []
         if qty_eff != rec.qty:
             adj.append({"field": "qty", "from": dstr(rec.qty), "to": dstr(qty_eff), "reason": "f64_roundtrip" if dp_of(rec.qty) <= SIZE_DP else "precision_toward_zero"})

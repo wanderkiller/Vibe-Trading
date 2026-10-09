@@ -41,6 +41,10 @@ def frame_legs(pit, frame_index: int | None, now_ms: int) -> list[dict]:
 
     Note: the ``Pit`` hides a quote whose exchange time ``quote_ts`` is after ``as_of`` (= ``now_ms``), so such a
     contract is not in the frame here (README §4.2 would clamp its age at 0 instead).
+
+    Besides ``base`` and ``view`` each leg carries what README §5a's tradability rules read and the view does not hold:
+    ``mark`` (the quote row's mark, else the mid) and ``quote_time`` (``quote_ts``, else the venue's fetch time in this
+    frame -- the age AlphaKeel's engine and ledger judge staleness by; the view's ``quote_ms`` stays ``quote_ts``).
     """
     fees = pit.fees()
     legs = []
@@ -59,8 +63,11 @@ def frame_legs(pit, frame_index: int | None, now_ms: int) -> list[dict]:
             obs = pit.observations(inst, now_ms, now_ms + 1)
             o = next((r for r in reversed(obs) if r.frame == q.frame), None)
         fpx = o.funding_px if o is not None and o.funding_px is not None else q.mark
+        mark = q.mark if q.mark is not None else (q.bid + q.ask) / 2
         legs.append({
             "base": meta.base,
+            "mark": fmt(mark),
+            "quote_time": q.quote_ts if q.quote_ts is not None else pit.venue_fetch_ms(inst.venue),
             "view": {
                 "venue": inst.venue, "symbol": inst.symbol, "market": inst.market, "quote_ccy": meta.quote,
                 "bid": fmt(q.bid), "ask": fmt(q.ask), "bbo": bool(q.bbo),
@@ -111,11 +118,41 @@ def touch(legs: list[dict]) -> dict[tuple[str, str, str], tuple[str, str]]:
 # ---------------------------------------------------------------------------------------------------------------------
 
 QTY_DP = 8
+#: the engine's fill-side future tolerance (execution profile ``quotes.fill_future_tolerance_ms``; AlphaKeel
+#: ``screener::score::QUOTE_FUTURE_TOLERANCE_MS``): a quote time further ahead than this is not usable
+FUTURE_TOLERANCE_MS = 5_000
 
 
-def tradable(legs):
-    """``(venue, market, symbol)`` of this frame's legs with a real top of book (``bbo = true``): README §5a."""
-    return {(x["view"]["venue"], x["view"]["market"], x["view"]["symbol"]) for x in legs if x["view"]["bbo"]}
+def key_of(x) -> tuple[str, str, str]:
+    v = x["view"]
+    return (v["venue"], v["market"], v["symbol"])
+
+
+def valid(x) -> bool:
+    """README §5a: a leg whose quote can be traded on at all -- a real top of book (``bbo``) and sane numbers: bid > 0,
+    ask >= bid, mark > 0 and (perp) |funding_rate| <= 1 (AlphaKeel ``paper::open_planned`` / ``obs_valid``). An entry with
+    a leg that is not valid submits nothing and takes no trade number."""
+    v = x["view"]
+    if not v["bbo"]:
+        return False
+    bid, ask = Decimal(v["bid"]), Decimal(v["ask"])
+    mark = Decimal(x["mark"]) if x.get("mark") is not None else (bid + ask) / 2
+    if not (bid > 0 and ask >= bid and mark > 0):
+        return False
+    return v.get("funding_rate") is None or abs(Decimal(v["funding_rate"])) <= 1
+
+
+def fresh(x, now_ms: int, max_age_ms: int) -> bool:
+    """README §5a: the leg's quote time (``quote_ts``, else the venue's fetch time) is at most ``max_age_ms`` old and at
+    most ``FUTURE_TOLERANCE_MS`` ahead of ``now_ms``; an unknown quote time is not judged (AlphaKeel ``obs_fresh``)."""
+    t = x.get("quote_time")
+    return t is None or (t <= now_ms + FUTURE_TOLERANCE_MS and now_ms - t <= max_age_ms)
+
+
+def tradable(legs, now_ms: int | None = None, max_age_ms: int | None = None):
+    """``(venue, market, symbol)`` of this frame's legs with a tradable quote (README §5a): :func:`valid` and, when
+    ``max_age_ms`` is given, :func:`fresh`. A held pair exits only when both its legs are in this set."""
+    return {key_of(x) for x in legs if valid(x) and (max_age_ms is None or fresh(x, now_ms, max_age_ms))}
 
 
 def entry_qty(notional_per_leg, long_ask, qty_dp=QTY_DP):
@@ -210,7 +247,7 @@ def dataset_leg(*, venue: str, market: str, symbol: str, base: str, quote_ccy: s
         # the settlement timestamp's millisecond jitter is not carried into the next boundary (same rule as AlphaKeel)
         funding = {"funding_rate": fmt(rate), "interval_hours": h, "next_funding_ms": (st + 30_000) // 60_000 * 60_000 + iv * 1000}
     px = fmt(close)
-    return {"base": base, "view": {
+    return {"base": base, "mark": px, "quote_time": close_time_ms, "view": {
         "venue": venue, "symbol": symbol, "market": market, "quote_ccy": quote_ccy, "bid": px, "ask": px, "bbo": True,
         **funding, "funding_px": px if market == "perp" else None, "volume_quote": _s(volume_quote), "taker_fee": taker_fee,
         "quote_ms": close_time_ms}}

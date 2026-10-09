@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import types
 from decimal import Decimal
 from pathlib import Path
 
@@ -227,6 +228,10 @@ class FakePit:
     def __init__(self, rows: dict, obs: dict, instruments: dict, fees: dict):
         self.rows, self.obs, self.insts, self.fee_doc = rows, obs, instruments, fees
         self.as_of_ms = T
+        self.fetched: dict[str, int | None] = {}  # venue -> fetch time in this frame (default: the frame time)
+
+    def venue_fetch_ms(self, venue):
+        return self.fetched.get(venue, self.as_of_ms)
 
     def instruments(self):
         return self.insts
@@ -273,7 +278,8 @@ def _fake_pit() -> FakePit:
             unsel: [_q(T, "2000", "2001", 7)]}
     obs = {bn: [_o(T, "0.0001", 8, 7)], ok: [_o(T - 60_000, "0.0009", 8, 6), _o(T, "0.0006", 8, 7, fpx="100.025")],
            old: [_o(T, "0.0001", 8, 7)]}
-    fees = {"fees": {v: {"perp": "0.0005", "spot": "0.001"} for v in ("binance", "okx", "bybit")}}
+    fees = {"fees": {v: {"perp": "0.0005", "spot": "0.001"} for v in ("binance", "okx", "bybit")},
+            "engine": {"leverage_perp": "1", "maint_margin": "0.005", "max_quote_age_ms": 5000}}
     return FakePit(rows, obs, insts, fees)
 
 
@@ -347,8 +353,9 @@ def test_the_policy_enters_both_legs_and_exits_only_what_the_engine_holds():
     json.dumps(st)
     # only the long leg filled; one hour later max_hold fires and the close is for that leg only, at the bid
     pit2 = _fake_pit()
+    pit2.as_of_ms = T + 3_600_000
     for rows in pit2.rows.values():
-        rows[:] = [Quote(q.t + 3_600_000, q.bid, q.ask, q.bbo, q.mark, q.volume_quote, q.quote_ts, q.frame + 60) for q in rows]
+        rows[:] = [Quote(q.t + 3_600_000, q.bid, q.ask, q.bbo, q.mark, q.volume_quote, None if q.quote_ts is None else q.quote_ts + 3_600_000, q.frame + 60) for q in rows]
     for rows in pit2.obs.values():
         rows[:] = [Observation(o.t + 3_600_000, o.funding_rate, o.interval_hours, o.next_funding_ms, o.funding_px, o.funding_px_kind, o.frame + 60) for o in rows]
     held = [{"position_ref": "p1L", "instrument": {"venue": "binance", "market": "perp", "symbol": "BTCUSDT"}, "side": "long", "qty": "9.999",
@@ -413,8 +420,9 @@ def test_pair_net_now_is_the_sum_of_the_engines_leg_values_and_unknown_if_either
     st = out["state"]
     t = T + 60_000
     pit = _fake_pit()
+    pit.as_of_ms = t
     for rows in pit.rows.values():
-        rows[:] = [Quote(q.t + 60_000, q.bid, q.ask, q.bbo, q.mark, q.volume_quote, q.quote_ts, q.frame + 1) for q in rows]
+        rows[:] = [Quote(q.t + 60_000, q.bid, q.ask, q.bbo, q.mark, q.volume_quote, None if q.quote_ts is None else q.quote_ts + 60_000, q.frame + 1) for q in rows]
     for rows in pit.obs.values():
         rows[:] = [Observation(o.t + 60_000, o.funding_rate, o.interval_hours, o.next_funding_ms, o.funding_px, o.funding_px_kind, o.frame + 1) for o in rows]
     assert pol._pair_net_now(st["positions"]["pair-1"], {p["position_ref"]: p for p in _held("-12.5", "-7.5")}) == "-20"
@@ -476,6 +484,23 @@ def test_sim_net_now_reproduces_the_rust_hand_value_and_its_null_rule():
     r = S.Pos("p3", bn, True, "USDT", net=Decimal(1), entry_qty=Decimal(1), entry_notional=Decimal("0.5"))
     sim, _ = _sim_with(r, (Decimal("1.5"), Decimal("1.6"), 0), fee="0")
     assert sim._view(0, _F, [])["positions"][0]["net_now"] == "1"
+
+
+def test_sim_net_now_counts_every_settled_funding_estimated_or_official():
+    """README §5a ``net_now`` (review R2-11): the settled funding of the position is ALL of it -- an estimated settlement
+    (predicted rate, no official event) counts like an official one. AlphaKeel's IR ledger now uses the same figure
+    (``net_incl_estimated``) instead of the verified part only."""
+    from alphakeel_research import sim as S
+
+    bn = Inst("binance", "perp", "BTCUSDT")
+    p = S.Pos("p1", bn, True, "USDT", net=Decimal(10), entry_qty=Decimal(10), entry_notional=Decimal(10))
+    sim, _ = _sim_with(p, (Decimal("1"), Decimal("1"), 0), fee="0")
+    sim.frames, sim.snaps, sim.price_dp = [types.SimpleNamespace(t=T)], [{bn: S.Snap(Decimal(1), Decimal(1), Decimal(1), None)}], {bn: 8}
+    sim.accounts, sim.fed_official, sim.official_n, sim.estimate_fallbacks = {("BINANCE", "USDT"): Decimal(0)}, {}, 0, 0
+    sim.evs, sim._ord, sim.fund_events = [], 0, []
+    sim._settle(bn, T, Decimal("0.01"), last_mark_at=sim.frames[0], k=0)  # not fed by an official event: an estimate
+    assert (sim.estimate_fallbacks, sim.official_n) == (1, 0)
+    assert sim._view(0, _F, [])["positions"][0]["net_now"] == "-0.1"  # 10 x 1 x 0.01 paid by the long
 
 
 # --- (e) the example IR under the local simulator, on AlphaKeel's fixture pack --------------------------------------------

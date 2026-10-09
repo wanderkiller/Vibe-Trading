@@ -308,6 +308,7 @@ class Pack:
         self.log = AccessLog()
         self._mem: dict[str, list[list]] = {}
         self._objs = {o["name"]: o for o in lock["objects"]}
+        self._fetch_by_t: dict[int, dict[str, int | None]] | None = None
 
     @classmethod
     def open(cls, client: "Client", pack_id: str, cache_dir: str | os.PathLike) -> "Pack":
@@ -486,6 +487,13 @@ class Pack:
         rows = self._read("frames/frames.jsonl.zst")
         fr = [Frame(r[0], r[1], r[2], r[3], r[5], r[8], {v[0]: {"ok": v[1], "fetched_ms": v[2], "error": v[3]} for v in r[9]}, D(r[10]), r[11]) for r in rows]
         return fr if include_warmup else [f for f in fr if not f.warmup]
+
+    def venue_fetch_ms(self, t: int, venue: str) -> int | None:
+        """The time AlphaKeel fetched ``venue`` in the scan frame decided at ``t`` (frames table), or None (no such frame,
+        venue not in it, or no fetch time recorded). A quote without an exchange time (``quote_ts`` null) is as old as this."""
+        if self._fetch_by_t is None:
+            self._fetch_by_t = {r[2]: {v[0]: v[2] for v in r[9]} for r in self._read("frames/frames.jsonl.zst")}
+        return self._fetch_by_t.get(t, {}).get(venue)
 
     def fx(self, start: int, end: int) -> list[tuple[int, Decimal | None]]:
         out = [(r[0], D(r[1])) for r in self._read("fx/fx.jsonl.zst") if start <= r[0] < end]
@@ -689,6 +697,10 @@ class Pit:
     def fees(self) -> dict:
         """The pack's static fee table (it does not change inside a pack)."""
         return self.__pack.fees()
+
+    def venue_fetch_ms(self, venue: str) -> int | None:
+        """When ``venue`` was fetched for the scan frame decided at ``as_of`` (never after it); None if not recorded."""
+        return self.__pack.venue_fetch_ms(self.as_of_ms, venue)
 
     def latest_quote(self, inst: Inst) -> Quote | None:
         rows = self.quotes(inst, self.as_of_ms - 24 * 3_600_000, self.as_of_ms + 1)
