@@ -76,7 +76,8 @@ SIM_CONVENTIONS = {
                "received by shorts for a positive rate; mark = close of the last 1m bar closed at or before t (else the settlement's mark)",
     "rounding": "q8 = half-even to 1e-8; quantity half-even to 8 places (README §5a); the trade's executed quantity is that "
                 "quantity truncated toward zero to the decimals AlphaKeel's engine can hold exactly (README §5a engine precision: a "
-                "contract's largest position x 10^dp <= 2^43); decisions and the equity series before the last point use the IR quantity",
+                "contract's largest position x 10^dp <= 2^43); decisions (net_now) use the IR quantity, fills, fees, funding and "
+                "every equity point the executed quantity",
     "equity": "realized + open pairs valued close-now (README §5a net_now formula at the touch; a leg without a quote at its last close)",
     "not_modelled": ["margin", "leverage", "liquidation", "partial fills", "latency", "slippage beyond the synthetic touch",
                      "FX (USDT legs only)", "funding on spot legs"],
@@ -188,12 +189,17 @@ def spill_klines(pack: Pack, insts: list[Inst], start_ms: int, end_ms: int, work
     last: dict[Inst, int] = {}
     chains = {i: Chain() for i in insts}
     try:
-        for venue in sorted({i.venue for i in insts}):
-            want = {(i.market, i.symbol): i for i in insts if i.venue == venue}
+        for venue, market in sorted({(i.venue, i.market) for i in insts}):
+            # one object family per (venue, market), the same selection as AlphaKeel's ``Pack::market_rows``, so a
+            # symbol listed on both markets cannot mix spot and perp bars (and the chain digests stay comparable)
+            if any(o["role"] == "market" and o["name"].startswith(f"market/kline_1m/{venue}/part-") for o in pack.lock["objects"]):
+                raise EvidenceError("evidence.reference", f"this pack stores kline_1m rows of {venue} spot and perp contracts in one "
+                                    "object (layout before market-separated objects); rebuild the pack")
             by_symbol: dict[str, list[Inst]] = {}
-            for i in want.values():
-                by_symbol.setdefault(i.symbol, []).append(i)
-            tag = f"market/kline_1m/{venue}/"
+            for i in insts:
+                if (i.venue, i.market) == (venue, market):
+                    by_symbol.setdefault(i.symbol, []).append(i)
+            tag = f"market/kline_1m/{venue}/{market}/"
             for o in sorted((o for o in pack.lock["objects"] if o["role"] == "market" and o["name"].startswith(tag)), key=lambda o: o["name"]):
                 if (o["last_ms"] or 0) < start_ms or (o["first_ms"] or 0) >= end_ms:
                     continue
@@ -206,7 +212,7 @@ def spill_klines(pack: Pack, insts: list[Inst], start_ms: int, end_ms: int, work
                         continue
                     if r[2] != r[0] + ir_views.KLINE_SPAN_MS:
                         raise EvidenceError("evidence.reference", f"kline at {r[0]} of {venue}:{r[1]} has close_time_ms {r[2]}, not t + 59999")
-                    for i in by_symbol[r[1]]:  # a symbol is one market per venue in practice; both get the row otherwise
+                    for i in by_symbol[r[1]]:
                         if i in last and r[0] <= last[i]:
                             raise EvidenceError("evidence.reference", f"klines of {i.leg()} are not in strict time order at {r[0]}")
                         last[i] = r[0]
@@ -521,18 +527,27 @@ class Sim:
             total += leg.net_now(Decimal(bid if leg.long else ask))
         return total
 
-    def unrealized(self, touch: dict, last_close) -> Decimal:
-        total = Decimal(0)
-        for tr in self.open.values():
-            for leg in tr.legs():
+    def valuation_marks(self, touch: dict, last_close) -> list:
+        """The open legs' close-now prices at this instant: ``[trade, "L"|"S", price, settlements booked so far]`` (the
+        touch; a leg without a quote at its last close, else its entry price). The equity point is computed from these
+        once the run's executed quantities are known (:meth:`equity_at`)."""
+        out = []
+        for tr in sorted(self.open.values(), key=lambda x: x.trade):
+            for side, leg in (("L", tr.long), ("S", tr.short)):
                 k = (leg.inst.venue, leg.inst.market, leg.inst.symbol)
                 if k in touch:
                     px = Decimal(touch[k][0] if leg.long else touch[k][1])
                 else:
                     px = last_close(leg.inst)
                     px = leg.entry_px if px is None else px
-                total += leg.net_now(px)
-        return total
+                out.append([tr.trade, side, _s(px), len(leg.settles)])
+        return out
+
+    @staticmethod
+    def leg_value_at(leg: Leg, px: Decimal, settled: int) -> Decimal:
+        """README §5a ``net_now`` of one leg at the leg's (executed) quantity with the first ``settled`` funding bookings."""
+        funding = sum((q8(leg.qty * mk * r) for mk, r in leg.settles[:settled]), Decimal(0))
+        return leg.price_pnl(px) + funding - leg.entry_fee - leg.qty * px * leg.fee_rate
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -596,6 +611,9 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
     ftr = open(out / "trades.jsonl", "w", encoding="utf-8")
     feq = open(out / "equity.jsonl", "w", encoding="utf-8")
     fde = open(out / "decisions.jsonl", "w", encoding="utf-8")
+    # equity points are valued at the engine's executed quantities (README §5a), known only once every trade of the run is:
+    # each instant's marks are spilled here and the series is written after the run (bounded memory, like the klines)
+    fpts = open(work / "equity-marks.jsonl", "w", encoding="utf-8")
     try:
         def settle_until(t_incl: int) -> None:
             nonlocal last_settled_t
@@ -608,16 +626,33 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                 sim.settle(inst, s.rate, mark if mark is not None else s.mark)
             last_settled_t = t_incl if last_settled_t is None else max(last_settled_t, t_incl)
 
-        def equity_point(t: int, touch: dict) -> Decimal:
+        def equity_point(t: int, touch: dict) -> None:
+            fpts.write(json.dumps([t, len(sim.closed_trades), len(sim.open), sim.valuation_marks(touch, cursor.last_close)],
+                                  separators=(",", ":")) + "\n")
+
+        def write_equity() -> Decimal:
+            """The equity series at the executed quantities: realized of the trades closed by then + the open legs' net_now
+            at the spilled marks. Identical to valuing during the run when no quantity was cut (README §5a)."""
             nonlocal peak, peak_t
-            unreal = sim.unrealized(touch, cursor.last_close)
-            eq = sim.realized + unreal
-            _jsonl(feq, {"t": t, "equity": _s(eq), "realized": _s(sim.realized), "unrealized": _s(unreal), "open_pairs": len(sim.open)})
-            daily[utc_day(t)] = eq
-            if eq > peak:
-                peak, peak_t = eq, t
-            if peak - eq > dd["amount"]:
-                dd.update(amount=peak - eq, peak_ms=peak_t, trough_ms=t)
+            fpts.close()
+            by_trade = {tr.trade: tr for tr in sim.closed_trades + list(sim.open.values())}
+            realized_upto = [Decimal(0)]
+            for tr in sim.closed_trades:
+                realized_upto.append(realized_upto[-1] + tr.realized())
+            eq = Decimal(0)
+            with open(work / "equity-marks.jsonl", encoding="utf-8") as f:
+                for line in f:
+                    t, n_closed, n_open, marks = json.loads(line)
+                    unreal = sum((Sim.leg_value_at(by_trade[n].long if side == "L" else by_trade[n].short, Decimal(px), settled)
+                                  for n, side, px, settled in marks), Decimal(0))
+                    realized = realized_upto[n_closed]
+                    eq = realized + unreal
+                    _jsonl(feq, {"t": t, "equity": _s(eq), "realized": _s(realized), "unrealized": _s(unreal), "open_pairs": n_open})
+                    daily[utc_day(t)] = eq
+                    if eq > peak:
+                        peak, peak_t = eq, t
+                    if peak - eq > dd["amount"]:
+                        dd.update(amount=peak - eq, peak_ms=peak_t, trough_ms=t)
             return eq
 
         t = start_ms
@@ -680,15 +715,18 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         settle_until(end_ms - 1)
         cursor.advance(end_ms - 1)
         final_touch = ir_views.touch(cursor.legs())
-        # the engine's executed quantities (known only once every trade of the run is): fills, fees, funding, totals
+        equity_point(end_ms - 1, final_touch)
+        # the engine's executed quantities (known only once every trade of the run is): fills, fees, funding, totals and
+        # the whole equity series
         sim.apply_engine_qty()
-        final_eq = equity_point(end_ms - 1, final_touch)
+        final_eq = write_equity()
         for tr in sim.closed_trades + sorted(sim.open.values(), key=lambda x: x.trade):
             _jsonl(ftr, tr.record())
     finally:
         ftr.close()
         feq.close()
         fde.close()
+        fpts.close()
         cursor.close()
         shutil.rmtree(work, ignore_errors=True)
 
@@ -793,6 +831,34 @@ def backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, en
 # export: the IR document AlphaKeel's registry imports
 # ---------------------------------------------------------------------------------------------------------------------
 
+# AlphaKeel's runtime entry gates the IR does not inherit (``IrDecider::runtime_warnings``, 2026-10-09 review U8): the
+# built-in rules require both quotes at most ``max_quote_age_ms`` old and at most ``max_leg_skew_ms`` apart; IR frames
+# are not scored, so only the IR's own upper-bound conditions gate its entries. The defaults of AlphaKeel's ScreenConfig.
+ENTRY_FRESHNESS = (("quote_age_ms", "max_quote_age_ms", 5000), ("leg_skew_ms", "max_leg_skew_ms", 3000))
+
+
+def _upper_bound(c: dict) -> Decimal | None:
+    if c["op"] in ("<=", "<"):
+        return Decimal(c["value"])
+    if c["op"] == "between":
+        return Decimal(c["value"][1])
+    return None
+
+
+def freshness_warnings(ir_doc: dict) -> list[str]:
+    """Entry-freshness bounds missing from or looser than AlphaKeel's runtime defaults (same rule as AlphaKeel's
+    ``ir.quote_age_unbounded`` / ``ir.leg_skew_unbounded`` / ``*_looser`` warnings; never changes the IR)."""
+    out = []
+    for feature, setting, limit in ENTRY_FRESHNESS:
+        bounds = [b for c in ir_doc["entry"]["conditions"] if c["feature"] == feature and (b := _upper_bound(c)) is not None]
+        if not bounds:
+            out.append(f"entry.conditions set no upper bound on {feature}: AlphaKeel's {setting} = {limit} ms does not apply "
+                       f"to IR entries; add {{\"feature\": \"{feature}\", \"op\": \"<=\", \"value\": \"{limit}\"}}")
+        elif min(bounds) > limit:
+            out.append(f"entry bound {feature} <= {min(bounds)} is looser than AlphaKeel's {setting} = {limit} ms; the IR's bound applies")
+    return out
+
+
 def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_credential: dict | None = None) -> dict:
     """Write ``strategy.json`` (the IR with ``strategy_id`` and ``provenance``), the trials evidence and
     ``evidence/ir-backtest-audit.json`` into ``out_dir``. The definition is never changed (same ``strategy_id``)."""
@@ -843,9 +909,13 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
     # base allow-list would trade bases nobody researched (2026-10-09 review: oil and stock perps on the first paper round).
     researched = sorted({cursor_base for cursor_base in (i.get("base") for i in card["instruments"]) if cursor_base})
     allowed = loaded.doc["universe"].get("bases")
+    warnings = []
     if allowed is None or set(allowed) - set(researched):
-        prov["warnings"] = [f"universe.bases {'is absent' if allowed is None else 'allows bases outside the backtest'}: "
-                            f"the backtest covered only {researched}; paper/live consider every contract a scan lists"]
+        warnings.append(f"universe.bases {'is absent' if allowed is None else 'allows bases outside the backtest'}: "
+                        f"the backtest covered only {researched}; paper/live consider every contract a scan lists")
+    warnings += freshness_warnings(loaded.doc)
+    if warnings:
+        prov["warnings"] = warnings
     doc = copy.deepcopy(loaded.doc)
     doc["strategy_id"] = sid
     doc["provenance"] = prov

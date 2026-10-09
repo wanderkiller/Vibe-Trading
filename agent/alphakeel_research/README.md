@@ -116,7 +116,11 @@ same vectors as the Rust crate.
   The local simulator gives the same per-leg `net_now` (same formula, null rule and decimal text) as the service's session.
   Only `funding_estimate: "predicted"` is served (`last_settled` is refused at `initialize`).
 - `examples/ir/strategy.json`: an example for the fixture pack (Binance vs OKX BTC perpetuals; enters on the first frame,
-  leaves on `max_hold_hours: 1` at the last).
+  leaves on `max_hold_hours: 1` at the last). It is also the template for new IRs: its entry conditions carry
+  `quote_age_ms <= 5000` and `leg_skew_ms <= 3000`, AlphaKeel's runtime defaults (`max_quote_age_ms`,
+  `max_leg_skew_ms`). IR frames are not scored, so these gates bind an IR's entries only when the IR writes them; keep
+  them (or tighter) in every IR. `ir export` adds a `provenance.warnings` line when either bound is missing or looser,
+  the same rule as AlphaKeel's `ir.quote_age_unbounded` / `ir.leg_skew_unbounded` / `*_looser` runtime warnings.
 
 Two commands against the research service:
 

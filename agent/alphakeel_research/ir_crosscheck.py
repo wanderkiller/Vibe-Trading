@@ -35,7 +35,11 @@ NOTES = [
     "AlphaKeel marks a funding settlement at the last frame's mark at or before it; the simulator at the last 1m bar's "
     "close; they are the same price when decision frames sit on the settlement grid (start aligned, step divides the interval)",
     "the engine checks same-instant cumulative initial margin (profile leverage) and may refuse an entry the simulator, "
-    "which models no margin, makes: such a trade appears on one side only",
+    "which models no margin, makes: AlphaKeel then voids that entry (no position, no cooldown, its number skipped; "
+    "Strategy IR README §5a) and the trade appears on the simulator's side only",
+    "trade-by-trade here, not the service's /comparisons: that endpoint compares two service runs by their event logs "
+    "under one execution profile; the simulator is a local run that models neither margin nor the profile and writes no "
+    "event log. L0 uses the same definition as /comparisons for dataset-view runs (run-manifest.inputs chains)",
     "quantities: both sides decide with the IR quantity (8 places) and execute it truncated to the engine's exact-accounting "
     "precision (Strategy IR README §5a; the simulator applies the same cap), so the quantity of every leg must be equal",
 ]
@@ -51,6 +55,33 @@ def view_of(card: dict) -> dict:
         "fees": {v: {"perp": fees[v]["perp"]} for v in venues},
         "instruments": [{k: i[k] for k in ("venue", "market", "symbol", "base", "quote")} for i in card["instruments"]],
     }
+
+
+# L0 of the comparison: the tables a dataset-view run reads (AlphaKeel ``dataset_view::captures``: per declared contract
+# its ``kline_1m`` rows from the pack window's start and its official settlements). The SAME definition as the service's
+# ``/comparisons`` L0 for two dataset-view runs (Strategy IR README §5a): ``run-manifest.inputs`` entries, one per
+# (table, contract), equal in range, row count and row-digest chain.
+L0_TABLES = ("kline_1m", "settlements")
+
+
+def compare_inputs(vt_inputs: list[dict], ak_inputs: list[dict]) -> dict:
+    """``run-manifest.inputs`` of both sides restricted to ``L0_TABLES``; every (table, contract) must be on both sides
+    with the same ``first_ms``/``last_ms``/``rows``/``chain_sha256``."""
+    def index(xs: list[dict]) -> dict[str, dict]:
+        return {f"{a['table']} {json.dumps(a.get('instrument'), sort_keys=True)}": a for a in xs
+                if a["table"] in L0_TABLES and a.get("rows")}  # an empty read (AlphaKeel records it, VT does not) is no input
+
+    vt, ak = index(vt_inputs), index(ak_inputs)
+    diffs = []
+    for key in sorted(set(vt) | set(ak)):
+        a, b = vt.get(key), ak.get(key)
+        if a is None or b is None:
+            diffs.append({"input": key, "field": "presence", "vt": a is not None, "alphakeel": b is not None})
+            continue
+        for f in ("first_ms", "last_ms", "rows", "chain_sha256"):
+            if a.get(f) != b.get(f):
+                diffs.append({"input": key, "field": f, "vt": a.get(f), "alphakeel": b.get(f)})
+    return {"status": "mismatch" if diffs or not vt else "matched", "inputs": len(vt), "differences": diffs[:30]}
 
 
 def _jsonl(b: bytes) -> list[dict]:
@@ -149,6 +180,8 @@ def alphakeel_check(client: Any, ir_doc: dict, run_dir: str | Path, *, timeout: 
         res = json.loads(client.artifact(run["run_id"], "result.json"))
         ev = _jsonl(client.artifact(run["run_id"], "events.jsonl"))
         cmp = compare(vt_trades(run_dir), ak_trades(ev))
+        manifest = json.loads(client.artifact(run["run_id"], "run-manifest.json"))
+        l0 = compare_inputs(card["inputs"], manifest.get("inputs") or [])
         # like for like: AlphaKeel's result amounts cover CLOSED trades (positions still open at the end are valued in
         # equity, not in realized/fees/funding); the run card's fees/funding also include the open positions'.
         closed = [json.loads(x) for x in (run_dir / "trades.jsonl").read_text().splitlines() if x.strip()]
@@ -159,9 +192,9 @@ def alphakeel_check(client: Any, ir_doc: dict, run_dir: str | Path, *, timeout: 
                   "fees": str(sum((Decimal(x["entry_fee"]) + Decimal(x["exit_fee"]) for x in legs), Decimal(0)))}
         tot = {k: {"vt": vt_tot[k], "alphakeel": res["amounts"][k], "scope": "closed trades"} for k in ("realized", "funding", "fees")}
         tot_ok = all(abs(Decimal(v["vt"]) - Decimal(v["alphakeel"])) <= TOLERANCE * max(1, cmp["trades_vt"] * 6) for v in tot.values())
-        doc.update(comparison=cmp, totals=tot, alphakeel_verification=res.get("verification"),
+        doc.update(comparison=cmp, totals=tot, inputs=l0, alphakeel_verification=res.get("verification"),
                    alphakeel_dataset_view=res.get("dataset_view", {}).get("instants"),
-                   passed=cmp["differences"] == 0 and tot_ok)
+                   passed=cmp["differences"] == 0 and tot_ok and l0["status"] == "matched")
     (run_dir / "alphakeel-check.json").write_text(json.dumps(doc, indent=2, sort_keys=True, default=str) + "\n")
     if "comparison" in doc:
         rec = reconciliation_doc(doc, card, res)
@@ -175,8 +208,8 @@ PASS_SCOPE = ("dataset view kline_close_synthetic_bbo: the Python simulator and 
 
 
 def reconciliation_doc(check: dict, card: dict, res: dict) -> dict:
-    """The cross-check as a ``vibe-trading.ir-reconciliation/1`` file (``arb strategy reconcile --from-file``): L0 = same
-    pack and view, L2 = the trade set and decision times, L3 = per-leg quantities, prices, fees and funding, L4 = closed
+    """The cross-check as a ``vibe-trading.ir-reconciliation/1`` file (``arb strategy reconcile --from-file``): L0 = the
+    same input rows (``compare_inputs``: both sides' ``run-manifest.inputs`` chains of klines and settlements), L2 = the trade set and decision times, L3 = per-leg quantities, prices, fees and funding, L4 = closed
     totals. Same honesty as ``ir review``: AlphaKeel's registry records it as research-supplied, never as a verdict."""
     cmp = check["comparison"]
     timing = [d for d in cmp["first_differences"] if d.get("field") in ("presence", "opened_ms", "closed_ms")]
@@ -189,9 +222,9 @@ def reconciliation_doc(check: dict, card: dict, res: dict) -> dict:
         "comparison": "xchk-" + hashlib.sha256(f"{card['run_id']}|{check['alphakeel_run_id']}".encode()).hexdigest()[:24],
         "strategy_id": card["strategy_id"], "pack_id": card["pack"]["pack_id"],
         "local_run": card["run_id"], "alphakeel_run": check["alphakeel_run_id"],
-        "layers": {"L0": "matched", "L1": "not_applicable", "L2": st(timing or cmp["trades_vt"] != cmp["trades_alphakeel"]),
+        "layers": {"L0": check["inputs"]["status"], "L1": "not_applicable", "L2": st(timing or cmp["trades_vt"] != cmp["trades_alphakeel"]),
                    "L3": st(amounts), "L4": st(not tot_ok)},
-        "first_difference": (cmp["first_differences"] or [None])[0],
+        "first_difference": (check["inputs"]["differences"] or cmp["first_differences"] or [None])[0],
         "passed": bool(check.get("passed")), "pass_scope": PASS_SCOPE,
         "notes": NOTES + [f"trades: {cmp['trades_vt']} (vt) / {cmp['trades_alphakeel']} (alphakeel), matched {cmp['trades_matched']}"],
         "summary": {

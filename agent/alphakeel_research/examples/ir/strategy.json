@@ -7,7 +7,8 @@
   "entry": {
     "conditions": [
       {"feature": "net_conservative", "op": ">=", "value": "0.001"},
-      {"feature": "quote_age_ms", "op": "<=", "value": "5000"}
+      {"feature": "quote_age_ms", "op": "<=", "value": "5000"},
+      {"feature": "leg_skew_ms", "op": "<=", "value": "3000"}
     ],
     "rank_by": "net_conservative", "candidate_limit": 5, "cooldown_minutes": 60, "one_per_base": true
   },

@@ -271,10 +271,12 @@ def test_the_views_quote_time_is_the_exchange_time_and_staleness_falls_back_to_t
     assert f["quote_age_ms"] is None and f["leg_skew_ms"] is None
 
 
-@pytest.mark.parametrize("bid,ask,mark,rate", [("100", "99.99", None, None), ("0", "100", None, None), ("100", "100.01", "0", None),
-                                               ("100", "100.01", None, "1.5")])
-def test_an_entry_on_an_invalid_quote_is_not_submitted_and_takes_no_trade_number(bid, ask, mark, rate):
-    """README §5a (review R2-10): bid <= 0, ask < bid, mark <= 0 or |funding_rate| > 1 on a leg -> the entry submits nothing
+@pytest.mark.parametrize("bid,ask,mark,rate,fpx", [("100", "99.99", None, None, None), ("0", "100", None, None, None),
+                                                   ("100", "100.01", "0", None, None), ("100", "100.01", None, "1.5", None),
+                                                   ("100", "100.01", "100", None, "0"), ("100", "100.01", None, None, "-1")])
+def test_an_entry_on_an_invalid_quote_is_not_submitted_and_takes_no_trade_number(bid, ask, mark, rate, fpx):
+    """README §5a (review R2-10): bid <= 0, ask < bid, mark <= 0, funding price <= 0 (with a positive mark: AlphaKeel's
+    engine takes no quote whose funding price is not positive) or |funding_rate| > 1 on a leg -> the entry submits nothing
     and takes no number (AlphaKeel ``paper::open_planned``), like ``bbo = false``."""
     pol = _policy()
     st = pol.initialize({"ir": _carry_doc()})
@@ -283,6 +285,8 @@ def test_an_entry_on_an_invalid_quote_is_not_submitted_and_takes_no_trade_number
     pit.rows[bn] = [dataclasses.replace(q, bid=Decimal(bid), ask=Decimal(ask), mark=None if mark is None else Decimal(mark)) for q in pit.rows[bn]]
     if rate is not None:
         pit.obs[bn] = [dataclasses.replace(o, funding_rate=Decimal(rate)) for o in pit.obs[bn]]
+    if fpx is not None:
+        pit.obs[bn] = [dataclasses.replace(o, funding_px=Decimal(fpx)) for o in pit.obs[bn]]
     out = pol.on_step(_ctx(T, [], pit), st)
     assert out["intents"] == [] and out["state"]["positions"] == {} and out["state"]["next_trade"] == 1
     nxt = pol.on_step(_ctx(T, [], _fake_pit()), out["state"])
@@ -511,8 +515,25 @@ def test_ir_export_round_trips_with_the_same_strategy_id_and_full_provenance(tmp
     audit = json.loads((exp / "evidence" / "ir-backtest-audit.json").read_text())
     assert audit["strategy_id"] == sid and audit["run_card"]["run_id"] == p["run_id"] and audit["alphakeel_metrics"] is not None
     assert any("no research-service credential" in r for r in audit["reasons"])
+    # the golden IR has no entry-freshness bounds: the export says AlphaKeel's runtime gates do not apply (U8)
+    assert [w.split(":")[0] for w in p["warnings"] if w.startswith("entry")] == [
+        "entry.conditions set no upper bound on quote_age_ms", "entry.conditions set no upper bound on leg_skew_ms"]
     # every float-free decimal stays canonical; the document is a valid IR wherever it goes
     assert ir.validate(doc) == []
+
+
+def test_entry_freshness_warnings_follow_alphakeels_runtime_defaults():
+    """U8: the shipped template carries both bounds; a missing or looser bound is reported, a tighter one is not."""
+    example = json.loads((Path(ir_backtest.__file__).parent / "examples" / "ir" / "strategy.json").read_text())
+    assert ir_backtest.freshness_warnings(example) == [] and ir.validate(example) == []
+    doc = golden_ir()
+    cond = lambda f, op, v: {"feature": f, "op": op, "value": v}  # noqa: E731
+    doc["entry"]["conditions"] = [cond("quote_age_ms", "<=", "8000"), cond("leg_skew_ms", "between", ["0", "1000"])]
+    (w,) = ir_backtest.freshness_warnings(doc)
+    assert w.startswith("entry bound quote_age_ms <= 8000 is looser than AlphaKeel's max_quote_age_ms = 5000 ms")
+    doc["entry"]["conditions"] = [cond("quote_age_ms", "<", "5000"), cond("leg_skew_ms", ">=", "10")]
+    (w,) = ir_backtest.freshness_warnings(doc)
+    assert w.startswith("entry.conditions set no upper bound on leg_skew_ms")
 
 
 def test_ir_export_with_a_research_credential_applies_the_data_horizon_rule(tmp_path):
@@ -682,6 +703,59 @@ def test_the_dataset_simulator_executes_the_engines_quantity_and_redoes_the_amou
     tr2 = sim2.open_pair(1, pair, Decimal("729.99"), 0)
     sim2.apply_engine_qty()
     assert (tr2.long.qty, tr2.long.ir_qty, sim2.qty_adjusted) == (Decimal("729.99"), None, 0)
+
+
+def test_every_equity_point_is_valued_at_the_engines_quantity(tmp_path):
+    """README §5a: the engine holds 100000.00000001 BTC at 7 places (100000 x 10^8 > 2^43), so it executes 100000; the
+    equity series (AlphaKeel's engine values at the executed quantity at every frame) must use it at EVERY point, not
+    only the last one. Right after entry, close-now = -(entry fees + exit fees at the touch), spread 0."""
+    doc = golden_ir()
+    doc["sizing"]["notional_per_leg"] = "10000000.00000123"  # / ask 100 = 100000.0000000123 -> 8 places 100000.00000001
+    doc["exit"]["max_loss"] = "1000000"
+    pack = Pack.from_directory(export_dir(tmp_path, golden_built()))
+    out = tmp_path / "bt"
+    card = ir_backtest.run(doc, pack, [BN, OK], start_ms=START, end_ms=END, out_dir=out, step_minutes=2)
+    assert card["counts"]["legs_engine_qty_adjusted"] == 2
+    t = json.loads((out / "trades.jsonl").read_text().splitlines()[0])
+    assert (t["long"]["qty"], t["long"]["ir_qty"]) == ("100000", "100000.00000001")
+    eq = [json.loads(x) for x in (out / "equity.jsonl").read_text().splitlines()]
+    fee = Decimal("0.0005")
+    engine = -(2 * (Decimal(100000) * Decimal(100) * fee + Decimal(100000) * Decimal("100.2") * fee))
+    assert Decimal(eq[0]["equity"]) == engine == Decimal("-20020")  # at the IR quantity it would be -20020.000000001001
+    assert eq[-1]["equity"] == card["amounts"]["equity_end"] and eq[-1]["realized"] == card["amounts"]["realized"]
+    assert not (out / ".work").exists()
+
+
+def test_the_crosscheck_l0_compares_the_run_manifest_input_chains(tmp_path):
+    """U9: L0 is no longer asserted; it is the service's dataset-view L0 (run-manifest.inputs chains of klines and
+    settlements per contract) applied to the VT run card's inputs and the AlphaKeel run's manifest."""
+    from alphakeel_research import ir_crosscheck as X
+
+    pack = Pack.from_directory(export_dir(tmp_path, golden_built()))
+    card = ir_backtest.run(golden_ir(), pack, [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "bt", step_minutes=2)
+    vt = card["inputs"]
+    assert {a["table"] for a in vt} >= {"kline_1m"}
+    # AlphaKeel records an empty read and other tables too; neither enters L0
+    ak = copy.deepcopy(vt) + [{"table": "settlements", "instrument": {"venue": "x", "market": "perp", "symbol": "Y"},
+                               "first_ms": 0, "last_ms": 0, "rows": 0, "chain_sha256": "0" * 64},
+                              {"table": "instruments", "instrument": None, "first_ms": 0, "last_ms": 0, "rows": 3, "chain_sha256": "1" * 64}]
+    ok = X.compare_inputs(vt, ak)
+    assert ok["status"] == "matched" and ok["inputs"] == len([a for a in vt if a["table"] in X.L0_TABLES]) and ok["differences"] == []
+    bad = copy.deepcopy(ak)
+    bad[0]["chain_sha256"] = "f" * 64
+    r = X.compare_inputs(vt, bad)
+    assert r["status"] == "mismatch" and r["differences"][0]["field"] == "chain_sha256"
+    r = X.compare_inputs(vt, ak[1:])
+    assert r["status"] == "mismatch" and r["differences"][0] == {"input": r["differences"][0]["input"], "field": "presence",
+                                                                   "vt": True, "alphakeel": False}
+    assert X.compare_inputs([], [])["status"] == "mismatch"  # nothing read is no evidence of the same input
+    cmp = {"trades_vt": 0, "trades_alphakeel": 0, "trades_matched": 0, "differences": 0, "first_differences": []}
+    check = {"alphakeel_run_id": "run-x", "comparison": cmp, "inputs": r, "passed": False,
+             "totals": {"realized": {"vt": "0", "alphakeel": "0"}}}
+    rec = X.reconciliation_doc(check, card, {})
+    assert rec["layers"]["L0"] == "mismatch" and rec["first_difference"]["field"] == "presence"
+    rec = X.reconciliation_doc({**check, "inputs": ok}, card, {})
+    assert rec["layers"]["L0"] == "matched" and rec["first_difference"] is None
 
 
 def test_the_crosscheck_has_no_known_quantity_difference_any_more(tmp_path):
