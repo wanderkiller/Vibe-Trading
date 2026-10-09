@@ -535,13 +535,14 @@ def test_the_crosscheck_matches_alphakeel_events_to_vt_trades_and_locates_a_diff
     from alphakeel_research import ir_crosscheck as X
 
     inst = {"venue": "binance", "market": "perp", "symbol": "BTCUSDT"}
-    leg = lambda side, px_in, px_out, fund: {"position_ref": "", "instrument": inst, "side": side, "qty": "10", "entry_price": px_in,
-                                             "exit_price": px_out, "entry_fee": "0.5", "exit_fee": "0.5", "funding": fund}
+    def leg(side, px_in, px_out, fund):
+        return {"position_ref": "", "instrument": inst, "side": side, "qty": "10", "entry_price": px_in,
+                "exit_price": px_out, "entry_fee": "0.5", "exit_fee": "0.5", "funding": fund}
     t = {"trade": 1, "opened_ms": 1_000, "closed_ms": 61_000, "long": leg("long", "100", "101", "-0.1"),
          "short": leg("short", "100", "101", "0.3")}
     (tmp_path / "trades.jsonl").write_text(json.dumps(t) + "\n")
-    fill = lambda iid, ns, px: {"kind": "fill", "intent_id": iid, "ns": str(ns), "instrument": inst,
-                                "data": {"qty": "10", "price": px, "fee": "0.5"}}
+    def fill(iid, ns, px):
+        return {"kind": "fill", "intent_id": iid, "ns": str(ns), "instrument": inst, "data": {"qty": "10", "price": px, "fee": "0.5"}}
     ev = [fill("n1-L-open", 1_000_000_001, "100"), fill("n1-S-open", 1_000_000_001, "100"),
           {"kind": "funding", "position_ref": "p1L", "data": {"amount": "-0.1"}},
           {"kind": "funding", "position_ref": "p1S", "data": {"amount": "0.3"}},
