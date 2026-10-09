@@ -19,9 +19,10 @@ from .sim import Simulator, dp_of
 DEFAULT_CACHE = Path(os.environ.get("ALPHAKEEL_RESEARCH_CACHE", Path.home() / ".vibe-trading" / "alphakeel" / "packs"))
 
 
-def freeze_pack(client: Client, request: dict, *, cache_dir: str | Path | None = None, timeout: float = 900.0) -> Pack:
+def freeze_pack(client: Client, request: dict, *, cache_dir: str | Path | None = None, timeout: float = 900.0,
+                key: str | None = None) -> Pack:
     """Create (or find, by key) a frozen data pack and open it locally with verified content."""
-    job = client.create_pack(request)
+    job = client.create_pack(request, key=key)
     done = client.wait_pack(job["job_id"], timeout=timeout)
     if done["status"] != "ready":
         err = done.get("error") or {}

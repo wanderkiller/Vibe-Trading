@@ -359,7 +359,7 @@ def test_the_policy_enters_both_legs_and_exits_only_what_the_engine_holds():
         ("n1-L-close", "sell", "9.999", "100", True, "p1L", "pair-1")]
     # the close filled: the pair is gone from the engine -> closed, base cools down from this step
     out3 = pol.on_step(_ctx(t2 + 60_000, [], pit2), out2["state"])
-    assert out3["state"]["positions"] == {} and out3["state"]["cooldowns"] == {"BTC": t2 + 60_000}
+    assert out3["state"]["positions"] == {} and out3["state"]["cooldowns"] == {"BTC": t2}  # README §5: from the close decision (AlphaKeel closed_ms), not this later step
 
 
 def test_an_entry_that_never_filled_is_dropped_without_a_cooldown():

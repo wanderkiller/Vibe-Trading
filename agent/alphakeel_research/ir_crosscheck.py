@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -55,7 +56,7 @@ def _jsonl(b: bytes) -> list[dict]:
 
 
 def ak_trades(events: list[dict]) -> dict[int, dict]:
-    """``trade -> {legs: {L|S: {...}}, opened_ns, closed_ns}`` from AlphaKeel's event log (intent ids ``n<k>-L|S-open|close``)."""
+    """``trade -> {legs: {L|S: {...}}, opened_ms, closed_ms}`` (decision times of the fills) from AlphaKeel's event log (intent ids ``n<k>-L|S-open|close``)."""
     out: dict[int, dict] = {}
     for e in events:
         kind, iid, pref = e.get("kind"), e.get("intent_id"), e.get("position_ref")
@@ -68,10 +69,10 @@ def ak_trades(events: list[dict]) -> dict[int, dict]:
             lg["fees"] += Decimal(d["fee"])
             if act == "open":
                 lg["qty"], lg["entry_price"] = Decimal(d["qty"]), Decimal(d["price"])
-                t.setdefault("opened_ns", int(e["ns"]))
+                t.setdefault("opened_ms", int(e["time_ms"]))
             else:
                 lg["exit_price"] = Decimal(d["price"])
-                t["closed_ns"] = int(e["ns"])
+                t["closed_ms"] = int(e["time_ms"])
         elif kind == "funding" and pref and pref.startswith("p"):
             n, leg = int(pref[1:-1]), pref[-1]
             lg = out.setdefault(n, {"legs": {}})["legs"].setdefault(leg, {"funding": Decimal(0), "fees": Decimal(0)})
@@ -100,11 +101,11 @@ def compare(vt: dict[int, dict], ak: dict[int, dict]) -> dict:
             diffs.append({"trade": n, "field": "presence", "vt": a is not None, "alphakeel": b is not None})
             continue
         ok = True
-        ak_open = b.get("opened_ns", 0) // 1_000_000
+        ak_open = b.get("opened_ms")
         if ak_open != a["opened_ms"]:
             ok = False
             diffs.append({"trade": n, "field": "opened_ms", "vt": a["opened_ms"], "alphakeel": ak_open})
-        ak_close = None if "closed_ns" not in b else b["closed_ns"] // 1_000_000
+        ak_close = b.get("closed_ms")
         if ak_close != a["closed_ms"]:
             ok = False
             diffs.append({"trade": n, "field": "closed_ms", "vt": a["closed_ms"], "alphakeel": ak_close})
@@ -129,8 +130,15 @@ def alphakeel_check(client: Any, ir_doc: dict, run_dir: str | Path, *, timeout: 
     card = json.loads((run_dir / "run_card.json").read_text())
     body = {"mode": "ir_strategy", "pack_id": card["pack"]["pack_id"], "ir": ir_doc, "dataset_view": view_of(card)}
     key = "vt-xcheck-" + hashlib.sha256(canon.canonical_bytes(body)).hexdigest()[:32]
+    submitted = int(time.time() * 1000)
     run = client.create_run(body, key=key)
     st = client.wait_run(run["run_id"], timeout=timeout)
+    # The key is content-derived: after a failed run (e.g. on an older service build) it would return that failed run
+    # forever. A run that had already ended before this call is retried once as its child (``parent_run_id``).
+    if st.get("status") in ("failed", "interrupted", "cancelled") and int(st.get("created_ms") or submitted) < submitted:
+        child = {**body, "parent_run_id": run["run_id"]}
+        run = client.create_run(child, key=key + "-retry-" + run["run_id"][-12:])
+        st = client.wait_run(run["run_id"], timeout=timeout)
     doc: dict = {"schema": SCHEMA, "vt_run_id": card["run_id"], "strategy_id": card["strategy_id"],
                  "alphakeel_run_id": run["run_id"], "alphakeel_status": st.get("status"), "notes": NOTES}
     if st.get("status") != "complete":
@@ -139,9 +147,15 @@ def alphakeel_check(client: Any, ir_doc: dict, run_dir: str | Path, *, timeout: 
         res = json.loads(client.artifact(run["run_id"], "result.json"))
         ev = _jsonl(client.artifact(run["run_id"], "events.jsonl"))
         cmp = compare(vt_trades(run_dir), ak_trades(ev))
-        am = card["amounts"]
-        tot = {k: {"vt": am[k2], "alphakeel": res["amounts"][k]} for k, k2 in
-               (("realized", "realized"), ("funding", "funding"), ("fees", "fees"))}
+        # like for like: AlphaKeel's result amounts cover CLOSED trades (positions still open at the end are valued in
+        # equity, not in realized/fees/funding); the run card's fees/funding also include the open positions'.
+        closed = [json.loads(x) for x in (run_dir / "trades.jsonl").read_text().splitlines() if x.strip()]
+        closed = [t for t in closed if t["status"] == "closed"]
+        legs = [t[k] for t in closed for k in ("long", "short")]
+        vt_tot = {"realized": card["amounts"]["realized"],
+                  "funding": str(sum((Decimal(x["funding"]) for x in legs), Decimal(0))),
+                  "fees": str(sum((Decimal(x["entry_fee"]) + Decimal(x["exit_fee"]) for x in legs), Decimal(0)))}
+        tot = {k: {"vt": vt_tot[k], "alphakeel": res["amounts"][k], "scope": "closed trades"} for k in ("realized", "funding", "fees")}
         tot_ok = all(abs(Decimal(v["vt"]) - Decimal(v["alphakeel"])) <= TOLERANCE * max(1, cmp["trades_vt"] * 6) for v in tot.values())
         doc.update(comparison=cmp, totals=tot, alphakeel_verification=res.get("verification"),
                    alphakeel_dataset_view=res.get("dataset_view", {}).get("instants"),

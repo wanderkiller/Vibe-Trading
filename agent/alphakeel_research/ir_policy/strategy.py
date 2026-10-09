@@ -4,7 +4,7 @@ Parameters: ``{"ir": <IR document>, "qty_dp": <int, default 8>}``.
 
 Each step:
 1. reconcile the IR positions with the engine's REAL positions (``ctx["positions"]``): a pair whose legs are all gone is
-   closed (its base goes to ``cooldowns`` at this step's time); an entry none of whose legs ever showed up did not fill
+   closed (its base goes to ``cooldowns`` at the decision time of its close); an entry none of whose legs ever showed up did not fill
    and is dropped without a cooldown;
 2. build the frame from the point-in-time reader (``ir_views``, README §4.1a) and call ``ir.decide`` (README §5);
 3. exits -> one reduce-only ``limit_ioc`` per engine position of that pair (whatever actually filled, never an
@@ -62,7 +62,9 @@ def _reconcile(state, engine, t):
             positions[key] = p
         elif p["seen"]:
             del positions[key]
-            cooldowns[IR.ascii_upper(p["base"])] = t
+            # README §5: the cooldown runs from the CLOSE (the decision time of the close that filled), as AlphaKeel's
+            # evaluator records ``closed_ms``; starting it at this later step delayed every re-entry by one frame (L2).
+            cooldowns[IR.ascii_upper(p["base"])] = p.get("close_ms", t)
         else:
             del positions[key]  # the entry never filled on either leg: nothing was held, no cooldown
     return positions, cooldowns
@@ -98,6 +100,7 @@ def on_step(ctx, state):
         p = positions[x["position_id"]]
         if not ir_views.exit_quoted(p, quoted):
             continue  # README §5a: a leg has no tradable quote in this frame -> hold; decided again on the next step
+        positions[x["position_id"]] = p = {**p, "close_ms": t}
         for leg in ("long", "short"):
             ref = p["refs"][leg]
             ep = engine.get(ref)

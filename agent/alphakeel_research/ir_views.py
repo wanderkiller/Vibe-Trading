@@ -144,7 +144,7 @@ def exit_quoted(p, quoted):
 #   ``assumptions.funding_estimate`` is NOT changed (it stays ``predicted``); this is the view's approximation, stated as such;
 # * ``interval_hours`` from that settlement's ``interval_seconds``; when the dataset leaves it null (Binance, OKX, Bybit,
 #   Bitget, Gate and Aster history never state it), INFERRED point-in-time from the gap between the two latest visible
-#   settlements, accepted only when it is exactly 1, 2, 4 or 8 h (``INFERABLE_INTERVALS``). A perp with neither is left
+#   settlements, accepted only when it is 1, 2, 4 or 8 h within 60 s (``INFERABLE_INTERVALS``; timestamps jitter by ms). A perp with neither is left
 #   out. After a venue changes a contract's interval the inference lags one settlement. ``next_funding_ms`` = settlement
 #   time + interval;
 # * ``volume_quote`` = sum of ``volume_quote`` over the 1440 one-minute bars of the 24 h ending with the last closed bar
@@ -207,7 +207,8 @@ def dataset_leg(*, venue: str, market: str, symbol: str, base: str, quote_ccy: s
         h = interval_hours_of(iv)
         if h is None:
             return None
-        funding = {"funding_rate": fmt(rate), "interval_hours": h, "next_funding_ms": st + iv * 1000}
+        # the settlement timestamp's millisecond jitter is not carried into the next boundary (same rule as AlphaKeel)
+        funding = {"funding_rate": fmt(rate), "interval_hours": h, "next_funding_ms": (st + 30_000) // 60_000 * 60_000 + iv * 1000}
     px = fmt(close)
     return {"base": base, "view": {
         "venue": venue, "symbol": symbol, "market": market, "quote_ccy": quote_ccy, "bid": px, "ask": px, "bbo": True,
@@ -215,12 +216,21 @@ def dataset_leg(*, venue: str, market: str, symbol: str, base: str, quote_ccy: s
         "quote_ms": close_time_ms}}
 
 
+#: settlement timestamps jitter by a few milliseconds (Binance ``fundingTime`` ...000, ...004, ...005): a gap within this
+#: tolerance of a standard interval is that interval (the same 60 s the official-settlement boundary match uses)
+INTERVAL_TOLERANCE_MS = 60_000
+
+
 def inferred_interval_seconds(prev_t: int | None, last_t: int) -> int | None:
-    """The interval implied by two consecutive visible settlements, or None unless it is one of ``INFERABLE_INTERVALS``."""
+    """The interval implied by two consecutive visible settlements: the standard interval (``INFERABLE_INTERVALS``)
+    within ``INTERVAL_TOLERANCE_MS`` of their gap, else None."""
     if prev_t is None:
         return None
-    gap, rem = divmod(last_t - prev_t, 1000)
-    return gap if rem == 0 and gap in INFERABLE_INTERVALS else None
+    gap = last_t - prev_t
+    for iv in INFERABLE_INTERVALS:
+        if abs(gap - iv * 1000) <= INTERVAL_TOLERANCE_MS:
+            return iv
+    return None
 
 
 def settlement_tuple(last, prev=None) -> tuple[Decimal, int, int | None]:

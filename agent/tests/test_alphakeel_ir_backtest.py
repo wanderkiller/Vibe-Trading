@@ -515,6 +515,8 @@ def test_a_null_settlement_interval_is_inferred_point_in_time_only_at_standard_p
     assert V.inferred_interval_seconds(0, 4 * h) == 14_400
     assert V.inferred_interval_seconds(0, 16 * h) is None  # a skipped settlement is not a period
     assert V.inferred_interval_seconds(0, 3 * h) is None
+    assert V.inferred_interval_seconds(1_780_876_800_000, 1_780_905_600_005) == 28_800  # Binance fundingTime jitter (+5 ms)
+    assert V.inferred_interval_seconds(0, 8 * h + 61_000) is None
     assert V.inferred_interval_seconds(None, 8 * h) is None
     last, prev = S(rate=Decimal("0.0001"), t=16 * h, interval_seconds=None), S(t=8 * h)
     assert V.settlement_tuple(last, prev) == (Decimal("0.0001"), 16 * h, 28_800)
@@ -542,7 +544,8 @@ def test_the_crosscheck_matches_alphakeel_events_to_vt_trades_and_locates_a_diff
          "short": leg("short", "100", "101", "0.3")}
     (tmp_path / "trades.jsonl").write_text(json.dumps(t) + "\n")
     def fill(iid, ns, px):
-        return {"kind": "fill", "intent_id": iid, "ns": str(ns), "instrument": inst, "data": {"qty": "10", "price": px, "fee": "0.5"}}
+        return {"kind": "fill", "intent_id": iid, "time_ms": ns // 1_000_000, "time_ns": str(ns), "instrument": inst,
+                "data": {"qty": "10", "price": px, "fee": "0.5"}}
     ev = [fill("n1-L-open", 1_000_000_001, "100"), fill("n1-S-open", 1_000_000_001, "100"),
           {"kind": "funding", "position_ref": "p1L", "data": {"amount": "-0.1"}},
           {"kind": "funding", "position_ref": "p1S", "data": {"amount": "0.3"}},

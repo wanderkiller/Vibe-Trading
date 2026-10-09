@@ -60,8 +60,8 @@ APPROXIMATIONS = [
     "funding_rate = the last official settlement visible at the decision time (available_at, or settlement time + the pack's "
     "assumed delay): a last_settled proxy for the predicted rate live scans use; the IR's assumptions.funding_estimate is unchanged",
     "interval_hours from that settlement's interval_seconds; when the dataset leaves it null (Binance/OKX/Bybit/Bitget/Gate/"
-    "Aster history) it is INFERRED from the gap between the two latest visible settlements, accepted only at exactly 1, 2, 4 "
-    "or 8 h (perps with neither are left out; after an interval change the inference lags one settlement); "
+    "Aster history) it is INFERRED from the gap between the two latest visible settlements, accepted only at 1, 2, 4 "
+    "or 8 h within 60 s (timestamps jitter by milliseconds) (perps with neither are left out; after an interval change the inference lags one settlement); "
     "next_funding_ms = settlement time + interval",
     "volume_quote = sum of volume_quote over the 1440 bars of the 24 h ending with the last closed bar (null unless all 1440 exist)",
     "a funding settlement on an open leg with no 1m bar in the 5 minutes before it and no mark price in the settlement row "
@@ -591,8 +591,8 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                 t += step
                 continue
             counts["instants"] += 1
-            for tr in closed_pending:  # ir_policy reconciles a filled close one step later: the base cools down from now
-                cooldowns[IR.ascii_upper(tr.base)] = t
+            for tr in closed_pending:  # README §5: removed from positions one step later, cooling down from its close time
+                cooldowns[IR.ascii_upper(tr.base)] = tr.closed_ms
             closed_pending = []
             pairs = ir_views.pairs_of_legs(legs)
             touch = ir_views.touch(legs)
@@ -735,7 +735,13 @@ def backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, en
         from . import workflow
 
         who = client.check()
-        pack = workflow.freeze_pack(client, req, cache_dir=cache_dir)
+        # A request that names no dataset version means "latest at acceptance"; keyed by its content alone, a re-run after
+        # new data was published got the OLD pack back (same key, same job) -- silently stale. The UTC day in the key
+        # re-freezes at most daily; unchanged data gives the same content-derived pack_id anyway.
+        from .client import key_for
+
+        day_key = key_for("pack", {"request": req, "utc_day": utc_day(int(time.time() * 1000))})
+        pack = workflow.freeze_pack(client, req, cache_dir=cache_dir, key=day_key)
         service = {"used": True, "credential": who.get("credential"), "data_horizon": who.get("data_horizon"),
                    "holdout_days": who.get("holdout_days")}
     check_pack(pack, req)
