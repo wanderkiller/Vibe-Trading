@@ -118,6 +118,10 @@ def _load_universe_panel(
         ValueError: unknown universe or bad period.
         RuntimeError: ``TUSHARE_TOKEN`` unset when csi300 is requested.
     """
+    if isinstance(universe, str) and universe.startswith("alphakeel:"):  # AlphaKeel patch layer: dataset-pack crypto cross-section
+        from src.factors.alphakeel_universe import load_alphakeel_panel
+
+        return load_alphakeel_panel(universe, *_parse_period(period))
     if universe not in _UNIVERSE_TAG:
         raise ValueError(
             f"universe {universe!r} not recognized; expected one of {sorted(_UNIVERSE_TAG)}"
@@ -1157,7 +1161,11 @@ class AlphaBenchTool(BaseTool):
             },
             "universe": {
                 "type": "string",
-                "description": "csi300 | sp500 | btc-usdt (resolved via existing data tools).",
+                "description": (
+                    "csi300 | sp500 | btc-usdt (resolved via existing data tools) | "
+                    "alphakeel:<universe.json or inline JSON> (crypto cross-section from an AlphaKeel dataset pack; "
+                    "see agent/alphakeel_research/README.md)."
+                ),
             },
             "period": {
                 "type": "string",

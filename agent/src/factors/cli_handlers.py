@@ -65,6 +65,7 @@ except Exception:  # pragma: no cover — rich is a project dep, fallback only
     TextColumn = None  # type: ignore[assignment]
     TimeElapsedColumn = None  # type: ignore[assignment]
 
+from src.factors.alphakeel_universe import UniverseChoices  # AlphaKeel patch layer
 from src.factors.compare_runner import SORT_KEYS as _COMPARE_SORT_KEYS, compare_alphas
 from src.factors.registry import Registry, RegistryError
 
@@ -78,7 +79,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 # ``src.tools.alpha_bench_tool._UNIVERSE_TAG``. There is no KRX (or NSE/BSE)
 # panel yet, so Korea/India are deliberately absent — ``alpha bench`` would
 # fail at universe load, not produce a Korean benchmark.
-_UNIVERSE_CHOICES = ["csi300", "sp500", "btc-usdt"]
+# AlphaKeel patch layer: UniverseChoices also accepts ``alphakeel:<spec>`` (dataset-pack crypto cross-section).
+_UNIVERSE_CHOICES = UniverseChoices(["csi300", "sp500", "btc-usdt"])
 
 # Per-row fields that only ``bench_runner_strict`` produces. They are the
 # statistics ``categorise_strict`` actually gates on, so a strict run that

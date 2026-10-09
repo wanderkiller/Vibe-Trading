@@ -130,6 +130,7 @@
     "agent/backtest/loaders/alphakeel_b2_loader.py",
     "agent/backtest/alphakeel_metrics.py",
     "agent/src/tools/alphakeel_research_tool.py",
+    "agent/src/factors/alphakeel_universe.py",
     "agent/tests/fixtures/alphakeel/",
     "agent/tests/fixtures/alphakeel_server.py",
     "agent/tests/test_alphakeel_b2_loader.py",
@@ -144,7 +145,8 @@
     "agent/tests/test_alphakeel_protocol.py",
     "agent/tests/test_alphakeel_registration.py",
     "agent/tests/test_alphakeel_robustness.py",
-    "agent/tests/test_alphakeel_sim_funding_gaps.py"
+    "agent/tests/test_alphakeel_sim_funding_gaps.py",
+    "agent/tests/test_alphakeel_universe.py"
    ],
    "anchors": [
     {
@@ -312,6 +314,75 @@
      "file": "agent/backtest/metrics.py",
      "kind": "hook",
      "literal": "\"nobitex\": 1440, \"wallex\": 1440, \"alphakeel_pack\": 1440, \"alphakeel_b2\": 1440,"
+    }
+   ]
+  },
+  {
+   "id": "alpha-bench-universe",
+   "title": "alphakeel:<spec> universe in the alpha bench (dispatch, CLI choice, tool description)",
+   "files": [
+    "agent/src/tools/alpha_bench_tool.py",
+    "agent/src/factors/cli_handlers.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/src/tools/alpha_bench_tool.py",
+     "kind": "upstream",
+     "literal": "def _load_universe_panel(\n    universe: str, period: str, *, use_cache: bool = True\n) -> dict[str, pd.DataFrame]:",
+     "note": "every bench path (tool, CLI, strict and compare runners, MCP) loads its panel here"
+    },
+    {
+     "file": "agent/src/tools/alpha_bench_tool.py",
+     "kind": "upstream",
+     "literal": "def _parse_period(period: str) -> tuple[str, str]:"
+    },
+    {
+     "file": "agent/src/tools/alpha_bench_tool.py",
+     "kind": "upstream",
+     "literal": "    if universe not in _UNIVERSE_TAG:",
+     "note": "the alphakeel dispatch sits right before this check (and before the pickle cache)"
+    },
+    {
+     "file": "agent/src/tools/alpha_bench_tool.py",
+     "kind": "upstream",
+     "literal": "fwd = close.pct_change(fill_method=None).shift(-1)",
+     "note": "forward return = next bar's close over this close: the panel's point-in-time rule (row = values visible at the bar close) relies on it"
+    },
+    {
+     "file": "agent/src/tools/alpha_bench_tool.py",
+     "kind": "hook",
+     "literal": "if isinstance(universe, str) and universe.startswith(\"alphakeel:\"):  # AlphaKeel patch layer"
+    },
+    {
+     "file": "agent/src/tools/alpha_bench_tool.py",
+     "kind": "hook",
+     "literal": "\"alphakeel:<universe.json or inline JSON> (crypto cross-section from an AlphaKeel dataset pack; \""
+    },
+    {
+     "file": "agent/src/tools/alpha_bench_tool.py",
+     "kind": "preimage",
+     "literal": "\"description\": \"csi300 | sp500 | btc-usdt (resolved via existing data tools).\","
+    },
+    {
+     "file": "agent/src/factors/cli_handlers.py",
+     "kind": "upstream",
+     "literal": "        choices=_UNIVERSE_CHOICES,",
+     "note": "argparse checks `value in choices`; UniverseChoices.__contains__ also accepts alphakeel:<spec>"
+    },
+    {
+     "file": "agent/src/factors/cli_handlers.py",
+     "kind": "hook",
+     "literal": "_UNIVERSE_CHOICES = UniverseChoices([\"csi300\", \"sp500\", \"btc-usdt\"])"
+    },
+    {
+     "file": "agent/src/factors/cli_handlers.py",
+     "kind": "hook",
+     "literal": "from src.factors.alphakeel_universe import UniverseChoices  # AlphaKeel patch layer"
+    },
+    {
+     "file": "agent/src/factors/cli_handlers.py",
+     "kind": "preimage",
+     "literal": "_UNIVERSE_CHOICES = [\"csi300\", \"sp500\", \"btc-usdt\"]"
     }
    ]
   },
