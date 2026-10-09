@@ -210,7 +210,7 @@ deliberately unchanged: a file path in a web request is not offered.
 - `agent/src/tools/alpha_bench_tool.py`
 - `agent/src/factors/cli_handlers.py`
 
-**Commits.** The lane/u-d commit `feat(alphakeel): alphakeel:<spec> alpha-bench universe from a dataset pack`.
+**Commits.** `445c7889` (module, hooks, tests), plus the README section that follows it.
 
 **Upstreamable.** No; it follows the leaf package. (A generic "universe provider" hook in `_load_universe_panel` would be.)
 

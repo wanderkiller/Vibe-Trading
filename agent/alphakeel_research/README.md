@@ -191,6 +191,51 @@ AlphaKeel imports the file into its registry (`strategy_ir::Ir::parse` + `valida
 
 The agent tool exposes the four IR commands as actions `ir_validate`, `ir_review`, `ir_backtest`, `ir_export`.
 
+## Factor research on a crypto cross-section: the `alphakeel:` alpha-bench universe
+
+The alpha zoo's bench universes are `csi300`, `sp500` and the single-asset `btc-usdt`; `alphakeel:<spec>` adds a crypto
+cross-section built from a dataset pack (`src/factors/alphakeel_universe.py`, patch group `alpha-bench-universe`). The
+spec is a JSON file (or the JSON object inline after `alphakeel:`; relative paths are resolved against the file's
+directory):
+
+```json
+{"schema": "vibe-trading.alphakeel-universe/1",
+ "pack_dir": "pack",
+ "instruments": [{"venue": "binance", "market": "perp", "symbol": "BTCUSDT", "base": "BTC"},
+                 {"venue": "binance", "market": "perp", "symbol": "ETHUSDT", "base": "ETH"}],
+ "interval": "1d", "ir": "strategy.json", "excluded_bases": [], "funding": true}
+```
+
+```bash
+vibe-trading alpha bench --zoo academic --universe alphakeel:/path/universe.json --period 2025-01-01/2025-07-20
+vibe-trading alpha compare academic_illiq academic_smb --universe alphakeel:/path/universe.json --period 2025-01-01/2025-07-20
+```
+
+The agent's `alpha_bench` tool (and MCP `alpha_bench`) take the same `universe` string; the web UI's REST bench does not
+(it accepts no file path).
+
+- **Pack**: `pack_dir` = an exported pack (`Pack.export`, e.g. `ir review`'s `DIR/pack`; no network); `pack_id` = a
+  frozen pack opened through the research service; neither = freeze a dataset pack for exactly the period
+  (`[first day 00:00, last day + 1 d)`, `kline_1m` trade + funding for perps, strict coverage unless
+  `"accept_partial": true`) with `ALPHAKEEL_RESEARCH_URL` / `_TOKEN(_FILE)`, keyed by request + UTC day like `ir
+  backtest`. The pack must be a versioned dataset pack holding every instrument over the whole period; anything else is
+  refused (no other source is used).
+- **Roster**: `instruments` with a declared `base` (dataset packs leave it null), one instrument per base (a column is a
+  base). Filter: `bases` (allow-list) and `excluded_bases`, the IR's rule (non-empty, upper-case, distinct); with `ir`,
+  the IR's `universe.bases` intersects the allow-list and its `excluded_bases` add up, so the factor is researched on
+  exactly the bases the strategy may enter (`_meta.allowed_bases_without_instrument` lists allowed bases nobody
+  declared). At least two bases must remain.
+- **Panel**: `open high low close volume amount vwap` (volume in base units, amount = quote volume, vwap = amount / volume),
+  one row per complete UTC bar (`1h`, `4h`, `1d`; a bucket with a missing minute is NaN, never filled), labelled with the
+  bar's open time. Perps add `funding_rate` (last official settlement visible at the bar close, per settlement, not
+  normalised), `funding_interval_hours` and `funding_sum` (rates that became visible during the bar).
+- **Point in time**: a row holds only what is visible at its bar close (`open + interval - 1 ms`): klines from
+  `close_time_ms` (checked `= t + 59 999`), settlements from `available_at_ms` or settlement time + the lock's
+  `funding.assumed_delay_ms` (>= 60 s, the `Pit` rule). The bench's forward return is the next bar's close over this one.
+  The roster is the researcher's declared list, not a point-in-time index membership: `_meta.survivorship_bias` is
+  `true` (pick the list by a rule fixed before the period, e.g. the IR's `bases`). `_meta` also records the pack id and
+  digest, dataset versions, interval and the filter.
+
 Tests: `agent/tests/test_alphakeel_*.py` (install `.[dev,alphakeel-dev]`). Without the fixture server the cross-process
 tests skip; AlphaKeel's cross-project CI runs them with `ALPHAKEEL_REQUIRE_FIXTURE=1`, where a missing binary or tool
 fails instead, against the Vibe-Trading commit pinned in AlphaKeel's `ci/vibe-trading.ref`.
