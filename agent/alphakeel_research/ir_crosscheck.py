@@ -92,8 +92,19 @@ def vt_trades(run_dir: Path) -> dict[int, dict]:
     return out
 
 
+def _engine_rounded(vt_qty: Decimal, ak_qty: Decimal) -> bool:
+    """AlphaKeel's engine caps a contract's quantity decimals so its f64 position stays exact (docs/29 §16); a large
+    low-price quantity then carries fewer than the IR's 8 decimals. Known when the engine's value is the simulator's
+    truncated (toward zero) to the engine's decimals."""
+    dp = max(0, -ak_qty.normalize().as_tuple().exponent)
+    if dp >= 8:
+        return False
+    return vt_qty.quantize(Decimal(1).scaleb(-dp), rounding="ROUND_DOWN") == ak_qty
+
+
 def compare(vt: dict[int, dict], ak: dict[int, dict]) -> dict:
     diffs: list[dict] = []
+    known: list[dict] = []
     matched = 0
     for n in sorted(set(vt) | set(ak)):
         a, b = vt.get(n), ak.get(n)
@@ -116,12 +127,16 @@ def compare(vt: dict[int, dict], ak: dict[int, dict]) -> dict:
                 if u is None and v is None:
                     continue
                 if u is None or v is None or abs(u - v) > TOLERANCE:
+                    if f == "qty" and u is not None and v is not None and _engine_rounded(u, v):
+                        known.append({"trade": n, "leg": leg, "field": f, "vt": str(u), "alphakeel": str(v),
+                                      "why": "engine quantity precision cap (AlphaKeel docs/29 §16: qty x 10^dp <= 2^43)"})
+                        continue
                     ok = False
                     diffs.append({"trade": n, "leg": leg, "field": f, "vt": None if u is None else str(u),
                                   "alphakeel": None if v is None else str(v)})
         matched += ok
     return {"trades_vt": len(vt), "trades_alphakeel": len(ak), "trades_matched": matched,
-            "differences": len(diffs), "first_differences": diffs[:30]}
+            "differences": len(diffs), "first_differences": diffs[:30], "known_precision_differences": known[:30]}
 
 
 def alphakeel_check(client: Any, ir_doc: dict, run_dir: str | Path, *, timeout: float = 7200.0) -> dict:

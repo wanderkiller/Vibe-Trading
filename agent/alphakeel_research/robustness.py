@@ -16,7 +16,7 @@ Runs (each in ``out_dir/runs/<label>/``, independent runs in ``workers`` process
 * ``filter-off|on``    when a filter is under test (``{"kind": "excluded_bases", "bases": [...]}``): the IR without and
                        with those bases in ``universe.excluded_bases``;
 * ``perm-NNNN``        Monte Carlo permutation test of the filter: ``permutations`` random exclusion sets of the same size,
-                       drawn (seeded) from the bases that actually traded in ``filter-off``; draws are preferred whose
+                       drawn (seeded) from the IR's ``universe.bases`` (else the bases that traded in ``filter-off``); draws are preferred whose
                        blocked-trade count in ``filter-off`` is within max(1, 25%) of the real filter's (comparable trade
                        count; if fewer than one such set exists every set of that size is eligible and this is reported).
                        Each draw is a FULL rerun (re-selection and knock-on effects included, not a reshuffle of trades).
@@ -635,7 +635,11 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         off_tr, on_tr = _trades(R.result(f_off)["run_dir"]), _trades(R.result(f_on)["run_dir"])
         filt = filter_accounting(off_tr, on_tr, bases_f, net(f_off), net(f_on))
         real = Decimal(filt["improvement"])
-        pool = sorted({IR.ascii_upper(t["base"]) for t in off_tr})
+        # the null: random exclusion sets of the same size from the strategy's universe (its ``bases`` allow-list when
+        # given -- excluding a base that never traded is a legitimate draw with zero effect), else the traded bases
+        traded = {IR.ascii_upper(t["base"]) for t in off_tr}
+        universe_bases = base_doc["universe"].get("bases")
+        pool = sorted({IR.ascii_upper(b) for b in universe_bases} - set(bases_f) | set(bases_f) if universe_bases else traded)
         k = len(bases_f)
         perm: dict[str, Any] = {"draws": permutations, "set_size": k, "pool": pool, "seed": seed}
         if permutations == 0:
