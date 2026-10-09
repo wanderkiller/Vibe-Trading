@@ -764,7 +764,8 @@
     "README_ko.md",
     "README_zh.md",
     "patches/",
-    "agent/tests/test_alphakeel_patch_layer.py"
+    "agent/tests/test_alphakeel_patch_layer.py",
+    "AGENTS.md"
    ],
    "anchors": [
     {
@@ -928,6 +929,16 @@
      "file": "README_zh.md",
      "kind": "hook",
      "literal": "| `alphakeel_pack` |"
+    },
+    {
+     "file": ".gitignore",
+     "kind": "upstream",
+     "literal": "# Agent tool aliases (auto-generated mirror of CLAUDE.md)"
+    },
+    {
+     "file": ".gitignore",
+     "kind": "hook",
+     "literal": "!AGENTS.md"
     }
    ]
   }

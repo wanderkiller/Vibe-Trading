@@ -373,12 +373,15 @@ class" field in the run card would be upstreamable.
 
 **Purpose.** Ships the leaf package (`packages.find` include, contract package data), adds `hypothesis` to `dev` and an
 `alphakeel-dev` extra for the cross-project CI, documents the two sources in `SKILL.md` and the seven READMEs, the
-environment variables in `agent/.env.example`, ignores build artifacts; and this patch layer itself (`patches/`).
+environment variables in `agent/.env.example`, ignores build artifacts; un-ignores `AGENTS.md` (upstream ignores it as a
+generated mirror of CLAUDE.md; here it is the real, hand-written project rules file, new file, local-only); and this patch
+layer itself (`patches/`).
 
 **Files.**
 - `pyproject.toml`
 - `agent/SKILL.md`
 - `.gitignore`
+- `AGENTS.md`
 - `agent/.env.example`
 - `README.md`
 - `README_ar.md`
@@ -416,6 +419,8 @@ the `loaders/` tree line.
 - preimage `agent/SKILL.md`: `- **Cryptocurrency** via OKX or CCXT/100+ exchanges (free, no API key)`
 - upstream `.gitignore`: `.idea/*`
 - hook `.gitignore`: `agent/alphakeel_research/*.egg-info/`
+- upstream `.gitignore`: `# Agent tool aliases (auto-generated mirror of CLAUDE.md)`
+- hook `.gitignore`: `!AGENTS.md`
 - upstream `agent/.env.example`: `# ETORO_USER_KEY=your_user_key`
 - hook `agent/.env.example`: `# ALPHAKEEL_RESEARCH_URL=`
 - upstream `README.md`: `` regex (?m)^\| `local` \| `` — source-table row the alphakeel rows follow
