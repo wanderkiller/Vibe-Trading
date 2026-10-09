@@ -161,4 +161,44 @@ def alphakeel_check(client: Any, ir_doc: dict, run_dir: str | Path, *, timeout: 
                    alphakeel_dataset_view=res.get("dataset_view", {}).get("instants"),
                    passed=cmp["differences"] == 0 and tot_ok)
     (run_dir / "alphakeel-check.json").write_text(json.dumps(doc, indent=2, sort_keys=True, default=str) + "\n")
+    if "comparison" in doc:
+        rec = reconciliation_doc(doc, card, res)
+        (run_dir / "reconciliation.json").write_text(json.dumps(rec, indent=2, sort_keys=True, default=str) + "\n")
     return doc
+
+
+PASS_SCOPE = ("dataset view kline_close_synthetic_bbo: the Python simulator and AlphaKeel's engine (Rust IR evaluator + "
+              "NautilusTrader) agree trade by trade on the same frozen dataset pack; synthetic touch (spread 0, no depth), "
+              "last-settled funding as the decision rate -- not a scan-frame reconciliation; the strategy is not certified")
+
+
+def reconciliation_doc(check: dict, card: dict, res: dict) -> dict:
+    """The cross-check as a ``vibe-trading.ir-reconciliation/1`` file (``arb strategy reconcile --from-file``): L0 = same
+    pack and view, L2 = the trade set and decision times, L3 = per-leg quantities, prices, fees and funding, L4 = closed
+    totals. Same honesty as ``ir review``: AlphaKeel's registry records it as research-supplied, never as a verdict."""
+    cmp = check["comparison"]
+    timing = [d for d in cmp["first_differences"] if d.get("field") in ("presence", "opened_ms", "closed_ms")]
+    amounts = [d for d in cmp["first_differences"] if d not in timing]
+    tot_ok = all(abs(Decimal(v["vt"]) - Decimal(v["alphakeel"])) <= TOLERANCE * max(1, cmp["trades_vt"] * 6)
+                 for v in check["totals"].values())
+    st = lambda bad: "mismatch" if bad else "matched"  # noqa: E731
+    return {
+        "schema": "vibe-trading.ir-reconciliation/1",
+        "comparison": "xchk-" + hashlib.sha256(f"{card['run_id']}|{check['alphakeel_run_id']}".encode()).hexdigest()[:24],
+        "strategy_id": card["strategy_id"], "pack_id": card["pack"]["pack_id"],
+        "local_run": card["run_id"], "alphakeel_run": check["alphakeel_run_id"],
+        "layers": {"L0": "matched", "L1": "not_applicable", "L2": st(timing or cmp["trades_vt"] != cmp["trades_alphakeel"]),
+                   "L3": st(amounts), "L4": st(not tot_ok)},
+        "first_difference": (cmp["first_differences"] or [None])[0],
+        "passed": bool(check.get("passed")), "pass_scope": PASS_SCOPE,
+        "notes": NOTES + [f"trades: {cmp['trades_vt']} (vt) / {cmp['trades_alphakeel']} (alphakeel), matched {cmp['trades_matched']}"],
+        "summary": {
+            "python_local": {"run_id": card["run_id"], "mode": "ir_backtest_dataset_view", "side": "python_local",
+                             "strategy_id": card["strategy_id"], "amounts": check["totals"] and {k: v["vt"] for k, v in check["totals"].items()},
+                             "counts": card["counts"]},
+            "alphakeel": {"run_id": check["alphakeel_run_id"], "mode": "ir_strategy", "side": "alphakeel_engine",
+                          "strategy_id": res.get("strategy_id"), "amounts": res.get("amounts"), "counts": res.get("counts"),
+                          "verification": res.get("verification")},
+        },
+        "source": "ir crosscheck",
+    }

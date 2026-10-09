@@ -545,6 +545,14 @@ class ResultSchema(StrEnum):
     alphakeel_result_1 = "alphakeel.result/1"
 
 
+class ResultWindow(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    end_ms: Annotated[int, Field(ge=0)]
+    start_ms: Annotated[int, Field(ge=0)]
+
+
 class RunManifestBuilder(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -709,6 +717,12 @@ class Verification(BaseModel):
     engine_recount: Status
     external_python: Status
     ir_ledger: Status | None = None
+    ir_ledger_problems: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="`ir_strategy` with `ir_ledger = mismatch` only: why (the engine-vs-ledger audit: maximum differences and the\nfirst problems). Absent otherwise."
+        ),
+    ] = None
     native_rule_ledger: Status
 
 
@@ -1289,6 +1303,12 @@ class RunResult(BaseModel):
     capital: ResultCapital
     counts: BTreeMap
     data_quality: BTreeMap
+    dataset_view: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="`ir_strategy` on a dataset pack only: the `dataset_view` request, instants, instants without data and the\nview's approximations."
+        ),
+    ] = None
     drawdown: ResultDrawdown
     equity: ResultEquity
     event_log: ResultEventLog
@@ -1303,6 +1323,7 @@ class RunResult(BaseModel):
     strategy_id: Id | None = None
     strategy_sha256: Sha256 | None = None
     verification: Verification
+    window: ResultWindow | None = None
 
 
 class StrategyManifest(BaseModel):

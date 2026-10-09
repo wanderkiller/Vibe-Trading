@@ -213,7 +213,7 @@ def _check_shape(doc: Any) -> None:
         _s_str(doc["strategy_id"], "strategy_id")
     _s_str(doc["name"], "name")
     _s_str(doc["kind"], "kind")
-    u = _obj(doc["universe"], "universe", ("pairs", "shape", "excluded_bases"), ("quote_ccys",))
+    u = _obj(doc["universe"], "universe", ("pairs", "shape", "excluded_bases"), ("quote_ccys", "bases"))
     pairs = u["pairs"]
     if pairs != "any":
         if not isinstance(pairs, list):
@@ -224,7 +224,7 @@ def _check_shape(doc: Any) -> None:
             for j, x in enumerate(pr):
                 _s_enum(x, VENUES, f"universe.pairs[{i}][{j}]")
     _s_enum(u["shape"], SHAPES, "universe.shape")
-    for key in ("excluded_bases", "quote_ccys"):
+    for key in ("excluded_bases", "quote_ccys", "bases"):
         if key in u:
             if not isinstance(u[key], list):
                 raise _shape("must be a list of strings", f"universe.{key}")
@@ -385,6 +385,14 @@ def _check(doc: Any) -> None:
     for i, b in enumerate(u["excluded_bases"]):
         if not _upper(b):
             raise _invalid(f"universe.excluded_bases[{i}]", "must be non-empty upper case")
+    if "bases" in u:  # optional base allow-list (README §1); absent = any base
+        if not u["bases"]:
+            raise _invalid("universe.bases", "cannot be empty when given")
+        seen_b: set = set()
+        for i, b in enumerate(u["bases"]):
+            if not _upper(b) or b in seen_b:
+                raise _invalid(f"universe.bases[{i}]", "must be non-empty upper case and unique")
+            seen_b.add(b)
     qs = u.get("quote_ccys", ["USDT"])
     if not qs:
         raise _invalid("universe.quote_ccys", "cannot be empty")
@@ -661,6 +669,8 @@ def _admit(ir: Ir, p: dict, cooldowns: dict, open_bases: set, now_ms: int) -> tu
         return None, "universe:shape"
     if u["pairs"] != "any" and [p["long"]["venue"], p["short"]["venue"]] not in u["pairs"]:
         return None, "universe:pair"
+    if "bases" in u and not any(ascii_upper(b) == base for b in u["bases"]):
+        return None, "universe:base"
     if any(ascii_upper(b) == base for b in u["excluded_bases"]):
         return None, "universe:excluded_base"
     try:

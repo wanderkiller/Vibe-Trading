@@ -798,6 +798,13 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
     }
     if research_credential is not None:
         prov["research_credential"] = research_credential.get("credential")
+    # The backtest only ever saw the declared instruments; paper and live scan every listed contract. An IR without a
+    # base allow-list would trade bases nobody researched (2026-10-09 review: oil and stock perps on the first paper round).
+    researched = sorted({cursor_base for cursor_base in (i.get("base") for i in card["instruments"]) if cursor_base})
+    allowed = loaded.doc["universe"].get("bases")
+    if allowed is None or set(allowed) - set(researched):
+        prov["warnings"] = [f"universe.bases {'is absent' if allowed is None else 'allows bases outside the backtest'}: "
+                            f"the backtest covered only {researched}; paper/live consider every contract a scan lists"]
     doc = copy.deepcopy(loaded.doc)
     doc["strategy_id"] = sid
     doc["provenance"] = prov

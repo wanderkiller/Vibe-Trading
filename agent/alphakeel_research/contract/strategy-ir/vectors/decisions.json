@@ -2316,6 +2316,314 @@
   },
   {
    "expected": {
+    "entries": [
+     {
+      "base": "ETH",
+      "features": {
+       "basis": "0",
+       "fees": "0.00079996",
+       "funding": "0.00719964",
+       "funding_apr": "0.875956",
+       "funding_hourly_net": "0.000099995",
+       "leg_skew_ms": 0,
+       "net_conservative": "0.00209988",
+       "net_expected": "0.0061997",
+       "price_estimated": false,
+       "quote_age_ms": 1000,
+       "spread": "0.00019998",
+       "stress": "0.0005",
+       "volume_min": "50000000"
+      },
+      "long": {
+       "symbol": "ETHUSDT",
+       "venue": "binance"
+      },
+      "notional_per_leg": "1000",
+      "pair_id": "cross:ETH:binance:ETHUSDT>okx:ETH-USDT-SWAP",
+      "short": {
+       "symbol": "ETH-USDT-SWAP",
+       "venue": "okx"
+      }
+     },
+     {
+      "base": "SOL",
+      "features": {
+       "basis": "0",
+       "fees": "0.00079996",
+       "funding": "0.00449978",
+       "funding_apr": "0.547473",
+       "funding_hourly_net": "0.0000624969",
+       "leg_skew_ms": 0,
+       "net_conservative": "0.00074995",
+       "net_expected": "0.00349984",
+       "price_estimated": false,
+       "quote_age_ms": 1000,
+       "spread": "0.00019998",
+       "stress": "0.0005",
+       "volume_min": "50000000"
+      },
+      "long": {
+       "symbol": "SOLUSDT",
+       "venue": "okx"
+      },
+      "notional_per_leg": "1000",
+      "pair_id": "cross:SOL:okx:SOLUSDT>binance:SOL-USDT-SWAP",
+      "short": {
+       "symbol": "SOL-USDT-SWAP",
+       "venue": "binance"
+      }
+     }
+    ],
+    "exits": [],
+    "rejected": [
+     {
+      "pair_id": "cross:BTC:binance:BTCUSDT>okx:BTC-USDT-SWAP",
+      "reason": "universe:base"
+     },
+     {
+      "pair_id": "cross:LUNA:binance:LUNAUSDT>okx:LUNA-USDT-SWAP",
+      "reason": "universe:excluded_base"
+     }
+    ]
+   },
+   "frame": {
+    "pairs": [
+     {
+      "base": "BTC",
+      "id": "cross:BTC:binance:BTCUSDT>okx:BTC-USDT-SWAP",
+      "kind": "cross_perp",
+      "long": {
+       "ask": "100.01",
+       "bbo": true,
+       "bid": "100",
+       "funding_px": null,
+       "funding_rate": "0.0001",
+       "interval_hours": 8,
+       "market": "perp",
+       "next_funding_ms": 1790003600000,
+       "quote_ccy": "USDT",
+       "quote_ms": 1789999999000,
+       "symbol": "BTCUSDT",
+       "taker_fee": "0.0002",
+       "venue": "binance",
+       "volume_quote": "50000000"
+      },
+      "short": {
+       "ask": "100.01",
+       "bbo": true,
+       "bid": "100",
+       "funding_px": null,
+       "funding_rate": "0.0006",
+       "interval_hours": 8,
+       "market": "perp",
+       "next_funding_ms": 1790003600000,
+       "quote_ccy": "USDT",
+       "quote_ms": 1789999999000,
+       "symbol": "BTC-USDT-SWAP",
+       "taker_fee": "0.0002",
+       "venue": "okx",
+       "volume_quote": "50000000"
+      }
+     },
+     {
+      "base": "ETH",
+      "id": "cross:ETH:binance:ETHUSDT>okx:ETH-USDT-SWAP",
+      "kind": "cross_perp",
+      "long": {
+       "ask": "100.01",
+       "bbo": true,
+       "bid": "100",
+       "funding_px": null,
+       "funding_rate": "-0.0002",
+       "interval_hours": 8,
+       "market": "perp",
+       "next_funding_ms": 1790003600000,
+       "quote_ccy": "USDT",
+       "quote_ms": 1789999999000,
+       "symbol": "ETHUSDT",
+       "taker_fee": "0.0002",
+       "venue": "binance",
+       "volume_quote": "50000000"
+      },
+      "short": {
+       "ask": "100.01",
+       "bbo": true,
+       "bid": "100",
+       "funding_px": null,
+       "funding_rate": "0.0006",
+       "interval_hours": 8,
+       "market": "perp",
+       "next_funding_ms": 1790003600000,
+       "quote_ccy": "USDT",
+       "quote_ms": 1789999999000,
+       "symbol": "ETH-USDT-SWAP",
+       "taker_fee": "0.0002",
+       "venue": "okx",
+       "volume_quote": "50000000"
+      }
+     },
+     {
+      "base": "LUNA",
+      "id": "cross:LUNA:binance:LUNAUSDT>okx:LUNA-USDT-SWAP",
+      "kind": "cross_perp",
+      "long": {
+       "ask": "100.01",
+       "bbo": true,
+       "bid": "100",
+       "funding_px": null,
+       "funding_rate": "0.0001",
+       "interval_hours": 8,
+       "market": "perp",
+       "next_funding_ms": 1790003600000,
+       "quote_ccy": "USDT",
+       "quote_ms": 1789999999000,
+       "symbol": "LUNAUSDT",
+       "taker_fee": "0.0002",
+       "venue": "binance",
+       "volume_quote": "50000000"
+      },
+      "short": {
+       "ask": "100.01",
+       "bbo": true,
+       "bid": "100",
+       "funding_px": null,
+       "funding_rate": "0.0006",
+       "interval_hours": 8,
+       "market": "perp",
+       "next_funding_ms": 1790003600000,
+       "quote_ccy": "USDT",
+       "quote_ms": 1789999999000,
+       "symbol": "LUNA-USDT-SWAP",
+       "taker_fee": "0.0002",
+       "venue": "okx",
+       "volume_quote": "50000000"
+      }
+     },
+     {
+      "base": "SOL",
+      "id": "cross:SOL:okx:SOLUSDT>binance:SOL-USDT-SWAP",
+      "kind": "cross_perp",
+      "long": {
+       "ask": "100.01",
+       "bbo": true,
+       "bid": "100",
+       "funding_px": null,
+       "funding_rate": "0.0001",
+       "interval_hours": 8,
+       "market": "perp",
+       "next_funding_ms": 1790003600000,
+       "quote_ccy": "USDT",
+       "quote_ms": 1789999999000,
+       "symbol": "SOLUSDT",
+       "taker_fee": "0.0002",
+       "venue": "okx",
+       "volume_quote": "50000000"
+      },
+      "short": {
+       "ask": "100.01",
+       "bbo": true,
+       "bid": "100",
+       "funding_px": null,
+       "funding_rate": "0.0006",
+       "interval_hours": 8,
+       "market": "perp",
+       "next_funding_ms": 1790003600000,
+       "quote_ccy": "USDT",
+       "quote_ms": 1789999999000,
+       "symbol": "SOL-USDT-SWAP",
+       "taker_fee": "0.0002",
+       "venue": "binance",
+       "volume_quote": "50000000"
+      }
+     }
+    ]
+   },
+   "ir": {
+    "assumptions": {
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted",
+     "horizon_hours": 72
+    },
+    "entry": {
+     "candidate_limit": 5,
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "cooldown_minutes": 360,
+     "one_per_base": true,
+     "rank_by": "net_conservative"
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "kind": "cross_venue_carry",
+    "name": "carry-basic",
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "run_id": "run-0001",
+     "tool": "vibe-trading",
+     "trials": {
+      "count": 12,
+      "evidence": "trials.jsonl"
+     },
+     "window": {
+      "end": "2026-09-30",
+      "start": "2026-07-01"
+     }
+    },
+    "schema": "alphakeel.strategy-ir/1",
+    "sizing": {
+     "leverage": null,
+     "max_open": 3,
+     "notional_per_leg": "1000"
+    },
+    "universe": {
+     "bases": [
+      "ETH",
+      "LUNA",
+      "SOL"
+     ],
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "pairs": "any",
+     "quote_ccys": [
+      "USDT"
+     ],
+     "shape": "cross_perp"
+    }
+   },
+   "name": "base allow-list: other bases are refused before the excluded list",
+   "now_ms": 1790000000000,
+   "state": {
+    "cooldowns": {},
+    "positions": []
+   }
+  },
+  {
+   "expected": {
     "entries": [],
     "exits": [],
     "rejected": [

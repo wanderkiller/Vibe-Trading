@@ -3183,6 +3183,26 @@
         ],
         "type": "string"
       },
+      "ResultWindow": {
+        "additionalProperties": false,
+        "properties": {
+          "end_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start_ms": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_ms",
+          "end_ms"
+        ],
+        "type": "object"
+      },
       "RunManifest": {
         "additionalProperties": false,
         "properties": {
@@ -3488,6 +3508,10 @@
           "data_quality": {
             "$ref": "#/components/schemas/BTreeMap"
           },
+          "dataset_view": {
+            "description": "`ir_strategy` on a dataset pack only: the `dataset_view` request, instants, instants without data and the\nview's approximations.",
+            "type": "object"
+          },
           "drawdown": {
             "$ref": "#/components/schemas/ResultDrawdown"
           },
@@ -3560,6 +3584,17 @@
           },
           "verification": {
             "$ref": "#/components/schemas/Verification"
+          },
+          "window": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ResultWindow",
+                "description": "`ir_strategy` only: the decision window (first decision instant, last + 1 ms)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3917,6 +3952,10 @@
                 "type": "null"
               }
             ]
+          },
+          "ir_ledger_problems": {
+            "description": "`ir_strategy` with `ir_ledger = mismatch` only: why (the engine-vs-ledger audit: maximum differences and the\nfirst problems). Absent otherwise.",
+            "type": "object"
           },
           "native_rule_ledger": {
             "$ref": "#/components/schemas/Status"

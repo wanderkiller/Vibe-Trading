@@ -43,6 +43,7 @@
 | `universe.shape` | `cross_perp` \| `spot_perp` | 组合形态；与候选的 `kind` 相同才参与。 |
 | `universe.excluded_bases` | 大写字符串列表 | 不参与的基础币。 |
 | `universe.quote_ccys` | 大写字符串列表，缺省 `["USDT"]` | 允许的计价币（非空、不重复）。缺省值在计算 id 前补上。 |
+| `universe.bases` | 大写字符串列表，可选 | 基础币白名单（非空、不重复）：给出时只有这些基础币能进场（§5 第 2a 步）；缺省 = 不限，且**不补默认值**（缺省的文档 id 不变）。研究只在一组币上做过时必须写它：否则 paper/实盘会在扫描到的任何币上进场（2026-10-09 审查：研究 16 个加密币，paper 第一轮就开了原油与股票永续）。 |
 | `assumptions.horizon_hours` | 整数 ≥ 1 | 估算持有时长（小时）。 |
 | `assumptions.basis_stress` | 十进制串，`[0, 1)` | 基差不利变化压力（占名义比例），只进保守情景。 |
 | `assumptions.funding_estimate` | `predicted` \| `last_settled` | 视图里 `funding_rate` 的来源。不改变公式；运行时不能提供该来源时必须**拒绝加载**，不得静默替换（T3 执行）。 |
@@ -82,7 +83,7 @@ JSON 整数只用于计数、小时、分钟（`horizon_hours`、`candidate_limi
 
 1. 形状：`schema.json`；未知字段、未知特征、未知运算符、未知平台、十进制串不规范 → 拒绝。
 2. `schema` 常量、`kind = cross_venue_carry`。
-3. §1 表中的取值范围；`universe.pairs` 与 `shape` 一致；`excluded_bases`、`quote_ccys` 大写。
+3. §1 表中的取值范围；`universe.pairs` 与 `shape` 一致；`excluded_bases`、`quote_ccys` 大写；`bases` 给出时非空、大写、不重复（依次检查 `excluded_bases`、`bases`、`quote_ccys`，报告第一处）。
 4. 条件：`between` ↔ 区间且 `lo ≤ hi`；其他运算符 ↔ 单值。
 5. `parameters`：v1 **不支持占位符**。每个参数用 `path` 指向它描述的字面量，路径语法 `seg(.seg)*`，`seg = name([index])*`，
    第一段只能是 `entry`、`exit`、`sizing`、`assumptions`（例：`entry.conditions[0].value`、`entry.conditions[1].value[0]`、
@@ -211,6 +212,7 @@ Decision { exits: [{position_id, reason}],
 
 1. `kind ≠ universe.shape` → `universe:shape`
 2. `universe.pairs` 不含 `[long.venue, short.venue]` → `universe:pair`
+2a. `universe.bases` 给出且 `base ∉ bases` → `universe:base`
 3. `base ∈ excluded_bases` → `universe:excluded_base`
 4. 组合不合法 → `invalid:quote_ccy_mismatch` / `invalid:shape_mismatch`
 5. `long.quote_ccy ∉ quote_ccys` → `universe:quote_ccy`
@@ -256,7 +258,7 @@ Decision { exits: [{position_id, reason}],
 - `canonical.json`：`doc → definition_canonical, strategy_id`；含 `same_id_as` / `different_id_from` 标注
   （出处变化、键顺序、自述 id、`quote_ccys` 缺省、数值变化、假设变化、平台对列表及其顺序）。
 - `decisions.json`：`{ir, frame, state, now_ms} → expected`（Decision）。覆盖按排名进场、`candidate_limit`、`max_open`、冷却、
-  `one_per_base`（已持仓与同时刻重复）、特征不可用、每一种退出原因、持仓组合不在帧里、宇宙过滤（形态/平台对/排除币/计价币/非法组合）、
+  `one_per_base`（已持仓与同时刻重复）、特征不可用、每一种退出原因、持仓组合不在帧里、宇宙过滤（形态/平台对/基础币白名单/排除币/计价币/非法组合）、
   `between` 与布尔特征、现货+永续进场。
 
 ## 7. 实现
