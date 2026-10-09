@@ -130,14 +130,17 @@ def key_of(x) -> tuple[str, str, str]:
 
 def valid(x) -> bool:
     """README §5a: a leg whose quote can be traded on at all -- a real top of book (``bbo``) and sane numbers: bid > 0,
-    ask >= bid, mark > 0 and (perp) |funding_rate| <= 1 (AlphaKeel ``paper::open_planned`` / ``obs_valid``). An entry with
-    a leg that is not valid submits nothing and takes no trade number."""
+    ask >= bid, mark > 0, funding price > 0 (the view's ``funding_px``, else the mark) and (perp) |funding_rate| <= 1
+    (AlphaKeel ``paper::open_planned`` / ``obs_valid``; the funding price is the mark AlphaKeel's engine takes a quote by,
+    so a leg with ``funding_px <= 0`` is not a quote either side trades or values on). An entry with a leg that is not
+    valid submits nothing and takes no trade number."""
     v = x["view"]
     if not v["bbo"]:
         return False
     bid, ask = Decimal(v["bid"]), Decimal(v["ask"])
     mark = Decimal(x["mark"]) if x.get("mark") is not None else (bid + ask) / 2
-    if not (bid > 0 and ask >= bid and mark > 0):
+    fpx = Decimal(v["funding_px"]) if v.get("funding_px") is not None else mark
+    if not (bid > 0 and ask >= bid and mark > 0 and fpx > 0):
         return False
     return v.get("funding_rate") is None or abs(Decimal(v["funding_rate"])) <= 1
 

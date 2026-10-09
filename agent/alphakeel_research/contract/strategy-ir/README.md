@@ -240,6 +240,7 @@ Decision { exits: [{position_id, reason}],
   `entries` 次序各占一个号；`L` = 做多腿，`S` = 做空腿），`position_ref = p<trade><L|S>`，`pair_id = pair-<trade>`。研究服务的
   L2 决策层按 `intent_id` 逐条对比，命名不同就无法对账。下列进场决定**不提交意图、不占号**（与 Rust `paper::open_planned` 的拒绝一致）：
   任一腿没有真实一档买卖价（`bbo = false`）；任一腿报价数值不合法——买一 ≤ 0、卖一 < 买一、标记价 ≤ 0（报价行没有标记价时用中间价）、
+  永续资金费价格 `funding_px` ≤ 0（观测行没有时用标记价；引擎按它记资金费，2026-10-09 起两侧与引擎的 `snap_of` 同一条）、
   永续 |`funding_rate`| > 1；缺汇率（v1 只有 USDT，不会发生）；数量舍入为 0。报价新旧**不是**进场规则（要限制请在 IR 里写
   `quote_age_ms` 条件）。
 - **意图数量**：两腿同量，`qty = notional_per_leg ÷ long.ask`，**半偶舍入到 8 位小数**（两侧相同）。平仓意图的数量是同一个 `qty`。
@@ -251,16 +252,28 @@ Decision { exits: [{position_id, reason}],
   - 交易 t 的小数位 `dp_t` = 它两条腿 `dp_c` 的较小值；成交数量 = `qty` **向零截断**到 `dp_t` 位。
   只在单腿数量超过约 87 961 个币（`2^43 ÷ 10^8`）时生效（例：73 万个 PUMP 只有 7 位）。上限取决于整个运行，所以 Python 侧在运行结束后
   （数据集回测）或第二遍（扫描包 `ir review` 的本地模拟器）套用；`ir crosscheck` 的数量逐腿必须相等，不再有“已知精度差”。
+- **持仓 = 引擎持仓；引擎没开成的进场作废（2026-10-09）**：已提交的进场，若引擎**两条腿都没有成交**（同一时刻累计初始保证金不足
+  被拒、`not_submitted`；IOC 在触及价未成交），这笔交易**作废**：从下一决策时刻起没有持仓、不占基础币与名额、不进冷却，就像从未开过（本时刻的其他决定不变——决策时引擎结果未知）；它的
+  `trade` 号**保留不复用**（意图日志里仍是 `n<k>-L|S-open`，下一笔进场是 `k+1`）。Python `ir_policy` 每步按 `ctx["positions"]` 对齐，
+  天然如此；Rust `ir_strategy` 运行（扫描包与数据集视图）以不动点实现：决策 + 引擎执行后，把**最早**一个两腿都未成交的进场时刻上的这类
+  交易作废、整段重跑，直到没有新的（上限 64 轮，超出记为问题）。作废的进场不是问题、不影响 `ledger_ok`。**只成交一条腿**的进场
+  不在本规则内：两侧都不对单腿仓位做后续对齐，Rust 运行把它记为问题（决策账本与引擎不一致），结果不可作为对账依据。
+  原生规则运行（`native_strategy`）不做作废，引擎拒单仍记为问题。
 - **缺可成交报价时不退出**：持仓的任一腿在本帧没有**可成交报价**时，本帧**不提交该组合的退出意图**（即使 `max_hold` 已到），等下一帧
   再退出；不得用旧帧报价定价退出。可成交报价 = 本帧有该合约的报价行、`bbo = true`、数值合法（同上：买一 > 0、卖一 ≥ 买一、标记价 > 0、
-  永续 |费率| ≤ 1）、含 USDC 腿有汇率，且**足够新**：报价时间（`quote_ts`；为空时用该平台本帧的抓取时刻，即数据包帧表里该平台的
+  永续资金费价格 > 0、永续 |费率| ≤ 1）、含 USDC 腿有汇率，且**足够新**：报价时间（`quote_ts`；为空时用该平台本帧的抓取时刻，即数据包帧表里该平台的
   `fetched_ms`）不早于 `now_ms − max_age`、不晚于 `now_ms + 5000`。`max_age` = 运行环境的报价年龄上限：研究运行（`ir_strategy`、
   `ir_policy`）= 执行口径 `quotes.max_age_ms`（= 数据包费用表 `engine.max_quote_age_ms`；数据集视图 = K 线年龄上限 5 分钟）；在线
   paper/实盘 = 运行配置的估值年龄（`valuation_max_age_ms` 与 `max_quote_age_ms` 取大者）。这就是 Rust 纸上账本“估值冻结”的条件，
   也是引擎收报价的条件（不可成交的腿引擎不估值、`net_now` 为 null）。
 - **研究运行的运行环境 = 执行口径**：`ir_strategy` 运行的杠杆、维持保证金与报价年龄上限都取本次运行的执行口径（与 Python 本地模拟器读的是
   同一份口径文档）。IR 的 `sizing.leverage` 非空时它就是口径的 `leverage_perp`（服务写进口径；VT `ir review` 作为口径覆盖传给服务与
-  本地模拟器），请求里显式给出另一个 `leverage_perp` 是矛盾的，拒绝（`request.invalid`）。
+  本地模拟器），请求里显式给出另一个 `leverage_perp` 是矛盾的，拒绝（`request.invalid`）。原生规则运行（`native_strategy`）同一规则
+  （2026-10-09 起，docs/29 §16）：杠杆、维持保证金、报价年龄与估值年龄都取执行口径，`rules.leverage` 非空时等同 IR 的 `sizing.leverage`；
+  规则自己的 `maint_margin` / `liq_buffer` 仍覆盖口径。
+- **数据集视图运行的 L0**：研究服务 `/comparisons` 对两个数据集视图运行（`dataset_view`）比较请求里的视图（不同 → `not_comparable`）
+  与 `run-manifest.inputs` 的逐合约 `kline_1m` / `settlements` 行摘要链（服务从自己的数据包副本复算）。VT `ir crosscheck`
+  （本地数据集模拟器 vs AlphaKeel 运行）的 L0 用同一定义：本地运行卡的 `inputs` 与 AlphaKeel 运行 `run-manifest.inputs` 的这两张表逐项相等。
 - **`net_now`（§5 的持仓立即平仓净额）**：两侧同一公式 = 触及价盈亏（多腿 `qty × (bid − avg_entry)`，空腿
   `qty × (avg_entry − ask)`）+ 该仓位**全部**已结算的资金费（含结算前缺新鲜报价、金额按最后观察值估算的结算）− 入场手续费 − 触及价平仓
   taker 费；单位为腿的计价币（v1 只允许 USDT）。研究服务的 policy 上下文按**腿**给出 `positions[].net_now`（同一公式按腿计），策略把
