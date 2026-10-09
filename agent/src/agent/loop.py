@@ -19,8 +19,6 @@ import copy
 import json
 import logging
 import queue
-import re
-import shutil
 import sys
 import threading
 import time as _time
@@ -30,7 +28,6 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from src.agent.context import ContextBuilder
 from src.agent.grounding import GroundingLedger
-from src.agent.grounding.evidence import ARCHIVE_MANIFEST as _ARCHIVE_MANIFEST
 from src.agent.grounding.release import MAX_GROUNDING_REVISIONS
 from src.agent.memory import WorkspaceMemory
 from src.agent.progress import HeartbeatTimer, ProgressEvent, _set_emitter
@@ -63,7 +60,6 @@ from src.config.accessor import get_env_config
 from src.config.paths import get_runs_dir, get_sessions_dir
 from src.tools.background_tools import get_background_manager
 from src.config.limits import truncate_tool_result
-from src.tools.path_utils import safe_run_dir
 from src.tools.redaction import redact_payload, redact_tool_result
 
 RUNS_DIR = get_runs_dir()
@@ -537,6 +533,7 @@ def _microcompact(
     *,
     target_tokens: Optional[int] = None,
     measure: Optional[Callable[[list], int]] = None,
+    preserve_tool_call_ids: Optional[set[str]] = None,
 ) -> list:
     """Layer 1: prune old tool results, keeping the most recent N intact.
 
@@ -548,6 +545,8 @@ def _microcompact(
             still needs is what made it re-fetch its evidence until
             ``no_progress``, so the loop passes a target.
         measure: Prompt-size function for ``target_tokens``.
+        preserve_tool_call_ids: Replayed results no successful model request
+            has carried yet; they are never cleared here.
 
     Returns:
         Names of tools whose every result just became unreadable (legacy
@@ -561,6 +560,8 @@ def _microcompact(
     for msg in tool_msgs[:-KEEP_RECENT]:
         if target_tokens is not None and measure is not None and measure(messages) <= target_tokens:
             break
+        if preserve_tool_call_ids and msg.get("tool_call_id") in preserve_tool_call_ids:
+            continue
         content = msg.get("content", "")
         # Skip a result already cleared: the marker is itself >100 chars, so
         # re-clearing it would rewrite the recorded original size with the
@@ -592,7 +593,7 @@ def _result_data_gone(content: Any) -> bool:
     return _is_cleared(content) or content == _STUB_RESULT_CONTENT
 
 
-def _context_collapse(messages: list) -> None:
+def _context_collapse(messages: list, *, preserve_tool_call_ids: Optional[set[str]] = None) -> None:
     """Layer 2: fold long text blocks in older messages without LLM call.
 
     Preserves head + tail of large text, collapses the middle.
@@ -604,6 +605,8 @@ def _context_collapse(messages: list) -> None:
     if len(messages) <= COLLAPSE_PRESERVE_RECENT + 1:
         return
     for msg in messages[1:-COLLAPSE_PRESERVE_RECENT]:
+        if msg.get("role") == "tool" and msg.get("tool_call_id") in (preserve_tool_call_ids or ()):
+            continue
         content = msg.get("content")
         if not isinstance(content, str) or len(content) <= COLLAPSE_TEXT_MIN:
             continue
@@ -885,237 +888,21 @@ Rules:
 {focus_section}"""
 
 
-def _failure_code(result: str) -> str:
-    """The ``error_code`` (else error text) of a refused call, for the stop message."""
-    try:
-        payload = json.loads(result)
-    except (TypeError, ValueError):
-        return ""
-    if not isinstance(payload, dict):
-        return ""
-    return str(payload.get("error_code") or payload.get("reason") or payload.get("error") or "")[:120]
-
-
-def _is_tool_success(result: str) -> bool:
-    """Return True if the tool result does not look like an error response."""
-    try:
-        data = json.loads(result)
-        if isinstance(data, dict):
-            status = str(data.get("status") or "").strip().casefold()
-            if status in {"error", "failed", "failure", "cancelled", "canceled"}:
-                return False
-            if data.get("ok") is False or data.get("success") is False:
-                return False
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return True
-
-
-# Provider tool-call markup that a model can emit as plain text on the
-# forced-text final iteration, where tool definitions are withheld. Releasing
-# it verbatim hands the user mojibake instead of an answer. Both DSML bar
-# spellings are covered: ASCII double bars and fullwidth double bars, opening
-# and closing tags (a draft ending in "</｜｜DSML｜｜invoke>" once reached the
-# grounding gate as three unreadable figures-block lines).
-_FORCED_TEXT_TOOL_CALL_RE = re.compile(
-    r"<\s*/?\s*(?:invoke|parameter|tool_calls|dsml)\b",
-    re.IGNORECASE,
+# --- Tool-result helpers, moved to src.agent.tool_results (issue #1624) ---
+# Re-exported here so existing ``from src.agent.loop import ...`` keeps working.
+from src.agent.tool_results import (  # noqa: E402
+    _FORCED_TEXT_TOOL_CALL_RE as _FORCED_TEXT_TOOL_CALL_RE,
+    _DSML_BAR_TOOL_CALL_RE as _DSML_BAR_TOOL_CALL_RE,
+    _TARGET_PATH_RE as _TARGET_PATH_RE,
+    _TARGET_ACTION_RE,
+    _failure_code,
+    _is_tool_success,
+    _looks_like_tool_call_syntax,
+    _named_target_paths,
+    _normalize_tool_run_dir,
+    _previously_archived as _previously_archived,
+    _archive_backtest_result,
 )
-_DSML_BAR_TOOL_CALL_RE = re.compile(
-    r"<\s*/?\s*[|\u2502\uFF5C]{2}\s*(?:dsml|tool_calls|invoke)\b",
-    re.IGNORECASE,
-)
-
-
-def _looks_like_tool_call_syntax(content: str) -> bool:
-    """Return whether final text still contains provider tool-call DSL.
-
-    When tool calling is unavailable, a model may nonetheless answer with its
-    native tool-call markup as prose - ``<DSML>tool_calls>``, ``<invoke
-    name=...>``, or the fullwidth-vbar mojibake of the same. Such content is
-    not an answer and must not be released to the user as one.
-    """
-    if not content:
-        return False
-    return bool(
-        _FORCED_TEXT_TOOL_CALL_RE.search(content)
-        or _DSML_BAR_TOOL_CALL_RE.search(content)
-    )
-
-
-# Task target-file detection: a user message usually names the file to
-# create or update ("update C:\\...\\plan.md"). If a run approaches its
-# iteration cap without having written that file, the loop must remind the
-# model instead of ending "answered but incomplete".
-# Windows absolute paths may contain spaces (e.g. C:\Users\Emad Karimi\...),
-# so the drive-letter branch allows spaces and stops non-greedily at the first
-# ".md"; the POSIX and bare-name branches stay space-free word matches.
-_TARGET_PATH_RE = re.compile(
-    r"[A-Za-z]:\\[^<>|?*\x22\x27\r\n]+?\.md\b"
-    r"|/[\w./\\-]+\.md\b"
-    r"|\b[\w./\\-]+\.md\b"
-)
-_TARGET_ACTION_RE = re.compile(
-    r"update|create|write|add|make|edit|generate|overwrite|append"
-    r"|更新|创建|写|添加|修改|生成|建立|编制",
-    re.IGNORECASE,
-)
-
-
-def _named_target_paths(text: str) -> list[Path]:
-    """Return the .md file paths named in a user message (deduped).
-
-    Both absolute Windows paths and bare or relative filenames are matched.
-    """
-    seen: set[str] = set()
-    paths: list[Path] = []
-    for match in _TARGET_PATH_RE.finditer(text or ""):
-        raw = match.group(0).strip().strip("\x22\x27")
-        try:
-            p = Path(raw)
-        except (ValueError, OSError):
-            continue
-        if p.suffix != ".md":
-            continue
-        key = str(p).casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        paths.append(p)
-    return paths
-def _normalize_tool_run_dir(args: dict[str, Any], memory_run_dir: str | None) -> dict[str, Any]:
-    """Normalize ``run_dir`` in tool args to an absolute path when possible.
-
-    If the model supplies a relative ``run_dir`` (for example ``"."`` or
-    ``"risk_parity_run"``), resolve it against the active run directory.
-    """
-    normalized = dict(args)
-    if not memory_run_dir:
-        return normalized
-
-    if "run_dir" not in normalized:
-        normalized["run_dir"] = memory_run_dir
-        return normalized
-
-    run_dir_value = str(normalized["run_dir"]).strip()
-    if not run_dir_value:
-        normalized["run_dir"] = memory_run_dir
-        return normalized
-
-    candidate = Path(run_dir_value)
-    if not candidate.is_absolute():
-        normalized["run_dir"] = str((Path(memory_run_dir) / candidate).resolve())
-    return normalized
-
-
-# ``_ARCHIVE_MANIFEST`` names the backtest an archived run currently describes,
-# and the files that archive placed there, so the next one can replace exactly
-# its own output. The grounding ledger reads it to tell whose copy it is.
-
-
-def _previously_archived(target: Path) -> set[str]:
-    """Return the run-relative files the previous archive copied into ``target``.
-
-    The caller deletes what this returns, and the names are read back off disk,
-    so each one is confined to ``target`` here — a manifest carrying ``..`` must
-    not become a way to delete a file elsewhere. An unreadable or malformed
-    manifest yields an empty set: the worst case is the pre-#1094 merge for one
-    turn, which beats refusing to archive a backtest the user is waiting for.
-    """
-    try:
-        payload = json.loads((target / _ARCHIVE_MANIFEST).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return set()
-    files = payload.get("files") if isinstance(payload, dict) else None
-    if not isinstance(files, list):
-        return set()
-    root = target.resolve()
-    return {
-        str(name)
-        for name in files
-        if isinstance(name, str)
-        and (root / name).resolve().is_relative_to(root)
-        and (root / name).resolve() != root
-    }
-
-
-def _archive_backtest_result(result: str, active_run_dir: str | None) -> bool:
-    """Copy a successful detached backtest into the active, reportable run.
-
-    The model may choose another allowed run directory while iterating.  The
-    CLI and web API, however, identify the turn by ``active_run_dir``.  Keep
-    that public identity stable by copying only deterministic backtest output
-    into the active run as soon as the backtest tool succeeds.
-
-    Both paths are re-validated here.  ``backtest`` already refuses a run_dir
-    outside the allowed roots, so today the source cannot be arbitrary — but
-    that invariant lives in another module and this function reads its path back
-    out of a *tool result* rather than from the validated arguments.  Checking
-    locally keeps a copy loop from depending on a guarantee made elsewhere.
-
-    The copy REPLACES the previous archive rather than merging with it (#1094).
-    An agent may backtest more than once in a turn, and the copy is a plain
-    merge, so a file only the earlier backtest produced used to survive
-    alongside the later one's output — one artifacts directory describing two
-    different runs, which ``/runs/{id}`` then lists as artifacts of the current
-    one.  Only files a previous archive placed here are removed, recorded in
-    :data:`_ARCHIVE_MANIFEST`; anything the active run wrote itself (notably
-    ``code/signal_engine.py``, written before ``backtest`` is called) is
-    untouched, which is why the manifest exists instead of a blanket wipe.
-    """
-    if not active_run_dir:
-        return False
-    try:
-        payload = json.loads(result)
-    except (json.JSONDecodeError, TypeError):
-        return False
-    if not isinstance(payload, dict):
-        return False
-
-    source_value = payload.get("run_dir")
-    if not source_value:
-        return False
-    try:
-        source = safe_run_dir(str(source_value))
-        target = safe_run_dir(str(active_run_dir))
-    except ValueError:
-        logger.warning("Refusing to archive backtest output from outside the allowed run roots")
-        return False
-    if source == target or not (source / "artifacts" / "metrics.csv").is_file():
-        return False
-
-    target.mkdir(parents=True, exist_ok=True)
-    previously_archived = _previously_archived(target)
-    archived: list[str] = []
-    for directory in ("artifacts", "code", "logs"):
-        source_dir = source / directory
-        if source_dir.is_dir():
-            shutil.copytree(source_dir, target / directory, dirs_exist_ok=True)
-            archived += [
-                path.relative_to(source).as_posix()
-                for path in source_dir.rglob("*")
-                if path.is_file()
-            ]
-    for stale in previously_archived - set(archived):
-        (target / stale).unlink(missing_ok=True)
-    (target / _ARCHIVE_MANIFEST).write_text(
-        json.dumps({"source_run": source.name, "files": sorted(archived)}, indent=2),
-        encoding="utf-8",
-    )
-    for filename in (
-        "config.json",
-        "design_spec.json",
-        "planner_output.json",
-        "rag_metadata.json",
-        "review_report.json",
-        "run_card.json",
-        "run_card.md",
-        "llm_usage.json",
-    ):
-        source_file = source / filename
-        if source_file.is_file():
-            shutil.copy2(source_file, target / filename)
-    return (target / "artifacts" / "metrics.csv").is_file()
 
 
 class AgentLoop:
@@ -1163,6 +950,8 @@ class AgentLoop:
                 ),
             )
         self._llm_runtime = runtime_snapshot
+        self._active_model_id = runtime_snapshot.configured_model
+        self._active_model_source = "configured"
         self.memory = memory or WorkspaceMemory()
         self._event_callback = event_callback
         self.max_iterations = max_iterations
@@ -1207,6 +996,9 @@ class AgentLoop:
         self._readonly_replay_cache: dict[tuple[str, str], str] = {}
         self._readonly_replay_ready: set[tuple[str, str]] = set()
         self._readonly_replay_protected: set[tuple[str, str]] = set()
+        # Replayed tool_call_ids whose restored payload no successful model
+        # request has carried yet (message identity, not call identity).
+        self._readonly_replay_visibility_pending: set[str] = set()
         self._readonly_replay_recoveries = 0
         self._tool_progress = ToolProgress()
         self._context_meter = ContextMeter()
@@ -1332,6 +1124,7 @@ class AgentLoop:
         self._readonly_replay_cache = {}
         self._readonly_replay_ready = set()
         self._readonly_replay_protected = set()
+        self._readonly_replay_visibility_pending = set()
         self._readonly_replay_recoveries = 0
         self._tool_progress = ToolProgress()
         self._context_meter = ContextMeter()
@@ -1457,10 +1250,15 @@ class AgentLoop:
                     # can force each layer with a tiny number.
                     tokens = estimate_tokens(messages)
                     if tokens > int(_token_threshold() * 0.5):
-                        self._microcompact_and_unblock(messages, trace, iteration)
+                        self._microcompact_and_unblock(
+                            messages,
+                            trace,
+                            iteration,
+                            preserve_tool_call_ids=self._readonly_replay_visibility_pending,
+                        )
                         tokens = estimate_tokens(messages)
                     if tokens > int(_token_threshold() * 0.7):
-                        _context_collapse(messages)
+                        _context_collapse(messages, preserve_tool_call_ids=self._readonly_replay_visibility_pending)
                         tokens = estimate_tokens(messages)
                     _tok_threshold = _token_threshold()
                     if tokens > _tok_threshold:
@@ -1693,6 +1491,8 @@ class AgentLoop:
                 else:
                     stream_failure_streak = 0
 
+                self._consume_readonly_replay_visibility(messages, trace, current_iter)
+
                 # Cancelled mid-stream: discard this turn's partial response and
                 # end the run now, without executing any of its tool calls.
                 if self._cancel_event.is_set():
@@ -1702,13 +1502,14 @@ class AgentLoop:
                 self._last_activity_wall = _time.time()
 
                 usage = getattr(response, "usage_metadata", None)
+                current_response_model = getattr(response, "response_model", None)
                 # `messages` is still exactly what this request sent.
                 self._context_meter.observe(
                     usage.get("input_tokens") if isinstance(usage, dict) else None,
                     messages,
                 )
-                if getattr(response, "response_model", None):
-                    last_response_model = response.response_model
+                if current_response_model:
+                    last_response_model = current_response_model
                 usage_delta = _record_llm_usage(
                     run_dir,
                     llm_usage_summary,
@@ -2226,6 +2027,12 @@ class AgentLoop:
                 messages.append(assistant_message)
 
                 # Execute tools with read/write batching
+                self._active_model_id = (
+                    current_response_model or self._llm_runtime.configured_model
+                )
+                self._active_model_source = (
+                    "provider_response" if current_response_model else "configured"
+                )
                 compact_requested, focus_topic = self._process_tool_calls(
                     response.tool_calls, context, messages, trace, react_trace, current_iter,
                 )
@@ -2602,6 +2409,7 @@ class AgentLoop:
                         tc.id, tc.name, truncate_tool_result(restored)
                     )
                 )
+                self._readonly_replay_visibility_pending.add(tc.id)
                 self._successful_call_keys[tc.id] = dedup_key
                 self._called_ok.add(dedup_key)
                 self._readonly_replay_ready.discard(dedup_key)
@@ -3157,9 +2965,53 @@ class AgentLoop:
         if not p.is_absolute() and self.memory.run_dir:
             p = Path(self.memory.run_dir) / p
         try:
-            self._written_files.add(str(p.resolve()).casefold())
+            resolved = p.resolve()
+            self._written_files.add(str(resolved).casefold())
         except (OSError, ValueError):
+            resolved = p
             self._written_files.add(str(p).casefold())
+
+        if not self.memory.run_dir:
+            return
+        run_root = Path(self.memory.run_dir).resolve()
+        try:
+            relative = resolved.relative_to(run_root).as_posix()
+        except ValueError:
+            return
+        if relative not in {"config.json", "code/signal_engine.py"}:
+            return
+
+        metadata_path = run_root / "strategy_provenance.json"
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            files = {}
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "Could not read strategy model provenance; update skipped: %s",
+                exc,
+            )
+            return
+        else:
+            if not isinstance(metadata, dict):
+                logger.warning("Invalid strategy model provenance; update skipped.")
+                return
+            files = metadata.get("files", {})
+            if not isinstance(files, dict):
+                logger.warning("Invalid strategy model provenance files; update skipped.")
+                return
+        files[relative] = {
+            "provider": self._llm_runtime.provider or None,
+            "model_id": self._active_model_id or None,
+            "model_source": self._active_model_source,
+        }
+        try:
+            metadata_path.write_text(
+                json.dumps({"files": files}, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.warning("Could not write strategy model provenance: %s", exc)
 
     def _pending_write_directive(
         self, user_message: str, run_started_wall: float
@@ -3274,10 +3126,11 @@ class AgentLoop:
                 iteration,
                 target_tokens=budget.micro_at,
                 measure=self._prompt_tokens,
+                preserve_tool_call_ids=self._readonly_replay_visibility_pending,
             )
             tokens = self._prompt_tokens(messages)
         if tokens > budget.collapse_at:
-            _context_collapse(messages)
+            _context_collapse(messages, preserve_tool_call_ids=self._readonly_replay_visibility_pending)
             tokens = self._prompt_tokens(messages)
         # A summary keeps the static prompt plus a ~20K-token tail, so on a
         # window that small the prompt stays over the line after compacting;
@@ -3339,6 +3192,7 @@ class AgentLoop:
         *,
         target_tokens: Optional[int] = None,
         measure: Optional[Callable[[list], int]] = None,
+        preserve_tool_call_ids: Optional[set[str]] = None,
     ) -> list[str]:
         """Run layer-1 microcompact and re-open lost readonly call identities.
 
@@ -3355,12 +3209,18 @@ class AgentLoop:
             iteration: Current ReAct iteration, recorded on the trace event.
             target_tokens: Clear oldest-first only until the prompt fits.
             measure: Prompt-size function for ``target_tokens``.
+            preserve_tool_call_ids: Replayed results still owed one model request.
 
         Returns:
             The tool names re-opened, for callers and tests to assert on.
         """
         readable_before = self._readable_success_keys(messages)
-        _microcompact(messages, target_tokens=target_tokens, measure=measure)
+        _microcompact(
+            messages,
+            target_tokens=target_tokens,
+            measure=measure,
+            preserve_tool_call_ids=preserve_tool_call_ids,
+        )
         unreadable_tools = self._unblock_lost_readonly_results(messages, readable_before)
         if unreadable_tools:
             trace.write({
@@ -3369,6 +3229,21 @@ class AgentLoop:
                 "tools": unreadable_tools,
             })
         return unreadable_tools
+
+    def _consume_readonly_replay_visibility(
+        self, messages: list, trace: TraceWriter, iteration: int
+    ) -> None:
+        """Release replay leases once a successful model request carried them."""
+        visible = {
+            msg.get("tool_call_id")
+            for msg in messages
+            if msg.get("role") == "tool"
+            and msg.get("tool_call_id") in self._readonly_replay_visibility_pending
+            and not _result_data_gone(msg.get("content"))
+        }
+        for call_id in sorted(visible):
+            self._readonly_replay_visibility_pending.discard(call_id)
+            trace.write({"type": "replay_visibility_consumed", "iter": iteration, "call_id": call_id})
 
     def _readable_success_keys(self, messages: list) -> set[tuple[str, str]]:
         """Identify surviving successful results, not synthetic skip/stub calls."""
@@ -3463,7 +3338,7 @@ class AgentLoop:
                 self._successful_call_keys[tc.id] = recorded_key
             if tc.name == "backtest":
                 try:
-                    _archive_backtest_result(result, self.memory.run_dir)
+                    _archive_backtest_result(result, self.memory.run_dir, source_call_id=tc.id)
                 except OSError as exc:
                     logger.warning("Could not archive backtest output into active run: %s", exc)
             if tc.name in {"write_file", "edit_file"}:
@@ -3532,6 +3407,18 @@ class AgentLoop:
             iteration=iteration,
         )
         preview = trace_result[:200]
+        artifact = None
+        if status == "ok" and tc.name in {"write_file", "render_shadow_report"}:
+            try:
+                payload = json.loads(trace_result)
+                from src.tools.report_artifacts import report_path
+                report_id = payload.get("report_id", "")
+                path = report_path(report_id) if isinstance(report_id, str) else None
+                if path is not None:
+                    artifact = {"report_id": report_id, "filename": path.name,
+                                "download_url": f"/api/reports/{report_id}"}
+            except (ValueError, TypeError, AttributeError, OSError):
+                pass
         react_trace.append({"type": "tool_call", "tool": tc.name, "result_preview": preview})
         self._emit(
             "tool_result",
@@ -3541,6 +3428,7 @@ class AgentLoop:
                 "elapsed_ms": elapsed_ms,
                 "preview": preview,
                 "call_id": tc.id,
+                **({"artifact": artifact} if artifact else {}),
             },
         )
 
@@ -3597,6 +3485,16 @@ class AgentLoop:
             else:
                 logger.warning("Auto compact: nothing to compress (body too small)")
                 return
+
+        # Replayed results are owed one successful writing request. Keep the
+        # entire assistant-call/result pair out of summaries until then.
+        pending = self._readonly_replay_visibility_pending
+        leased = [msg for msg in head if (
+            msg.get("role") == "tool" and msg.get("tool_call_id") in pending
+        ) or any(call.get("id") in pending for call in msg.get("tool_calls") or [])]
+        if leased:
+            head = [msg for msg in head if all(msg is not kept for kept in leased)]
+            tail = leased + tail
 
         # Build focus section
         focus_section = _FOCUS_SECTION.format(topic=focus_topic) if focus_topic else ""

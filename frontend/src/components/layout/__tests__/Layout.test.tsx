@@ -1,6 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { Layout } from "../Layout";
+import { api } from "@/lib/api";
+import { toast } from "sonner";
+
+vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
 
 const sessions = [
   {
@@ -17,7 +21,6 @@ vi.mock("react-i18next", () => ({
       "layout.alphaZoo": "Alpha Zoo",
       "layout.cancel": "Cancel",
       "layout.collapse": "Collapse",
-      "layout.close": "Close",
       "layout.confirm": "Confirm",
       "layout.correlation": "Correlation Matrix",
       "layout.dark": "Dark",
@@ -27,7 +30,6 @@ vi.mock("react-i18next", () => ({
       "layout.language": "Language",
       "layout.light": "Light",
       "layout.mainNavigation": "Main navigation",
-      "layout.menu": "Menu",
       "layout.newChat": "New Chat",
       "layout.noSessions": "No sessions yet",
       "layout.rename": "Rename",
@@ -88,17 +90,19 @@ function renderLayout() {
 }
 
 describe("Layout accessibility", () => {
+  beforeEach(() => {
+    window.localStorage.removeItem("qa-sidebar");
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(api.listSessions).mockReset().mockResolvedValue(sessions as never);
+    vi.mocked(api.renameSession).mockReset().mockResolvedValue({ status: "ok" });
+    vi.mocked(api.deleteSession).mockReset().mockResolvedValue({ status: "ok" });
+  });
   it("labels landmarks, brand, main content, and the new-chat affordance", () => {
     renderLayout();
 
-    const sidebar = screen.getByRole("complementary", { name: "Vibe-Trading sidebar" });
-    expect(sidebar).toHaveClass("max-md:hidden");
+    expect(screen.getByRole("complementary", { name: "Vibe-Trading sidebar" })).toHaveClass("max-md:w-12");
     expect(screen.getByRole("navigation", { name: "Main navigation" })).toBeInTheDocument();
-    // Scoped to the desktop <aside> — the mobile header bar has its own,
-    // separate "Vibe-Trading" brand link (jsdom renders both; only one is
-    // ever visible in a real browser, decided by the `max-md:hidden` CSS
-    // breakpoint neither jsdom nor these role queries evaluate).
-    expect(within(sidebar).getByRole("link", { name: "Vibe-Trading" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Vibe-Trading" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "New Chat" })).toHaveAttribute("title", "New Chat");
     expect(screen.getByText("Skip to main content")).toHaveAttribute("href", "#main");
     expect(screen.getByRole("main")).toHaveAttribute("id", "main");
@@ -147,76 +151,6 @@ describe("Layout accessibility", () => {
     expect(languageButton).not.toHaveAttribute("aria-haspopup");
   });
 
-  it("opens the full sidebar as a dismissible drawer from the mobile-only hamburger trigger", async () => {
-    renderLayout();
-    await screen.findByText(sessions[0].title);
-
-    expect(screen.queryByRole("dialog", { name: "Vibe-Trading sidebar" })).not.toBeInTheDocument();
-
-    // The sidebar <aside> is `max-md:hidden` entirely on mobile — this
-    // hamburger button in the mobile header bar is the only way in.
-    fireEvent.click(screen.getByRole("button", { name: "Menu" }));
-
-    const dialog = screen.getByRole("dialog", { name: "Vibe-Trading sidebar" });
-    expect(dialog).toHaveAttribute("aria-modal", "true");
-    // The drawer is a full, self-contained copy of the sidebar's content —
-    // nav links and the session list both — not just the sessions panel.
-    expect(within(dialog).getByRole("link", { name: "Agent" })).toBeInTheDocument();
-    expect(within(dialog).getByRole("link", { name: "Runtime" })).toBeInTheDocument();
-    expect(within(dialog).getByText(sessions[0].title)).toBeInTheDocument();
-    // Slides/fades in rather than appearing instantly — mounts off-screen
-    // (translate-x-full) and transparent, then the open handler's rAF flips
-    // it to the visible transform/opacity a frame later.
-    expect(dialog.className).toContain("transition-transform");
-    await waitFor(() => expect(dialog.className).toContain("translate-x-0"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    // The drawer plays a slide/fade-out transition before unmounting —
-    // see MOBILE_SIDEBAR_TRANSITION_MS — so this is async, not immediate.
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Vibe-Trading sidebar" })).not.toBeInTheDocument();
-    });
-  });
-
-  it("closes the mobile drawer via Escape and via clicking the backdrop", async () => {
-    renderLayout();
-    await screen.findByText(sessions[0].title);
-    const trigger = screen.getByRole("button", { name: "Menu" });
-
-    fireEvent.click(trigger);
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Vibe-Trading sidebar" })).not.toBeInTheDocument();
-    });
-
-    fireEvent.click(trigger);
-    const dialog = screen.getByRole("dialog", { name: "Vibe-Trading sidebar" });
-    // The backdrop is the dialog's own positioning parent, one level up.
-    fireEvent.click(dialog.parentElement!);
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Vibe-Trading sidebar" })).not.toBeInTheDocument();
-    });
-  });
-
-  it("closes the mobile drawer after navigating to a session, or a nav link, from it", async () => {
-    renderLayout();
-    await screen.findByText(sessions[0].title);
-
-    fireEvent.click(screen.getByRole("button", { name: "Menu" }));
-    let dialog = screen.getByRole("dialog", { name: "Vibe-Trading sidebar" });
-    fireEvent.click(within(dialog).getByText(sessions[0].title));
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Vibe-Trading sidebar" })).not.toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Menu" }));
-    dialog = screen.getByRole("dialog", { name: "Vibe-Trading sidebar" });
-    fireEvent.click(within(dialog).getByRole("link", { name: "Runtime" }));
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Vibe-Trading sidebar" })).not.toBeInTheDocument();
-    });
-  });
-
   it("synchronizes the sidebar preference from another tab", () => {
     window.localStorage.setItem("qa-sidebar", "expanded");
     renderLayout();
@@ -227,5 +161,71 @@ describe("Layout accessibility", () => {
     fireEvent(window, new StorageEvent("storage", { key: "qa-sidebar" }));
 
     expect(sidebar).toHaveClass("w-12");
+  });
+
+  it("shows a connection failure instead of an empty history, and retries", async () => {
+    vi.mocked(api.listSessions).mockRejectedValueOnce(new Error("Backend unavailable"));
+    renderLayout();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Backend unavailable");
+    expect(screen.queryByText("No sessions yet")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "connection.retry" }));
+    expect(await screen.findByText(sessions[0].title)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("retains the rename draft and surfaces a failed save", async () => {
+    vi.mocked(api.renameSession).mockRejectedValueOnce(new Error("Rename failed"));
+    renderLayout();
+    await screen.findByText(sessions[0].title);
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "My renamed chat" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Rename failed"));
+    expect(input).toHaveValue("My renamed chat");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("My renamed chat")).toBeInTheDocument();
+  });
+
+  it("keeps a failed deletion visible so it can be retried", async () => {
+    vi.mocked(api.deleteSession).mockRejectedValueOnce(new Error("Delete failed"));
+    renderLayout();
+    await screen.findByText(sessions[0].title);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Delete failed"));
+    expect(screen.getByText(sessions[0].title)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(screen.queryByText(sessions[0].title)).not.toBeInTheDocument());
+  });
+
+  it("does not submit rename twice when Enter is followed by blur", async () => {
+    let complete!: (value: { status: string }) => void;
+    vi.mocked(api.renameSession).mockReturnValueOnce(new Promise((resolve) => { complete = resolve; }));
+    renderLayout();
+    await screen.findByText(sessions[0].title);
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "Renamed once" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.blur(input);
+    expect(api.renameSession).toHaveBeenCalledOnce();
+    await act(async () => complete({ status: "ok" }));
+    expect(screen.getByText("Renamed once")).toBeInTheDocument();
+  });
+
+  it("keeps history, new chat and language reachable with a collapsed sidebar", async () => {
+    window.localStorage.setItem("qa-sidebar", "collapsed");
+    renderLayout();
+    const trigger = screen.getByRole("button", { name: "Sessions" });
+    expect(screen.queryByRole("link", { name: "New Chat" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Language" })).toBeInTheDocument();
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByText(sessions[0].title)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "New Chat" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
   });
 });

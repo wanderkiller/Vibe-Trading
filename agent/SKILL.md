@@ -133,7 +133,7 @@ Comprehensive knowledge base covering:
 
 Use `load_skill(name)` to access full methodology docs with code templates.
 
-## Available MCP Tools (74)
+## Available MCP Tools (76)
 
 | Tool | Description | API Key |
 |------|-------------|---------|
@@ -154,6 +154,7 @@ Use `load_skill(name)` to access full methodology docs with code templates.
 | `get_fund_flow` | Capital fund-flow (main/retail net inflow) | None* |
 | `get_dragon_tiger` | Dragon-tiger list (龙虎榜) top buyer/seller seats | None* |
 | `get_northbound_flow` | Northbound (Stock Connect) net flow | None* |
+| `get_southbound_flow` | Southbound (Stock Connect) net buy into HK (Eastmoney/HKEX) | None |
 | `get_margin_trading` | Margin trading & short-selling balances | None* |
 | `get_block_trades` | Block-trade (大宗交易) records | None* |
 | `get_shareholder_count` | Shareholder-count history per symbol | None* |
@@ -177,6 +178,7 @@ Use `load_skill(name)` to access full methodology docs with code templates.
 | `read_document` | Extract text from PDF/DOCX/XLSX/PPTX/images | None |
 | `write_file` | Write files (config, strategy code) | None |
 | `read_file` | Read file contents | None |
+| `read_run_artifact` | Structured run-artifact reads (rows / downsample / meta) | None |
 | `list_strategies` | Browse discoverable strategies (Alpha Zoo + SDM store) | None |
 | `query_strategies` | Evidence-gated query: regime / Sharpe / quality / cost filters | None |
 | `get_strategy_evidence` | Per-regime evidence rows for one strategy | None |

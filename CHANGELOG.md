@@ -5,6 +5,142 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Maintenance — 2026-10-08
+
+- Optional AES-256 protection for Email PDF reports (#1709): Web, CLI
+  playbooks and Agent proposals persist only the boolean choice. Confirmations
+  show it, and creation or confirmation refuses an unconfigured password.
+  The private Email setting is translated in all nine UI languages.
+- KIS order and fill reads query KRX, SOR and NXT, deduplicate records and fail
+  incomplete venue reads (#1726). An explicitly expired token is refreshed
+  once, including HTTP 200 business errors and 401/403 replies; other business
+  errors remain failures.
+- Derived formulas parse the complete expression after a descriptive label
+  while retaining operand evidence and arithmetic validation (#1728).
+
+### Maintenance — 2026-10-07
+
+- Move volatile workspace state outside the system prompt (#1708, resolves
+  #1707); align local daily dates across markets (#1710) and distinguish bare
+  equity tickers from explicit crypto pairs (#1711).
+- A-share benchmarks follow the declared exchange suffix (#1712), and loader
+  suites share the live health checker’s OHLCV contract (#1725, resolves #1723),
+  including Binance and a catalog assertion for newly registered sources.
+- OU lag pairs retain gaps (#1713), walk-forward validation skips empty purged
+  training folds (#1714), undefined correlations remain missing (#1715), and
+  risk X-ray returns do not bridge missing observations (#1717).
+- CDS premium legs include the final stub (#1716); style exposure excludes
+  incomplete rows and reports unmatched weight (#1718); Heston rejects
+  nonfinite inputs and invalid integration bounds (#1719); options Sortino
+  uses the full return sample for downside deviation (#1727).
+- Session search respects a zero limit (#1720), and archive audit diagnostics
+  use the shared ledger walker to report malformed records (#1721).
+
+### Added
+
+- **Editable scheduled delivery and rich Email reports** (#1649, #1680).
+  Choose a configured channel and destination, edit existing schedules, and
+  select plain text, sanitized HTML or a PDF attachment for Email across Web,
+  CLI playbooks and agent proposals. Confirmation surfaces show the format. Format edits
+  persist, active sends cannot be overwritten, and desktop PDF delivery uses
+  the packaged renderer when native libraries are unavailable, with embedded
+  CJK/Arabic fonts and tested multiline/table pagination. Email PDF delivery
+  also supports optional AES-256 password protection using an operator-managed
+  Email channel secret; scheduled jobs store only the boolean choice.
+- **Structured backtest summaries and paged artifact reads** (#1646, #1647,
+  resolves #1644 and #1645). Complete scalar metrics, structured metrics and
+  validation accompany endpoint-preserving equity previews and OHLCV paths.
+  `read_run_artifact` streams manifest-listed CSV pages within the actual
+  tool-result limit, with resumable offsets and bounded metadata. Grounding
+  accepts only shown rows of unchanged engine tables, preserving run identity
+  and excluding model-written files and escaped symlinks.
+
+- **Grounding validation records fired declared checks** (#1661, with the
+  registry substrate from #1628, thanks @he-yufeng). Validation artifacts name
+  the registered checks behind their findings; the existing private/listed
+  identity rule is unchanged.
+- **Public loader-health failures carry sanitized warning evidence** (#1643,
+  thanks @cgycorey). Reports retain up to three bounded loader warnings while
+  continuing to fail unavailable sources. Structured and quoted credentials
+  are redacted; warnings containing filesystem paths are omitted in full.
+
+- **Feishu joins the guided Web UI channel setup** (#1572, thanks
+  @shadowinlife). The Feishu panel gets field hints and a setup guide in all
+  nine locales. **Test connection** is a standalone probe that requests a
+  tenant access token from feishu.cn or larksuite.com, whichever the config
+  names, without starting the bot. `stop()` now closes the lark WebSocket and
+  stops its dedicated event loop, so a hot reload no longer leaves the old
+  connection answering messages beside the new one.
+
+### Changed
+
+- **An MCP tool result reaches the agent once, not four times** (#1634, thanks
+  @zeus229). A structured result used to arrive as `data`, an identical
+  `structured_content`, a text block restating it and the joined `text`. Only
+  exact copies of `data` are dropped, and only from what the agent reads;
+  `MCPServerAdapter.call_tool` still returns every surface to programmatic
+  callers, and error or text-only results are unchanged.
+- **Tool-result helpers moved out of `loop.py`** into `src/agent/tool_results.py`
+  (#1636, thanks @Jackzigen), the first extraction of the loop split. The
+  moved functions are byte-identical and `loop` still exports them; their log
+  records now come from the `src.agent.tool_results` logger.
+
+### Fixed
+
+- **Channel settings and delivery** (#1681, #1508). Unchanged nullable form
+  values no longer block saving or testing. Email authentication requires a
+  configured receiving authserv-id and sender-domain alignment; comments and
+  duplicate headers cannot pass as authenticated results. The guided setup
+  exposes the trust setting in all nine interface languages.
+- **Research continuity and output access** (#1682, #1688, #1679, #1676,
+  #1639). Memory snippets retain real spacing and match markers, goal evidence
+  preserves exact tool-call provenance, export refusals explain allowed-root
+  configuration, macro results report both observation and delivery limits,
+  and skill-file deletion follows resolved auxiliary-directory boundaries.
+- **Risk and portfolio mathematics** (#1659, #1658, #1657, #1656, #1653).
+  Attribution rejects non-finite inputs, VaR transitions preserve missing
+  observations, implied volatility meets its price tolerance, monthly risk
+  requests obtain sufficient default history, and turnover prices signed
+  reversals plus cash liquidation and reentry.
+- **Local data, updates and broker restrictions** (#1651, #1655, #1581,
+  #1585). Local ranges include the entire end day, CLI updates retain the VCS
+  installation source, SDK position-pricing fixes retain contributor ancestry,
+  and unsupported Robinhood option orders remain gated even when remotely
+  annotated read-only. Options execution remains unimplemented (#1435).
+
+- **Strategy-file writes no longer crash on missing model provenance fields**
+  (#1673, closes #1672, thanks @tomaszkubiak-courses). Each writing turn records
+  the provider-reported model or falls back to the configured model.
+- **Monte Carlo path metrics include starting capital** (#1664, thanks
+  @MetaAviator). Both actual and shuffled paths include the first trade's
+  return and loss against the initial high-water mark when computing Sharpe
+  and maximum drawdown.
+- **Report audits retain accounting negatives and their units** (#1663,
+  closes #1660, thanks @he-yufeng). ASCII and fullwidth parentheses, inner or
+  outer units and currency marks retain the negative sign. Malformed pairs
+  and non-finite or oversized values are rejected without losing the labels
+  of subsequent values on the same line.
+- **Indonesian tool documentation matches the registry** (#1671, thanks
+  @he-yufeng), including `get_southbound_flow` and the measured tool counts.
+
+- **Carhart momentum no longer reads today's price** (#1578, thanks
+  @Shizoqua). `academic_carhart_mom` computed the 12-month return minus the
+  1-month return, which moves with today's close — the opposite of skipping
+  the most recent month. It is now the return from 252 to 21 trading days
+  ago, pinned by a test that moves every close in the skipped month and
+  requires the value to stay put.
+- **Profit factor is undefined when no trade lost** (#1602, thanks
+  @davidalmeida90). With no losing trade, `profit_factor` and
+  `profit_loss_ratio` were reported as 0.0, which ranked a run that never lost
+  below every other run. They are now `None` — an empty `metrics.csv` cell and
+  `null` in JSON — in both the daily metrics and the options engine; a run
+  with no closed trade keeps 0.0.
+- **Stooq's challenge page stops every later request, not just the warning**
+  (#1637, thanks @cgycorey). Once Stooq answers with its anti-bot page, the
+  loader returns no data for every remaining symbol in the process without
+  another throttled request, so the fallback chain moves on at once. A new
+  process probes again.
+
 ## [0.1.16] — 2026-09-29
 
 Rolls up 492 commits / 116 merged pull requests since 0.1.15, from 16

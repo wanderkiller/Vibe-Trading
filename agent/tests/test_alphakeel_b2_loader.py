@@ -28,6 +28,7 @@ from alphakeel_research.errors import ApiError
 from backtest import data_audit
 from backtest.loaders import registry
 from backtest.loaders.base import NoAvailableSourceError
+from tests.loader_contract import assert_loader_contract
 
 H = "ab" * 32
 DAY = 86_400_000
@@ -258,6 +259,7 @@ def test_ohlcv_comes_from_verified_klines_resampled_and_tagged_with_dataset_vers
     ldr = loader(fc)
     out = ldr.fetch(["BTC-USDT"], "2023-01-01", "2023-01-01", interval="1m")
     df = out["BTC-USDT"]
+    assert_loader_contract(df, context="alphakeel_b2 canonical frame")
     assert len(df) == 1440 and df.index.name == "trade_date" and str(df.index[0]) == "2023-01-01 00:00:00"
     assert list(df.columns) == ["open", "high", "low", "close", "volume"]
     assert df.iloc[0].tolist() == [100.0, 101.0, 99.0, 100.5, 2.0]

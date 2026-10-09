@@ -8,18 +8,7 @@
    "files": [
     "frontend/index.html",
     "frontend/src/components/chat/AgentAvatar.tsx",
-    "frontend/src/components/layout/Layout.tsx",
-    "frontend/src/components/layout/__tests__/Layout.test.tsx",
-    "frontend/src/pages/Agent.tsx",
-    "frontend/src/i18n/locales/ar.json",
-    "frontend/src/i18n/locales/de.json",
-    "frontend/src/i18n/locales/en.json",
-    "frontend/src/i18n/locales/es.json",
-    "frontend/src/i18n/locales/id.json",
-    "frontend/src/i18n/locales/ja.json",
-    "frontend/src/i18n/locales/ko.json",
-    "frontend/src/i18n/locales/pt-BR.json",
-    "frontend/src/i18n/locales/zh-CN.json"
+    "frontend/src/pages/Agent.tsx"
    ],
    "anchors": [
     {
@@ -53,31 +42,6 @@
      "literal": "<div className=\"h-8 w-8 shrink-0 mt-0.5\" aria-hidden=\"true\">"
     },
     {
-     "file": "frontend/src/components/layout/Layout.tsx",
-     "kind": "upstream",
-     "literal": "export function Layout() {"
-    },
-    {
-     "file": "frontend/src/components/layout/Layout.tsx",
-     "kind": "upstream",
-     "literal": "const [collapsed, setCollapsed] = useState(() => safeGet(\"qa-sidebar\") === \"collapsed\");"
-    },
-    {
-     "file": "frontend/src/components/layout/Layout.tsx",
-     "kind": "upstream",
-     "literal": "const loadSessions = () => {"
-    },
-    {
-     "file": "frontend/src/components/layout/Layout.tsx",
-     "kind": "hook",
-     "literal": "const MOBILE_SIDEBAR_TRANSITION_MS = 200;"
-    },
-    {
-     "file": "frontend/src/components/layout/Layout.tsx",
-     "kind": "hook",
-     "literal": "const renderSessionsList = (onNavigate?: () => void) => ("
-    },
-    {
      "file": "frontend/src/pages/Agent.tsx",
      "kind": "upstream",
      "literal": "ref={listRef}"
@@ -91,114 +55,6 @@
      "file": "frontend/src/pages/Agent.tsx",
      "kind": "preimage",
      "literal": "className=\"chat-scroll-container flex-1 overflow-auto p-6 relative\""
-    },
-    {
-     "file": "frontend/src/i18n/locales/ar.json",
-     "kind": "upstream",
-     "literal": "\"skipToMain\":",
-     "note": "layout.* key block the drawer labels sit in"
-    },
-    {
-     "file": "frontend/src/i18n/locales/ar.json",
-     "kind": "hook",
-     "literal": "\"menu\":",
-     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
-    },
-    {
-     "file": "frontend/src/i18n/locales/de.json",
-     "kind": "upstream",
-     "literal": "\"skipToMain\":",
-     "note": "layout.* key block the drawer labels sit in"
-    },
-    {
-     "file": "frontend/src/i18n/locales/de.json",
-     "kind": "hook",
-     "literal": "\"menu\":",
-     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
-    },
-    {
-     "file": "frontend/src/i18n/locales/en.json",
-     "kind": "upstream",
-     "literal": "\"skipToMain\":",
-     "note": "layout.* key block the drawer labels sit in"
-    },
-    {
-     "file": "frontend/src/i18n/locales/en.json",
-     "kind": "hook",
-     "literal": "\"menu\":",
-     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
-    },
-    {
-     "file": "frontend/src/i18n/locales/es.json",
-     "kind": "upstream",
-     "literal": "\"skipToMain\":",
-     "note": "layout.* key block the drawer labels sit in"
-    },
-    {
-     "file": "frontend/src/i18n/locales/es.json",
-     "kind": "hook",
-     "literal": "\"menu\":",
-     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
-    },
-    {
-     "file": "frontend/src/i18n/locales/id.json",
-     "kind": "upstream",
-     "literal": "\"skipToMain\":",
-     "note": "layout.* key block the drawer labels sit in"
-    },
-    {
-     "file": "frontend/src/i18n/locales/id.json",
-     "kind": "hook",
-     "literal": "\"menu\":",
-     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
-    },
-    {
-     "file": "frontend/src/i18n/locales/ja.json",
-     "kind": "upstream",
-     "literal": "\"skipToMain\":",
-     "note": "layout.* key block the drawer labels sit in"
-    },
-    {
-     "file": "frontend/src/i18n/locales/ja.json",
-     "kind": "hook",
-     "literal": "\"menu\":",
-     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
-    },
-    {
-     "file": "frontend/src/i18n/locales/ko.json",
-     "kind": "upstream",
-     "literal": "\"skipToMain\":",
-     "note": "layout.* key block the drawer labels sit in"
-    },
-    {
-     "file": "frontend/src/i18n/locales/ko.json",
-     "kind": "hook",
-     "literal": "\"menu\":",
-     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
-    },
-    {
-     "file": "frontend/src/i18n/locales/pt-BR.json",
-     "kind": "upstream",
-     "literal": "\"skipToMain\":",
-     "note": "layout.* key block the drawer labels sit in"
-    },
-    {
-     "file": "frontend/src/i18n/locales/pt-BR.json",
-     "kind": "hook",
-     "literal": "\"menu\":",
-     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
-    },
-    {
-     "file": "frontend/src/i18n/locales/zh-CN.json",
-     "kind": "upstream",
-     "literal": "\"skipToMain\":",
-     "note": "layout.* key block the drawer labels sit in"
-    },
-    {
-     "file": "frontend/src/i18n/locales/zh-CN.json",
-     "kind": "hook",
-     "literal": "\"menu\":",
-     "note": "layout.menu / layout.close labels for the drawer; add them to every new locale"
     }
    ]
   },
@@ -361,7 +217,8 @@
    "files": [
     "agent/backtest/loaders/registry.py",
     "agent/backtest/loader_health.py",
-    "agent/backtest/metrics.py"
+    "agent/backtest/metrics.py",
+    "agent/tests/test_loader_contract.py"
    ],
    "anchors": [
     {
@@ -667,7 +524,9 @@
     "agent/tests/test_metrics.py",
     "agent/tests/test_metrics_inf_zero_equity.py",
     "agent/src/shadow_account/reporter.py",
-    "agent/tests/test_shadow_account.py"
+    "agent/tests/test_shadow_account.py",
+    "agent/tests/test_metrics_sortino.py",
+    "agent/tests/test_validation_initial_capital.py"
    ],
    "anchors": [
     {
@@ -708,7 +567,7 @@
     {
      "file": "agent/backtest/metrics.py",
      "kind": "preimage",
-     "literal": "downside_std = float(downside.std()) if len(downside) > 1 else 1e-10"
+     "literal": "else 1e-10  # Preserve the existing no-downside fallback."
     },
     {
      "file": "agent/backtest/metrics.py",
@@ -813,7 +672,7 @@
     {
      "file": "agent/backtest/run_card.py",
      "kind": "preimage",
-     "literal": "\"warnings\": list(warnings or []),"
+     "literal": "\"warnings\": [*(warnings or []), *provenance_warnings],"
     }
    ]
   },

@@ -809,14 +809,14 @@ def _calc_options_metrics(
     sortino: float | None = None
     if returns is not None and bars_per_year > 0:
         downside = returns[returns < 0]
-        if len(downside) > 1:
-            downside_std = float(downside.std())
-            if np.isfinite(downside_std) and downside_std > 1e-12:
-                sortino = float(returns.mean() / downside_std * np.sqrt(bars_per_year))
-        if sortino is None:
-            warnings.append(
-                "Sortino ratio requires at least two varying downside returns."
+        # Zero-target downside RMS includes every return period in the divisor.
+        downside_deviation = float(np.sqrt((downside**2).sum() / len(returns)))
+        if np.isfinite(downside_deviation) and downside_deviation > 1e-12:
+            sortino = float(
+                returns.mean() / downside_deviation * np.sqrt(bars_per_year)
             )
+        if sortino is None:
+            warnings.append("Sortino ratio requires nonzero downside deviation.")
     elif bars_per_year <= 0:
         warnings.append("Sortino ratio requires a positive bars_per_year value.")
     else:
@@ -850,8 +850,14 @@ def _calc_options_metrics(
     losses = [p for p in closed_pnl if p < 0]
     win_rate = len(wins) / len(closed_pnl) if closed_pnl else 0.0
     avg_win = np.mean(wins) if wins else 0.0
-    avg_loss = abs(np.mean(losses)) if losses else 1e-10
-    pl_ratio = avg_win / avg_loss if avg_loss > 1e-10 else 0.0
+    avg_loss = abs(np.mean(losses)) if losses else 0.0
+    # Closed trades with no loss leave the ratio without a denominator: None,
+    # as in backtest.metrics.win_rate_and_stats, since 0.0 would rank the run
+    # below every other one. No closed trade at all keeps 0.0.
+    if avg_loss > 1e-10:
+        pl_ratio = avg_win / avg_loss
+    else:
+        pl_ratio = None if closed_pnl else 0.0
 
     return {
         "final_value": final_value,
@@ -865,6 +871,6 @@ def _calc_options_metrics(
         # options_rejected_opens and must not inflate the trade count.
         "trade_count": sum(1 for t in trades if t.get("side") != "reject"),
         "win_rate": round(win_rate, 4),
-        "profit_loss_ratio": round(pl_ratio, 4),
+        "profit_loss_ratio": round(pl_ratio, 4) if pl_ratio is not None else None,
         "warnings": warnings,
     }

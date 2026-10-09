@@ -1,6 +1,6 @@
 # Local patch layer over upstream HKUDS/Vibe-Trading
 
-This fork (`wanderkiller/Vibe-Trading`, branch `feat/alphakeel-ir`) is upstream
+This fork (`wanderkiller/Vibe-Trading`, branch `main`) is upstream
 [HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading) plus the patch groups below. The upstream commit the
 series is based on is recorded in [`BASE`](BASE) (today `e1dbea8a`, upstream release 0.1.16, 2026-09-29).
 
@@ -25,7 +25,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 
 | Group | Upstream files touched | Status |
 |---|---|---|
-| `frontend-mobile` | Layout, AgentAvatar, Agent page, index.html, 9 locales | upstreamable (mobile drawer PR), not submitted |
+| `frontend-mobile` | AgentAvatar, Agent page, index.html | small residue; upstream's own compact sidebar replaced our drawer |
 | `local-deploy` | none (new files only; derived from `Dockerfile`) | local-only |
 | `leaf-package` | none (new files only) | local-only |
 | `loader-registry-hooks` | registry, loader_health, metrics tables | local-only (follows the leaf package) |
@@ -38,33 +38,20 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 
 ## `frontend-mobile` — mobile layout and i18n
 
-**Purpose.** Makes the web UI usable on a phone: below the `md` breakpoint the sidebar becomes a slide-in drawer (its
-own copy of brand, navigation, sessions and footer, opened from a hamburger in a mobile-only header, closed by Escape,
-backdrop, navigation or resizing to desktop), the app shell uses `h-dvh` and the page body never scrolls, the chat list
-uses `overscroll-contain`, and the assistant avatar is hidden on mobile (it indented assistant text by 44 px). Every
-locale gets `layout.close` and `layout.menu`.
+**Purpose.** Phone polish on top of upstream's own compact sidebar (upstream e532650b ships a 12-wide icon rail, a feature
+menu and a sessions disclosure, which replaced our former slide-in drawer in Layout.tsx and the `layout.close`/`layout.menu`
+labels; both were dropped in the 2026-10-09 merge): the app shell uses `h-dvh` and the page body never scrolls, the chat list
+uses `overscroll-contain`, and the assistant avatar is hidden on mobile (it indented assistant text by 44 px).
 
 **Files.**
 - `frontend/index.html`
 - `frontend/src/components/chat/AgentAvatar.tsx`
-- `frontend/src/components/layout/Layout.tsx`
-- `frontend/src/components/layout/__tests__/Layout.test.tsx`
 - `frontend/src/pages/Agent.tsx`
-- `frontend/src/i18n/locales/ar.json`
-- `frontend/src/i18n/locales/de.json`
-- `frontend/src/i18n/locales/en.json`
-- `frontend/src/i18n/locales/es.json`
-- `frontend/src/i18n/locales/id.json`
-- `frontend/src/i18n/locales/ja.json`
-- `frontend/src/i18n/locales/ko.json`
-- `frontend/src/i18n/locales/pt-BR.json`
-- `frontend/src/i18n/locales/zh-CN.json`
 
 **Commits.** `6335f98f` `42e3aec7` `220d3b9b` `6fbb6d15` `8a1c8de6` `58fcfcb9` `2d02e96c`, plus merge `98e8248e`
 (the `id.json` labels exist only in that merge's resolution, because `id` arrived with 0.1.16).
 
-**Upstreamable.** Yes. A PR would contain the Layout drawer (with the shared `renderSessionsList`), the `h-dvh`
-body, `overscroll-contain`, the AgentAvatar change, the two labels in every locale and the Layout tests. Not submitted.
+**Upstreamable.** Yes: the `h-dvh` body, `overscroll-contain` and the AgentAvatar change. Not submitted.
 
 **Anchors.**
 - upstream `frontend/index.html`: `<div id="root"></div>`
@@ -73,32 +60,9 @@ body, `overscroll-contain`, the AgentAvatar change, the two labels in every loca
 - upstream `frontend/src/components/chat/AgentAvatar.tsx`: `export function AgentAvatar() {`
 - hook `frontend/src/components/chat/AgentAvatar.tsx`: `hidden md:block h-8 w-8`
 - preimage `frontend/src/components/chat/AgentAvatar.tsx`: `<div className="h-8 w-8 shrink-0 mt-0.5" aria-hidden="true">`
-- upstream `frontend/src/components/layout/Layout.tsx`: `export function Layout() {`
-- upstream `frontend/src/components/layout/Layout.tsx`: `const [collapsed, setCollapsed] = useState(() => safeGet("qa-sidebar") === "collapsed");`
-- upstream `frontend/src/components/layout/Layout.tsx`: `const loadSessions = () => {`
-- hook `frontend/src/components/layout/Layout.tsx`: `const MOBILE_SIDEBAR_TRANSITION_MS = 200;`
-- hook `frontend/src/components/layout/Layout.tsx`: `const renderSessionsList = (onNavigate?: () => void) => (`
 - upstream `frontend/src/pages/Agent.tsx`: `ref={listRef}`
 - hook `frontend/src/pages/Agent.tsx`: `chat-scroll-container flex-1 overflow-auto overscroll-contain`
 - preimage `frontend/src/pages/Agent.tsx`: `className="chat-scroll-container flex-1 overflow-auto p-6 relative"`
-- upstream `frontend/src/i18n/locales/ar.json`: `"skipToMain":` — layout.* key block the drawer labels sit in
-- hook `frontend/src/i18n/locales/ar.json`: `"menu":` — layout.menu / layout.close labels for the drawer; add them to every new locale
-- upstream `frontend/src/i18n/locales/de.json`: `"skipToMain":` — layout.* key block the drawer labels sit in
-- hook `frontend/src/i18n/locales/de.json`: `"menu":` — layout.menu / layout.close labels for the drawer; add them to every new locale
-- upstream `frontend/src/i18n/locales/en.json`: `"skipToMain":` — layout.* key block the drawer labels sit in
-- hook `frontend/src/i18n/locales/en.json`: `"menu":` — layout.menu / layout.close labels for the drawer; add them to every new locale
-- upstream `frontend/src/i18n/locales/es.json`: `"skipToMain":` — layout.* key block the drawer labels sit in
-- hook `frontend/src/i18n/locales/es.json`: `"menu":` — layout.menu / layout.close labels for the drawer; add them to every new locale
-- upstream `frontend/src/i18n/locales/id.json`: `"skipToMain":` — layout.* key block the drawer labels sit in
-- hook `frontend/src/i18n/locales/id.json`: `"menu":` — layout.menu / layout.close labels for the drawer; add them to every new locale
-- upstream `frontend/src/i18n/locales/ja.json`: `"skipToMain":` — layout.* key block the drawer labels sit in
-- hook `frontend/src/i18n/locales/ja.json`: `"menu":` — layout.menu / layout.close labels for the drawer; add them to every new locale
-- upstream `frontend/src/i18n/locales/ko.json`: `"skipToMain":` — layout.* key block the drawer labels sit in
-- hook `frontend/src/i18n/locales/ko.json`: `"menu":` — layout.menu / layout.close labels for the drawer; add them to every new locale
-- upstream `frontend/src/i18n/locales/pt-BR.json`: `"skipToMain":` — layout.* key block the drawer labels sit in
-- hook `frontend/src/i18n/locales/pt-BR.json`: `"menu":` — layout.menu / layout.close labels for the drawer; add them to every new locale
-- upstream `frontend/src/i18n/locales/zh-CN.json`: `"skipToMain":` — layout.* key block the drawer labels sit in
-- hook `frontend/src/i18n/locales/zh-CN.json`: `"menu":` — layout.menu / layout.close labels for the drawer; add them to every new locale
 
 ## `local-deploy` — local deployment overlay
 
@@ -197,6 +161,7 @@ never part of a network fallback (`_NO_NETWORK_FALLBACK_SOURCES`), excluded from
 - `agent/backtest/loaders/registry.py`
 - `agent/backtest/loader_health.py`
 - `agent/backtest/metrics.py`
+- `agent/tests/test_loader_contract.py`
 
 **Commits.** `e0245ca9` `1f83ef6f` `83ea7c2a`.
 
@@ -307,6 +272,8 @@ report a statistic built on undefined samples.
 - `agent/tests/test_metrics_inf_zero_equity.py`
 - `agent/src/shadow_account/reporter.py`
 - `agent/tests/test_shadow_account.py`
+- `agent/tests/test_metrics_sortino.py`
+- `agent/tests/test_validation_initial_capital.py`
 
 **Commits.** `41f8c94b`; shadow report N/A (audit 2026-10-09).
 
@@ -323,7 +290,7 @@ the `validation.py` guards, and the tests.
 - hook `agent/backtest/metrics.py`: `sortino: float | None = None`
 - hook `agent/backtest/metrics.py`: `"sharpe": None, "calmar": 0, "sortino": None,`
 - preimage `agent/backtest/metrics.py`: `float(port_ret.mean() / (vol + 1e-10) * np.sqrt(bpy))`
-- preimage `agent/backtest/metrics.py`: `downside_std = float(downside.std()) if len(downside) > 1 else 1e-10`
+- preimage `agent/backtest/metrics.py`: `else 1e-10  # Preserve the existing no-downside fallback.`
 - preimage `agent/backtest/metrics.py`: `"sharpe": 0, "calmar": 0, "sortino": 0,`
 - upstream `agent/backtest/validation.py`: `def monte_carlo_test(`
 - upstream `agent/backtest/validation.py`: `def bootstrap_sharpe_ci(`
@@ -360,7 +327,7 @@ class" field in the run card would be upstreamable.
 - hook `agent/backtest/run_card.py`: `from backtest.data_audit import data_audit, non_auditable_warning`
 - hook `agent/backtest/run_card.py`: `"data_audit": audit,`
 - hook `agent/backtest/run_card.py`: `"## Data Audit"`
-- preimage `agent/backtest/run_card.py`: `"warnings": list(warnings or []),`
+- preimage `agent/backtest/run_card.py`: `"warnings": [*(warnings or []), *provenance_warnings],`
 
 ## `packaging-docs` — packaging and documentation
 

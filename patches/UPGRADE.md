@@ -1,6 +1,6 @@
 # Upgrading the patch series onto a new upstream release
 
-The series is the set of commits `$(cat patches/BASE)..feat/alphakeel-ir`, grouped in [MANIFEST.md](MANIFEST.md).
+The series is the set of commits `$(cat patches/BASE)..main`, grouped in [MANIFEST.md](MANIFEST.md).
 An upgrade replays it onto a new upstream commit. **Old patches are never assumed valid on a new base**: a rebase
 that applies cleanly only proves the text still fits. Every hook's anchors and the engine/metrics tests must pass on
 the new base, and any upstream change to a file we hook (even one that merged without a conflict) is re-read before
@@ -35,11 +35,11 @@ Record the output; it goes into the rehearsal/upgrade note (see `REHEARSAL-2026-
 ## 2. Create the upgrade branch in its own worktree
 
 ```bash
-git worktree add ../vt-upgrade-$NEW -b upgrade/$NEW feat/alphakeel-ir
+git worktree add ../vt-upgrade-$NEW -b upgrade/$NEW main
 cd ../vt-upgrade-$NEW
 ```
 
-Never upgrade in the deployed checkout, and never on `feat/alphakeel-ir` itself until the result is accepted.
+Never upgrade in the deployed checkout, and never on `main` itself until the result is accepted.
 
 ## 3. Rebase
 
@@ -56,8 +56,9 @@ General rule: **keep upstream's new behaviour and re-apply our hook minimally**;
 our whole old version (that silently reverts upstream fixes) or upstream's whole version (that drops the hook — the
 checker reports it as `MISS`/`REGRESSED`).
 
-* `frontend-mobile`: re-apply the drawer onto upstream's `Layout.tsx`; add `layout.close`/`layout.menu` to every
-  locale, including new ones. Run the frontend tests (`npm test` in `frontend/`) before deploying.
+* `frontend-mobile`: only `index.html` (`h-dvh`), `AgentAvatar.tsx` and `Agent.tsx` remain; `Layout.tsx` and the locales
+  are upstream's since 2026-10-09 (its compact sidebar replaced our drawer). Run the frontend tests (`npm test` in
+  `frontend/`) before deploying.
 * `local-deploy`: no conflicts expected (new files); `Dockerfile.local` is handled in step 7.
 * `leaf-package`: new files, no conflicts; breakage shows up as failing anchors (`register`, `BaseTool`, loader
   protocol, `get_env_value`) or failing `test_alphakeel_*`.
@@ -81,7 +82,7 @@ Document every resolution (file, what upstream changed, what we kept) in the upg
 The plain rebase loses what exists only in merge `98e8248e`'s resolution:
 
 ```bash
-git show feat/alphakeel-ir:requirements-local-providers-lock.txt > requirements-local-providers-lock.txt
+git show main:requirements-local-providers-lock.txt > requirements-local-providers-lock.txt
 # and re-add "close"/"menu" to the "layout" block of frontend/src/i18n/locales/id.json
 git add -A && git commit -m "local: restore merge-only overlay content lost by linearising the series"
 ```
@@ -118,7 +119,7 @@ Then deploy per DEPLOYMENT.local.md (backup image, env files and volumes first; 
 
 ## 9. Record the new base
 
-On the accepted upgrade branch, before it replaces `feat/alphakeel-ir`:
+On the accepted upgrade branch, before it replaces `main`:
 
 ```bash
 git rev-parse "$NEW" > patches/BASE

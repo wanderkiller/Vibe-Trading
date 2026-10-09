@@ -86,6 +86,41 @@ def _dingtalk_hints() -> list[FieldHint]:
     ]
 
 
+def _feishu_hints() -> list[FieldHint]:
+    """Return the hand-written Feishu field hints (``enabled`` excluded).
+
+    ``app_id``/``app_secret`` are required because
+    :meth:`FeishuChannel.start` refuses to connect without them; the
+    ``encrypt_key``/``verification_token`` pair stays optional because the
+    WebSocket long-connection mode works without them for most apps.
+    """
+    specs = (
+        ("app_id", "text", False, True),
+        ("app_secret", "password", True, True),
+        ("encrypt_key", "password", True, False),
+        ("verification_token", "password", True, False),
+        ("allow_from", "list", False, False),
+        ("react_emoji", "text", False, False),
+        ("done_emoji", "text", False, False),
+        ("tool_hint_prefix", "text", False, False),
+        ("group_policy", "text", False, False),
+        ("reply_to_message", "bool", False, False),
+        ("streaming", "bool", False, False),
+        ("domain", "text", False, False),
+        ("topic_isolation", "bool", False, False),
+    )
+    return [
+        {
+            "key": key,
+            "type": widget,
+            "secret": secret,
+            "required": required,
+            "help_key": f"{_HELP_KEY_PREFIX}.feishu.{key}",
+        }
+        for key, widget, secret, required in specs
+    ]
+
+
 def _qq_hints() -> list[FieldHint]:
     """Return the hand-written QQ field hints (``enabled`` excluded)."""
     specs = (
@@ -132,6 +167,7 @@ def _email_hints() -> list[FieldHint]:
         ("smtp_port", "text", False, False),
         ("smtp_username", "text", False, True),
         ("smtp_password", "password", True, True),
+        ("pdf_password", "password", True, False),
         ("smtp_use_tls", "bool", False, False),
         ("smtp_use_ssl", "bool", False, False),
         ("verify_tls", "bool", False, False),
@@ -148,6 +184,7 @@ def _email_hints() -> list[FieldHint]:
         ("allow_from", "list", False, False),
         ("verify_dkim", "bool", False, False),
         ("verify_spf", "bool", False, False),
+        ("trusted_authserv_id", "text", False, False),
         ("allowed_attachment_types", "list", False, False),
         ("max_attachment_size", "text", False, False),
         ("max_attachments_per_email", "text", False, False),
@@ -206,6 +243,7 @@ def _websocket_hints() -> list[FieldHint]:
 FIELD_HINTS: dict[str, list[FieldHint]] = {
     "dingtalk": _dingtalk_hints(),
     "email": _email_hints(),
+    "feishu": _feishu_hints(),
     "qq": _qq_hints(),
     "websocket": _websocket_hints(),
 }
@@ -295,13 +333,14 @@ def is_secret_key(name: str, key: str) -> bool:
     return bool(SECRET_KEY_RE.search(key))
 
 
-def _mask(value: Any) -> dict[str, Any]:
+def _mask(value: Any, *, reveal_suffix: bool = True) -> dict[str, Any]:
     """Return the ``{set, masked}`` descriptor for one secret value."""
     is_set = bool(value)
     if not is_set:
         return {"set": False, "masked": ""}
     text = str(value)
-    return {"set": True, "masked": "****" if len(text) <= 8 else "****" + text[-4:]}
+    masked = "****" + text[-4:] if reveal_suffix and len(text) > 8 else "****"
+    return {"set": True, "masked": masked}
 
 
 def _strip_url_userinfo(value: Any) -> Any:
@@ -346,7 +385,8 @@ def split_values_secrets(
     secrets: dict[str, dict[str, Any]] = {}
     for key, value in section.items():
         if is_secret_key(name, key):
-            secrets[key] = _mask(value)
+            # The PDF password is deliberately represented by presence only.
+            secrets[key] = _mask(value, reveal_suffix=key != "pdf_password")
         else:
             values[key] = _strip_url_userinfo(value)
     return values, secrets
