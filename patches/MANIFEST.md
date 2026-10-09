@@ -305,8 +305,10 @@ report a statistic built on undefined samples.
 - `agent/backtest/validation.py`
 - `agent/tests/test_metrics.py`
 - `agent/tests/test_metrics_inf_zero_equity.py`
+- `agent/src/shadow_account/reporter.py`
+- `agent/tests/test_shadow_account.py`
 
-**Commits.** `41f8c94b`.
+**Commits.** `41f8c94b`; shadow report N/A (audit 2026-10-09).
 
 **Upstreamable.** Partly done upstream since BASE: `95389681` adopted the same full-sample downside deviation for
 Sortino (but keeps a `1e-10` fallback when there is no downside) and `f110ad6c` made profit factor / P-L ratio `None`
@@ -328,6 +330,7 @@ the `validation.py` guards, and the tests.
 - upstream `agent/backtest/validation.py`: `def walk_forward_analysis(`
 - upstream `agent/backtest/validation.py`: `def _path_metrics(`
 - hook `agent/backtest/validation.py`: `def _sharpe(returns: np.ndarray, bars_per_year: int = 252) -> float | None:`
+- hook `agent/src/shadow_account/reporter.py`: `"N/A" if value is None else f"{value:.2f}"`
 - hook `agent/backtest/validation.py`: `"sharpe_undefined_windows"`
 - preimage `agent/backtest/validation.py`: `def _sharpe(returns: np.ndarray, bars_per_year: int = 252) -> float:`
 - preimage `agent/backtest/validation.py`: `sharpe = float(returns.mean() / (std + 1e-10) * np.sqrt(bars_per_year))`

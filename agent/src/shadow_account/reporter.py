@@ -207,19 +207,19 @@ def _render_per_market_bar(result: ShadowBacktestResult, path: Path) -> None:
     import matplotlib.pyplot as plt
 
     markets = list(result.per_market.keys())
-    sharpes = [result.per_market[m].get("sharpe", 0.0) for m in markets]
+    raw = [result.per_market[m].get("sharpe") for m in markets]  # absent/None = undefined, never 0.0
     labels = [_MARKET_LABELS.get(m, m) for m in markets]
 
     fig, ax = plt.subplots(figsize=(8, 3), dpi=150)
-    bars = ax.bar(labels, sharpes, color="#4a5fb0")
+    bars = ax.bar(labels, [0.0 if v is None else v for v in raw], color="#4a5fb0")
     ax.axhline(0, color="#8a8f99", linewidth=0.8)
     ax.set_title("Sharpe by Market")
     ax.grid(True, axis="y", linestyle=":", alpha=0.4)
-    for bar, value in zip(bars, sharpes):
+    for bar, value in zip(bars, raw):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height(),
-            f"{value:.2f}",
+            "N/A" if value is None else f"{value:.2f}",
             ha="center",
             va="bottom",
             fontsize=9,

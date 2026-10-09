@@ -2363,3 +2363,17 @@ def test_daily_bars_date_only_journal_window_still_enters() -> None:
     )
     series = signals["600519.SH"]
     assert (series > 0).any(), "date-only journal window must still enter"
+
+
+def test_per_market_bar_keeps_undefined_sharpe_as_na(tmp_path, monkeypatch):
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    from matplotlib.axes import Axes
+    from src.shadow_account.reporter import _render_per_market_bar
+
+    texts = []
+    orig = Axes.text
+    monkeypatch.setattr(Axes, "text", lambda self, x, y, s, *a, **k: (texts.append(s), orig(self, x, y, s, *a, **k))[1])
+    result = types.SimpleNamespace(per_market={"us": {"final_value": 1.0}, "hk": {"sharpe": 1.234}})
+    _render_per_market_bar(result, tmp_path / "bar.png")
+    assert texts == ["N/A", "1.23"]

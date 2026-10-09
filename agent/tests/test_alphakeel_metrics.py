@@ -80,3 +80,9 @@ def test_daily_returns_group_by_utc_day_over_an_explicit_capital_base():
     assert akm.daily_returns(eq, 1_000.0, 10_000.0) == pytest.approx([0.1, -0.06, 0.03])
     with pytest.raises(ValueError, match="capital_base"):
         akm.daily_returns(eq, 0.0, 10_000.0)
+
+
+def test_mean_is_exactly_rounded_so_flat_series_has_no_moments():
+    # plain sum() of ten 0.001 is 0.0010000000000000002 on Python 3.11 (3.12 compensates) -> fake 1e-38 variance
+    assert akm._mean([0.001] * 10) == 0.001
+    assert akm.moments([0.001] * 10) is None

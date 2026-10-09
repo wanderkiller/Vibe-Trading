@@ -275,7 +275,7 @@ Decision { exits: [{position_id, reason}],
 需要历史序列的特征（z-score、资金费持续性、回本时间 `payback_hours`）、跨计价币换汇、`kind` 以外的策略形态、参数占位符。
 schema 不为它们占位，两侧也不做假实现。
 
-**运行时守卫不属于 IR。** 在线 paper（`arb screen --paper-state … --strategy <id>`）与跨所执行器（`arb cross-live run --strategy <id>`）
+**运行时守卫不属于 IR。** 在线 paper（`arb-screen screen --paper-state … --strategy <id>`）与跨所执行器（`arb-screen cross-live run --strategy <id>`）
 加载 IR 时，在 IR 的退出规则之外加一道运行时守卫：任一腿标记价进入强平价的 `paper.liq_buffer` 范围即平仓（与内置规则的
 `liquidation_risk` 同一判断 `screener::paper::near_liquidation`，平仓原因 `liquidation_risk`、`strategy_reason = runtime:liq_buffer`）。
 守卫只在这两个运行环境打开（`IrDecider::with_runtime_guards`）；回测与研究服务的 `ir_strategy` 保持纯 IR 语义，Python 侧也不实现它，

@@ -36,7 +36,7 @@ DAYS_PER_YEAR = 365
 
 
 def _mean(x: Sequence[float]) -> float:
-    return sum(x) / len(x)
+    return math.fsum(x) / len(x)  # exact-rounded: plain sum() differs across Python 3.11/3.12
 
 
 def _cdf(z: float) -> float:  # tail-exact Φ
@@ -77,11 +77,11 @@ def moments(x: Sequence[float]) -> tuple[float, float] | None:
         return None
     m = _mean(x)
     n = len(x)
-    m2 = sum((v - m) ** 2 for v in x) / n
+    m2 = math.fsum((v - m) ** 2 for v in x) / n
     if m2 == 0:
         return None
-    m3 = sum((v - m) ** 3 for v in x) / n
-    m4 = sum((v - m) ** 4 for v in x) / n
+    m3 = math.fsum((v - m) ** 3 for v in x) / n
+    m4 = math.fsum((v - m) ** 4 for v in x) / n
     return m3 / m2 ** 1.5, m4 / m2 ** 2
 
 

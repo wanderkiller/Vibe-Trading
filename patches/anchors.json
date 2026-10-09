@@ -665,7 +665,9 @@
     "agent/backtest/metrics.py",
     "agent/backtest/validation.py",
     "agent/tests/test_metrics.py",
-    "agent/tests/test_metrics_inf_zero_equity.py"
+    "agent/tests/test_metrics_inf_zero_equity.py",
+    "agent/src/shadow_account/reporter.py",
+    "agent/tests/test_shadow_account.py"
    ],
    "anchors": [
     {
@@ -752,6 +754,11 @@
      "file": "agent/backtest/validation.py",
      "kind": "preimage",
      "literal": "sharpe = float(returns.mean() / (std + 1e-10) * np.sqrt(bars_per_year))"
+    },
+    {
+     "file": "agent/src/shadow_account/reporter.py",
+     "kind": "hook",
+     "literal": "\"N/A\" if value is None else f\"{value:.2f}\""
     }
    ]
   },
