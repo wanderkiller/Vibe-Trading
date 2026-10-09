@@ -157,6 +157,8 @@ NOTES.md
 
 # Agent tool aliases (auto-generated mirror of CLAUDE.md)
 AGENTS.md
+# This fork keeps a real, hand-written AGENTS.md (project rules); see patches/MANIFEST.md packaging-docs
+!AGENTS.md
 
 .DS_Store
 
