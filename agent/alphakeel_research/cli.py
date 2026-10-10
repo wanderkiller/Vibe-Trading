@@ -18,19 +18,26 @@
                                            compared layer by layer; prints the comparison, writes DIR/reconciliation.json)
     python -m alphakeel_research ir backtest --ir strategy.json --start-ms N --end-ms N --instruments inst.json [--step-minutes 2]
                                           [--fees fees.json] [--trials N [--trials-evidence FILE]] [--capital-base X]
-                                          [--accept-partial] [--pack-dir DIR] [--verbose] --out DIR
+                                          [--accept-partial] [--pack-dir DIR] [--verbose] [--out DIR]
+                                          (--out defaults to a new Vibe-Trading run directory RUNS_DIR/<YYYYMMDD_HHMMSS>_ir/, which
+                                           also gets ir.json, instruments.json, req.json, review_report.json, state.json)
                                           (long-history research backtest on a dataset pack: 1m klines + official
                                            settlements, synthetic touch; research evidence, NOT reconciliation input)
     python -m alphakeel_research ir crosscheck --ir strategy.json --run DIR [--timeout-s 7200]
                                           (the same dataset pack, window, step, fees and instruments as the `ir backtest` run
                                            in DIR, run by AlphaKeel's engine (ir_strategy + dataset_view); trade-by-trade
                                            comparison written to DIR/alphakeel-check.json)
-    python -m alphakeel_research ir export   --ir strategy.json --run DIR [--research-credential] --out DIR
+    python -m alphakeel_research ir export   --ir strategy.json --run DIR [--research-credential] [--robustness DIR] --out DIR
+                                          (robustness defaults to DIR/robustness when present; evidence/robustness.* is copied)
                                           (strategy.json with strategy_id + provenance for AlphaKeel's registry)
     python -m alphakeel_research ir robustness --ir strategy.json --pack-dir DIR --instruments inst.json --is-start-ms N --is-end-ms N
                                           [--oos-start-ms N --oos-end-ms N [--oos-pack-dir DIR]] [--fees fees.json] [--filter filter.json]
                                           [--permutations 30] [--seed 7] [--workers 2] [--step-minutes 5] [--capital-base X]
-                                          [--prior-trials N] --out DIR
+                                          [--prior-trials N] [--wf-folds 3] [--wf-test-days 30] [--wf-min-train-days 30] --out DIR
+    python -m alphakeel_research ir robustness --run DIR [--oos-start-ms N --oos-end-ms N ...]
+                                          (DIR = an `ir backtest` run: --out DIR/robustness, --ir DIR/ir.json, --instruments
+                                           DIR/instruments.json, the IS window and --pack-dir from its run card; explicit
+                                           arguments must agree with the run card)
                                           (reliability battery on an exported dataset pack: cost stress, parameter neighbours,
                                            sub-periods, OOS, filter permutation test, honest trial count; grade A-F with the
                                            rule table; writes DIR/robustness.json, robustness.md, trials.jsonl; no network)
@@ -84,6 +91,52 @@ def ir_report(r: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _run_card(run_dir: str) -> dict:
+    from . import ir_backtest
+
+    f = Path(run_dir) / "run_card.json"
+    try:
+        card = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise ApiError("request.invalid", f"{f} is not readable: --run needs an `ir backtest` run directory", field="run") from None
+    if card.get("schema") != ir_backtest.RUN_CARD_SCHEMA:
+        raise ApiError("request.invalid", f"{f} is not a {ir_backtest.RUN_CARD_SCHEMA} document", field="run")
+    return card
+
+
+def _robustness_inputs(a) -> tuple[str, str, str, tuple[int, int], str]:
+    """(ir, instruments, pack_dir, IS window, out) of ``ir robustness``: explicit arguments, or -- with ``--run`` -- the
+    run directory's files and run card; an explicit argument that disagrees with the run card is an error."""
+    from . import ir as IR
+
+    if not a.run:
+        missing = [f for f, v in (("--ir", a.ir), ("--pack-dir", a.pack_dir), ("--instruments", a.instruments), ("--is-start-ms", a.is_start_ms),
+                                  ("--is-end-ms", a.is_end_ms), ("--out", a.out)) if v is None]
+        if missing:
+            raise ApiError("request.invalid", f"ir robustness needs {', '.join(missing)} (or --run DIR)", field="run")
+        return a.ir, a.instruments, a.pack_dir, (a.is_start_ms, a.is_end_ms), a.out
+    run = Path(a.run)
+    card = _run_card(a.run)
+    ir_path = a.ir or str(run / "ir.json")
+    if not Path(ir_path).is_file():
+        raise ApiError("request.invalid", f"{ir_path} does not exist: --run needs the run directory's ir.json (or --ir)", field="ir")
+    sid = IR.load(_load(ir_path)).strategy_id
+    if sid != card["strategy_id"]:
+        raise ApiError("request.invalid", f"the IR is {sid}, the run card is for {card['strategy_id']}", field="ir")
+    w = card["window"]
+    window = (w["start_ms"], w["end_ms"])
+    for flag, given, want in (("--is-start-ms", a.is_start_ms, window[0]), ("--is-end-ms", a.is_end_ms, window[1])):
+        if given is not None and given != want:
+            raise ApiError("request.invalid", f"{flag} {given} differs from the run card's window ({want})", field="is_window")
+    pack_dir = a.pack_dir or card.get("pack_dir")
+    if not pack_dir:
+        raise ApiError("request.invalid", "the run card records no pack_dir (the pack came from the service): give --pack-dir", field="pack_dir")
+    inst = a.instruments or str(run / "instruments.json")
+    if not Path(inst).is_file():
+        raise ApiError("request.invalid", f"{inst} does not exist: give --instruments", field="instruments")
+    return ir_path, inst, pack_dir, window, a.out or str(run / "robustness")
+
+
 def _ir_research(a) -> int:
     """``ir backtest`` / ``ir export``: the service is only contacted when it is needed (freezing, credential)."""
     from decimal import Decimal
@@ -93,13 +146,18 @@ def _ir_research(a) -> int:
 
         if (a.oos_start_ms is None) != (a.oos_end_ms is None):
             raise ApiError("request.invalid", "--oos-start-ms and --oos-end-ms go together", field="oos_window")
-        pack = Pack.from_directory(a.pack_dir)
+        ir_path, inst_path, pack_dir, window, out_dir = _robustness_inputs(a)
+        pack = Pack.from_directory(pack_dir)
+        if a.run and pack.id != _run_card(a.run)["pack"]["pack_id"]:
+            raise ApiError("request.invalid", f"--pack-dir is pack {pack.id}, the run used {_run_card(a.run)['pack']['pack_id']}", field="pack_dir")
         oos = None if a.oos_start_ms is None else (a.oos_start_ms, a.oos_end_ms)
-        doc = robustness.battery(_load(a.ir), pack, _load(a.instruments), is_window=(a.is_start_ms, a.is_end_ms), oos_window=oos,
+        a.out = out_dir
+        doc = robustness.battery(_load(ir_path), pack, _load(inst_path), is_window=window, oos_window=oos,
                                  oos_pack=Pack.from_directory(a.oos_pack_dir) if a.oos_pack_dir else None, out_dir=a.out,
                                  fees=_load(a.fees), filter_spec=_load(a.filter), permutations=a.permutations, seed=a.seed,
                                  step_minutes=a.step_minutes, capital_base=Decimal(a.capital_base) if a.capital_base else None,
-                                 workers=a.workers, prior_trials=a.prior_trials)
+                                 workers=a.workers, prior_trials=a.prior_trials, wf_folds=a.wf_folds, wf_test_days=a.wf_test_days,
+                                 wf_min_train_days=a.wf_min_train_days)
         r = doc["rating"]
         _out({"strategy_id": doc["strategy_id"], "grade": r["grade"], "score": r["score"], "caps": [c["id"] for c in r["caps"]],
               "reasons": r["reasons"], "trials": doc["trials"]["count"], "runs": len(doc["runs"]),
@@ -118,6 +176,10 @@ def _ir_research(a) -> int:
         _out({k: doc.get(k) for k in ("passed", "alphakeel_run_id", "alphakeel_status", "comparison", "totals", "error")})
         return 0 if doc.get("passed") else 1
     if a.ir_cmd == "backtest":
+        if not a.out:
+            from . import ir_backtest
+
+            a.out = str(ir_backtest.new_run_dir())
         c = None if a.pack_dir else Client(a.url)
         try:
             card = workflow.ir_backtest(c, _load(a.ir), _load(a.instruments), start_ms=a.start_ms, end_ms=a.end_ms, out_dir=a.out,
@@ -131,7 +193,7 @@ def _ir_research(a) -> int:
         _out({"run_id": card["run_id"], "strategy_id": card["strategy_id"], "pack_id": card["pack"]["pack_id"],
               "window": card["window"], "view": card["view"], "counts": card["counts"], "amounts": card["amounts"],
               "max_drawdown": card["max_drawdown"], "trials": card["trials"], "assumptions": card["assumptions"],
-              "run_card": str(Path(a.out) / "run_card.json"), "note": "research evidence (dataset view approximations in the run card); not reconciliation input"})
+              "run_dir": str(a.out), "run_card": str(Path(a.out) / "run_card.json"), "note": "research evidence (dataset view approximations in the run card); not reconciliation input"})
         return 0
     cred = None
     if a.research_credential:
@@ -140,7 +202,9 @@ def _ir_research(a) -> int:
             cred = c.check()
         finally:
             c.close()
-    r = workflow.ir_export(_load(a.ir), a.run, a.out, research_credential=cred)
+    r = workflow.ir_export(_load(a.ir), a.run, a.out, research_credential=cred, robustness_dir=a.robustness)
+    for w in r.get("warnings", []):
+        print(f"warning: {w}", file=sys.stderr)
     _out(r)
     return 0
 
@@ -225,13 +289,14 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--accept-partial", action="store_true")
     q.add_argument("--pack-dir", help="an exported dataset pack directory instead of freezing one through the service")
     q.add_argument("--verbose", action="store_true", help="write every rejected pair into decisions.jsonl")
-    q.add_argument("--out", required=True)
+    q.add_argument("--out", help="output directory (default: a new Vibe-Trading run directory RUNS_DIR/<YYYYMMDD_HHMMSS>_ir/)")
     q = irs.add_parser("robustness", help="reliability battery + confidence grade on an exported dataset pack (no network)")
-    q.add_argument("--ir", required=True)
-    q.add_argument("--pack-dir", required=True, help="exported dataset pack directory (lock.json + content/)")
-    q.add_argument("--instruments", required=True, help="JSON list of {venue, market, symbol, base?, quote?}")
-    q.add_argument("--is-start-ms", type=int, required=True)
-    q.add_argument("--is-end-ms", type=int, required=True)
+    q.add_argument("--run", help="an `ir backtest` run directory: defaults --out (DIR/robustness), --ir, --instruments, the IS window and --pack-dir")
+    q.add_argument("--ir")
+    q.add_argument("--pack-dir", help="exported dataset pack directory (lock.json + content/)")
+    q.add_argument("--instruments", help="JSON list of {venue, market, symbol, base?, quote?}")
+    q.add_argument("--is-start-ms", type=int)
+    q.add_argument("--is-end-ms", type=int)
     q.add_argument("--oos-start-ms", type=int)
     q.add_argument("--oos-end-ms", type=int)
     q.add_argument("--oos-pack-dir", help="exported pack for the OOS window (default: --pack-dir)")
@@ -243,7 +308,10 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--step-minutes", type=int, default=5)
     q.add_argument("--capital-base", help="capital base shared by every variant (default notional_per_leg x 2 x max_open of the IR)")
     q.add_argument("--prior-trials", type=int, default=0, help="variants tried BEFORE this battery (self-declared; added to the DSR count)")
-    q.add_argument("--out", required=True)
+    q.add_argument("--wf-folds", type=int, default=3, help="anchored walk-forward folds (test segments = the last folds x test-days days of the IS window)")
+    q.add_argument("--wf-test-days", type=int, default=30)
+    q.add_argument("--wf-min-train-days", type=int, default=30, help="shorter first training segment: walk-forward not computable")
+    q.add_argument("--out", help="output directory (required without --run)")
     q = irs.add_parser("crosscheck", help="the same dataset backtest run by AlphaKeel's engine, compared trade by trade")
     q.add_argument("--ir", required=True)
     q.add_argument("--run", required=True, help="the `ir backtest` output directory")
@@ -252,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--ir", required=True)
     q.add_argument("--run", required=True, help="the `ir backtest` output directory")
     q.add_argument("--research-credential", action="store_true", help="record the research-service credential (Client.check())")
+    q.add_argument("--robustness", help="directory with robustness.json/.md/trials.jsonl (default: RUN/robustness when present)")
     q.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     try:

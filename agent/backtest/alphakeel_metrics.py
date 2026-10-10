@@ -117,7 +117,10 @@ def effective_sample_size(x: Sequence[float]) -> float:
     return n * min(1.0, g0 / lrv)
 
 
-def dsr(x: Sequence[float], n_trials: int, variant_sharpes: Sequence[float] = ()) -> float | None:
+def dsr_inputs(x: Sequence[float], n_trials: int, variant_sharpes: Sequence[float] = ()) -> dict | None:
+    """Everything :func:`dsr` feeds into ``psr(sharpe, sr0(var_sr_used, trials), effective_days, skew, kurt)``; None when
+    the DSR is not defined. ``var_sr_used = max(cross-variant variance of per-day Sharpes, the estimator's own variance)``.
+    Published in ``robustness.json`` so a reader (AlphaKeel's G1 precheck) can recompute the DSR with another trial count."""
     s = sharpe(x)
     mo = moments(x)
     if s is None or mo is None:
@@ -128,7 +131,15 @@ def dsr(x: Sequence[float], n_trials: int, variant_sharpes: Sequence[float] = ()
         return None
     cross = statistics.variance(list(variant_sharpes)) if len(variant_sharpes) >= 2 else 0.0
     floor = (1 - g3 * s + (g4 - 1) / 4 * s * s) / (te - 1)
-    return psr(s, sr0(max(cross, floor), n_trials), te, g3, g4)
+    return {"sharpe_daily": s, "skewness": g3, "kurtosis_non_excess": g4, "effective_days": te, "var_sr_used": max(cross, floor),
+            "trials": int(n_trials)}
+
+
+def dsr(x: Sequence[float], n_trials: int, variant_sharpes: Sequence[float] = ()) -> float | None:
+    i = dsr_inputs(x, n_trials, variant_sharpes)
+    if i is None:
+        return None
+    return psr(i["sharpe_daily"], sr0(i["var_sr_used"], n_trials), i["effective_days"], i["skewness"], i["kurtosis_non_excess"])
 
 
 def block_length(n: int) -> int:

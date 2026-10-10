@@ -121,7 +121,8 @@ include = ["src*", "backtest*", "cli*", "evals*", "alphakeel_research*"]
 ]
 "evals.harness" = ["README.md", "cases/**/*.json"]
 "backtest" = ["*.py"]
-"alphakeel_research" = ["contract/*.json", "contract/PIN", "contract/vectors/*.json"]
+"alphakeel_research" = ["contract/*.json", "contract/PIN", "contract/vectors/*.json", "contract/validation/*.json",
+                        "contract/validation/vectors/*.json"]
 "src.factors" = ["zoo/**/*.yaml", "zoo/**/*.md", "zoo/**/NOTICE"]
 
 [project.optional-dependencies]

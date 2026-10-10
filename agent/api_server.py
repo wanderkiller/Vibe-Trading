@@ -180,6 +180,8 @@ app.middleware("http")(_apply_security_headers)
 # --- Runs ---
 from src.api.runs_routes import register_runs_routes  # noqa: E402
 register_runs_routes(app)
+from src.api.alphakeel_handoff_routes import register_alphakeel_handoff_routes  # noqa: E402
+register_alphakeel_handoff_routes(app)
 
 from src.api.runs_routes import (  # noqa: F401, E402
     _load_json_file,

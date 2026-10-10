@@ -791,3 +791,123 @@ def test_ir_review_repeats_the_local_run_with_the_engines_quantity_when_the_cap_
              step(it("pair-1", "binance", "PUMPUSDT", "730000.12345678", True))]
     assert workflow._capped_trades(steps) == {"pair-1": 7}
     assert workflow._capped_trades(steps[1:2]) == {}
+
+
+# --- (6) IR runs as Vibe-Trading runs; export carries the robustness evidence ---------------------------------------------------
+
+def test_new_run_dir_is_a_vt_run_id_and_never_reuses_a_name(tmp_path, monkeypatch):
+    import datetime as dt
+
+    monkeypatch.setenv("VIBE_TRADING_HOME", str(tmp_path / "home"))
+    t = dt.datetime(2026, 10, 10, 12, 30, 5, tzinfo=dt.timezone.utc)
+    a, b, c = (ir_backtest.new_run_dir(t) for _ in range(3))
+    assert [x.name for x in (a, b, c)] == ["20261010_123005_ir", "20261010_123005_ir_2", "20261010_123005_ir_3"]
+    assert a.parent == ir_backtest.runs_dir() and a.parent.name == "runs" and a.is_dir()
+
+
+def test_ir_backtest_without_out_creates_a_vt_run_with_the_list_files(tmp_path, monkeypatch, capsys):
+    import re
+
+    monkeypatch.setenv("VIBE_TRADING_HOME", str(tmp_path / "home"))
+    pd = export_dir(tmp_path, golden_built())
+    (tmp_path / "ir.json").write_text(json.dumps(golden_ir()))
+    (tmp_path / "inst.json").write_text(json.dumps([BN, OK]))
+    assert cli.main(["ir", "backtest", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END), "--instruments",
+                     str(tmp_path / "inst.json"), "--pack-dir", str(pd)]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    run = Path(printed["run_dir"])
+    assert run.parent == tmp_path / "home" / "runs" and re.fullmatch(r"\d{8}_\d{6}_ir", run.name)
+    card = json.loads((run / "run_card.json").read_text())
+    assert card["pack_dir"] == str(pd.resolve())
+    sid = ir.load(golden_ir()).strategy_id
+    assert json.loads((run / "ir.json").read_text())["strategy_id"] == sid and ir.load(json.loads((run / "ir.json").read_text())).strategy_id == sid
+    assert json.loads((run / "instruments.json").read_text()) == [BN, OK]
+    assert json.loads((run / "state.json").read_text()) == {"status": "success"}
+    assert json.loads((run / "req.json").read_text()) == {"prompt": f"IR {golden_ir()['name']} 2023-01-01..2023-01-01", "kind": "alphakeel_ir"}
+    rr = json.loads((run / "review_report.json").read_text())
+    assert set(rr) == {"total_return", "sharpe"}
+    assert rr["total_return"] == float(Decimal(card["amounts"]["equity_end"]) / Decimal(card["assumptions"]["capital_base"]))
+    assert rr["sharpe"] == card["alphakeel_metrics"]["sharpe_annualised"]
+    assert (run / "artifacts" / "metrics.csv").read_text().splitlines()[0] == "total_return,sharpe"
+
+
+def test_a_failed_ir_backtest_leaves_state_failed(tmp_path, capsys):
+    pd = export_dir(tmp_path, golden_built())
+    (tmp_path / "ir.json").write_text(json.dumps(golden_ir()))
+    (tmp_path / "inst.json").write_text(json.dumps([BN, OK]))
+    out = tmp_path / "bad"
+    assert cli.main(["ir", "backtest", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(END), "--end-ms", str(START), "--instruments",
+                     str(tmp_path / "inst.json"), "--pack-dir", str(pd), "--out", str(out)]) == 1
+    st = json.loads((out / "state.json").read_text())
+    assert st["status"] == "failed" and "does not match" in st["error"] and not (out / "review_report.json").exists()
+
+
+def _fake_robustness(d: Path, sid: str, grade="C", schema="vibe-trading.ir-robustness/2"):
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "robustness.json").write_text(json.dumps({"schema": schema, "strategy_id": sid, "rating": {"grade": grade}}))
+    (d / "robustness.md").write_text("# report\n")
+    (d / "trials.jsonl").write_text('{"seq": 1}\n')
+
+
+def test_ir_export_carries_the_robustness_evidence_or_warns(tmp_path, capsys):
+    run = _run(tmp_path, "--trials", "1")
+    sid = ir.load(golden_ir()).strategy_id
+    # absent: still succeeds, provenance.robustness null, a warning in the document, the result and on stderr
+    r = workflow.ir_export(golden_ir(), run, tmp_path / "e0")
+    w = [x for x in r["warnings"] if x.startswith("no robustness evidence")]
+    assert len(w) == 1 and r["provenance"]["robustness"] is None and w[0] in r["provenance"]["warnings"]
+    assert not (tmp_path / "e0" / "evidence" / "robustness.json").exists()
+    # default directory <run>/robustness
+    _fake_robustness(run / "robustness", sid, "B")
+    r = workflow.ir_export(golden_ir(), run, tmp_path / "e1")
+    ev = tmp_path / "e1" / "evidence"
+    assert sorted(p.name for p in ev.iterdir() if p.name.startswith("robustness")) == ["robustness-trials.jsonl", "robustness.json", "robustness.md"]
+    assert (ev / "robustness-trials.jsonl").read_text() == '{"seq": 1}\n'
+    pr = r["provenance"]["robustness"]
+    assert pr == {"file": "evidence/robustness.json", "schema": "vibe-trading.ir-robustness/2", "grade": "B",
+                  "sha256": hashlib.sha256((ev / "robustness.json").read_bytes()).hexdigest()}
+    doc = json.loads((tmp_path / "e1" / "strategy.json").read_text())
+    assert doc["strategy_id"] == sid == ir.load(doc).strategy_id and ir.validate(doc) == [] and not any("robustness" in x for x in doc["provenance"]["warnings"])
+    # explicit directory; mismatching strategy, old schema and a missing explicit directory are refused
+    _fake_robustness(tmp_path / "other", "ir-" + "0" * 24)
+    with pytest.raises(ApiError, match="robustness.json is for"):
+        workflow.ir_export(golden_ir(), run, tmp_path / "e2", robustness_dir=tmp_path / "other")
+    _fake_robustness(tmp_path / "old", sid, schema="vibe-trading.ir-robustness/1")
+    with pytest.raises(ApiError, match="ir-robustness/2"):
+        workflow.ir_export(golden_ir(), run, tmp_path / "e3", robustness_dir=tmp_path / "old")
+    with pytest.raises(ApiError, match="does not exist"):
+        workflow.ir_export(golden_ir(), run, tmp_path / "e4", robustness_dir=tmp_path / "nowhere")
+    # CLI: --robustness DIR
+    capsys.readouterr()
+    assert cli.main(["ir", "export", "--ir", str(tmp_path / "ir.json"), "--run", str(run), "--robustness", str(tmp_path / "old" / ".." / "other"),
+                     "--out", str(tmp_path / "e5")]) == 1
+
+
+def test_agent_tool_maps_robustness_and_crosscheck_and_refuses_the_handoff_directory(tmp_path, monkeypatch):
+    from src.tools.alphakeel_research_tool import _ACTIONS, AlphakeelResearchTool, _argv
+
+    assert {"ir_robustness", "ir_crosscheck"} <= set(_ACTIONS)
+    argv = _argv("ir_robustness", {"run": "r", "is_start_ms": 1, "is_end_ms": 2, "oos_start_ms": 3, "oos_end_ms": 4, "oos_pack_dir": "p2",
+                                   "permutations": 5, "seed": 7, "workers": 1, "prior_trials": 2, "wf_folds": 3, "wf_test_days": 30,
+                                   "wf_min_train_days": 20, "filter": {"kind": "excluded_bases", "bases": ["ETH"]}, "timeout_s": 9})
+    assert argv[:4] == ["ir", "robustness", "--run", "r"]
+    for flag, val in (("--is-start-ms", "1"), ("--is-end-ms", "2"), ("--oos-start-ms", "3"), ("--oos-end-ms", "4"), ("--oos-pack-dir", "p2"),
+                      ("--permutations", "5"), ("--seed", "7"), ("--workers", "1"), ("--prior-trials", "2"), ("--wf-folds", "3"),
+                      ("--wf-test-days", "30"), ("--wf-min-train-days", "20")):
+        assert argv[argv.index(flag) + 1] == val, flag
+    assert json.loads(Path(argv[argv.index("--filter") + 1]).read_text()) == {"kind": "excluded_bases", "bases": ["ETH"]}
+    assert "--timeout-s" not in argv and "--out" not in argv
+    with pytest.raises(ValueError):
+        _argv("ir_robustness", {"permutations": 3})
+    assert _argv("ir_crosscheck", {"ir": "s.json", "run": "r", "timeout_s": 60}) == ["ir", "crosscheck", "--ir", "s.json", "--run", "r", "--timeout-s", "60"]
+    # the handoff directory (ALPHAKEEL_HANDOFF_DIR, default /home/vibe/handoff) is the user's: ir_export there is refused
+    monkeypatch.setenv("ALPHAKEEL_HANDOFF_DIR", str(tmp_path / "handoff"))
+    assert _argv("ir_export", {"ir": "s", "run": "r", "out": str(tmp_path / "elsewhere"), "robustness": "rb"})[-2:] == ["--robustness", "rb"]
+    for bad in (tmp_path / "handoff" / "ir-1", tmp_path / "handoff", tmp_path / "x" / ".." / "handoff" / "ir-2"):
+        with pytest.raises(ValueError, match="user"):
+            _argv("ir_export", {"ir": "s", "run": "r", "out": str(bad)})
+    out = json.loads(AlphakeelResearchTool().execute(action="ir_export", args={"ir": "s", "run": "r", "out": str(tmp_path / "handoff" / "ir-3")}))
+    assert out["status"] == "error" and "hand-off" in out["error"].lower()
+    monkeypatch.delenv("ALPHAKEEL_HANDOFF_DIR")
+    with pytest.raises(ValueError, match="user"):
+        _argv("ir_export", {"ir": "s", "run": "r", "out": "/home/vibe/handoff/ir-4"})

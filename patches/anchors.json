@@ -118,6 +118,11 @@
      "file": "requirements-local-providers-lock.txt",
      "kind": "hook",
      "literal": "langchain-anthropic==1.7.2"
+    },
+    {
+     "file": "docker-compose.override.yml",
+     "kind": "hook",
+     "literal": "ALPHAKEEL_HANDOFF_DIR: /home/vibe/handoff"
     }
    ]
   },
@@ -141,6 +146,7 @@
     "agent/tests/test_alphakeel_ir.py",
     "agent/tests/test_alphakeel_ir_backtest.py",
     "agent/tests/test_alphakeel_metrics.py",
+    "agent/tests/test_alphakeel_precheck.py",
     "agent/tests/test_alphakeel_policy_host.py",
     "agent/tests/test_alphakeel_protocol.py",
     "agent/tests/test_alphakeel_registration.py",
@@ -745,6 +751,46 @@
      "file": "agent/backtest/run_card.py",
      "kind": "preimage",
      "literal": "\"warnings\": [*(warnings or []), *provenance_warnings],"
+    }
+   ]
+  },
+  {
+   "id": "alphakeel-handoff",
+   "title": "Hand-off of an IR run to AlphaKeel (run page button, backend and hooks)",
+   "files": [
+    "agent/src/api/alphakeel_handoff_routes.py",
+    "agent/api_server.py",
+    "agent/tests/test_alphakeel_handoff_routes.py",
+    "frontend/src/components/run/AlphaKeelHandoff.tsx",
+    "frontend/src/pages/RunDetail.tsx"
+   ],
+   "anchors": [
+    {
+     "file": "agent/api_server.py",
+     "kind": "upstream",
+     "literal": "register_runs_routes(app)",
+     "note": "the hand-off routes are registered right after the runs routes (they reuse its auth dependency, run-id validation and RUNS_DIR)"
+    },
+    {
+     "file": "agent/api_server.py",
+     "kind": "hook",
+     "literal": "register_alphakeel_handoff_routes(app)"
+    },
+    {
+     "file": "frontend/src/pages/RunDetail.tsx",
+     "kind": "upstream",
+     "literal": "<div className=\"ml-auto flex flex-wrap gap-1\">",
+     "note": "the header action group; the hand-off button is its first child"
+    },
+    {
+     "file": "frontend/src/pages/RunDetail.tsx",
+     "kind": "hook",
+     "literal": "import { AlphaKeelHandoff } from \"@/components/run/AlphaKeelHandoff\";"
+    },
+    {
+     "file": "frontend/src/pages/RunDetail.tsx",
+     "kind": "hook",
+     "literal": "<AlphaKeelHandoff runId={runId} />"
     }
    ]
   },

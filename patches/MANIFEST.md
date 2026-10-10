@@ -33,6 +33,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `crypto-funding` | engines/_market_hooks, crypto, composite; ccxt_loader | upstreamable as a bug-fix PR (see below) |
 | `metrics-conventions` | metrics, validation | partly upstreamed already; rest upstreamable |
 | `run-card-data-audit` | run_card | local-only as written; a generic provenance hook is upstreamable |
+| `alphakeel-handoff` | api_server (one hook), RunDetail (one import, one element) | local-only (follows the leaf package) |
 | `packaging-docs` | pyproject, SKILL.md, READMEs, .gitignore, .env.example | local-only |
 
 ---
@@ -95,6 +96,7 @@ The `langchain-core==1.6.1` anchor fails when upstream moves that pin; then the 
 - upstream `docker-compose.yml`: `  vibe-trading:`
 - upstream `docker-compose.yml`: `  vibe-home:` — DEPLOYMENT.local.md relies on the vibe-home volume
 - hook `docker-compose.override.yml`: `dockerfile: Dockerfile.local`
+- hook `docker-compose.override.yml`: `ALPHAKEEL_HANDOFF_DIR: /home/vibe/handoff` — the hand-off bind mount and its two variables
 - upstream `requirements-lock.txt`: `langchain-core==1.6.1 \` — the overlay's langchain-core 1.6.3 pin replaces exactly this base pin; a change means regenerating the overlay
 - hook `requirements-local-providers-lock.txt`: `langchain-anthropic==1.7.2`
 
@@ -126,6 +128,7 @@ reachable are the next groups.
 - `agent/tests/test_alphakeel_ir_backtest.py`
 - `agent/tests/test_alphakeel_metrics.py`
 - `agent/tests/test_alphakeel_policy_host.py`
+- `agent/tests/test_alphakeel_precheck.py`
 - `agent/tests/test_alphakeel_protocol.py`
 - `agent/tests/test_alphakeel_registration.py`
 - `agent/tests/test_alphakeel_robustness.py`
@@ -368,6 +371,37 @@ class" field in the run card would be upstreamable.
 - hook `agent/backtest/run_card.py`: `"data_audit": audit,`
 - hook `agent/backtest/run_card.py`: `"## Data Audit"`
 - preimage `agent/backtest/run_card.py`: `"warnings": [*(warnings or []), *provenance_warnings],`
+
+## `alphakeel-handoff` — hand-off of an IR run to AlphaKeel
+
+**Purpose.** The "Hand off to AlphaKeel" button on the run page (docs/45 section 7, plan WP2 2.7). An `ir backtest` run is a
+first-class Vibe-Trading run (its directory under `RUNS_DIR` carries `ir.json`, `req.json`, `state.json`, ...); the run page
+shows the robustness grade and the research-side G1 precheck (`alphakeel_research/precheck.py`, the same protocol and
+vectors as AlphaKeel's verdict) and, on the user's click, `ir_backtest.export` writes the package into the shared
+hand-off directory (`ALPHAKEEL_HANDOFF_DIR`, bind-mounted from the host, see `local-deploy`). The agent tool cannot
+export there. New files carry everything; the upstream files only get hooks.
+
+**Files.**
+- `agent/src/api/alphakeel_handoff_routes.py`
+- `agent/api_server.py`
+- `agent/tests/test_alphakeel_handoff_routes.py`
+- `frontend/src/components/run/AlphaKeelHandoff.tsx`
+- `frontend/src/pages/RunDetail.tsx`
+
+**Commits.** The commit that adds this group (backend, tests and patch records); `AlphaKeelHandoff.tsx` and the two
+`RunDetail.tsx` hooks come with the frontend lane's commit, so `check_patches.py` reports them missing until both are merged.
+
+**Upstreamable.** No, local-only (the hand-off target is AlphaKeel's).
+
+**Anchors.** `api_server.py` keeps the registration right after `register_runs_routes(app)`; the routes resolve
+`require_auth`, `_validate_path_param` and `RUNS_DIR` from the host `api_server` module at call time, like the runs routes,
+so an upstream rename of those fails the route tests, not an import. `RunDetail.tsx` keeps the header action group the
+button is mounted in.
+- upstream `agent/api_server.py`: `register_runs_routes(app)` — the hand-off routes are registered right after the runs routes (they reuse its auth dependency, run-id validation and RUNS_DIR)
+- hook `agent/api_server.py`: `register_alphakeel_handoff_routes(app)`
+- upstream `frontend/src/pages/RunDetail.tsx`: `<div className="ml-auto flex flex-wrap gap-1">` — the header action group; the hand-off button is its first child
+- hook `frontend/src/pages/RunDetail.tsx`: `import { AlphaKeelHandoff } from "@/components/run/AlphaKeelHandoff";`
+- hook `frontend/src/pages/RunDetail.tsx`: `<AlphaKeelHandoff runId={runId} />`
 
 ## `packaging-docs` — packaging and documentation
 

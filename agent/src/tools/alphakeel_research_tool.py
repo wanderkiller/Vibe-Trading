@@ -17,7 +17,7 @@ from typing import Any
 
 from src.agent.tools import BaseTool
 
-_ACTIONS = ("check", "freeze", "read", "review", "policy", "native", "compare", "ir_validate", "ir_review", "ir_backtest", "ir_export")
+_ACTIONS = ("check", "freeze", "read", "review", "policy", "native", "compare", "ir_validate", "ir_review", "ir_backtest", "ir_robustness", "ir_crosscheck", "ir_export")
 #: ``read`` tables: scan packs have quotes/observations/settlements; dataset packs have klines/bbo/instrument_meta (and settlements).
 _MAX_OUT = 20_000
 
@@ -27,10 +27,24 @@ def _csv(v: Any) -> str:
     return ",".join(str(x).strip() for x in v if str(x).strip()) if isinstance(v, (list, tuple)) else str(v)
 
 
-def _instruments_file(v: Any) -> str:
-    """``instruments`` is a path to a JSON file, or the list itself (``[{venue, market, symbol}]``), which is written to a temp file."""
+#: where ``ir export`` may NOT write from the agent: AlphaKeel's hand-off directory (same variable the run page's button uses)
+_HANDOFF_DEFAULT = "/home/vibe/handoff"
+
+
+def _handoff_dir() -> str:
+    return os.environ.get("ALPHAKEEL_HANDOFF_DIR") or _HANDOFF_DEFAULT
+
+
+def _under_handoff(path: str) -> bool:
+    root = os.path.realpath(_handoff_dir())
+    p = os.path.realpath(path)
+    return p == root or p.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def _instruments_file(v: Any, prefix: str = "ak-instruments-") -> str:
+    """``instruments`` (or ``filter``) is a path to a JSON file, or the JSON itself, which is written to a temp file."""
     if isinstance(v, (list, dict)):
-        fd, path = tempfile.mkstemp(prefix="ak-instruments-", suffix=".json")
+        fd, path = tempfile.mkstemp(prefix=prefix, suffix=".json")
         with os.fdopen(fd, "w") as f:
             json.dump(v, f)
         return path
@@ -88,13 +102,34 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
         if a.get("instruments") in (None, "", []):
             raise ValueError("ir_backtest needs instruments")
         out.extend(["--instruments", _instruments_file(a["instruments"])])
-        add("--out", "out", True)
+        add("--out", "out")  # optional: the CLI creates a Vibe-Trading run directory
         for f, k in (("--step-minutes", "step_minutes"), ("--fees", "fees"), ("--trials", "trials"), ("--trials-evidence", "trials_evidence"),
                      ("--capital-base", "capital_base"), ("--pack-dir", "pack_dir")):
             add(f, k)
         out.extend(f for f, k in (("--accept-partial", "accept_partial"), ("--verbose", "verbose")) if a.get(k))
+    elif action == "ir_robustness":
+        if not a.get("run") and not a.get("ir"):
+            raise ValueError("ir_robustness needs run (an ir_backtest run directory) or ir")
+        add("--run", "run"), add("--ir", "ir"), add("--pack-dir", "pack_dir")
+        if a.get("instruments") not in (None, "", []):
+            out.extend(["--instruments", _instruments_file(a["instruments"])])
+        for f, k in (("--is-start-ms", "is_start_ms"), ("--is-end-ms", "is_end_ms"), ("--oos-start-ms", "oos_start_ms"),
+                     ("--oos-end-ms", "oos_end_ms"), ("--oos-pack-dir", "oos_pack_dir"), ("--fees", "fees")):
+            add(f, k)
+        if a.get("filter") not in (None, "", {}):
+            out.extend(["--filter", _instruments_file(a["filter"], "ak-filter-")])
+        for f, k in (("--permutations", "permutations"), ("--seed", "seed"), ("--workers", "workers"), ("--step-minutes", "step_minutes"),
+                     ("--capital-base", "capital_base"), ("--prior-trials", "prior_trials"), ("--wf-folds", "wf_folds"),
+                     ("--wf-test-days", "wf_test_days"), ("--wf-min-train-days", "wf_min_train_days"), ("--out", "out")):
+            add(f, k)
+    elif action == "ir_crosscheck":
+        add("--ir", "ir", True), add("--run", "run", True), add("--timeout-s", "timeout_s")
     elif action == "ir_export":
-        add("--ir", "ir", True), add("--run", "run", True), add("--out", "out", True)
+        add("--ir", "ir", True), add("--run", "run", True), add("--out", "out", True), add("--robustness", "robustness")
+        if _under_handoff(str(a["out"])):
+            raise ValueError("ir_export: writing into AlphaKeel's hand-off directory is not an agent action. Hand-off is the user's "
+                             "decision: the user presses 'Hand off to AlphaKeel' on the run page (docs/45 section 7). Export to another "
+                             "directory if you need the package, or tell the user the run is ready for review.")
         if a.get("research_credential"):
             out.append("--research-credential")
     return out
@@ -124,8 +159,12 @@ class AlphakeelResearchTool(BaseTool):
         "local simulator and the engine's real state, run the 'native' strategy, or 'compare' two runs. Strategy IR "
         "(strategy.json): 'ir_validate' with AlphaKeel, 'ir_review' (Python vs AlphaKeel's Rust evaluator on a scan pack, "
         "layered reconciliation), 'ir_backtest' (long-history research backtest on a dataset pack: 1m klines + official "
-        "settlements, synthetic touch; research evidence, not reconciliation), 'ir_export' (strategy.json with strategy_id "
-        "and provenance for AlphaKeel's registry, from an ir_backtest run). Files for "
+        "settlements, synthetic touch; research evidence, not reconciliation; without args.out it creates a Vibe-Trading run "
+        "directory), 'ir_robustness' (reliability battery + grade on the run's exported pack: cost stress, parameter neighbours, "
+        "anchored walk-forward, OOS, filter permutation test; args.run = the ir_backtest run directory), 'ir_crosscheck' (the same "
+        "backtest run by AlphaKeel's engine, compared trade by trade), 'ir_export' (strategy.json with strategy_id "
+        "and provenance for AlphaKeel's registry, from an ir_backtest run; carries the robustness evidence). You cannot export into "
+        "AlphaKeel's hand-off directory: hand-off is the user's button on the run page. Files for "
         "intents/strategy/profile are paths on disk. Returns ids, digests and summaries only; a pass never certifies "
         "strategy logic. Needs ALPHAKEEL_RESEARCH_URL and a service token in the environment."
     )
@@ -133,7 +172,7 @@ class AlphakeelResearchTool(BaseTool):
         "type": "object",
         "properties": {
             "action": {"type": "string", "enum": list(_ACTIONS)},
-            "args": {"type": "object", "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode; IR: ir, out, run, step_minutes, fees, trials, trials_evidence, capital_base, pack_dir, verbose, research_credential."},
+            "args": {"type": "object", "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode; IR: ir, out, run, step_minutes, fees, trials, trials_evidence, capital_base, pack_dir, verbose, research_credential, robustness (export: directory with robustness.json); ir_robustness: run, ir, instruments, pack_dir, is_start_ms, is_end_ms, oos_start_ms, oos_end_ms, oos_pack_dir, filter ({kind: excluded_bases, bases: [...]} or a JSON file), permutations, seed, workers, prior_trials, wf_folds, wf_test_days, wf_min_train_days; ir_crosscheck: ir, run, timeout_s."},
         },
         "required": ["action"],
     }

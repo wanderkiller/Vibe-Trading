@@ -34,11 +34,12 @@ def test_the_pinned_contract_files_match_their_pin():
 
 
 def test_the_one_pin_also_covers_the_strategy_ir_spec_like_the_services_contract_pin():
-    # the same 10 keys as /whoami contract_pin (Client.check compares them all): research contract + Strategy IR spec
+    # the same 12 keys as /whoami contract_pin (Client.check compares them all): research contract + Strategy IR spec + validation protocol
     pinned = set(C.local_pin())
     assert pinned == {"openapi.json", "error-codes.json", "vectors/canonical.json", "vectors/contract-artifacts.json", "vectors/numeric-gold.json",
                       "strategy-ir/README.md", "strategy-ir/schema.json", "strategy-ir/vectors/canonical.json",
-                      "strategy-ir/vectors/decisions.json", "strategy-ir/vectors/features.json"}
+                      "strategy-ir/vectors/decisions.json", "strategy-ir/vectors/features.json", "validation/protocol.json",
+                      "validation/vectors/g1-precheck.json"}
     assert not (PIN_DIR / "strategy-ir" / "PIN").exists()  # one pin mechanism
 
 

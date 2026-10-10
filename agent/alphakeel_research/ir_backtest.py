@@ -795,15 +795,93 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         "metrics": {"total_return_on_capital": _s(q8(final_eq / capital_base)), "days": len(days), "trades_closed": sim.closed,
                     "sharpe_daily_annualised": ak.get("sharpe_annualised") if isinstance(ak, dict) else None},
         "research_service": research_service or {"used": False},
+        # the exported pack directory the run used (`ir robustness --run` reopens it); None when the pack came from the service
+        "pack_dir": str(Path((research_service or {})["pack_dir"]).resolve()) if (research_service or {}).get("pack_dir") else None,
     }
     (out / "run_card.json").write_text(json.dumps(card, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
     return card
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# IR runs as Vibe-Trading runs: the run directory under RUNS_DIR carries the files the run list and detail pages read
+# ---------------------------------------------------------------------------------------------------------------------
+
+def runs_dir() -> Path:
+    """Vibe-Trading's runs directory (``src.config.paths.get_runs_dir()``); without ``src`` (the leaf package used
+    standalone) the same rule: ``$VIBE_TRADING_HOME`` or ``~/.vibe-trading``, plus ``/runs``."""
+    try:
+        from src.config.paths import get_runs_dir
+
+        return Path(get_runs_dir())
+    except Exception:  # noqa: BLE001 - src missing or not importable: standalone use
+        import os
+
+        home = os.environ.get("VIBE_TRADING_HOME")
+        return (Path(home).expanduser() if home else Path.home() / ".vibe-trading") / "runs"
+
+
+def new_run_dir(now: dt.datetime | None = None) -> Path:
+    """``RUNS_DIR/<YYYYMMDD_HHMMSS>_ir`` (UTC; ``_2``, ``_3``... when it exists), created. The name sorts and parses like
+    VT's own run ids (``list_runs`` takes the time from the first two ``_`` parts)."""
+    t = (now or dt.datetime.now(dt.timezone.utc)).astimezone(dt.timezone.utc)
+    base = runs_dir()
+    base.mkdir(parents=True, exist_ok=True)
+    stem = f"{t:%Y%m%d_%H%M%S}_ir"
+    n = 1
+    while True:
+        d = base / (stem if n == 1 else f"{stem}_{n}")
+        try:
+            d.mkdir()
+            return d
+        except FileExistsError:
+            n += 1
+
+
+def _write_json(path: Path, doc: Any) -> None:
+    path.write_text(json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
+
+
+def write_run_files(out: Path, ir_doc: dict, instruments: list[dict], card: dict) -> None:
+    """The files that make an ``ir backtest`` directory a Vibe-Trading run: ``ir.json`` (the IR as run, with
+    ``strategy_id``), ``instruments.json``, ``req.json``, ``review_report.json`` (``total_return`` and ``sharpe`` only, from
+    the run card) and ``artifacts/metrics.csv`` (the two columns the run list and detail pages read), and LAST
+    ``state.json`` ``{"status": "success"}``."""
+    loaded = IR.load(ir_doc)
+    doc = copy.deepcopy(loaded.doc)
+    doc["strategy_id"] = loaded.strategy_id
+    _write_json(out / "ir.json", doc)
+    _write_json(out / "instruments.json", instruments)
+    w = card["window"]
+    _write_json(out / "req.json", {"prompt": f"IR {card['name']} {w['start_day']}..{w['end_day']}", "kind": "alphakeel_ir"})
+    total = float(Decimal(card["amounts"]["equity_end"]) / Decimal(card["assumptions"]["capital_base"]))
+    sharpe = (card.get("alphakeel_metrics") or {}).get("sharpe_annualised")
+    _write_json(out / "review_report.json", {"total_return": total, "sharpe": sharpe})
+    (out / "artifacts").mkdir(exist_ok=True)
+    (out / "artifacts" / "metrics.csv").write_text("total_return,sharpe\n" + f"{total!r},{'' if sharpe is None else repr(sharpe)}\n", encoding="utf-8")
+    _write_json(out / "state.json", {"status": "success"})
+
+
 def backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, end_ms: int, out_dir: str | Path,
              cache_dir: str | Path | None = None, pack_dir: str | Path | None = None, accept_partial: bool = False, **kw: Any) -> dict:
     """Freeze (or reuse, the request key is content-derived) the dataset pack through the research service -- or open an
-    exported one (``pack_dir``) -- check it is the pack asked for, and :func:`run`."""
+    exported one (``pack_dir``) -- check it is the pack asked for, and :func:`run`; then write the Vibe-Trading run files
+    (:func:`write_run_files`; ``state.json`` says ``failed`` when anything raised)."""
+    out = Path(out_dir)
+    try:
+        card = _backtest(client, ir_doc, instruments, start_ms=start_ms, end_ms=end_ms, out_dir=out, cache_dir=cache_dir,
+                         pack_dir=pack_dir, accept_partial=accept_partial, **kw)
+        write_run_files(out, ir_doc, instruments, card)
+        return card
+    except Exception as e:
+        out.mkdir(parents=True, exist_ok=True)
+        msg = getattr(e, "message", None) or str(e)
+        (out / "state.json").unlink(missing_ok=True)
+        _write_json(out / "state.json", {"status": "failed", "error": msg, "reason": msg})
+        raise
+
+
+def _backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, end_ms: int, out_dir: str | Path,
+              cache_dir: str | Path | None = None, pack_dir: str | Path | None = None, accept_partial: bool = False, **kw: Any) -> dict:
     insts = universe_instruments(ir_doc, instruments)
     req = dataset_request(insts, start_ms, end_ms, accept_partial=accept_partial)
     service = None
@@ -859,9 +937,42 @@ def freshness_warnings(ir_doc: dict) -> list[str]:
     return out
 
 
-def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_credential: dict | None = None) -> dict:
-    """Write ``strategy.json`` (the IR with ``strategy_id`` and ``provenance``), the trials evidence and
-    ``evidence/ir-backtest-audit.json`` into ``out_dir``. The definition is never changed (same ``strategy_id``)."""
+ROBUSTNESS_SCHEMA = "vibe-trading.ir-robustness/2"
+#: robustness.json's trials.jsonl lands under this name: AlphaKeel's importer whitelists exactly these evidence names
+EVIDENCE_ROBUSTNESS = ("robustness.json", "robustness.md", "robustness-trials.jsonl")
+
+
+def _robustness_evidence(rd: Path, robustness_dir: str | Path | None, sid: str) -> tuple[Path, dict] | None:
+    """(directory, parsed robustness.json) of the battery for ``sid``, or None when there is none. An explicitly given
+    directory must hold a robustness.json; the default ``<run>/robustness`` is optional."""
+    explicit = robustness_dir is not None
+    d = Path(robustness_dir) if explicit else rd / "robustness"
+    f = d / "robustness.json"
+    if not f.is_file():
+        if explicit:
+            raise ApiError("request.invalid", f"{f} does not exist: run `ir robustness` first", field="robustness")
+        return None
+    try:
+        doc = json.loads(f.read_text(encoding="utf-8"))
+    except ValueError:
+        raise ApiError("request.invalid", f"{f} is not JSON", field="robustness") from None
+    if not isinstance(doc, dict) or doc.get("schema") != ROBUSTNESS_SCHEMA:
+        raise ApiError("request.invalid", f"{f} is not a {ROBUSTNESS_SCHEMA} document: re-run `ir robustness`", field="robustness")
+    if doc.get("strategy_id") != sid:
+        raise ApiError("request.invalid", f"robustness.json is for {doc.get('strategy_id')}, the IR is {sid}", field="robustness")
+    for n in ("robustness.md", "trials.jsonl"):
+        if not (d / n).is_file():
+            raise ApiError("request.invalid", f"{d / n} is missing: the robustness directory is incomplete", field="robustness")
+    return d, doc
+
+
+def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_credential: dict | None = None,
+           robustness_dir: str | Path | None = None) -> dict:
+    """Write ``strategy.json`` (the IR with ``strategy_id`` and ``provenance``), the trials evidence,
+    ``evidence/ir-backtest-audit.json`` and -- when the battery was run (``robustness_dir``, default ``<run_dir>/robustness``
+    if present) -- ``evidence/robustness.json``, ``robustness.md``, ``robustness-trials.jsonl`` into ``out_dir``. Without
+    robustness the export still succeeds: ``provenance.robustness`` is null and a warning says so. The definition is
+    never changed (same ``strategy_id``)."""
     from . import handoff
 
     loaded = IR.load(ir_doc)
@@ -882,8 +993,11 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
     src = rd / tri["evidence"]
     if not src.is_file() or hashlib.sha256(src.read_bytes()).hexdigest() != tri.get("sha256"):
         raise ApiError("request.invalid", f"the trials evidence {src} is missing or differs from the run card", field="trials")
+    rob = _robustness_evidence(rd, robustness_dir, sid)
     out = Path(out_dir)
     (out / "evidence").mkdir(parents=True, exist_ok=True)
+    for n in EVIDENCE_ROBUSTNESS:  # an earlier export into this directory must not leave stale evidence behind
+        (out / "evidence" / n).unlink(missing_ok=True)
     ev_rel = f"evidence/{src.name}"
     shutil.copyfile(src, out / ev_rel)
     window = {"start": card["window"]["start_day"], "end": card["window"]["end_day"]}
@@ -905,11 +1019,22 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
     }
     if research_credential is not None:
         prov["research_credential"] = research_credential.get("credential")
+    warnings = []
+    prov["robustness"] = None
+    if rob is not None:
+        rdir, rdoc = rob
+        shutil.copyfile(rdir / "robustness.json", out / "evidence" / "robustness.json")
+        shutil.copyfile(rdir / "robustness.md", out / "evidence" / "robustness.md")
+        shutil.copyfile(rdir / "trials.jsonl", out / "evidence" / "robustness-trials.jsonl")
+        prov["robustness"] = {"file": "evidence/robustness.json", "schema": rdoc["schema"], "grade": rdoc["rating"]["grade"],
+                              "sha256": hashlib.sha256((out / "evidence" / "robustness.json").read_bytes()).hexdigest()}
+    else:
+        warnings.append("no robustness evidence: run `ir robustness --run DIR` first; without it AlphaKeel's G1 precheck fails every "
+                        "research-side item (provenance.robustness is null)")
     # The backtest only ever saw the declared instruments; paper and live scan every listed contract. An IR without a
     # base allow-list would trade bases nobody researched (2026-10-09 review: oil and stock perps on the first paper round).
     researched = sorted({cursor_base for cursor_base in (i.get("base") for i in card["instruments"]) if cursor_base})
     allowed = loaded.doc["universe"].get("bases")
-    warnings = []
     if allowed is None or set(allowed) - set(researched):
         warnings.append(f"universe.bases {'is absent' if allowed is None else 'allows bases outside the backtest'}: "
                         f"the backtest covered only {researched}; paper/live consider every contract a scan lists")
@@ -932,4 +1057,4 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
     (out / "evidence" / "ir-backtest-audit.json").write_text(json.dumps(audit_doc, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
     (out / "strategy.json").write_text(json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
     return {"strategy_id": sid, "path": str(out / "strategy.json"), "classification": audit["classification"], "reasons": audit["reasons"],
-            "provenance": prov, "audit": str(out / "evidence" / "ir-backtest-audit.json")}
+            "provenance": prov, "audit": str(out / "evidence" / "ir-backtest-audit.json"), "warnings": warnings}

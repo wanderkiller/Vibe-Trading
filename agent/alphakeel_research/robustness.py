@@ -12,6 +12,8 @@ Runs (each in ``out_dir/runs/<label>/``, independent runs in ``workers`` process
 * ``basis-x2``         IR copy with ``assumptions.basis_stress`` doubled (a different IR: a different strategy_id);
 * ``param-<n>-lo|hi``  for every ``parameters`` entry, the literal at its README §3 rule 5 ``path`` (and the parameter's
                        ``value``) set to ``robust[0]`` / ``robust[1]``; each neighbour is its own IR;
+* ``wf<k>-train-gNN``  anchored walk-forward (see below): every grid point of fold k on the fold's training window;
+* ``wf<k>-test``       the training winner of fold k on the fold's test window;
 * ``oos``              the same IR on the OOS window (another pack allowed), when given;
 * ``filter-off|on``    when a filter is under test (``{"kind": "excluded_bases", "bases": [...]}``): the IR without and
                        with those bases in ``universe.excluded_bases``;
@@ -22,11 +24,24 @@ Runs (each in ``out_dir/runs/<label>/``, independent runs in ``workers`` process
                        Each draw is a FULL rerun (re-selection and knock-on effects included, not a reshuffle of trades).
                        p = (1 + #{random improvement >= real improvement}) / (1 + N), improvement = net(on) - net(off).
 
+Anchored walk-forward (``wf_folds`` x ``wf_test_days``, default 3 x 30; ``wf_min_train_days`` default 30): the test
+segments are the last ``wf_folds * wf_test_days`` UTC days of the IS window, consecutive; fold k trains on
+``[IS start, test_k start)`` (anchored: the training window only grows). Per fold the parameter grid is, for every
+``parameters`` entry, the values {value, robust[0], robust[1]} (deduplicated, base value first): the full cartesian
+product when it has at most 27 points, else one-at-a-time (the base point plus each parameter's lo and hi). Every grid
+point is run on the training window, the highest training net (``equity_end``; ties: base first, then grid order) is
+selected and ITS IR is run on the test window; each run starts flat at its window start. efficiency =
+(sum test net / sum test days) / (sum selected train net / sum train days), null when the denominator is <= 0. When the
+first training segment is shorter than ``wf_min_train_days`` (or an argument is invalid) the walk-forward is not computable.
+
 Trial count (DSR): the number of DISTINCT IR definitions (strategy_id) run on the IS window as candidates -- base,
 basis stress, parameter neighbours, filter off/on -- plus ``prior_trials`` the caller declares for variants tried before
 the battery (self-declared, reported as such). Permutation draws are recorded in ``trials.jsonl`` but NOT counted: they
 are null-model draws nobody selects among, and counting them would make the DSR (and the grade) fall as the permutation
-count rises, i.e. reward running fewer permutations. Fee stresses share the base strategy_id and are not new variants.
+count rises, i.e. reward running fewer permutations. Fee stresses share the base strategy_id and are not new variants. The walk-forward training grids are NOT candidates
+either: they are a selection procedure applied to each fold's training window (the walk-forward test windows are what is
+judged), not variants nobody selected among on the IS window; they are listed in ``trials.jsonl`` with role
+``walk_forward`` and ``counted_trial: false``.
 
 Statistics (base IS daily returns = UTC-daily equity change / one capital base shared by every variant, AlphaKeel
 convention, ``backtest.alphakeel_metrics``): Sharpe (x sqrt 365), PSR vs 0, DSR (honest trial count, variants' per-day
@@ -50,6 +65,7 @@ Caps -- each triggered cap is a ceiling on the grade:
   few_trades                   fewer than 30 closed trades in the base run                          C
   short_window                 fewer than 60 days in the base IS window                             C
   funding_unpriced             more than 1% of funding settlements on open legs could not be priced C
+  walk_forward_unstable        walk-forward computable and fewer than 2/3 of its folds have positive test net C
   filter_not_better_than_random the graded IR contains the filter and its permutation p-value > 0.10 C
   synthetic_view               the data view is the synthetic-touch dataset view                    B
   ===========================  ===================================================================  =====
@@ -65,6 +81,7 @@ demonstrated"):
   pbo                     PBO <= 0.2                                                   always
   bootstrap_ci            stationary-bootstrap 95% CI lower bound of mean daily > 0    always
   segments                >= 75% of the k equal sub-periods have positive net          always
+  walk_forward_efficiency walk-forward efficiency >= 0.5                               always
   parameter_neighbours    >= 75% of parameter neighbours have positive net             the IR has parameters
   filter_permutation      filter permutation p-value <= 0.05                           the graded IR contains the filter
   concentration           top coin's share of closed-trade net <= 50%                  always
@@ -102,10 +119,12 @@ from . import ir_backtest, ir_views
 from .errors import ApiError
 from .packfile import Pack, PackCache
 
-SCHEMA = "vibe-trading.ir-robustness/1"
+SCHEMA = "vibe-trading.ir-robustness/2"
 COST_MULTIPLIERS = ("1.5", "2")
 BASIS_MULTIPLIER = "2"
 SEGMENTS = 4
+WF_FOLDS, WF_TEST_DAYS, WF_MIN_TRAIN_DAYS = 3, 30, 30
+WF_CARTESIAN_MAX = 27
 BOOTSTRAP_RESAMPLES = 2000
 PBO_MAX_BLOCKS = 10
 TRADE_MATCH_TOLERANCE = Decimal("0.25")
@@ -122,6 +141,7 @@ RULES = {
         {"id": "short_window", "condition": "fewer than 60 days in the base IS window", "max_grade": "C"},
         {"id": "funding_unpriced", "condition": "more than 1% of funding settlements on open legs could not be priced", "max_grade": "C"},
         {"id": "filter_not_better_than_random", "condition": "the graded IR contains the filter under test and its permutation p-value > 0.10", "max_grade": "C"},
+        {"id": "walk_forward_unstable", "condition": "walk-forward computable and fewer than 2/3 of its folds have positive test net", "max_grade": "C"},
         {"id": "synthetic_view", "condition": "the data view is the synthetic-touch dataset view", "max_grade": "B"},
     ],
     "components": [
@@ -130,6 +150,7 @@ RULES = {
         {"id": "pbo", "pass_when": "PBO <= 0.2", "applicable": "always"},
         {"id": "bootstrap_ci", "pass_when": "stationary-bootstrap 95% CI lower bound of the mean daily return > 0", "applicable": "always"},
         {"id": "segments", "pass_when": ">= 75% of the k equal sub-periods have positive net", "applicable": "always"},
+        {"id": "walk_forward_efficiency", "pass_when": "walk-forward efficiency >= 0.5", "applicable": "always"},
         {"id": "parameter_neighbours", "pass_when": ">= 75% of parameter neighbours have positive net", "applicable": "the IR has parameters"},
         {"id": "filter_permutation", "pass_when": "filter permutation p-value <= 0.05", "applicable": "the graded IR contains the filter under test"},
         {"id": "concentration", "pass_when": "top coin's share of closed-trade net <= 50%", "applicable": "always"},
@@ -348,6 +369,8 @@ def rate(f: dict) -> dict:
         "short_window": int(f.get("days") or 0) < 60,
         "funding_unpriced": f.get("funding_unpriced_fraction") is not None and Decimal(str(f["funding_unpriced_fraction"])) > Decimal("0.01"),
         "filter_not_better_than_random": bool(f.get("filter_tested")) and (f.get("filter_p") is None or Decimal(str(f["filter_p"])) > Decimal("0.1")),
+        "walk_forward_unstable": bool(f.get("walk_forward_computable")) and int(f.get("walk_forward_positive_folds") or 0) * 3
+        < int(f.get("walk_forward_folds") or 0) * 2,
         "synthetic_view": bool(f.get("synthetic_view")),
     }
     comp_val = {
@@ -356,6 +379,7 @@ def rate(f: dict) -> dict:
         "pbo": (True, _le(f.get("pbo"), "0.2")),
         "bootstrap_ci": (True, None if f.get("bootstrap_lower") is None else Decimal(str(f["bootstrap_lower"])) > 0),
         "segments": (True, _ge(f.get("segments_positive_fraction"), "0.75")),
+        "walk_forward_efficiency": (True, _ge(f.get("walk_forward_efficiency"), "0.5") if f.get("walk_forward_computable") else None),
         "parameter_neighbours": (bool(f.get("has_parameters")), _ge(f.get("neighbours_positive_fraction"), "0.75")),
         "filter_permutation": (bool(f.get("filter_tested")), _le(f.get("filter_p"), "0.05")),
         "concentration": (True, _le(f.get("top_coin_share"), "0.5")),
@@ -542,10 +566,73 @@ def _draw_sets(pool: list[str], k: int, off_trades: list[dict], real_blocked: in
     return out, matched
 
 
+def walk_forward_plan(is_window: tuple[int, int], folds: Any, test_days: Any, min_train_days: Any) -> dict:
+    """Fold boundaries of the anchored walk-forward (module docstring): ``{"computable", "reason", "folds": [{"k", "train":
+    (start_ms, end_ms), "test": (start_ms, end_ms)}]}``. Invalid arguments or a first training segment shorter than
+    ``min_train_days`` give ``computable: False`` with the reason (never an exception: the battery reports it)."""
+    for name, v in (("wf_folds", folds), ("wf_test_days", test_days), ("wf_min_train_days", min_train_days)):
+        if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+            return {"computable": False, "reason": f"{name} must be an integer >= 1", "folds": []}
+    start, end = is_window
+    first_test = end - folds * test_days * ir_backtest.DAY_MS
+    train_days = (first_test - start) / ir_backtest.DAY_MS
+    if train_days < min_train_days:
+        return {"computable": False, "folds": [], "reason": f"IS window too short: {folds} folds of {test_days} days leave "
+                f"{max(train_days, 0):.2f} days of training before the first test segment, wf_min_train_days is {min_train_days}"}
+    out = []
+    for k in range(1, folds + 1):
+        t0 = first_test + (k - 1) * test_days * ir_backtest.DAY_MS
+        out.append({"k": k, "train": (start, t0), "test": (t0, t0 + test_days * ir_backtest.DAY_MS)})
+    return {"computable": True, "reason": None, "folds": out}
+
+
+def _days_of(w: tuple[int, int]) -> int:
+    return -(-(w[1] - w[0]) // ir_backtest.DAY_MS)
+
+
+def walk_forward_grid(base_doc: dict) -> tuple[list[dict], str]:
+    """The per-fold parameter grid: ``[{"parameters": {name: value}, "doc": IR | None, "skipped": reason | None}]`` in grid
+    order (first point = all parameters at their base value), and its kind ``cartesian`` (<= 27 points) or
+    ``one_at_a_time``. Each parameter's values are {value, robust[0], robust[1]}, deduplicated, base value first."""
+    import itertools
+
+    names = sorted(base_doc["parameters"])
+    values: dict[str, list[str]] = {}
+    for n in names:
+        p = base_doc["parameters"][n]
+        seen: list[Decimal] = []
+        vals: list[str] = []
+        for v in (p["value"], p["robust"][0], p["robust"][1]):
+            if Decimal(v) not in seen:
+                seen.append(Decimal(v))
+                vals.append(IR.fmt(Decimal(v)))
+        values[n] = vals
+    size = math.prod(len(v) for v in values.values())
+    if size <= WF_CARTESIAN_MAX:
+        kind = "cartesian"
+        combos = [dict(zip(names, c)) for c in itertools.product(*(values[n] for n in names))]
+    else:
+        kind = "one_at_a_time"
+        base = {n: values[n][0] for n in names}
+        combos = [base] + [{**base, n: v} for n in names for v in values[n][1:]]
+    out = []
+    for c in combos:
+        doc, why = base_doc, None
+        try:
+            for n in names:
+                if Decimal(c[n]) != Decimal(base_doc["parameters"][n]["value"]):
+                    doc = neighbour_doc(doc, n, c[n])
+        except (IR.IrError, ValueError, KeyError) as e:
+            doc, why = None, f"not a valid IR: {e}"
+        out.append({"parameters": c, "doc": doc, "skipped": why})
+    return out, kind
+
+
 def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos_window=None, oos_pack: Pack | None = None,
             out_dir: str | Path, fees: dict | None = None, filter_spec: dict | None = None, permutations: int = 30, seed: int = 7,
             step_minutes: int = 5, capital_base: Decimal | str | None = None, workers: int = 2, prior_trials: int = 0,
-            segments: int = SEGMENTS) -> dict:
+            segments: int = SEGMENTS, wf_folds: int = WF_FOLDS, wf_test_days: int = WF_TEST_DAYS,
+            wf_min_train_days: int = WF_MIN_TRAIN_DAYS) -> dict:
     """Run the battery (module docstring) and write ``robustness.json``, ``robustness.md`` and ``trials.jsonl`` into
     ``out_dir``. Returns the robustness document."""
     from backtest import alphakeel_metrics as M
@@ -568,6 +655,15 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         packs["oos"] = oos_pack or pack
         if windows["oos"][0] < windows["is"][1] and windows["oos"][1] > windows["is"][0]:
             raise ApiError("request.invalid", "the OOS window overlaps the IS window: it would not be out of sample", field="oos_window")
+    wf_cfg = {"folds": wf_folds, "test_days": wf_test_days, "min_train_days": wf_min_train_days}
+    wf_plan = walk_forward_plan(windows["is"], wf_folds, wf_test_days, wf_min_train_days)
+    wf_grid: list[dict] = []
+    if wf_plan["computable"]:
+        wf_grid, wf_cfg["grid"] = walk_forward_grid(base_doc)
+        wf_cfg["grid_size"] = len(wf_grid)
+        for f in wf_plan["folds"]:
+            for part in ("train", "test"):
+                windows[f"wf{f['k']}-{part}"], packs[f"wf{f['k']}-{part}"] = f[part], pack
     sizing = base_doc["sizing"]
     capital = Decimal(str(capital_base)) if capital_base is not None else Decimal(sizing["notional_per_leg"]) * 2 * sizing["max_open"]
     out = Path(out_dir)
@@ -618,6 +714,11 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         f_off = R.job("filter-off", "filter", with_excluded(base_doc, excl - set(bases_f)), fees=fees)
         f_on = R.job("filter-on", "filter", with_excluded(base_doc, excl | set(bases_f)), fees=fees)
         jobs += [f_off, f_on]
+    wf_train: dict[int, list[tuple[dict, dict]]] = {}
+    for f in wf_plan["folds"]:
+        wf_train[f["k"]] = [(g, R.job(f"wf{f['k']}-train-g{i:02d}", "walk_forward", g["doc"], window=f"wf{f['k']}-train", fees=fees))
+                            for i, g in enumerate(wf_grid, 1) if g["doc"] is not None]
+        jobs += [j for _g, j in wf_train[f["k"]]]
     R.execute(jobs)
 
     def net(j) -> Decimal:
@@ -628,6 +729,37 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         w = windows[j["window"]]
         days, eq = daily_equity(d["run_dir"], *w)
         return days, eq, _returns(days, eq, capital)
+
+    # --- walk-forward: select on each fold's training window, judge on its test window ---------------------------------------
+    wf_doc: dict[str, Any] = {"computable": False, "reason": wf_plan["reason"], "config": wf_cfg}
+    if wf_plan["computable"]:
+        picks = []
+        for f in wf_plan["folds"]:
+            best = None
+            for g, j in wf_train[f["k"]]:
+                n = net(j)
+                if best is None or n > best[2]:  # strictly greater: ties keep the earlier point (base first, then grid order)
+                    best = (g, j, n)
+            picks.append((f, best, R.job(f"wf{f['k']}-test", "walk_forward", best[0]["doc"], window=f"wf{f['k']}-test", fees=fees)))
+        R.execute([tj for _f, _b, tj in picks])
+        wf_folds_doc = []
+        for f, (g, j, train_net), tj in picks:
+            tc = R.result(tj)["card"]
+            wf_folds_doc.append({
+                "k": f["k"], "train": {"start_ms": f["train"][0], "end_ms": f["train"][1], "days": _days_of(f["train"])},
+                "test": {"start_ms": f["test"][0], "end_ms": f["test"][1], "days": _days_of(f["test"])},
+                "selected": {"strategy_id": j["strategy_id"], "parameters": g["parameters"], "train_net": _s(train_net)},
+                "test_net": tc["amounts"]["equity_end"], "test_trades_closed": tc["counts"]["closed"],
+                "skipped": [{"parameters": x["parameters"], "reason": x["skipped"]} for x in wf_grid if x["doc"] is None]})
+        tn = sum((Decimal(x["test_net"]) for x in wf_folds_doc), Decimal(0))
+        rn = sum((Decimal(x["selected"]["train_net"]) for x in wf_folds_doc), Decimal(0))
+        td, rd = sum(x["test"]["days"] for x in wf_folds_doc), sum(x["train"]["days"] for x in wf_folds_doc)
+        den = rn / rd
+        pos = sum(1 for x in wf_folds_doc if Decimal(x["test_net"]) > 0)
+        wf_doc = {"computable": True, "config": wf_cfg, "folds": wf_folds_doc, "positive_folds": pos,
+                  "positive_fraction": _s(ir_backtest.q8(Decimal(pos) / len(wf_folds_doc))),
+                  "efficiency": _s(ir_backtest.q8((tn / td) / den)) if den > 0 else None,
+                  "formula": "efficiency = (sum test net / sum test days) / (sum selected train net / sum train days); null when the denominator <= 0"}
 
     # --- phase 2: the filter's permutation test ----------------------------------------------------------------------
     filt = None
@@ -680,6 +812,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     var_ret = {s: (series(j)[2] if s != sid else b_ret) for s, j in candidates.items()}
     var_sharpe = [x for x in (M.sharpe(r) for r in var_ret.values()) if x is not None]
     ak = M.alphakeel_metrics(b_ret, trials=n_trials, variant_sharpes=var_sharpe)
+    dsr_in = M.dsr_inputs(b_ret, n_trials, var_sharpe)
     pbo, s_blocks = None, min(PBO_MAX_BLOCKS, 2 * (len(b_ret) // 10))
     if len(var_ret) >= 4 and s_blocks >= 4:
         pbo = M.pbo_cscv(list(var_ret.values()), s_blocks)
@@ -748,6 +881,8 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         "synthetic_view": base_card["view"] == ir_views.DATASET_VIEW, "dsr": ak["dsr"], "psr": ak["psr_vs_zero"], "pbo": pbo,
         "bootstrap_lower": None if boot is None else boot["ci_lower"], "segments_positive_fraction": seg_frac,
         "has_parameters": bool(base_doc["parameters"]), "neighbours_positive_fraction": params_doc["positive_fraction"],
+        "walk_forward_computable": wf_doc["computable"], "walk_forward_folds": len(wf_doc.get("folds", [])),
+        "walk_forward_positive_folds": wf_doc.get("positive_folds"), "walk_forward_efficiency": wf_doc.get("efficiency"),
         "top_coin_share": top_share, "oos_over_is_net_per_day": oos_doc["oos_over_is_net_per_day"] if oos_doc else None,
     }
     rating = rate(facts)
@@ -764,14 +899,16 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
                    "oos_window": oos_doc["window"] if oos_doc else None, "oos_pack_id": packs["oos"].id if oos_doc else None,
                    "fees": eff_fees, "fees_given": fees is not None, "filter": filter_spec, "permutations": permutations, "seed": seed,
                    "step_minutes": step_minutes, "capital_base": _s(capital), "workers": workers,
-                   "execution": R.serial_reason or ("process pool (spawn)" if workers > 1 else "in process"), "segments": segments},
+                   "execution": R.serial_reason or ("process pool (spawn)" if workers > 1 else "in process"), "segments": segments, "walk_forward": wf_cfg},
         "trials": {"count": n_trials, "distinct_candidate_variants": len(candidates), "prior_trials_declared": prior_trials,
                    "candidate_strategy_ids": sorted(candidates), "permutation_draws_not_counted": sum(1 for r in R.records if r["role"] == "permutation"),
+                   "walk_forward_runs_not_counted": sum(1 for r in R.records if r["role"] == "walk_forward"),
                    "evidence": "trials.jsonl",
                    "rule": "distinct IR definitions run on the IS window as candidates (base, basis stress, parameter neighbours, "
-                           "filter off/on) + declared prior trials; permutation draws are null-model draws and are not counted"},
+                           "filter off/on) + declared prior trials; permutation draws are null-model draws and walk-forward training grids are a "
+                           "selection procedure on each fold's training window; neither is counted"},
         "runs": R.records,
-        "statistics": {"alphakeel_metrics": ak, "pbo": {"value": pbo, "variants": len(var_ret), "blocks": s_blocks if pbo is not None else None,
+        "statistics": {"alphakeel_metrics": ak, "dsr_inputs": dsr_in, "pbo": {"value": pbo, "variants": len(var_ret), "blocks": s_blocks if pbo is not None else None,
                                                         "note": None if pbo is not None else "needs >= 4 candidate variants and >= 20 days"},
                        "bootstrap": boot, "t_stat_effective": t_eff, "trades_closed": counts["closed"], "open_at_end": counts["open_at_end"],
                        "max_drawdown": base_card["max_drawdown"], "net_decomposition": decomposition,
@@ -781,7 +918,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         "cost_stress": cost_doc, "parameters": params_doc,
         "subperiods": {"segments": segs, "positive_fraction": seg_frac, "worst": worst_seg, "months": months,
                        "months_positive_fraction": _positive_fraction([m["net"] for m in months])},
-        "oos": oos_doc, "filter": filt, "rating": rating, "notes": notes, "not_tested": NOT_TESTED,
+        "walk_forward": wf_doc, "oos": oos_doc, "filter": filt, "rating": rating, "notes": notes, "not_tested": NOT_TESTED,
         "data_view": {"view": base_card["view"], "approximations": base_card["approximations"]},
     }
     (out / "robustness.json").write_text(json.dumps(doc, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
@@ -849,6 +986,20 @@ def render_markdown(doc: dict) -> str:
     L += ["", "## Sub-period stability", ""]
     L += _table(["from", "to", "days", "net"], [[s["from"], s["to"], s["days"], s["net"]] for s in sp["segments"]])
     L += ["", f"Positive segments: {_f(sp['positive_fraction'])}; positive months: {_f(sp['months_positive_fraction'])} of {len(sp['months'])}."]
+    wf = doc["walk_forward"]
+    L += ["", "## Walk-forward (anchored)", ""]
+    if wf["computable"]:
+        c = wf["config"]
+        L += [f"{c['folds']} folds x {c['test_days']} test days; grid {c['grid']} ({c['grid_size']} points per fold); each fold trains on "
+              "[IS start, test start) and the training winner is run on the test segment.", ""]
+        L += _table(["fold", "train days", "test days", "selected parameters", "train net", "test net", "closed trades"],
+                    [[x["k"], x["train"]["days"], x["test"]["days"], ", ".join(f"{k}={v}" for k, v in x["selected"]["parameters"].items()) or "-",
+                      x["selected"]["train_net"], x["test_net"], x["test_trades_closed"]] for x in wf["folds"]])
+        L += ["", f"Positive folds: {wf['positive_folds']} of {len(wf['folds'])}; efficiency (test net per day / selected train net per day): "
+              f"{_f(wf['efficiency'])}."]
+        L += [f"- fold {x['k']} skipped {s['parameters']}: {s['reason']}" for x in wf["folds"][:1] for s in x["skipped"]]
+    else:
+        L += [f"Not computable: {wf['reason']} (counts as failed in the rating)."]
     o = doc["oos"]
     L += ["", "## Out of sample", ""]
     if o:

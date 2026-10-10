@@ -24,12 +24,13 @@ from tests.test_alphakeel_ir_backtest import DAY, LO, MIN, START, bars, build, e
 GOOD = {"base_net": "100", "oos_net": "40", "cost_x2_net": "50", "coverage_partial": False, "trades_closed": 200, "days": 365,
         "funding_unpriced_fraction": "0", "filter_tested": True, "filter_p": "0.01", "synthetic_view": False, "dsr": 0.99,
         "psr": 0.999, "pbo": 0.05, "bootstrap_lower": 0.0001, "segments_positive_fraction": "1", "has_parameters": True,
-        "neighbours_positive_fraction": "1", "top_coin_share": "0.2", "oos_over_is_net_per_day": "0.8"}
+        "neighbours_positive_fraction": "1", "top_coin_share": "0.2", "oos_over_is_net_per_day": "0.8",
+        "walk_forward_computable": True, "walk_forward_folds": 3, "walk_forward_positive_folds": 3, "walk_forward_efficiency": "0.8"}
 
 
 def test_all_components_pass_without_caps_is_a_and_the_dataset_view_caps_at_b():
     r = robustness.rate(dict(GOOD))
-    assert (r["grade"], r["passed"], r["applicable"], r["caps"]) == ("A", 9, 9, [])
+    assert (r["grade"], r["passed"], r["applicable"], r["caps"]) == ("A", 10, 10, [])
     r = robustness.rate({**GOOD, "synthetic_view": True})
     assert r["grade"] == "B" and [c["id"] for c in r["caps"]] == ["synthetic_view"]
 
@@ -47,6 +48,7 @@ def test_all_components_pass_without_caps_is_a_and_the_dataset_view_caps_at_b():
     ({"filter_p": "0.2"}, "filter_not_better_than_random", "C"),
     ({"filter_p": None}, "filter_not_better_than_random", "C"),
     ({"synthetic_view": True}, "synthetic_view", "B"),
+    ({"walk_forward_positive_folds": 1}, "walk_forward_unstable", "C"),
 ])
 def test_each_cap_is_a_ceiling(change, cap, grade):
     r = robustness.rate({**GOOD, **change})
@@ -54,18 +56,19 @@ def test_each_cap_is_a_ceiling(change, cap, grade):
     assert r["grade"] == grade or robustness.GRADES.index(r["grade"]) > robustness.GRADES.index(grade)
     assert any(cap in x for x in r["reasons"])
     # the boundary itself does not trigger: 30 trades / 60 days / 1% unpriced / p = 0.10
-    ok = robustness.rate({**GOOD, "trades_closed": 30, "days": 60, "funding_unpriced_fraction": "0.01", "filter_p": "0.05"})
+    ok = robustness.rate({**GOOD, "trades_closed": 30, "days": 60, "funding_unpriced_fraction": "0.01", "filter_p": "0.05",
+                          "walk_forward_positive_folds": 2})
     assert ok["caps"] == []
 
 
 def test_score_grades_and_not_computable_components_count_as_failed():
-    # 9 applicable, 7 pass -> 0.78 -> B; PBO and DSR missing = not demonstrated
+    # 10 applicable, 8 pass -> 0.8 -> B; PBO and DSR missing = not demonstrated
     r = robustness.rate({**GOOD, "pbo": None, "dsr": None})
-    assert (r["passed"], r["applicable"], r["score_grade"], r["grade"]) == (7, 9, "B", "B")
+    assert (r["passed"], r["applicable"], r["score_grade"], r["grade"]) == (8, 10, "B", "B")
     assert {c["id"]: c["result"] for c in r["components"]}["pbo"] == "not_computable"
     # no parameters and no filter: those components are not applicable (and the filter cap cannot apply)
     r = robustness.rate({**GOOD, "has_parameters": False, "filter_tested": False, "filter_p": None})
-    assert r["applicable"] == 7 and r["grade"] == "A"
+    assert r["applicable"] == 8 and r["grade"] == "A"
     # everything failing but a positive base: D, never better
     bad = {**GOOD, "dsr": 0.1, "psr": 0.2, "pbo": 0.9, "bootstrap_lower": -1, "segments_positive_fraction": "0.25",
            "neighbours_positive_fraction": "0", "filter_p": "0.04", "top_coin_share": "0.9", "oos_over_is_net_per_day": "0.1"}
@@ -188,17 +191,18 @@ def _trend(base, slope):
     return f
 
 
-def _market(tmp_path):
+def _market(tmp_path, hi=HI):
     insts, kl, st = [], {}, {"binance": [], "okx": []}
     for b, (bn, ok, px, slope) in COINS.items():
         insts += [{"venue": "binance", "market": "perp", "symbol": bn, "base": b, "quote": "USDT"},
                   {"venue": "okx", "market": "perp", "symbol": ok, "base": b, "quote": "USDT"}]
-        kl[("binance", bn)] = bars(bn, _trend(px, slope), hi=HI)
-        kl[("okx", ok)] = bars(ok, lambda t, px=px: str(px), hi=HI)
+        kl[("binance", bn)] = bars(bn, _trend(px, slope), hi=hi)
+        kl[("okx", ok)] = bars(ok, lambda t, px=px: str(px), hi=hi)
         for k in range(-1, 4):  # 8-hourly settlements: Binance pays longs, OKX pays shorts -> long Binance / short OKX
             st["binance"].append(settle(f"binance:linear:USDT:{bn}", START + k * 8 * 3_600_000, "-0.0001"))
             st["okx"].append(settle(f"okx:linear:USDT:{ok}", START + k * 8 * 3_600_000, "0.0003"))
-    pd = export_dir(tmp_path, build(insts, kl, st, lo=LO, hi=HI))
+    insts.sort(key=lambda d: (d["venue"], d["market"], d["symbol"]))  # the request's order (`ir_backtest.universe_instruments`)
+    pd = export_dir(tmp_path, build(insts, kl, st, lo=LO, hi=hi))
     return insts, pd
 
 
@@ -220,7 +224,7 @@ def test_battery_end_to_end_counts_trials_honestly_and_tests_the_filter(tmp_path
     doc = robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), oos_window=(START + H6, HI), out_dir=out,
                              filter_spec={"kind": "excluded_bases", "bases": ["ETH"]}, permutations=4, seed=11, step_minutes=2,
                              workers=1)
-    assert doc["schema"] == "vibe-trading.ir-robustness/1" and (out / "robustness.md").is_file() and (out / "trials.jsonl").is_file()
+    assert doc["schema"] == "vibe-trading.ir-robustness/2" and (out / "robustness.md").is_file() and (out / "trials.jsonl").is_file()
     labels = {r["label"]: r for r in doc["runs"]}
     assert {"base", "cost-x1.5", "cost-x2", "basis-x2", "param-hold-hi", "oos", "filter-off", "filter-on"} <= set(labels)
     assert "param-hold-lo" not in labels and doc["parameters"]["skipped"][0]["reason"] == "equals the base value"
@@ -303,3 +307,168 @@ def test_battery_refuses_bad_inputs(tmp_path):
     with pytest.raises(ApiError, match="permutations"):
         robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), out_dir=tmp_path / "x", permutations=-1, workers=1)
     assert ir_backtest.DAY_MS == DAY and MIN == 60_000
+
+
+# --- anchored walk-forward -----------------------------------------------------------------------------------------------
+
+def test_walk_forward_rating_cap_and_component():
+    r = robustness.rate({**GOOD, "walk_forward_positive_folds": 2})  # 2 of 3 = exactly 2/3: no cap
+    assert "walk_forward_unstable" not in [c["id"] for c in r["caps"]]
+    r = robustness.rate({**GOOD, "walk_forward_positive_folds": 1})
+    assert [c["id"] for c in r["caps"]] == ["walk_forward_unstable"] and r["grade"] == "C"
+    comp = lambda f: {c["id"]: c["result"] for c in robustness.rate(f)["components"]}["walk_forward_efficiency"]  # noqa: E731
+    assert comp({**GOOD, "walk_forward_efficiency": "0.5"}) == "pass"
+    assert comp({**GOOD, "walk_forward_efficiency": "0.49999999"}) == "fail"
+    assert comp({**GOOD, "walk_forward_efficiency": None}) == "not_computable"
+    # not computable: no cap, but the component counts as failed (like every other one)
+    nc = robustness.rate({**GOOD, "walk_forward_computable": False, "walk_forward_folds": 0, "walk_forward_positive_folds": None})
+    assert "walk_forward_unstable" not in [c["id"] for c in nc["caps"]] and (nc["passed"], nc["applicable"]) == (9, 10)
+    assert {c["id"]: c["result"] for c in nc["components"]}["walk_forward_efficiency"] == "not_computable"
+
+
+def test_walk_forward_plan_folds_are_the_last_days_of_the_is_window_and_anchored():
+    p = robustness.walk_forward_plan((0, 120 * DAY), 3, 30, 30)
+    assert p["computable"] and [(f["train"], f["test"]) for f in p["folds"]] == [
+        ((0, 30 * DAY), (30 * DAY, 60 * DAY)), ((0, 60 * DAY), (60 * DAY, 90 * DAY)), ((0, 90 * DAY), (90 * DAY, 120 * DAY))]
+    q = robustness.walk_forward_plan((0, 119 * DAY), 3, 30, 30)  # first training segment 29 days
+    assert not q["computable"] and "wf_min_train_days" in q["reason"]
+    assert not robustness.walk_forward_plan((0, 500 * DAY), 0, 30, 30)["computable"]
+    assert not robustness.walk_forward_plan((0, 500 * DAY), 3, True, 30)["computable"]
+
+
+def test_walk_forward_grid_cartesian_then_one_at_a_time():
+    doc = _param_doc()
+    grid, kind = robustness.walk_forward_grid(doc)  # 3 x 2 x 3 = 18 points, first = all base
+    assert kind == "cartesian" and len(grid) == 18 and grid[0]["parameters"] == {"hold": "4", "min_f": "0.00001", "spread_lo": "0"}
+    assert grid[0]["doc"] is doc and all(g["doc"] is not None for g in grid)
+    assert grid[1]["parameters"]["spread_lo"] == "0.005" and grid[1]["doc"]["entry"]["conditions"][1]["value"] == ["0.005", "0.01"]
+    doc["parameters"]["spread_hi"] = {"value": "0.01", "robust": ["0.006", "0.02"], "path": "entry.conditions[1].value[1]"}
+    ir.load(doc)
+    grid, kind = robustness.walk_forward_grid(doc)  # 54 > 27: base + (2 + 1 + 2 + 2) one-at-a-time points
+    assert kind == "one_at_a_time" and len(grid) == 8
+    assert sum(1 for g in grid[1:] if g["parameters"] != grid[0]["parameters"]) == 7
+    assert all(sum(1 for k in g["parameters"] if g["parameters"][k] != grid[0]["parameters"][k]) <= 1 for g in grid)
+    # a point that is not a valid IR (spread_lo above spread_hi) is skipped and recorded, not fatal
+    doc["parameters"]["spread_hi"]["robust"] = ["0", "0.02"]
+    doc["parameters"]["spread_lo"]["robust"] = ["0", "0.012"]
+    doc["parameters"]["hold"]["robust"] = ["4", "4"]
+    doc["parameters"]["min_f"]["robust"] = ["0.00001", "0.00001"]
+    bad, _ = robustness.walk_forward_grid(doc)
+    assert [g["parameters"]["spread_lo"] + "/" + g["parameters"]["spread_hi"] for g in bad if g["skipped"]] == ["0.012/0.01", "0.012/0"]
+
+
+def test_dsr_inputs_reproduce_dsr_exactly():
+    x = [0.001 * ((i * 7) % 11 - 4) + 0.0002 * i / 100 for i in range(120)]
+    vs = [0.05, 0.12, -0.03, 0.2]
+    i = M.dsr_inputs(x, 9, vs)
+    assert set(i) == {"sharpe_daily", "skewness", "kurtosis_non_excess", "effective_days", "var_sr_used", "trials"} and i["trials"] == 9
+    assert M.psr(i["sharpe_daily"], M.sr0(i["var_sr_used"], 9), i["effective_days"], i["skewness"], i["kurtosis_non_excess"]) == M.dsr(x, 9, vs)
+    assert i["var_sr_used"] >= M.statistics.variance(vs) and M.dsr_inputs([0.0] * 10, 3) is None and M.dsr([0.0] * 10, 3) is None
+
+
+WF_DAYS = 4
+WF_HI = START + WF_DAYS * DAY
+WF_COINS = {"BTC": ("BTCUSDT", "BTC-USDT-SWAP", 100, "0.002"), "ETH": ("ETHUSDT", "ETH-USDT-SWAP", 200, "-0.002")}
+
+
+def _wf_market(tmp_path):
+    insts, kl, st = [], {}, {"binance": [], "okx": []}
+    for b, (bn, ok, px, slope) in WF_COINS.items():
+        insts += [{"venue": "binance", "market": "perp", "symbol": bn, "base": b, "quote": "USDT"},
+                  {"venue": "okx", "market": "perp", "symbol": ok, "base": b, "quote": "USDT"}]
+        kl[("binance", bn)] = bars(bn, _trend(px, slope), hi=WF_HI)
+        kl[("okx", ok)] = bars(ok, lambda t, px=px: str(px), hi=WF_HI)
+        for k in range(-1, WF_DAYS * 3 + 1):
+            st["binance"].append(settle(f"binance:linear:USDT:{bn}", START + k * 8 * 3_600_000, "-0.0001"))
+            st["okx"].append(settle(f"okx:linear:USDT:{ok}", START + k * 8 * 3_600_000, "0.0003"))
+    return insts, export_dir(tmp_path, build(insts, kl, st, lo=LO, hi=WF_HI))
+
+
+def test_walk_forward_battery_vector_fixed_seed(tmp_path):
+    insts, pd = _wf_market(tmp_path)
+    out = tmp_path / "wf"
+    doc = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, WF_HI), out_dir=out, permutations=0, seed=5,
+                             step_minutes=10, workers=1, wf_folds=2, wf_test_days=1, wf_min_train_days=1)
+    assert doc["schema"] == "vibe-trading.ir-robustness/2"
+    wf = doc["walk_forward"]
+    assert wf["computable"] and wf["config"] == {"folds": 2, "test_days": 1, "min_train_days": 1, "grid": "cartesian", "grid_size": 2}
+    # fold boundaries: the last 2 UTC days are the test segments, training is anchored at the IS start
+    assert [(f["k"], f["train"]["start_ms"], f["train"]["end_ms"], f["train"]["days"], f["test"]["start_ms"], f["test"]["end_ms"], f["test"]["days"])
+            for f in wf["folds"]] == [(1, START, START + 2 * DAY, 2, START + 2 * DAY, START + 3 * DAY, 1),
+                                      (2, START, START + 3 * DAY, 3, START + 3 * DAY, START + 4 * DAY, 1)]
+    nets = lambda lbl: Decimal(json.loads((out / "runs" / lbl / "run_card.json").read_text())["amounts"]["equity_end"])  # noqa: E731
+    for f in wf["folds"]:
+        k = f["k"]
+        a, b = nets(f"wf{k}-train-g01"), nets(f"wf{k}-train-g02")  # hold = 1 (base), hold = 2
+        sel_hold, sel_net = ("1", a) if a >= b else ("2", b)  # a tie keeps the base point
+        assert f["selected"]["parameters"] == {"hold": sel_hold} and Decimal(f["selected"]["train_net"]) == sel_net == max(a, b)
+        assert Decimal(f["test_net"]) == nets(f"wf{k}-test")
+        assert f["skipped"] == []
+    tn = sum(Decimal(f["test_net"]) for f in wf["folds"])
+    rn = sum(Decimal(f["selected"]["train_net"]) for f in wf["folds"])
+    assert wf["positive_folds"] == sum(1 for f in wf["folds"] if Decimal(f["test_net"]) > 0)
+    if rn > 0:
+        assert wf["efficiency"] == ir.fmt(ir_backtest.q8((tn / 2) / (rn / 5)))
+    else:
+        assert wf["efficiency"] is None
+    facts = doc["rating"]["facts"]
+    assert (facts["walk_forward_computable"], facts["walk_forward_folds"], facts["walk_forward_efficiency"]) == (True, 2, wf["efficiency"])
+    # the training grids are runs in trials.jsonl but never DSR candidates
+    trials = [json.loads(x) for x in (out / "trials.jsonl").read_text().splitlines()]
+    w = [t for t in trials if t["role"] == "walk_forward"]
+    assert len(w) == 6 and not any(t["counted_trial"] for t in w) and doc["trials"]["walk_forward_runs_not_counted"] == 6
+    assert doc["trials"]["count"] == 3 and doc["trials"]["count"] == doc["statistics"]["dsr_inputs"]["trials"]  # base, basis-x2, param-hold-hi
+    # dsr_inputs reproduce the reported DSR; the walk-forward table is rendered
+    i = doc["statistics"]["dsr_inputs"]
+    assert M.psr(i["sharpe_daily"], M.sr0(i["var_sr_used"], i["trials"]), i["effective_days"], i["skewness"],
+                 i["kurtosis_non_excess"]) == doc["statistics"]["alphakeel_metrics"]["dsr"]
+    assert "## Walk-forward (anchored)" in (out / "robustness.md").read_text()
+
+
+def test_walk_forward_not_computable_on_a_short_window(tmp_path):
+    insts, pd = _market(tmp_path)
+    doc = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, START + H6), out_dir=tmp_path / "rb", permutations=0,
+                             step_minutes=2, workers=1)
+    wf = doc["walk_forward"]
+    assert wf["computable"] is False and "wf_min_train_days" in wf["reason"] and wf["config"] == {"folds": 3, "test_days": 30, "min_train_days": 30}
+    comp = {c["id"]: c["result"] for c in doc["rating"]["components"]}
+    assert comp["walk_forward_efficiency"] == "not_computable" and "walk_forward_unstable" not in [c["id"] for c in doc["rating"]["caps"]]
+    assert "Not computable" in (tmp_path / "rb" / "robustness.md").read_text()
+
+
+# --- `ir robustness --run`: the battery inside a VT run directory, then export picks it up ----------------------------------------
+
+def test_robustness_run_defaults_come_from_the_run_and_export_carries_the_evidence(tmp_path, capsys):
+    from alphakeel_research import workflow
+
+    insts, pd = _market(tmp_path, hi=START + H6)  # `ir backtest` wants a pack for exactly its window
+    (tmp_path / "ir.json").write_text(json.dumps(_ir()))
+    (tmp_path / "inst.json").write_text(json.dumps(insts))
+    run = tmp_path / "run"
+    assert cli.main(["ir", "backtest", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(START + H6), "--instruments",
+                     str(tmp_path / "inst.json"), "--pack-dir", str(pd), "--step-minutes", "2", "--trials", "1", "--out", str(run)]) == 0
+    capsys.readouterr()
+    base = ["ir", "robustness", "--run", str(run), "--permutations", "0", "--workers", "1", "--step-minutes", "2"]
+    # explicit arguments must agree with the run card
+    assert cli.main([*base, "--is-end-ms", str(START + H6 - 1)]) == 1
+    assert "differs from the run card" in capsys.readouterr().out
+    other = _ir()
+    other["entry"]["cooldown_minutes"] = 45
+    (tmp_path / "other.json").write_text(json.dumps(other))
+    assert cli.main([*base, "--ir", str(tmp_path / "other.json")]) == 1
+    assert "run card is for" in capsys.readouterr().out
+    assert cli.main(["ir", "robustness", "--ir", str(tmp_path / "ir.json")]) == 1  # no --run: the old arguments are required
+    assert "--pack-dir" in capsys.readouterr().out
+    assert cli.main([*base, "--is-start-ms", str(START), "--is-end-ms", str(START + H6)]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["json"] == str(run / "robustness" / "robustness.json")
+    doc = json.loads((run / "robustness" / "robustness.json").read_text())
+    assert doc["inputs"]["is_window"] == {"start_ms": START, "end_ms": START + H6} and doc["inputs"]["pack_id"] == Pack.from_directory(pd).id
+    # export with no flags finds RUN/robustness
+    exp = tmp_path / "exp"
+    r = workflow.ir_export(_ir(), run, exp)
+    pr = r["provenance"]["robustness"]
+    assert pr["grade"] == doc["rating"]["grade"] and pr["schema"] == robustness.SCHEMA
+    assert (exp / "evidence" / "robustness.json").read_bytes() == (run / "robustness" / "robustness.json").read_bytes()
+    assert (exp / "evidence" / "robustness-trials.jsonl").read_bytes() == (run / "robustness" / "trials.jsonl").read_bytes()
+    assert not any(w.startswith("no robustness") for w in r["warnings"])
