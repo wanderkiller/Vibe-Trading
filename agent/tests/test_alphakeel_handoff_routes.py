@@ -230,6 +230,26 @@ def test_export_refuses_when_the_robustness_changed_since_it_was_reviewed(env):
     assert env.client.post(f"/runs/{run.name}/alphakeel/export", json={"robustness_sha256": sha}).status_code == 200
 
 
+def test_export_refuses_a_battery_rewritten_between_the_check_and_the_copy(env, monkeypatch):
+    run = make_ir_run(env)
+    sha = env.client.get(f"/runs/{run.name}/alphakeel").json()["robustness_sha256"]
+    from alphakeel_research import ir_backtest
+
+    real = ir_backtest.export
+
+    def racing_export(doc, run_dir, out_dir, **kw):
+        f = Path(run_dir) / "robustness" / "robustness.json"
+        rb = json.loads(f.read_text())
+        rb["notes"] = list(rb.get("notes") or []) + ["rewritten by a concurrent ir robustness"]
+        f.write_text(json.dumps(rb))
+        return real(doc, run_dir, out_dir, **kw)
+
+    monkeypatch.setattr(ir_backtest, "export", racing_export)
+    r = env.client.post(f"/runs/{run.name}/alphakeel/export", json={"robustness_sha256": sha})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "export.changed"
+    assert not env.handoff.exists() or not any(env.handoff.iterdir())
+
+
 def test_export_with_a_battery_over_another_window_is_409_window_mismatch(env):
     run = make_ir_run(env)
     f = run / "robustness" / "robustness.json"

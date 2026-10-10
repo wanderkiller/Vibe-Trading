@@ -217,6 +217,11 @@ def export_run(run_dir: Path, expected_robustness_sha256: str | None = None) -> 
                 raise _err(409, "export.window_mismatch", e.message) from e
             except ApiError as e:
                 raise _err(400, e.code, e.message) from e
+            # `ir robustness` does not take this lock: the battery may have been rewritten between the check above and the
+            # copy. What is handed off must be the file the user reviewed.
+            copied = tmp / "evidence" / "robustness.json"
+            if expected_robustness_sha256 is not None and (not copied.is_file() or _sha256(copied) != expected_robustness_sha256):
+                raise _err(409, "export.changed", "robustness changed since you reviewed it; reopen")
             _write_manifest(tmp, sid, card.get("run_id"))
             os.chmod(tmp, 0o2775)  # mkdtemp is 0700; the console on the host reads the package (group of the shared directory)
             files = _files_of(tmp)
