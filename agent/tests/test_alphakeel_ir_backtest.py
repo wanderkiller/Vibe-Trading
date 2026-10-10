@@ -910,6 +910,17 @@ def test_agent_tool_maps_robustness_and_crosscheck_and_refuses_the_handoff_direc
             _argv("ir_export", {"ir": "s", "run": "r", "out": str(bad)})
     out = json.loads(AlphakeelResearchTool().execute(action="ir_export", args={"ir": "s", "run": "r", "out": str(tmp_path / "handoff" / "ir-3")}))
     assert out["status"] == "error" and "hand-off" in out["error"].lower()
+    # every action, every written path key: out, robustness, run (also through a symlink / ..)
+    (tmp_path / "link").symlink_to(tmp_path / "handoff")
+    h = tmp_path / "handoff" / "ir-9"
+    for action, args in (("ir_export", {"ir": "s", "run": "r", "out": str(tmp_path / "o"), "robustness": str(h)}),
+                         ("ir_export", {"ir": "s", "run": str(h), "out": str(tmp_path / "o")}),
+                         ("ir_robustness", {"run": str(tmp_path / "link" / "ir-9")}),
+                         ("ir_robustness", {"ir": "s", "out": str(tmp_path / "x" / ".." / "handoff")}),
+                         ("ir_backtest", {"ir": "s", "start_ms": 1, "end_ms": 2, "instruments": "i", "out": str(h)}),
+                         ("ir_review", {"pack": "p", "ir": "s", "out": str(h)})):
+        with pytest.raises(ValueError, match="hand-off directory|user"):
+            _argv(action, args)
     monkeypatch.delenv("ALPHAKEEL_HANDOFF_DIR")
     with pytest.raises(ValueError, match="user"):
         _argv("ir_export", {"ir": "s", "run": "r", "out": "/home/vibe/handoff/ir-4"})
