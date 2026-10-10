@@ -842,9 +842,9 @@ def test_a_failed_ir_backtest_leaves_state_failed(tmp_path, capsys):
     assert st["status"] == "failed" and "does not match" in st["error"] and not (out / "review_report.json").exists()
 
 
-def _fake_robustness(d: Path, sid: str, grade="C", schema="vibe-trading.ir-robustness/2"):
+def _fake_robustness(d: Path, sid: str, grade="C", schema="vibe-trading.ir-robustness/2", inputs=None):
     d.mkdir(parents=True, exist_ok=True)
-    (d / "robustness.json").write_text(json.dumps({"schema": schema, "strategy_id": sid, "rating": {"grade": grade}}))
+    (d / "robustness.json").write_text(json.dumps({"schema": schema, "strategy_id": sid, "rating": {"grade": grade}, "inputs": inputs}))
     (d / "robustness.md").write_text("# report\n")
     (d / "trials.jsonl").write_text('{"seq": 1}\n')
 
@@ -858,8 +858,10 @@ def test_ir_export_carries_the_robustness_evidence_or_warns(tmp_path, capsys):
     assert len(w) == 1 and r["provenance"]["robustness"] is None and w[0] in r["provenance"]["warnings"]
     assert not (tmp_path / "e0" / "evidence" / "robustness.json").exists()
     # default directory <run>/robustness
-    _fake_robustness(run / "robustness", sid, "B")
+    w = json.loads((run / "run_card.json").read_text())["window"]
+    _fake_robustness(run / "robustness", sid, "B", inputs={"is_window": {"start_ms": w["start_ms"], "end_ms": w["end_ms"]}, "oos_window": None})
     r = workflow.ir_export(golden_ir(), run, tmp_path / "e1")
+    assert r["provenance"]["robustness_windows"] == {"is": {"start_ms": w["start_ms"], "end_ms": w["end_ms"]}, "oos": None}
     ev = tmp_path / "e1" / "evidence"
     assert sorted(p.name for p in ev.iterdir() if p.name.startswith("robustness")) == ["robustness-trials.jsonl", "robustness.json", "robustness.md"]
     assert (ev / "robustness-trials.jsonl").read_text() == '{"seq": 1}\n'
@@ -911,3 +913,32 @@ def test_agent_tool_maps_robustness_and_crosscheck_and_refuses_the_handoff_direc
     monkeypatch.delenv("ALPHAKEEL_HANDOFF_DIR")
     with pytest.raises(ValueError, match="user"):
         _argv("ir_export", {"ir": "s", "run": "r", "out": "/home/vibe/handoff/ir-4"})
+
+
+def test_export_binds_the_robustness_windows_to_the_run_card(tmp_path):
+    run = _run(tmp_path, "--trials", "1")
+    sid = ir.load(golden_ir()).strategy_id
+    w = json.loads((run / "run_card.json").read_text())["window"]
+    s0, e0 = w["start_ms"], w["end_ms"]
+    isw = {"start_ms": s0, "end_ms": e0}
+
+    def go(name, inputs):
+        _fake_robustness(tmp_path / name, sid, inputs=inputs)
+        return workflow.ir_export(golden_ir(), run, tmp_path / f"o-{name}", robustness_dir=tmp_path / name)
+
+    for bad in ({"start_ms": s0, "end_ms": e0 + 1}, {"start_ms": s0 - 1, "end_ms": e0}):  # is_window mismatch
+        with pytest.raises(ApiError, match="window mismatch") as ei:
+            go("bad-is", {"is_window": bad, "oos_window": None})
+        assert ei.value.code == "request.invalid" and ei.value.field == "robustness"
+    with pytest.raises(ApiError, match="not out of sample"):  # OOS starts before the run window ends
+        go("bad-oos", {"is_window": isw, "oos_window": {"start_ms": e0 - 1, "end_ms": e0 + 1000}})
+    # matching windows: accepted, carried in the provenance; the OOS end bounds the credential's data horizon
+    oos = {"start_ms": e0, "end_ms": e0 + 3 * 86_400_000}
+    r = go("good", {"is_window": isw, "oos_window": oos})
+    assert r["provenance"]["robustness_windows"] == {"is": isw, "oos": oos}
+    cred = {"credential": "c", "data_horizon": {"max_window_end_ms": oos["end_ms"]}}
+    _fake_robustness(tmp_path / "good2", sid, inputs={"is_window": isw, "oos_window": oos})
+    workflow.ir_export(golden_ir(), run, tmp_path / "o-ok", research_credential=cred, robustness_dir=tmp_path / "good2")
+    _fake_robustness(tmp_path / "good3", sid, inputs={"is_window": isw, "oos_window": None})
+    with pytest.raises(ApiError, match="data horizon|research window"):
+        workflow.ir_export(golden_ir(), run, tmp_path / "o-no", research_credential=cred, robustness_dir=tmp_path / "good3")
