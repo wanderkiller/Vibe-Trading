@@ -1329,7 +1329,9 @@
       "grade": "Grade",
       "window": "Window",
       "exportedTo": "Exported to {{path}}",
-      "exportFailed": "Export failed"
+      "exportFailed": "Export failed",
+      "exportChanged": "Robustness changed since you reviewed it; reopen the dialog.",
+      "exportWindowMismatch": "The robustness battery was run over a different window than this run; re-run it on this run."
     }
   },
   "compare": {

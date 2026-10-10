@@ -1329,7 +1329,9 @@
       "grade": "Calificación",
       "window": "Ventana",
       "exportedTo": "Exportado a {{path}}",
-      "exportFailed": "Error al exportar"
+      "exportFailed": "Error al exportar",
+      "exportChanged": "La robustez cambió desde que la revisó; vuelva a abrir el diálogo.",
+      "exportWindowMismatch": "La batería de robustez se ejecutó sobre otra ventana distinta a la de esta ejecución; vuelva a ejecutarla sobre esta."
     }
   },
   "compare": {

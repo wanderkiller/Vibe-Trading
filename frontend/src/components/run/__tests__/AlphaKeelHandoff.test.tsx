@@ -18,7 +18,7 @@ function state(over: Record<string, unknown> = {}) {
     strategy_id: "illiq-v2",
     name: "Illiquidity v2",
     window: { start_day: "2024-01-01", end_day: "2025-01-01" },
-    robustness: { grade: "B", score: 0.7, caps: ["cap_a"], schema: "s", sha256: "x" },
+    robustness: { grade: "B", score: 0.7, caps: ["cap_a"], schema: "s", sha256: "abc123" },
     precheck: [
       { id: "P1", label: "check one", result: "PASS", observed: 1, note: null },
       { id: "P2", label: "check two", result: "FAIL", observed: 2, note: null },
@@ -80,6 +80,7 @@ describe("AlphaKeelHandoff", () => {
     const posts = mocks.request.mock.calls.filter((c) => c[1]?.method === "POST");
     expect(posts).toHaveLength(1);
     expect(posts[0][0]).toBe("/runs/r1/alphakeel/export");
+    expect(JSON.parse(posts[0][1].body)).toEqual({ robustness_sha256: "abc123" });
     expect(await screen.findByRole("button", { name: /Handed off/ })).toBeInTheDocument();
   });
 
@@ -92,6 +93,29 @@ describe("AlphaKeelHandoff", () => {
     await user.click(screen.getByRole("button", { name: "Export" }));
     await waitFor(() => expect(mocks.error).toHaveBeenCalledWith("robustness mismatch"));
     expect(mocks.success).not.toHaveBeenCalled();
+  });
+
+  it("tells the user to reopen and reloads the state on export.changed", async () => {
+    const user = userEvent.setup();
+    mocks.request.mockResolvedValueOnce(state());
+    mocks.request.mockRejectedValueOnce(Object.assign(new Error("server text"), { code: "export.changed" }));
+    mocks.request.mockResolvedValueOnce(state({ robustness: { grade: "C", score: 0.5, caps: [], schema: "s", sha256: "def456" } }));
+    render(<AlphaKeelHandoff runId="r1" />);
+    await user.click(await screen.findByRole("button", { name: /Hand off to AlphaKeel/ }));
+    await user.click(screen.getByRole("button", { name: "Export" }));
+    await waitFor(() => expect(mocks.error).toHaveBeenCalledWith("Robustness changed since you reviewed it; reopen the dialog."));
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(3));
+    expect(mocks.request.mock.calls[2][0]).toBe("/runs/r1/alphakeel");
+  });
+
+  it("explains export.window_mismatch", async () => {
+    const user = userEvent.setup();
+    mocks.request.mockResolvedValueOnce(state());
+    mocks.request.mockRejectedValueOnce(Object.assign(new Error("server text"), { code: "export.window_mismatch" }));
+    render(<AlphaKeelHandoff runId="r1" />);
+    await user.click(await screen.findByRole("button", { name: /Hand off to AlphaKeel/ }));
+    await user.click(screen.getByRole("button", { name: "Export" }));
+    await waitFor(() => expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining("different window")));
   });
 
   it("opens the re-export dialog when already exported", async () => {

@@ -1324,7 +1324,9 @@
       "grade": "등급",
       "window": "기간",
       "exportedTo": "{{path}}(으)로 내보냈습니다",
-      "exportFailed": "내보내기 실패"
+      "exportFailed": "내보내기 실패",
+      "exportChanged": "검토한 이후 견고성 결과가 변경되었습니다. 대화상자를 다시 여세요.",
+      "exportWindowMismatch": "견고성 검증이 이 실행과 다른 기간으로 수행되었습니다. 이 실행에 대해 다시 실행하세요."
     }
   },
   "compare": {

@@ -39,6 +39,7 @@ export function AlphaKeelHandoff({ runId }: { runId: string | undefined }) {
   const [state, setState] = useState<HandoffState | null>(null);
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
+  const [reloads, setReloads] = useState(0);
 
   useEffect(() => {
     setState(null);
@@ -55,13 +56,17 @@ export function AlphaKeelHandoff({ runId }: { runId: string | undefined }) {
     return () => {
       cancelled = true;
     };
-  }, [runId]);
+  }, [runId, reloads]);
 
   const doExport = useCallback(async () => {
     if (!runId || pending) return;
     setPending(true);
     try {
-      const res = await request<ExportResponse>(`/runs/${encodeURIComponent(runId)}/alphakeel/export`, { method: "POST" });
+      // the hash of the robustness the user is looking at: the server refuses when it changed since (export.changed)
+      const res = await request<ExportResponse>(`/runs/${encodeURIComponent(runId)}/alphakeel/export`, {
+        method: "POST",
+        body: JSON.stringify({ robustness_sha256: state?.robustness?.sha256 ?? null }),
+      });
       toast.success(t("runDetail.alphakeel.exportedTo", { path: res.path }));
       setState((prev) =>
         prev ? { ...prev, exported: { path: res.path, at: res.at, strategy_id: res.strategy_id, files: res.files } } : prev,
@@ -69,11 +74,19 @@ export function AlphaKeelHandoff({ runId }: { runId: string | undefined }) {
       setOpen(false);
     } catch (err) {
       const e = err as { message?: string; code?: string };
-      toast.error(e.message || e.code || t("runDetail.alphakeel.exportFailed"));
+      if (e.code === "export.changed") {
+        toast.error(t("runDetail.alphakeel.exportChanged"));
+        setOpen(false);
+        setReloads((n) => n + 1);
+      } else if (e.code === "export.window_mismatch") {
+        toast.error(t("runDetail.alphakeel.exportWindowMismatch"));
+      } else {
+        toast.error(e.message || e.code || t("runDetail.alphakeel.exportFailed"));
+      }
     } finally {
       setPending(false);
     }
-  }, [runId, pending, t]);
+  }, [runId, pending, state, t]);
 
   if (!state || state.ir !== true) return null;
 
