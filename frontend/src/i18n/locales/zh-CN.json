@@ -1308,7 +1308,24 @@
     "attrCumulativeTitle": "累计收益",
     "attrLoading": "加载归因数据…",
     "attrError": "加载归因数据失败。",
-    "attrNoData": "本次运行无归因数据。"
+    "attrNoData": "本次运行无归因数据。",
+    "alphakeel": {
+      "button": "交接给 AlphaKeel",
+      "exported": "已交接",
+      "needRobustness": "请先运行 ir robustness",
+      "needCredential": "未配置研究凭证",
+      "confirmTitle": "交接给 AlphaKeel？",
+      "confirm": "导出",
+      "cancel": "取消",
+      "notVerdict": "这里只导出文件；判定由 AlphaKeel 导入后计算。",
+      "reexportNote": "已导出过；再次导出会幂等覆盖原文件。",
+      "precheckTitle": "预检",
+      "target": "目标路径",
+      "grade": "评级",
+      "window": "窗口",
+      "exportedTo": "已导出到 {{path}}",
+      "exportFailed": "导出失败"
+    }
   },
   "compare": {
     "title": "策略对比",

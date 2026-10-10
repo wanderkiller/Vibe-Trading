@@ -1313,7 +1313,24 @@
     "attrCumulativeTitle": "Cumulative Returns",
     "attrLoading": "Loading attribution…",
     "attrError": "Failed to load attribution.",
-    "attrNoData": "No attribution data is available for this run."
+    "attrNoData": "No attribution data is available for this run.",
+    "alphakeel": {
+      "button": "Hand off to AlphaKeel",
+      "exported": "Handed off",
+      "needRobustness": "Run ir robustness first",
+      "needCredential": "Research credential not configured",
+      "confirmTitle": "Hand off to AlphaKeel?",
+      "confirm": "Export",
+      "cancel": "Cancel",
+      "notVerdict": "This only exports the files; AlphaKeel computes the verdict after import.",
+      "reexportNote": "Already exported; exporting again idempotently overwrites the files.",
+      "precheckTitle": "Pre-checks",
+      "target": "Target path",
+      "grade": "Grade",
+      "window": "Window",
+      "exportedTo": "Exported to {{path}}",
+      "exportFailed": "Export failed"
+    }
   },
   "compare": {
     "title": "Strategy Comparison",

@@ -1308,7 +1308,24 @@
     "attrCumulativeTitle": "累積収益",
     "attrLoading": "アトリビューションを読み込み中…",
     "attrError": "アトリビューションの読み込みに失敗しました。",
-    "attrNoData": "この実行にはアトリビューションデータがありません。"
+    "attrNoData": "この実行にはアトリビューションデータがありません。",
+    "alphakeel": {
+      "button": "AlphaKeel に引き渡す",
+      "exported": "引き渡し済み",
+      "needRobustness": "先に ir robustness を実行してください",
+      "needCredential": "リサーチ認証情報が未設定です",
+      "confirmTitle": "AlphaKeel に引き渡しますか？",
+      "confirm": "エクスポート",
+      "cancel": "キャンセル",
+      "notVerdict": "ファイルをエクスポートするだけです。判定はインポート後に AlphaKeel が計算します。",
+      "reexportNote": "エクスポート済みです。再実行すると同じファイルが冪等に上書きされます。",
+      "precheckTitle": "事前チェック",
+      "target": "出力先パス",
+      "grade": "グレード",
+      "window": "期間",
+      "exportedTo": "{{path}} にエクスポートしました",
+      "exportFailed": "エクスポートに失敗しました"
+    }
   },
   "compare": {
     "title": "戦略比較",

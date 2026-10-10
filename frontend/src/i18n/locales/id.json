@@ -1313,7 +1313,24 @@
     "attrCumulativeTitle": "Return Kumulatif",
     "attrLoading": "Memuat atribusi…",
     "attrError": "Gagal memuat atribusi.",
-    "attrNoData": "Tidak ada data atribusi yang tersedia untuk run ini."
+    "attrNoData": "Tidak ada data atribusi yang tersedia untuk run ini.",
+    "alphakeel": {
+      "button": "Serahkan ke AlphaKeel",
+      "exported": "Sudah diserahkan",
+      "needRobustness": "Jalankan ir robustness terlebih dahulu",
+      "needCredential": "Kredensial riset belum dikonfigurasi",
+      "confirmTitle": "Serahkan ke AlphaKeel?",
+      "confirm": "Ekspor",
+      "cancel": "Batal",
+      "notVerdict": "Ini hanya mengekspor berkas; AlphaKeel menghitung putusan setelah impor.",
+      "reexportNote": "Sudah diekspor; ekspor ulang menimpa berkas secara idempoten.",
+      "precheckTitle": "Pra-pemeriksaan",
+      "target": "Jalur tujuan",
+      "grade": "Peringkat",
+      "window": "Jendela",
+      "exportedTo": "Diekspor ke {{path}}",
+      "exportFailed": "Ekspor gagal"
+    }
   },
   "compare": {
     "title": "Perbandingan Strategi",

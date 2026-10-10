@@ -1313,7 +1313,24 @@
     "attrCumulativeTitle": "Retornos cumulativos",
     "attrLoading": "Carregando atribuição…",
     "attrError": "Falha ao carregar a atribuição.",
-    "attrNoData": "Nenhum dado de atribuição está disponível para esta execução."
+    "attrNoData": "Nenhum dado de atribuição está disponível para esta execução.",
+    "alphakeel": {
+      "button": "Entregar ao AlphaKeel",
+      "exported": "Entregue",
+      "needRobustness": "Execute ir robustness primeiro",
+      "needCredential": "Credencial de pesquisa não configurada",
+      "confirmTitle": "Entregar ao AlphaKeel?",
+      "confirm": "Exportar",
+      "cancel": "Cancelar",
+      "notVerdict": "Isto apenas exporta os arquivos; o AlphaKeel calcula o veredito após a importação.",
+      "reexportNote": "Já exportado; exportar novamente sobrescreve os arquivos de forma idempotente.",
+      "precheckTitle": "Pré-verificações",
+      "target": "Caminho de destino",
+      "grade": "Nota",
+      "window": "Janela",
+      "exportedTo": "Exportado para {{path}}",
+      "exportFailed": "Falha ao exportar"
+    }
   },
   "compare": {
     "title": "Comparação de estratégias",

@@ -52,6 +52,7 @@ import { FactorResearchPanel } from "@/components/charts/FactorResearchPanel";
 import { AttributionTab } from "@/components/charts/AttributionTab";
 import { PositionsTab } from "@/components/run/PositionsTab";
 import { RunCardPanel, RunCardStat, formatRunCardValue } from "@/components/run/RunCard";
+import { AlphaKeelHandoff } from "@/components/run/AlphaKeelHandoff";
 import { isDateColumn } from "@/lib/positions";
 
 const rehypePlugins = [rehypeHighlight];
@@ -406,6 +407,7 @@ export function RunDetail() {
           </div>
 
           <div className="ml-auto flex flex-wrap gap-1">
+            <AlphaKeelHandoff runId={runId} />
             {run.trade_log && run.trade_log.length > 0 && (
               <button
                 onClick={() => downloadCsv(`trades_${runId}.csv`, buildTradesCsv(run.trade_log!))}
