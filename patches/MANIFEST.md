@@ -33,7 +33,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `crypto-funding` | engines/_market_hooks, crypto, composite; ccxt_loader | upstreamable as a bug-fix PR (see below) |
 | `metrics-conventions` | metrics, validation | partly upstreamed already; rest upstreamable |
 | `run-card-data-audit` | run_card | local-only as written; a generic provenance hook is upstreamable |
-| `alphakeel-handoff` | api_server (one hook), RunDetail (one import, one element) | local-only (follows the leaf package) |
+| `alphakeel-handoff` | api_server (one hook), RunDetail (one import, one element), api.ts (one `export`) | local-only (follows the leaf package) |
 | `packaging-docs` | pyproject, SKILL.md, READMEs, .gitignore, .env.example | local-only |
 
 ---
@@ -387,9 +387,19 @@ export there. New files carry everything; the upstream files only get hooks.
 - `agent/tests/test_alphakeel_handoff_routes.py`
 - `frontend/src/components/run/AlphaKeelHandoff.tsx`
 - `frontend/src/pages/RunDetail.tsx`
+- `frontend/src/components/run/__tests__/AlphaKeelHandoff.test.tsx`
+- `frontend/src/lib/api.ts`
+- `frontend/src/i18n/locales/ar.json`
+- `frontend/src/i18n/locales/de.json`
+- `frontend/src/i18n/locales/en.json`
+- `frontend/src/i18n/locales/es.json`
+- `frontend/src/i18n/locales/id.json`
+- `frontend/src/i18n/locales/ja.json`
+- `frontend/src/i18n/locales/ko.json`
+- `frontend/src/i18n/locales/pt-BR.json`
+- `frontend/src/i18n/locales/zh-CN.json`
 
-**Commits.** The commit that adds this group (backend, tests and patch records); `AlphaKeelHandoff.tsx` and the two
-`RunDetail.tsx` hooks come with the frontend lane's commit, so `check_patches.py` reports them missing until both are merged.
+**Commits.** `e736638b` (backend, tests, patch records), `a0c12108` (button, `RunDetail.tsx` hooks, `api.ts` export, locales), merged in `c830d89f`.
 
 **Upstreamable.** No, local-only (the hand-off target is AlphaKeel's).
 
@@ -401,7 +411,10 @@ button is mounted in.
 - hook `agent/api_server.py`: `register_alphakeel_handoff_routes(app)`
 - upstream `frontend/src/pages/RunDetail.tsx`: `<div className="ml-auto flex flex-wrap gap-1">` — the header action group; the hand-off button is its first child
 - hook `frontend/src/pages/RunDetail.tsx`: `import { AlphaKeelHandoff } from "@/components/run/AlphaKeelHandoff";`
+- hook `frontend/src/lib/api.ts`: `export async function request<T>(` — the component reuses the authenticated request helper (one `export` keyword)
+- preimage `frontend/src/lib/api.ts`: `\nasync function request<T>(`
 - hook `frontend/src/pages/RunDetail.tsx`: `<AlphaKeelHandoff runId={runId} />`
+- hook `frontend/src/i18n/locales/<9 locales>.json`: `"needRobustness":` — the `runDetail.alphakeel` block
 
 ## `packaging-docs` — packaging and documentation
 

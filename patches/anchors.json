@@ -762,7 +762,18 @@
     "agent/api_server.py",
     "agent/tests/test_alphakeel_handoff_routes.py",
     "frontend/src/components/run/AlphaKeelHandoff.tsx",
-    "frontend/src/pages/RunDetail.tsx"
+    "frontend/src/pages/RunDetail.tsx",
+    "frontend/src/components/run/__tests__/AlphaKeelHandoff.test.tsx",
+    "frontend/src/lib/api.ts",
+    "frontend/src/i18n/locales/ar.json",
+    "frontend/src/i18n/locales/de.json",
+    "frontend/src/i18n/locales/en.json",
+    "frontend/src/i18n/locales/es.json",
+    "frontend/src/i18n/locales/id.json",
+    "frontend/src/i18n/locales/ja.json",
+    "frontend/src/i18n/locales/ko.json",
+    "frontend/src/i18n/locales/pt-BR.json",
+    "frontend/src/i18n/locales/zh-CN.json"
    ],
    "anchors": [
     {
@@ -791,6 +802,61 @@
      "file": "frontend/src/pages/RunDetail.tsx",
      "kind": "hook",
      "literal": "<AlphaKeelHandoff runId={runId} />"
+    },
+    {
+     "file": "frontend/src/lib/api.ts",
+     "kind": "hook",
+     "literal": "export async function request<T>("
+    },
+    {
+     "file": "frontend/src/lib/api.ts",
+     "kind": "preimage",
+     "literal": "\nasync function request<T>("
+    },
+    {
+     "file": "frontend/src/i18n/locales/ar.json",
+     "kind": "hook",
+     "literal": "\"needRobustness\":"
+    },
+    {
+     "file": "frontend/src/i18n/locales/de.json",
+     "kind": "hook",
+     "literal": "\"needRobustness\":"
+    },
+    {
+     "file": "frontend/src/i18n/locales/en.json",
+     "kind": "hook",
+     "literal": "\"needRobustness\":"
+    },
+    {
+     "file": "frontend/src/i18n/locales/es.json",
+     "kind": "hook",
+     "literal": "\"needRobustness\":"
+    },
+    {
+     "file": "frontend/src/i18n/locales/id.json",
+     "kind": "hook",
+     "literal": "\"needRobustness\":"
+    },
+    {
+     "file": "frontend/src/i18n/locales/ja.json",
+     "kind": "hook",
+     "literal": "\"needRobustness\":"
+    },
+    {
+     "file": "frontend/src/i18n/locales/ko.json",
+     "kind": "hook",
+     "literal": "\"needRobustness\":"
+    },
+    {
+     "file": "frontend/src/i18n/locales/pt-BR.json",
+     "kind": "hook",
+     "literal": "\"needRobustness\":"
+    },
+    {
+     "file": "frontend/src/i18n/locales/zh-CN.json",
+     "kind": "hook",
+     "literal": "\"needRobustness\":"
     }
    ]
   },
