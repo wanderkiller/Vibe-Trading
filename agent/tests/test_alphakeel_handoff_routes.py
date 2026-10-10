@@ -84,7 +84,7 @@ def test_a_non_ir_run_is_not_offered_and_cannot_be_exported(env):
     (env.runs / "run_20260101_000000" / "state.json").write_text('{"status": "success"}')
     r = env.client.get("/runs/run_20260101_000000/alphakeel")
     assert r.status_code == 200 and r.json() == {"ir": False, "strategy_id": None, "name": None, "window": None, "robustness": None,
-                                                 "precheck": [], "protocol": None, "target": None, "exported": None, "credential": False}
+                                                 "robustness_sha256": None, "precheck": [], "protocol": None, "target": None, "exported": None, "credential": False}
     r = env.client.post("/runs/run_20260101_000000/alphakeel/export")
     assert r.status_code == 409 and r.json()["detail"]["code"] == "ir.not_ir_run"
     assert env.client.get("/runs/nope/alphakeel").status_code == 404
@@ -199,3 +199,43 @@ def test_a_second_export_of_the_same_strategy_is_refused_while_the_first_runs(en
         r = env.client.post(f"/runs/{run.name}/alphakeel/export")
     assert r.status_code == 409 and r.json()["detail"]["code"] == "export.busy"
     assert env.client.post(f"/runs/{run.name}/alphakeel/export").status_code == 200
+
+
+def test_export_writes_a_manifest_listing_every_file_with_its_hash(env):
+    run = make_ir_run(env)
+    sid = env.client.get(f"/runs/{run.name}/alphakeel").json()["strategy_id"]
+    r = env.client.post(f"/runs/{run.name}/alphakeel/export")
+    assert r.status_code == 200, r.text
+    target = env.handoff / sid
+    m = json.loads((target / "handoff-manifest.json").read_text())
+    card = json.loads((run / "run_card.json").read_text())
+    assert m["schema"] == "alphakeel.handoff-manifest/1" and m["strategy_id"] == sid and m["run_id"] == card["run_id"]
+    assert isinstance(m["exported_at_ms"], int) and m["exported_at_ms"] > 0
+    on_disk = sorted(p.relative_to(target).as_posix() for p in target.rglob("*") if p.is_file() and p.name != "handoff-manifest.json")
+    assert [f["path"] for f in m["files"]] == on_disk and "strategy.json" in on_disk
+    for f in m["files"]:
+        data = (target / f["path"]).read_bytes()
+        assert f["sha256"] == hashlib.sha256(data).hexdigest() and f["bytes"] == len(data)
+    assert "handoff-manifest.json" in [f["name"] for f in r.json()["files"]]
+
+
+def test_export_refuses_when_the_robustness_changed_since_it_was_reviewed(env):
+    run = make_ir_run(env)
+    body = env.client.get(f"/runs/{run.name}/alphakeel").json()
+    sha = body["robustness_sha256"]
+    assert sha == body["robustness"]["sha256"] == hashlib.sha256((run / "robustness" / "robustness.json").read_bytes()).hexdigest()
+    r = env.client.post(f"/runs/{run.name}/alphakeel/export", json={"robustness_sha256": "0" * 64})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "export.changed" and "reopen" in r.json()["detail"]["message"]
+    assert not env.handoff.exists() or not any(env.handoff.iterdir())
+    assert env.client.post(f"/runs/{run.name}/alphakeel/export", json={"robustness_sha256": sha}).status_code == 200
+
+
+def test_export_with_a_battery_over_another_window_is_409_window_mismatch(env):
+    run = make_ir_run(env)
+    f = run / "robustness" / "robustness.json"
+    rb = json.loads(f.read_text())
+    rb["inputs"]["is_window"]["end_ms"] += 1
+    f.write_text(json.dumps(rb))
+    r = env.client.post(f"/runs/{run.name}/alphakeel/export")
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "export.window_mismatch" and "window mismatch" in r.json()["detail"]["message"]
+    assert not env.handoff.exists() or not any(env.handoff.iterdir())

@@ -1324,7 +1324,9 @@
       "grade": "评级",
       "window": "窗口",
       "exportedTo": "已导出到 {{path}}",
-      "exportFailed": "导出失败"
+      "exportFailed": "导出失败",
+      "exportChanged": "稳健性结果在你审阅之后已变化，请重新打开后再导出。",
+      "exportWindowMismatch": "稳健性检验使用的窗口与本次运行不一致，请对本次运行重新执行稳健性检验。"
     }
   },
   "compare": {

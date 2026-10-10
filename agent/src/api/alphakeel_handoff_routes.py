@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
 AuthDep = Callable[..., Awaitable[Any] | Any]
@@ -108,8 +108,8 @@ def describe(run_dir: Path) -> dict:
 
     found = ir_run(run_dir)
     if found is None:
-        return {"ir": False, "strategy_id": None, "name": None, "window": None, "robustness": None, "precheck": [], "protocol": None,
-                "target": None, "exported": None, "credential": False}
+        return {"ir": False, "strategy_id": None, "name": None, "window": None, "robustness": None, "robustness_sha256": None, "precheck": [],
+                "protocol": None, "target": None, "exported": None, "credential": False}
     card, _doc, sid = found
     protocol = precheck.load_protocol()
     rob = _robustness(run_dir, sid)
@@ -127,7 +127,7 @@ def describe(run_dir: Path) -> dict:
         exported = {k: marker.get(k) for k in ("path", "at", "strategy_id", "files")}
     w = card.get("window") or {}
     return {"ir": True, "strategy_id": sid, "name": card.get("name"), "window": {"start_day": w.get("start_day"), "end_day": w.get("end_day")},
-            "robustness": summary, "precheck": checks, "protocol": {"version": protocol["version"], "sha256": precheck.protocol_sha256()},
+            "robustness": summary, "robustness_sha256": summary["sha256"] if summary else None, "precheck": checks, "protocol": {"version": protocol["version"], "sha256": precheck.protocol_sha256()},
             "target": _target(sid), "exported": exported, "credential": credential_configured()}
 
 
@@ -153,15 +153,32 @@ def _replace_dir(tmp: Path, target: Path) -> None:
         shutil.rmtree(old, ignore_errors=True)
 
 
-def export_run(run_dir: Path) -> dict:
-    """The body of ``POST /runs/{run_id}/alphakeel/export`` (blocking). Raises ``HTTPException`` with the documented codes."""
+MANIFEST = "handoff-manifest.json"
+MANIFEST_SCHEMA = "alphakeel.handoff-manifest/1"
+
+
+def _write_manifest(tmp: Path, sid: str, run_id: Any) -> None:
+    """``handoff-manifest.json`` in ``tmp``: every other regular file with its sha256 and size, sorted by path."""
+    files = []
+    for p in sorted(tmp.rglob("*"), key=lambda q: q.relative_to(tmp).as_posix()):
+        if p.is_file() and not p.is_symlink() and p.relative_to(tmp).as_posix() != MANIFEST:
+            data = p.read_bytes()
+            files.append({"path": p.relative_to(tmp).as_posix(), "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)})
+    manifest = {"schema": MANIFEST_SCHEMA, "strategy_id": sid, "run_id": run_id,
+                "exported_at_ms": int(datetime.now(timezone.utc).timestamp() * 1000), "files": files}
+    (tmp / MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def export_run(run_dir: Path, expected_robustness_sha256: str | None = None) -> dict:
+    """The body of ``POST /runs/{run_id}/alphakeel/export`` (blocking). Raises ``HTTPException`` with the documented codes.
+    ``expected_robustness_sha256``: the hash of robustness.json the user reviewed; a different one under the lock is 409."""
     from alphakeel_research import ir_backtest
     from alphakeel_research.errors import ApiError
 
     found = ir_run(run_dir)
     if found is None:
         raise _err(409, "ir.not_ir_run", "this run is not an `ir backtest` run (no IR run card / ir.json)")
-    _card, doc, sid = found
+    card, doc, sid = found
     rb_file = run_dir / "robustness" / "robustness.json"
     if not rb_file.is_file():
         raise _err(409, "robustness.missing", "no robustness.json in this run: run `ir robustness --run` first")
@@ -189,13 +206,18 @@ def export_run(run_dir: Path) -> dict:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise _err(409, "export.busy", f"another export of {sid} is running") from None
+        if expected_robustness_sha256 is not None and expected_robustness_sha256 != _sha256(rb_file):
+            raise _err(409, "export.changed", "robustness changed since you reviewed it; reopen")
         target = root / sid
         tmp = Path(tempfile.mkdtemp(prefix=f".{sid}.tmp-", dir=root))
         try:
             try:
                 ir_backtest.export(doc, run_dir, tmp, research_credential=cred, robustness_dir=run_dir / "robustness")
+            except ir_backtest.WindowMismatch as e:
+                raise _err(409, "export.window_mismatch", e.message) from e
             except ApiError as e:
                 raise _err(400, e.code, e.message) from e
+            _write_manifest(tmp, sid, card.get("run_id"))
             os.chmod(tmp, 0o2775)  # mkdtemp is 0700; the console on the host reads the package (group of the shared directory)
             files = _files_of(tmp)
             _replace_dir(tmp, target)
@@ -234,6 +256,18 @@ def register_alphakeel_handoff_routes(app: FastAPI, require_auth: AuthDep | None
         return await run_in_threadpool(describe, _run_dir(run_id))
 
     @app.post("/runs/{run_id}/alphakeel/export", dependencies=[Depends(require_auth)])
-    async def export_run_alphakeel(run_id: str):
-        """Export the IR run (strategy, evidence incl. robustness) to the hand-off directory. Idempotent overwrite."""
-        return await run_in_threadpool(export_run, _run_dir(run_id))
+    async def export_run_alphakeel(run_id: str, request: Request):
+        """Export the IR run (strategy, evidence incl. robustness) to the hand-off directory. Idempotent overwrite.
+        Optional JSON body ``{"robustness_sha256": hex}``: the robustness the user reviewed (409 export.changed if it differs)."""
+        raw = await request.body()
+        sha = None
+        if raw.strip():
+            try:
+                body = json.loads(raw)
+            except ValueError:
+                raise _err(400, "request.invalid", "the body must be JSON") from None
+            if not isinstance(body, dict) or not (body.get("robustness_sha256") is None or isinstance(body.get("robustness_sha256"), str)):
+                raise _err(400, "request.invalid", "robustness_sha256 must be a string")
+            sha = body.get("robustness_sha256")
+        d = _run_dir(run_id)
+        return await run_in_threadpool(export_run, d, sha)

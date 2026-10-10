@@ -1324,7 +1324,9 @@
       "grade": "グレード",
       "window": "期間",
       "exportedTo": "{{path}} にエクスポートしました",
-      "exportFailed": "エクスポートに失敗しました"
+      "exportFailed": "エクスポートに失敗しました",
+      "exportChanged": "レビュー後にロバストネス結果が変更されました。ダイアログを開き直してください。",
+      "exportWindowMismatch": "ロバストネス検証がこの実行と異なる期間で実施されています。この実行に対して再実行してください。"
     }
   },
   "compare": {

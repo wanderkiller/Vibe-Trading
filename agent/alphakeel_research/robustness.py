@@ -813,6 +813,8 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     var_sharpe = [x for x in (M.sharpe(r) for r in var_ret.values()) if x is not None]
     ak = M.alphakeel_metrics(b_ret, trials=n_trials, variant_sharpes=var_sharpe)
     dsr_in = M.dsr_inputs(b_ret, n_trials, var_sharpe)
+    if dsr_in is not None:  # the exact series the statistics came from: AlphaKeel recomputes them from it
+        dsr_in = {**dsr_in, "daily_returns": [r for r in b_ret]}
     pbo, s_blocks = None, min(PBO_MAX_BLOCKS, 2 * (len(b_ret) // 10))
     if len(var_ret) >= 4 and s_blocks >= 4:
         pbo = M.pbo_cscv(list(var_ret.values()), s_blocks)

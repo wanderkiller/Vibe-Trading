@@ -1329,7 +1329,9 @@
       "grade": "Nota",
       "window": "Janela",
       "exportedTo": "Exportado para {{path}}",
-      "exportFailed": "Falha ao exportar"
+      "exportFailed": "Falha ao exportar",
+      "exportChanged": "A robustez mudou desde que você a revisou; reabra a janela.",
+      "exportWindowMismatch": "A bateria de robustez foi executada em uma janela diferente desta execução; execute-a novamente nesta execução."
     }
   },
   "compare": {

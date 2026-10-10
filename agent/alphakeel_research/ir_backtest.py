@@ -942,6 +942,36 @@ ROBUSTNESS_SCHEMA = "vibe-trading.ir-robustness/2"
 EVIDENCE_ROBUSTNESS = ("robustness.json", "robustness.md", "robustness-trials.jsonl")
 
 
+class WindowMismatch(ApiError):
+    """The robustness battery was not run over the run card's window (or its OOS window is not after it)."""
+
+    def __init__(self, message: str):
+        super().__init__("request.invalid", message, field="robustness")
+
+
+def _robustness_windows(doc: dict, card: dict) -> dict:
+    """``{"is": {start_ms,end_ms}, "oos": {start_ms,end_ms}|None}`` of the battery, after checking it against the run card:
+    the IS window must be exactly the card's window; an OOS window must start at or after the card's window end."""
+    inputs = doc.get("inputs") if isinstance(doc.get("inputs"), dict) else {}
+    cw = card["window"]
+    isw = inputs.get("is_window")
+    if not (isinstance(isw, dict) and type(isw.get("start_ms")) is int and type(isw.get("end_ms")) is int):
+        raise WindowMismatch("robustness.json has no inputs.is_window {start_ms,end_ms}: re-run `ir robustness`")
+    if (isw["start_ms"], isw["end_ms"]) != (cw["start_ms"], cw["end_ms"]):
+        raise WindowMismatch(f"window mismatch: the robustness battery ran over IS window {isw['start_ms']}..{isw['end_ms']} ms but the "
+                             f"run card's window is {cw['start_ms']}..{cw['end_ms']} ms; re-run `ir robustness --run` on this run")
+    oos = inputs.get("oos_window")
+    oos_out = None
+    if oos is not None:
+        if not (isinstance(oos, dict) and type(oos.get("start_ms")) is int and type(oos.get("end_ms")) is int):
+            raise WindowMismatch("robustness.json inputs.oos_window is not {start_ms,end_ms}")
+        if oos["start_ms"] < cw["end_ms"]:
+            raise WindowMismatch(f"window mismatch: the OOS window starts {oos['start_ms']} ms, before the run window ends "
+                                 f"({cw['end_ms']} ms): it is not out of sample")
+        oos_out = {"start_ms": oos["start_ms"], "end_ms": oos["end_ms"]}
+    return {"is": {"start_ms": isw["start_ms"], "end_ms": isw["end_ms"]}, "oos": oos_out}
+
+
 def _robustness_evidence(rd: Path, robustness_dir: str | Path | None, sid: str) -> tuple[Path, dict] | None:
     """(directory, parsed robustness.json) of the battery for ``sid``, or None when there is none. An explicitly given
     directory must hold a robustness.json; the default ``<run>/robustness`` is optional."""
@@ -994,6 +1024,7 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
     if not src.is_file() or hashlib.sha256(src.read_bytes()).hexdigest() != tri.get("sha256"):
         raise ApiError("request.invalid", f"the trials evidence {src} is missing or differs from the run card", field="trials")
     rob = _robustness_evidence(rd, robustness_dir, sid)
+    rob_windows = _robustness_windows(rob[1], card) if rob is not None else None
     out = Path(out_dir)
     (out / "evidence").mkdir(parents=True, exist_ok=True)
     for n in EVIDENCE_ROBUSTNESS:  # an earlier export into this directory must not leave stale evidence behind
@@ -1003,7 +1034,9 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
     window = {"start": card["window"]["start_day"], "end": card["window"]["end_day"]}
     handoff.check_window(window)
     handoff.check_trials(out, tri["count"], ev_rel)
-    horizon = handoff.check_research_credential(research_credential, window["end"])
+    # the research used the IS window and the OOS window: the credential's data horizon is checked against the later end
+    research_end_ms = max(card["window"]["end_ms"], (rob_windows["oos"] or {}).get("end_ms", 0)) if rob_windows else card["window"]["end_ms"]
+    horizon = handoff.check_research_credential(research_credential, utc_day(research_end_ms - 1))
     audit = handoff.audit_of(card, research_credential)
     prov: dict[str, Any] = {
         "tool": "vibe-trading", "run_id": card["run_id"], "window": window,
@@ -1028,6 +1061,7 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
         shutil.copyfile(rdir / "trials.jsonl", out / "evidence" / "robustness-trials.jsonl")
         prov["robustness"] = {"file": "evidence/robustness.json", "schema": rdoc["schema"], "grade": rdoc["rating"]["grade"],
                               "sha256": hashlib.sha256((out / "evidence" / "robustness.json").read_bytes()).hexdigest()}
+        prov["robustness_windows"] = rob_windows
     else:
         warnings.append("no robustness evidence: run `ir robustness --run DIR` first; without it AlphaKeel's G1 precheck fails every "
                         "research-side item (provenance.robustness is null)")

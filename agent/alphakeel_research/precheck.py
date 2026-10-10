@@ -60,9 +60,18 @@ def _get(doc: Any, *path: str) -> Any:
     return cur
 
 
-def _dec(x: Any) -> Decimal | None:
-    """A decimal from a string / int / float (via ``str``); None for anything else (bool, None, junk)."""
+def _dec(x: Any, kind: str = "any") -> Decimal | None:
+    """A decimal from a JSON value of the given ``kind`` -- AlphaKeel's verdict is strict on JSON types and so is this:
+    ``"str"`` a decimal string (money, written by the battery as a string), ``"num"`` a JSON number (int or float, never a
+    bool or a string), ``"int"`` a JSON integer (never a bool or a float), ``"any"`` any of those (legacy callers).
+    None for anything else (and for junk / non-finite values)."""
     if x is None or isinstance(x, bool):
+        return None
+    if kind == "str" and not isinstance(x, str):
+        return None
+    if kind == "num" and not isinstance(x, (int, float)):
+        return None
+    if kind == "int" and not isinstance(x, int):
         return None
     try:
         v = Decimal(str(x))
@@ -75,31 +84,36 @@ def _res(ok: bool | None, observed: Any, note: str | None = None) -> tuple[str, 
     return ("PASS" if ok else "FAIL"), observed, note
 
 
-def _need(doc: Any, *path: str) -> tuple[Decimal | None, str | None]:
+_KIND_WORDS = {"str": "a decimal string", "num": "a JSON number", "int": "a JSON integer"}
+
+
+def _need(doc: Any, *path: str, kind: str = "any") -> tuple[Decimal | None, str | None]:
     v = _get(doc, *path)
     where = ".".join(path)
     if v is _MISSING or v is None:
         return None, f"{where} missing"
-    d = _dec(v)
-    return d, None if d is not None else f"{where} is not a number"
+    d = _dec(v, kind)
+    if d is not None:
+        return d, None
+    return None, f"{where} has the wrong JSON type (type: must be {_KIND_WORDS.get(kind, 'a number')})" if kind != "any" else f"{where} is not a number"
 
 
 def _show(d: Decimal | None) -> str | None:
     return None if d is None else format(d.normalize(), "f")
 
 
-def _ge(doc, path, thr, observed_fmt=_show):
-    d, note = _need(doc, *path)
+def _ge(doc, path, thr, kind="any", observed_fmt=_show):
+    d, note = _need(doc, *path, kind=kind)
     return ("FAIL", None, note) if d is None else _res(d >= Decimal(thr), observed_fmt(d))
 
 
-def _gt(doc, path, thr):
-    d, note = _need(doc, *path)
+def _gt(doc, path, thr, kind="any"):
+    d, note = _need(doc, *path, kind=kind)
     return ("FAIL", None, note) if d is None else _res(d > Decimal(thr), _show(d))
 
 
-def _le(doc, path, thr):
-    d, note = _need(doc, *path)
+def _le(doc, path, thr, kind="any"):
+    d, note = _need(doc, *path, kind=kind)
     return ("FAIL", None, note) if d is None else _res(d <= Decimal(thr), _show(d))
 
 
@@ -114,8 +128,12 @@ def _dsr(rb: dict, t: dict, other: int):
         reported = _get(rb, "statistics", "alphakeel_metrics", "dsr")
         if reported is _MISSING or reported is None:
             return "FAIL", None, "statistics.alphakeel_metrics.dsr missing"
-        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in (s, g3, g4, te, var, trials, reported)) or trials < 1:
-            return "FAIL", None, "statistics.dsr_inputs is malformed"
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in (s, g3, g4, te, var, reported)):
+            return "FAIL", None, "statistics.dsr_inputs has the wrong JSON type (type: every statistic must be a JSON number)"
+        if isinstance(trials, bool) or not isinstance(trials, int):
+            return "FAIL", None, "statistics.dsr_inputs.trials has the wrong JSON type (type: must be a JSON integer)"
+        if trials < 1:
+            return "FAIL", None, "statistics.dsr_inputs.trials must be >= 1"
         own = M.psr(s, M.sr0(var, int(trials)), te, g3, g4)
     except (KeyError, TypeError, ValueError, ZeroDivisionError):
         return "FAIL", None, "statistics.dsr_inputs is malformed"
@@ -130,11 +148,13 @@ def _dsr(rb: dict, t: dict, other: int):
 
 def _pbo(rb: dict, t: dict):
     variants = _get(rb, "statistics", "pbo", "variants")
-    if variants is _MISSING or isinstance(variants, bool) or not isinstance(variants, int):
+    if variants is _MISSING or variants is None:
         return "FAIL", None, "statistics.pbo.variants missing"
+    if isinstance(variants, bool) or not isinstance(variants, int):
+        return "FAIL", None, "statistics.pbo.variants has the wrong JSON type (type: must be a JSON integer)"
     if variants < int(t["applies_min_variants"]):
         return "N/A", None, f"{variants} variants < {t['applies_min_variants']}: PBO is not applicable"
-    return _le(rb, ("statistics", "pbo", "value"), t["max_pbo"])
+    return _le(rb, ("statistics", "pbo", "value"), t["max_pbo"], "num")
 
 
 def _neighbours(rb: dict, t: dict):
@@ -143,7 +163,10 @@ def _neighbours(rb: dict, t: dict):
         return "FAIL", None, "parameters.neighbours missing"
     if len(nb) < int(t["min_neighbours"]):
         return "FAIL", len(nb), f"fewer than {t['min_neighbours']} parameter neighbours"
-    nets = [_dec(x.get("net")) if isinstance(x, dict) else None for x in nb]
+    raw = [x.get("net") if isinstance(x, dict) else None for x in nb]
+    if any(r is not None and not isinstance(r, str) for r in raw):
+        return "FAIL", None, "a parameter neighbour net has the wrong JSON type (type: must be a decimal string)"
+    nets = [_dec(r, "str") for r in raw]
     if any(n is None for n in nets):
         return "FAIL", None, "a parameter neighbour has no net"
     bad = sum(1 for n in nets if not n > Decimal(t["every_net_gt"]))
@@ -161,12 +184,19 @@ def _walk_forward(rb: dict, t: dict):
     days, nets = [], []
     for f in folds:
         d = _get(f, "test", "days")
-        n = _dec(_get(f, "test_net"))
-        if d is _MISSING or isinstance(d, bool) or not isinstance(d, int) or n is None:
+        tn = _get(f, "test_net")
+        if (d is not _MISSING and d is not None and (isinstance(d, bool) or not isinstance(d, int))) or \
+                (tn is not _MISSING and tn is not None and not isinstance(tn, str)):
+            return "FAIL", None, "a walk-forward fold has the wrong JSON type (type: test.days must be a JSON integer, test_net a decimal string)"
+        n = _dec(None if tn is _MISSING else tn, "str")
+        if d is _MISSING or d is None or n is None:
             return "FAIL", None, "a walk-forward fold has no test days / test net"
         days.append(d)
         nets.append(n)
-    eff = _dec(wf.get("efficiency"))
+    raw_eff = wf.get("efficiency")
+    if raw_eff is not None and not isinstance(raw_eff, str):
+        return "FAIL", None, "walk_forward.efficiency has the wrong JSON type (type: must be a decimal string or null)"
+    eff = _dec(raw_eff, "str")
     positive = sum(1 for n in nets if n > 0)
     num, den = t["min_positive_folds"]["num"], t["min_positive_folds"]["den"]
     obs = f"{positive} of {len(folds)} folds positive, efficiency {_show(eff) if eff is not None else 'n/a'}"
@@ -185,12 +215,14 @@ def _filter(rb: dict, t: dict):
     tested = _get(rb, "rating", "facts", "filter_tested")
     if tested is _MISSING:
         return "FAIL", None, "rating.facts.filter_tested missing"
+    if tested is None or not isinstance(tested, bool):
+        return "FAIL", None, "rating.facts.filter_tested has the wrong JSON type (type: must be a boolean, not null)"
     if tested is not True:
         return "N/A", None, "no filter under test in the IR"
     p = _get(rb, "rating", "facts", "filter_p")
     if p is _MISSING or p is None:
         return "FAIL", None, "the filter is in the IR but has no permutation p-value"
-    return _le(rb, ("rating", "facts", "filter_p"), t["max_p"])
+    return _le(rb, ("rating", "facts", "filter_p"), t["max_p"], "str")
 
 
 def _grade(rb: dict, t: dict):
@@ -211,27 +243,27 @@ def _item(rb: dict, item: dict, other: int) -> tuple[str, Any, str | None]:
     i, t = item["id"], item["threshold"]
     facts = ("rating", "facts")
     if i == "1.1":
-        return _ge(rb, (*facts, "days"), t["min_days"])
+        return _ge(rb, (*facts, "days"), t["min_days"], "int")
     if i == "1.2":
-        return _ge(rb, (*facts, "trades_closed"), t["min_trades"])
+        return _ge(rb, (*facts, "trades_closed"), t["min_trades"], "int")
     if i == "1.3":
-        return _gt(rb, (*facts, "base_net"), t["net_gt"])
+        return _gt(rb, (*facts, "base_net"), t["net_gt"], "str")
     if i == "1.4":
-        return _gt(rb, ("cost_stress", "1.5", "net"), t["net_gt"])
+        return _gt(rb, ("cost_stress", "1.5", "net"), t["net_gt"], "str")
     if i == "1.5":
         if _get(rb, "cost_stress", "basis_stress_x2") is _MISSING:
             return "FAIL", None, "basis stress x2 was not run (basis_stress 0 or too large)"
-        return _gt(rb, ("cost_stress", "basis_stress_x2", "net"), t["net_gt"])
+        return _gt(rb, ("cost_stress", "basis_stress_x2", "net"), t["net_gt"], "str")
     if i == "1.6":
         return _dsr(rb, t, other)
     if i == "1.7":
         return _pbo(rb, t)
     if i == "1.8":
-        return _gt(rb, ("statistics", "bootstrap", "ci_lower"), t["lower_gt"])
+        return _gt(rb, ("statistics", "bootstrap", "ci_lower"), t["lower_gt"], "num")
     if i == "1.9":
         return _neighbours(rb, t)
     if i == "1.10":
-        return _le(rb, ("statistics", "concentration", "top_coin_share"), t["max_share"])
+        return _le(rb, ("statistics", "concentration", "top_coin_share"), t["max_share"], "str")
     if i == "1.11":
         return _walk_forward(rb, t)
     if i == "1.12":

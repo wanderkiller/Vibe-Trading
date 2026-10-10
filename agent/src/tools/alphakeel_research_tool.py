@@ -51,7 +51,18 @@ def _instruments_file(v: Any, prefix: str = "ak-instruments-") -> str:
     return str(v)
 
 
+#: path-valued arguments a command writes under (``out``; ``run``: ``ir robustness`` writes DIR/robustness; ``robustness``: the
+#: battery directory an export copies from / a re-run writes to). None of them may point into the hand-off directory.
+_PATH_KEYS = ("out", "robustness", "run")
+
+
 def _argv(action: str, a: dict[str, Any]) -> list[str]:
+    for k in _PATH_KEYS:
+        v = a.get(k)
+        if isinstance(v, (str, os.PathLike)) and str(v) != "" and _under_handoff(str(v)):
+            raise ValueError(f"{action}: {k} points into AlphaKeel's hand-off directory, which is not an agent action. Hand-off is the "
+                             "user's decision: the user presses 'Hand off to AlphaKeel' on the run page (docs/45 section 7). Use another "
+                             "directory, or tell the user the run is ready for review.")
     out: list[str] = action.split("_", 1) if action.startswith("ir_") else [action]
 
     def add(flag: str, key: str, required: bool = False) -> None:

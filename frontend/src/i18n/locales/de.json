@@ -1329,7 +1329,9 @@
       "grade": "Bewertung",
       "window": "Zeitraum",
       "exportedTo": "Exportiert nach {{path}}",
-      "exportFailed": "Export fehlgeschlagen"
+      "exportFailed": "Export fehlgeschlagen",
+      "exportChanged": "Die Robustheitsprüfung hat sich seit Ihrer Durchsicht geändert; Dialog erneut öffnen.",
+      "exportWindowMismatch": "Die Robustheitsprüfung lief über ein anderes Fenster als dieser Lauf; bitte für diesen Lauf erneut ausführen."
     }
   },
   "compare": {

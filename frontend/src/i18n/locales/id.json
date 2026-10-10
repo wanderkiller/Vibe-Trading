@@ -1329,7 +1329,9 @@
       "grade": "Peringkat",
       "window": "Jendela",
       "exportedTo": "Diekspor ke {{path}}",
-      "exportFailed": "Ekspor gagal"
+      "exportFailed": "Ekspor gagal",
+      "exportChanged": "Hasil robustness berubah sejak Anda meninjaunya; buka kembali dialog.",
+      "exportWindowMismatch": "Uji robustness dijalankan pada jendela yang berbeda dari run ini; jalankan ulang untuk run ini."
     }
   },
   "compare": {

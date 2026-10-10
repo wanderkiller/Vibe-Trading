@@ -94,3 +94,54 @@ def test_walk_forward_result_of_a_real_battery_feeds_item_1_11(tmp_path):
     assert i["trials"] == doc["trials"]["count"] and got["1.6"]["note"].startswith(f"trials {i['trials']} + 0")
     again = {g["id"]: g for g in precheck.evaluate(doc, precheck.load_protocol(), 40)}
     assert again["1.6"]["observed"] <= got["1.6"]["observed"] if got["1.6"]["observed"] is not None else True
+
+
+def _mutate(path, value, *, filter_on=False):
+    rb = copy.deepcopy(VECTOR["cases"][0]["robustness"])
+    f = rb["rating"]["facts"]
+    if filter_on:
+        f["filter_tested"], f["filter_p"] = True, "0.01"
+    cur = rb
+    for k in path[:-1]:
+        cur = cur[k]
+    cur[path[-1]] = value
+    return rb
+
+
+WRONG_TYPES = [  # (item, path, wrong value, needs a filter under test)
+    ("1.1", ("rating", "facts", "days"), 120.0, False), ("1.1", ("rating", "facts", "days"), True, False), ("1.1", ("rating", "facts", "days"), "120", False),
+    ("1.2", ("rating", "facts", "trades_closed"), 45.0, False), ("1.2", ("rating", "facts", "trades_closed"), "45", False),
+    ("1.3", ("rating", "facts", "base_net"), 152.3, False), ("1.3", ("rating", "facts", "base_net"), True, False),
+    ("1.4", ("cost_stress", "1.5", "net"), 98.1, False), ("1.5", ("cost_stress", "basis_stress_x2", "net"), 120, False),
+    ("1.6", ("statistics", "dsr_inputs", "trials"), 7.0, False), ("1.6", ("statistics", "dsr_inputs", "trials"), True, False),
+    ("1.6", ("statistics", "dsr_inputs", "trials"), "7", False), ("1.6", ("statistics", "dsr_inputs", "trials"), 0, False),
+    ("1.6", ("statistics", "dsr_inputs", "sharpe_daily"), "0.3", False), ("1.6", ("statistics", "alphakeel_metrics", "dsr"), "0.9585088157772101", False),
+    ("1.7", ("statistics", "pbo", "variants"), 9.0, False), ("1.7", ("statistics", "pbo", "value"), "0.1", False),
+    ("1.7", ("statistics", "pbo", "value"), False, False),
+    ("1.8", ("statistics", "bootstrap", "ci_lower"), "0.0004", False), ("1.8", ("statistics", "bootstrap", "ci_lower"), True, False),
+    ("1.9", ("parameters", "neighbours"), [{"net": 50}, {"net": "12.5"}], False),
+    ("1.10", ("statistics", "concentration", "top_coin_share"), 0.31, False),
+    ("1.11", ("walk_forward", "efficiency"), 0.62, False),
+    ("1.11", ("walk_forward", "folds"), [{"k": 1, "test": {"days": 30.0}, "test_net": "10"}] * 3, False),
+    ("1.11", ("walk_forward", "folds"), [{"k": 1, "test": {"days": 30}, "test_net": 10}] * 3, False),
+    ("1.12", ("rating", "facts", "filter_tested"), None, False),
+    ("1.12", ("rating", "facts", "filter_p"), 0.01, True),
+]
+
+
+@pytest.mark.parametrize("item,path,value,filter_on", WRONG_TYPES, ids=[f"{i}-{'.'.join(p)}-{v!r}"[:70] for i, p, v, _ in WRONG_TYPES])
+def test_wrong_json_types_fail(item, path, value, filter_on):
+    p = precheck.load_protocol()
+    ok = {g["id"]: g for g in precheck.evaluate(_mutate(path, _mutate_value(path, filter_on), filter_on=filter_on), p)}
+    assert ok[item]["result"] == ("N/A" if path[-1] == "filter_tested" else "PASS"), ok[item]  # the right type passes: only the type is under test
+    got = {g["id"]: g for g in precheck.evaluate(_mutate(path, value, filter_on=filter_on), p)}
+    assert got[item]["result"] == "FAIL" and got[item]["note"], got[item]
+    if not (item == "1.6" and path[-1] == "trials" and value == 0):
+        assert "type" in got[item]["note"]
+
+
+def _mutate_value(path, filter_on):
+    cur = VECTOR["cases"][0]["robustness"]
+    for k in path:
+        cur = cur[k]
+    return "0.01" if filter_on and path[-1] == "filter_p" else cur
