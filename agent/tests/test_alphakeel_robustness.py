@@ -362,6 +362,11 @@ def test_dsr_inputs_reproduce_dsr_exactly():
     vs = [0.05, 0.12, -0.03, 0.2]
     i = M.dsr_inputs(x, 9, vs)
     assert set(i) == {"sharpe_daily", "skewness", "kurtosis_non_excess", "effective_days", "var_sr_used", "trials"} and i["trials"] == 9
+    # the battery publishes the series itself (JSON round trip): sharpe / skew / kurtosis recompute from it with the same functions
+    pub = json.loads(json.dumps({**i, "daily_returns": [r for r in x]}))
+    assert pub["daily_returns"] == x and M.sharpe(pub["daily_returns"]) == i["sharpe_daily"]
+    assert M.moments(pub["daily_returns"]) == (i["skewness"], i["kurtosis_non_excess"])
+    assert M.effective_sample_size(pub["daily_returns"]) == i["effective_days"]
     assert M.psr(i["sharpe_daily"], M.sr0(i["var_sr_used"], 9), i["effective_days"], i["skewness"], i["kurtosis_non_excess"]) == M.dsr(x, 9, vs)
     assert i["var_sr_used"] >= M.statistics.variance(vs) and M.dsr_inputs([0.0] * 10, 3) is None and M.dsr([0.0] * 10, 3) is None
 
@@ -407,16 +412,19 @@ def test_walk_forward_battery_vector_fixed_seed(tmp_path):
     tn = sum(Decimal(f["test_net"]) for f in wf["folds"])
     rn = sum(Decimal(f["selected"]["train_net"]) for f in wf["folds"])
     assert wf["positive_folds"] == sum(1 for f in wf["folds"] if Decimal(f["test_net"]) > 0)
-    if rn > 0:
-        assert wf["efficiency"] == ir.fmt(ir_backtest.q8((tn / 2) / (rn / 5)))
-    else:
-        assert wf["efficiency"] is None
+    # the fixture is a losing one: every fold's training net and test net are negative, so there is no efficiency (rn <= 0)
+    assert rn < 0 and tn < 0 and wf["efficiency"] is None and wf["positive_folds"] == 0
+    assert [f["test_net"] for f in wf["folds"]] == ["-29.07568689476741", "-29.74226251601734"]
+    assert [(f["selected"]["parameters"], f["selected"]["train_net"]) for f in wf["folds"]] == [
+        ({"hold": "2"}, "-56.36477881531186"), ({"hold": "2"}, "-80.68876955046182")]
     facts = doc["rating"]["facts"]
     assert (facts["walk_forward_computable"], facts["walk_forward_folds"], facts["walk_forward_efficiency"]) == (True, 2, wf["efficiency"])
     # the training grids are runs in trials.jsonl but never DSR candidates
     trials = [json.loads(x) for x in (out / "trials.jsonl").read_text().splitlines()]
     w = [t for t in trials if t["role"] == "walk_forward"]
     assert len(w) == 6 and not any(t["counted_trial"] for t in w) and doc["trials"]["walk_forward_runs_not_counted"] == 6
+    di = doc["statistics"]["dsr_inputs"]
+    assert M.sharpe(di["daily_returns"]) == di["sharpe_daily"] and M.moments(di["daily_returns"]) == (di["skewness"], di["kurtosis_non_excess"])
     assert doc["trials"]["count"] == 3 and doc["trials"]["count"] == doc["statistics"]["dsr_inputs"]["trials"]  # base, basis-x2, param-hold-hi
     # dsr_inputs reproduce the reported DSR; the walk-forward table is rendered
     i = doc["statistics"]["dsr_inputs"]
