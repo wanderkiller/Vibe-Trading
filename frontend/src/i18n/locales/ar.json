@@ -1308,7 +1308,24 @@
     "attrCumulativeTitle": "العوائد التراكمية",
     "attrLoading": "جارٍ تحميل الإسناد…",
     "attrError": "فشل تحميل الإسناد.",
-    "attrNoData": "لا تتوفر بيانات إسناد لهذا التشغيل."
+    "attrNoData": "لا تتوفر بيانات إسناد لهذا التشغيل.",
+    "alphakeel": {
+      "button": "تسليم إلى AlphaKeel",
+      "exported": "تم التسليم",
+      "needRobustness": "شغّل ir robustness أولاً",
+      "needCredential": "لم يتم إعداد بيانات اعتماد البحث",
+      "confirmTitle": "التسليم إلى AlphaKeel؟",
+      "confirm": "تصدير",
+      "cancel": "إلغاء",
+      "notVerdict": "هذا يصدّر الملفات فقط؛ يحسب AlphaKeel الحكم بعد الاستيراد.",
+      "reexportNote": "تم التصدير سابقاً؛ إعادة التصدير تستبدل الملفات بشكل متماثل.",
+      "precheckTitle": "الفحوصات المسبقة",
+      "target": "مسار الوجهة",
+      "grade": "الدرجة",
+      "window": "النافذة",
+      "exportedTo": "تم التصدير إلى {{path}}",
+      "exportFailed": "فشل التصدير"
+    }
   },
   "compare": {
     "title": "مقارنة الاستراتيجيات",

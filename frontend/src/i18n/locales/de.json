@@ -1313,7 +1313,24 @@
     "attrCumulativeTitle": "Kumulierte Renditen",
     "attrLoading": "Attribution wird geladen…",
     "attrError": "Attribution konnte nicht geladen werden.",
-    "attrNoData": "Für diesen Durchlauf sind keine Attributionsdaten verfügbar."
+    "attrNoData": "Für diesen Durchlauf sind keine Attributionsdaten verfügbar.",
+    "alphakeel": {
+      "button": "An AlphaKeel übergeben",
+      "exported": "Übergeben",
+      "needRobustness": "Zuerst ir robustness ausführen",
+      "needCredential": "Forschungs-Zugangsdaten nicht konfiguriert",
+      "confirmTitle": "An AlphaKeel übergeben?",
+      "confirm": "Exportieren",
+      "cancel": "Abbrechen",
+      "notVerdict": "Dies exportiert nur die Dateien; AlphaKeel berechnet das Urteil nach dem Import.",
+      "reexportNote": "Bereits exportiert; ein erneuter Export überschreibt die Dateien idempotent.",
+      "precheckTitle": "Vorabprüfungen",
+      "target": "Zielpfad",
+      "grade": "Bewertung",
+      "window": "Zeitraum",
+      "exportedTo": "Exportiert nach {{path}}",
+      "exportFailed": "Export fehlgeschlagen"
+    }
   },
   "compare": {
     "title": "Strategievergleich",
