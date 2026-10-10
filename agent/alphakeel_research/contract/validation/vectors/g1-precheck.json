@@ -1,0 +1,739 @@
+{
+ "schema": "alphakeel.validation-vectors/1",
+ "protocol": "validation/protocol.json",
+ "rule": "each case: evaluate the research-side G1 items of the protocol on `robustness` with `other_registered_candidates` added to the DSR trial count; results must equal `expected` exactly (PASS | FAIL | N/A)",
+ "cases": [
+  {
+   "name": "all_pass",
+   "why": "every research-side item passes; no filter under test -> 1.12 not applicable",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": false,
+      "filter_p": null
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "PASS",
+    "1.5": "PASS",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "N/A",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   }
+  },
+  {
+   "name": "boundaries",
+   "why": "inclusive bounds pass (30 trades, PBO 0.20 with 8 variants, share 0.50, p 0.05); strict bounds fail at equality (net 0, CI lower 0); a missing basis stress, missing dsr_inputs, no neighbours, a 29-day fold fail",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "C",
+     "facts": {
+      "days": 89,
+      "trades_closed": 30,
+      "base_net": "0",
+      "coverage_partial": true,
+      "filter_tested": true,
+      "filter_p": "0.05"
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "0.00000001"
+     },
+     "2": {
+      "net": "40.2"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "pbo": {
+      "value": 0.2,
+      "variants": 8
+     },
+     "bootstrap": {
+      "ci_lower": 0.0
+     },
+     "concentration": {
+      "top_coin_share": "0.5"
+     }
+    },
+    "parameters": {
+     "neighbours": []
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 29
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    }
+   },
+   "expected": {
+    "1.1": "FAIL",
+    "1.2": "PASS",
+    "1.3": "FAIL",
+    "1.4": "PASS",
+    "1.5": "FAIL",
+    "1.6": "FAIL",
+    "1.7": "PASS",
+    "1.8": "FAIL",
+    "1.9": "FAIL",
+    "1.10": "PASS",
+    "1.11": "FAIL",
+    "1.12": "PASS",
+    "1.13": "FAIL",
+    "1.16": "FAIL"
+   }
+  },
+  {
+   "name": "not_applicable_and_missing",
+   "why": "PBO with 7 variants is not applicable; a filter under test without a p-value fails; walk-forward not computable fails; one negative neighbour fails; a null top-coin share fails; DSR with 7 + 23 trials = 0.852 fails",
+   "other_registered_candidates": 23,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": true,
+      "filter_p": null
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7
+     },
+     "pbo": {
+      "value": null,
+      "variants": 7
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": null
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "-0.01"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": false,
+     "reason": "IS window too short for 3 folds of 30 days"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "PASS",
+    "1.5": "PASS",
+    "1.6": "FAIL",
+    "1.7": "N/A",
+    "1.8": "PASS",
+    "1.9": "FAIL",
+    "1.10": "FAIL",
+    "1.11": "FAIL",
+    "1.12": "FAIL",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   }
+  },
+  {
+   "name": "dsr_inconsistent",
+   "why": "the reported DSR differs from the one recomputed from dsr_inputs with the battery's own trial count by more than 1e-6: the inputs are not trusted",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": false,
+      "filter_p": null
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.97
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "PASS",
+    "1.5": "PASS",
+    "1.6": "FAIL",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "N/A",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   }
+  },
+  {
+   "name": "walk_forward_one_of_three",
+   "why": "only 1 of 3 folds positive (a zero net is not positive) fails even with efficiency exactly 0.5",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": false,
+      "filter_p": null
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "0"
+      }
+     ],
+     "efficiency": "0.5"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "PASS",
+    "1.5": "PASS",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "FAIL",
+    "1.12": "N/A",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   }
+  },
+  {
+   "name": "walk_forward_efficiency_boundary",
+   "why": "2 of 3 positive folds and efficiency exactly 0.5 pass",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": false,
+      "filter_p": null
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.5"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "PASS",
+    "1.5": "PASS",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "N/A",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   }
+  },
+  {
+   "name": "grade_a",
+   "why": "A is better than B",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "A",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": false,
+      "filter_p": null
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "PASS",
+    "1.5": "PASS",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "N/A",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   }
+  }
+ ]
+}

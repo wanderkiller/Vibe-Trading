@@ -299,7 +299,7 @@ Decision { exits: [{position_id, reason}],
 - **Rust**：`crates/strategy-ir`（包 `alphakeel-strategy-ir`，lib `strategy_ir`；层序在 `core` 与 `store` 之间，
   只依赖 `alphakeel-util` 与 `alphakeel-screener`）。`ir`（类型、`Ir::parse`、`validate`、`strategy_id`）、`features`
   （`LegView`/`PairView`/`Features`、`compute`，经济学直接调用 `screener::score::{funding_over, economics, ratios}`）、
-  `decide`（`PositionView`、`State`、`Frame`、`decide`）。全部纯函数。`tests/vectors.rs` 逐项比对三个向量文件。
+  `decide`（`PositionView`、`State`、`Frame`、`decide`）。全部纯函数。`crates/strategy-ir/tests/it/vectors.rs` 逐项比对三个向量文件。
   规范 JSON 的唯一实现是 `alphakeel_util::canon`（研究契约 `alphakeel_research_contract::contract::canonical_*` 调用它）。
 - **生成器**：`tools/gen-strategy-ir-vectors.py`（第三份独立实现，只依赖本文）。改规范时：先改本文，再改生成器与两侧实现，
   重新生成向量并让两侧测试通过。
