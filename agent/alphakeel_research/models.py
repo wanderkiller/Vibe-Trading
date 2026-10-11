@@ -456,7 +456,14 @@ class InputFrames(BaseModel):
     )
     count: Annotated[int, Field(ge=0)]
     first_seq: Annotated[int, Field(ge=0)]
+    first_sha256: Annotated[
+        str | None,
+        Field(
+            description="SHA-256 of the first / last replayed scan frame (the archive's frame hash, the same value a paper journal Mark carries in\n`input.sha256`). AlphaKeel's G3 item 3.9 compares them with the paper's frames at the segment boundaries (frame identity)."
+        ),
+    ] = None
     last_seq: Annotated[int, Field(ge=0)]
+    last_sha256: str | None = None
 
 
 class IntentsSchema(StrEnum):
