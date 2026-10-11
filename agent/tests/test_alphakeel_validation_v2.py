@@ -5,6 +5,7 @@ filter test, the robust-range width floor and the point-in-time truncation of ``
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from decimal import Decimal
 from pathlib import Path
@@ -24,10 +25,11 @@ PIN = contract.local_pin()
 
 
 def test_the_contract_pin_is_the_v2_protocol_and_vectors():
-    assert PIN["validation/protocol.json"] == "7636c480a65b031b8c7bca3e1764d794e5600e7af958c94dc61b6cb634263de3"
-    assert PIN["validation/vectors/g1-precheck.json"] == "abe15837aaa9cd6124e43ca4b6a92f62d24e33cc526bad4222a6f0a72b1eebbc"
+    # the digests are the contract itself: they must equal the packaged files (the PIN is exported from AlphaKeel, never edited)
+    for rel in ("validation/protocol.json", "validation/vectors/g1-precheck.json"):
+        assert PIN[rel] == hashlib.sha256((Path(contract.__file__).parent / "contract" / rel).read_bytes()).hexdigest()
     p = precheck.load_protocol()
-    assert p["version"] == "2.2"
+    assert p["version"] == "2.3"
     # an optional informational item (3.11, not research-side) never reaches the research-side list
     assert "3.11" not in {i["id"] for i in precheck.research_items(p)}
     stripped = copy.deepcopy(p)
@@ -38,8 +40,9 @@ def test_the_contract_pin_is_the_v2_protocol_and_vectors():
 
 @pytest.mark.parametrize("case", VECTOR["cases"], ids=[c["name"] for c in VECTOR["cases"]])
 def test_precheck_vectors_v2(case):
+    forced = precheck.ir_filter_required({"universe": case["ir_universe"]}) if "ir_universe" in case else case.get("filter_required_by_ir", False)
     got = precheck.evaluate(case["robustness"], precheck.load_protocol(), case["other_registered_candidates"], case.get("trials_floor", 0),
-                            filter_required_by_ir=case.get("filter_required_by_ir", False), ak_synthetic=case.get("ak_synthetic"))
+                            filter_required_by_ir=forced, ak_synthetic=case.get("ak_synthetic"))
     assert {g["id"]: g["result"] for g in got} == case["expected"], case["why"]
     assert all(g["note"] for g in got if g["result"] == "FAIL")
 
@@ -332,11 +335,36 @@ def test_protocol_22_ak_side_inputs_come_from_the_ir_and_the_pack_not_from_the_b
     p = precheck.load_protocol()
     case = next(c for c in VECTOR["cases"] if c["name"] == "filter_forced_by_ir_tested")
     ir = {"universe": {"excluded_bases": ["BTC"]}}
-    assert precheck.ir_filter_required(ir, set()) and not precheck.ir_filter_required({"universe": {}}, {"ETH"})
-    assert precheck.ir_filter_required({"universe": {"bases": ["eth"]}}, {"ETH", "SOL"}) and not precheck.ir_filter_required({"universe": {"bases": ["eth"]}}, {"ETH"})
+    # protocol 2.3 (review round 2, B): any bases allow-list forces the filter, whatever the battery traded
+    assert precheck.ir_filter_required(ir) and not precheck.ir_filter_required({"universe": {}})
+    assert precheck.ir_filter_required({"universe": {"bases": ["eth"]}}) and not precheck.ir_filter_required({"universe": {"bases": None}})
     assert precheck.pack_is_synthetic(None) and precheck.pack_is_synthetic({"selection": "pit_membership"})
     assert not precheck.pack_is_synthetic({"selection": "screener_live"}) and precheck.pack_is_synthetic({"selection": "screener_live", "dataset_pack": True})
     rb = copy.deepcopy(case["robustness"])
     rb["rating"]["facts"]["filter_tested"] = False
     got = {g["id"]: g for g in precheck.evaluate(rb, p, 0, ir=ir, pack_universe={"selection": "screener_live"})}
     assert got["1.12"]["result"] == "FAIL"  # forced by the IR even though the battery says filter_required false
+
+
+def test_register_trial_key_includes_assumptions_version(tmp_path, monkeypatch):
+    """Review round 2, E: the trial-registration key depends on the run-assumption version and the protocol version, so a run
+    made by an older service build (which AlphaKeel refuses to bind) is not handed back for the same body forever."""
+    run = _run(tmp_path)
+    card = json.loads((run / "run_card.json").read_text())
+
+    def key():
+        svc = FakeService()
+        ir_crosscheck.register_trial(svc, golden_ir(), card)
+        return svc.keys[0]
+
+    base = key()
+    assert key() == base  # deterministic
+    monkeypatch.setattr(ir_crosscheck, "ASSUMPTIONS_VERSION", "run-assumptions/99")
+    assert key() != base
+    monkeypatch.undo()
+    real = precheck.load_protocol
+    monkeypatch.setattr(precheck, "load_protocol", lambda: {**real(), "version": "9.9"})
+    assert key() != base
+    # the reconciliation (cross-check) key stays body-only
+    body, plain = ir_crosscheck.mirror_request(golden_ir(), card)
+    assert plain == ir_crosscheck.mirror_request(golden_ir(), card, key_salt="")[1] != ir_crosscheck.mirror_request(golden_ir(), card, key_salt="x")[1]

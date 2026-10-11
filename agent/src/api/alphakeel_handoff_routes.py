@@ -123,7 +123,17 @@ def describe(run_dir: Path) -> dict:
         # AlphaKeel's 1.6 trial floor: IR provenance.trials.count + the battery's candidates (it adds the service ledger on its side)
         tri, brt = card.get("trials") or {}, doc.get("trials") or {}
         floor = (tri.get("count") if type(tri.get("count")) is int else 0) + (brt.get("distinct_candidate_variants") if type(brt.get("distinct_candidate_variants")) is int else 0)
-        checks = precheck.evaluate(doc, protocol, 0, floor)
+        # protocol 2.2+: provenance.fixed_literals also count (AlphaKeel ``verdict.rs`` 1.6); read from the IR document
+        rule16 = next((i for i in protocol["stages"]["validated"]["items"] if i["id"] == "1.6"), {})
+        fixed = (_doc.get("provenance") or {}).get("fixed_literals")
+        if (rule16.get("threshold") or {}).get("fixed_literals") == "counted" and isinstance(fixed, dict):
+            floor += len(fixed)
+        # pass the IR so 1.12 (IR restrictions), 1.9 (IR widths), 1.13 and 1.19 are judged as AlphaKeel judges them; the IS pack's
+        # data lock lives in the research service, so 1.18 stays with AlphaKeel (shown as N/A here instead of a false FAIL)
+        checks = precheck.evaluate(doc, protocol, 0, floor, ir=_doc)
+        for c in checks:
+            if c["id"] == "1.18":
+                c.update(result="N/A", observed=None, note="AlphaKeel decides this from the IS pack's data lock in the research service; not checkable on the VT side")
     marker = _read_json(run_dir / MARKER)
     exported = None
     if isinstance(marker, dict):

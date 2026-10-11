@@ -174,13 +174,29 @@ def with_reconciliation_fill(profile: dict | None) -> dict:
     return {**(profile or {}), **RECONCILIATION_FILL}
 
 
-def mirror_request(ir_doc: dict, card: dict, *, profile: dict | None = None) -> tuple[dict, str]:
+#: Version of the service's run-assumption record this client expects (``result.run_assumptions``: v3 = protocol 2.3, with
+#: ``fees_perp_taker`` / ``leverage_perp`` / ``funding_mode``). It is part of the trial-registration idempotency key, so a run
+#: made by an older service build (no ``run_assumptions``, 2 bp spread floor) is never handed back for the same body
+#: (review round 2, E: AlphaKeel refuses to bind such a run, and the content-derived key would return it forever).
+ASSUMPTIONS_VERSION = "run-assumptions/3"
+
+
+def trial_key_salt() -> str:
+    """What the trial-registration key depends on besides the request body: the run-assumption version and the packaged protocol version."""
+    from . import precheck
+
+    return f"{ASSUMPTIONS_VERSION}|protocol {precheck.load_protocol()['version']}"
+
+
+def mirror_request(ir_doc: dict, card: dict, *, profile: dict | None = None, key_salt: str = "") -> tuple[dict, str]:
     """(body, idempotency key) of the AlphaKeel ``ir_strategy`` + ``dataset_view`` run that mirrors a VT run card: the
-    cross-check passes ``profile`` = :data:`RECONCILIATION_FILL`, trial registration none (the server's conservative default)."""
+    cross-check passes ``profile`` = :data:`RECONCILIATION_FILL`, trial registration none (the server's conservative default).
+    ``key_salt`` is mixed into the key (trial registration passes :func:`trial_key_salt`; the reconciliation key stays body-only)."""
     body = {"mode": "ir_strategy", "pack_id": card["pack"]["pack_id"], "ir": ir_doc, "dataset_view": view_of(card)}
     if profile is not None:
         body["profile"] = profile
-    return body, "vt-xcheck-" + hashlib.sha256(canon.canonical_bytes(body)).hexdigest()[:32]
+    digest = hashlib.sha256(canon.canonical_bytes(body) + (b"\n" + key_salt.encode() if key_salt else b"")).hexdigest()[:32]
+    return body, "vt-xcheck-" + digest
 
 
 def register_trial(client: Any, ir_doc: dict, card: dict, *, queue_wait_s: float = 600.0, poll_s: float = 5.0) -> str:
@@ -189,7 +205,7 @@ def register_trial(client: Any, ir_doc: dict, card: dict, *, queue_wait_s: float
     recorded once) and refuses the run when the row cannot be written, so creating the mirrored ``ir_strategy`` run IS the
     registration; this does not wait for the run to finish. A full run queue is waited out; any other error propagates (a trial
     that could not be registered must not be used as evidence)."""
-    body, key = mirror_request(ir_doc, card)
+    body, key = mirror_request(ir_doc, card, key_salt=trial_key_salt())
     deadline = time.monotonic() + queue_wait_s
     while True:
         try:

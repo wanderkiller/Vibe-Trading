@@ -40,12 +40,25 @@ def test_a_protocol_file_that_differs_from_the_pin_is_refused(tmp_path, monkeypa
 
 @pytest.mark.parametrize("case", VECTOR["cases"], ids=[c["name"] for c in VECTOR["cases"]])
 def test_every_shared_vector_case_matches_exactly(case):
+    # a case may give the IR universe instead of the flag: the flag is then derived by ir_filter_required, as AlphaKeel does (protocol 2.3)
+    forced = precheck.ir_filter_required({"universe": case["ir_universe"]}) if "ir_universe" in case else case.get("filter_required_by_ir", False)
     got = precheck.evaluate(case["robustness"], precheck.load_protocol(), case["other_registered_candidates"], case.get("trials_floor", 0),
-                            filter_required_by_ir=case.get("filter_required_by_ir", False), ak_synthetic=case.get("ak_synthetic"))
+                            filter_required_by_ir=forced, ak_synthetic=case.get("ak_synthetic"))
     assert [g["id"] for g in got] == list(case["expected"]), case["why"]
     assert {g["id"]: g["result"] for g in got} == case["expected"], case["why"]
     assert all(g["label"] for g in got)
     assert all(g["note"] for g in got if g["result"] == "FAIL")  # a FAIL always says why
+
+
+@pytest.mark.parametrize("c", VECTOR["derivations"]["filter_required_by_ir"], ids=lambda c: c["name"])
+def test_ir_filter_required_matches_the_shared_derivation_vectors(c):
+    # review round 2, B: the derivation function itself is under test, not only its result fed into evaluate()
+    assert precheck.ir_filter_required({"universe": c["universe"]}) is c["expected"]
+
+
+@pytest.mark.parametrize("c", VECTOR["derivations"]["pack_is_synthetic"], ids=lambda c: c["name"])
+def test_pack_is_synthetic_matches_the_shared_derivation_vectors(c):
+    assert precheck.pack_is_synthetic(c["pack_universe"]) is c["expected"]
 
 
 def test_missing_robustness_fails_every_item_and_a_missing_field_is_a_fail_not_a_pass():

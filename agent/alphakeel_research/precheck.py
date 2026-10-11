@@ -206,8 +206,10 @@ def _pbo(rb: dict, t: dict):
 
 
 def narrow_ranges(rb: dict) -> list[str]:
-    """Parameters whose ``robust`` range is narrower than +-MIN_ROBUST_REL_WIDTH of the value (``parameters.ranges`` of
-    robustness.json; absent in older files = not checked). A zero value has no relative width: its range must just be non-empty."""
+    """Parameters whose ``robust`` range is narrower than +-MIN_ROBUST_REL_WIDTH of the value on a side (``parameters.ranges`` of
+    robustness.json; absent in older files = not checked). A zero value has no relative width: robustness.json does not carry the
+    allowed range width, so only a non-empty range is required here; the total-width rule for value 0 (hi - lo >= 0.2 x the allowed
+    range width, protocol label of 1.9) is checked on the IR itself by :func:`robust_width_problems` (``ir_items``), as in AlphaKeel."""
     ranges = _get(rb, "parameters", "ranges")
     if not isinstance(ranges, list):
         return []
@@ -531,7 +533,8 @@ def ir_items(doc: dict, pack_universe: dict | None, protocol: dict, pack_id: str
         items.append({"id": "1.18", "label": have["1.18"]["label"], "result": result, "observed": observed, "note": note})
     if "1.19" in have:
         try:
-            r = literal_report(doc, "exempt" in have["1.19"]["threshold"] and "position" in str(have["1.19"]["threshold"]["exempt"]))
+            # by position for every protocol copy (AlphaKeel applies ``literal_exempt_at`` to every copy; review round 2, P2-2)
+            r = literal_report(doc, True)
             ok = not (r["undeclared"] or r["mismatched"] or r["stale"])
             why = "; ".join(x for x in (
                 f"undeclared literal(s): {'; '.join(r['undeclared'])}" if r["undeclared"] else "",
@@ -548,17 +551,12 @@ def ir_items(doc: dict, pack_universe: dict | None, protocol: dict, pack_id: str
 _UNSET: Any = object()
 
 
-def ir_filter_required(ir: dict, traded: set[str]) -> bool:
-    """1.12 (protocol 2.2, AlphaKeel ``ir_filter_required``): the IR restricts its universe -- ``universe.excluded_bases`` is not
-    empty, or ``universe.bases`` is an allow-list and the battery traded a coin outside it -- so the permutation test is mandatory."""
+def ir_filter_required(ir: dict) -> bool:
+    """1.12 (protocol 2.3, AlphaKeel ``ir_filter_required``): the IR restricts its universe -- ``universe.excluded_bases`` is not
+    empty, or ``universe.bases`` is any allow-list -- so the permutation test is mandatory. Only the IR counts: the coins the
+    battery traded are a subset of an allow-list by construction, so deriving it from them never fired (review round 2, B)."""
     u = ir.get("universe") or {}
-    if u.get("excluded_bases"):
-        return True
-    allow = u.get("bases")
-    if isinstance(allow, list):
-        allowed = {str(x).upper() for x in allow}
-        return any(c.upper() not in allowed for c in traded)
-    return False
+    return bool(u.get("excluded_bases")) or isinstance(u.get("bases"), list)
 
 
 def pack_is_synthetic(pu: dict | None) -> bool:
@@ -580,8 +578,7 @@ def evaluate(robustness: dict | None, protocol: dict, other_candidates: int = 0,
     out = []
     if ir is not None and isinstance(robustness, dict):  # AK derives these from the IR and the IS pack's data lock, not from the battery's own flags
         if filter_required_by_ir is None:
-            traded = set((_get(robustness, "statistics", "concentration", "net_by_coin") or {}) if isinstance(_get(robustness, "statistics", "concentration", "net_by_coin"), dict) else ())
-            filter_required_by_ir = ir_filter_required(ir, traded)
+            filter_required_by_ir = ir_filter_required(ir)
         if ak_synthetic is None and pack_universe is not _UNSET:
             ak_synthetic = pack_is_synthetic(pack_universe)
     for item in research_items(protocol):

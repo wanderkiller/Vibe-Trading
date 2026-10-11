@@ -122,7 +122,12 @@ def test_ir_run_with_robustness_lists_the_precheck_and_exports_idempotently(env)
     assert body["robustness"] == {"grade": doc["rating"]["grade"], "score": doc["rating"]["score"], "caps": [c["id"] for c in doc["rating"]["caps"]],
                                   "schema": "vibe-trading.ir-robustness/2",
                                   "sha256": hashlib.sha256((run / "robustness" / "robustness.json").read_bytes()).hexdigest()}
-    assert body["precheck"] == precheck.evaluate(doc, precheck.load_protocol()) and len(body["precheck"]) == 14
+    # protocol 2.3: the route passes the IR document, so 1.9/1.12/1.13/1.19 are judged as AlphaKeel judges them; 1.6 adds the
+    # trials floor and fixed_literals, and 1.18 (decided from the IS pack's data lock) is N/A on the VT side
+    want = precheck.evaluate(doc, precheck.load_protocol(), ir=_ir())
+    assert len(body["precheck"]) == 16 and [c["id"] for c in body["precheck"]] == [c["id"] for c in want]
+    assert {c["id"]: c["result"] for c in body["precheck"] if c["id"] not in ("1.6", "1.18")} == {c["id"]: c["result"] for c in want if c["id"] not in ("1.6", "1.18")}
+    assert all(c["result"] == "N/A" for c in body["precheck"] if c["id"] == "1.18")
     sid = body["strategy_id"]
     r = env.client.post(f"/runs/{run.name}/alphakeel/export")
     assert r.status_code == 200, r.text
