@@ -348,7 +348,10 @@ def ir_review(client: Client, pack: Pack, ir_doc: dict, *, out_dir: str | Path, 
     sid, ssha = loaded.strategy_id, canon.canonical_sha256(loaded.definition)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    profile = ir_profile(loaded.doc, profile)
+    from .ir_crosscheck import with_reconciliation_fill
+
+    # the comparison tests engine agreement on the one-level full-fill model (docs/37 4b); the L1 profile document is the server's render
+    profile = with_reconciliation_fill(ir_profile(loaded.doc, profile))
     prof_doc = client.render_profile(pack.id, "ir_strategy", profile)["profile"]
     insts = ir_instruments(pack, loaded.doc)
     params = {"ir": loaded.doc, "qty_dp": qty_dp}

@@ -158,11 +158,28 @@ def compare(vt: dict[int, dict], ak: dict[int, dict]) -> dict:
             "differences": len(diffs), "first_differences": diffs[:30]}
 
 
-def mirror_request(ir_doc: dict, card: dict) -> tuple[dict, str]:
-    """(body, idempotency key) of the AlphaKeel ``ir_strategy`` + ``dataset_view`` run that mirrors a VT run card. The one
-    definition for the cross-check and for trial registration, so a candidate registered with the same IR text and the later
-    cross-check of it are one service run (idempotent by key)."""
+#: Reconciliation (``ir crosscheck`` / ``ir review``, L0-L4) tests that the two engines AGREE, not that fills are realistic:
+#: it asks AlphaKeel for the one-level full-fill model with no synthetic spread and no capital cost, the Python simulator's own
+#: model (docs/37 4b). Trial registration and the battery's registered runs use the server default (conservative) instead.
+RECONCILIATION_FILL = {"fill_model": "top_of_book", "spread_floor_bps": "0", "capital_cost_annual": "0"}
+
+
+def with_reconciliation_fill(profile: dict | None) -> dict:
+    """``profile`` plus :data:`RECONCILIATION_FILL`; a given value that contradicts it is refused (the comparison would not be like for like)."""
+    for k, v in RECONCILIATION_FILL.items():
+        given = (profile or {}).get(k)
+        if given is not None and (str(given) != v if k == "fill_model" else Decimal(str(given)) != Decimal(v)):
+            raise ApiError("request.invalid", f"reconciliation compares the engines on the one-level full-fill model: profile.{k} = {given!r} "
+                           f"contradicts {v!r}", field=f"profile.{k}")
+    return {**(profile or {}), **RECONCILIATION_FILL}
+
+
+def mirror_request(ir_doc: dict, card: dict, *, profile: dict | None = None) -> tuple[dict, str]:
+    """(body, idempotency key) of the AlphaKeel ``ir_strategy`` + ``dataset_view`` run that mirrors a VT run card: the
+    cross-check passes ``profile`` = :data:`RECONCILIATION_FILL`, trial registration none (the server's conservative default)."""
     body = {"mode": "ir_strategy", "pack_id": card["pack"]["pack_id"], "ir": ir_doc, "dataset_view": view_of(card)}
+    if profile is not None:
+        body["profile"] = profile
     return body, "vt-xcheck-" + hashlib.sha256(canon.canonical_bytes(body)).hexdigest()[:32]
 
 
@@ -187,7 +204,7 @@ def alphakeel_check(client: Any, ir_doc: dict, run_dir: str | Path, *, timeout: 
     """Run the mirrored AlphaKeel ``ir_strategy`` + ``dataset_view`` run and compare; writes ``alphakeel-check.json``."""
     run_dir = Path(run_dir)
     card = json.loads((run_dir / "run_card.json").read_text())
-    body, key = mirror_request(ir_doc, card)
+    body, key = mirror_request(ir_doc, card, profile=with_reconciliation_fill(None))
     submitted = int(time.time() * 1000)
     run = client.create_run(body, key=key)
     st = client.wait_run(run["run_id"], timeout=timeout)

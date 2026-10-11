@@ -628,6 +628,26 @@ def walk_forward_grid(base_doc: dict) -> tuple[list[dict], str]:
     return out, kind
 
 
+def _service_conservative(client: Any, run_id: str, local_net: Decimal, timeout: float = 1800.0) -> dict:
+    """The research service's registered (conservative by default) run of the base IR: waits for it and reads ``result.json``.
+    ``net`` = ``amounts.net_of_capital_cost`` (the service's headline net), else ``amounts.close_now``; ``difference`` = net - local.
+    A run that failed or timed out gives ``net: null`` and the reason (never an invented number)."""
+    try:
+        st = client.wait_run(run_id, timeout=timeout)
+        if st.get("status") != "complete":
+            return {"run_id": run_id, "net": None, "error": f"service run {st.get('status')}"}
+        res = json.loads(client.artifact(run_id, "result.json"))
+        am = res.get("amounts") or {}
+        net = am.get("net_of_capital_cost", am.get("close_now"))
+        if net is None:
+            return {"run_id": run_id, "net": None, "error": "result.json has no amounts.net_of_capital_cost / close_now"}
+        return {"run_id": run_id, "fill_model": res.get("fill_model"), "net": str(net), "net_basis": "net_of_capital_cost" if "net_of_capital_cost" in am else "close_now",
+                "capital_cost": res.get("capital_cost"), "approximations": res.get("approximations"), "local_net": _s(local_net),
+                "difference": _s(Decimal(str(net)) - local_net)}
+    except (ApiError, ValueError, TypeError, ArithmeticError) as e:
+        return {"run_id": run_id, "net": None, "error": getattr(e, "message", None) or str(e)}
+
+
 def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos_window=None, oos_pack: Pack | None = None,
             out_dir: str | Path, fees: dict | None = None, filter_spec: dict | None = None, permutations: int = 30, seed: int = 7,
             step_minutes: int = 5, capital_base: Decimal | str | None = None, workers: int = 2, prior_trials: int = 0,
@@ -937,10 +957,18 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         regs = [{"strategy_id": s_, "label": j["label"], "role": j["role"],
                  "service_run_id": register_trial(registry, IR.load(j["args"]["doc"]).doc, R.result(j)["card"])}
                 for s_, j in sorted(candidates.items())]
-        service_runs: dict[str, Any] = {"registered": True, "runs": regs, "ids": [r["service_run_id"] for r in regs],
+        base_reg = next(r for r in regs if r["strategy_id"] == sid)
+        conservative = _service_conservative(registry, base_reg["service_run_id"], b_net)
+        if conservative.get("net") is None:
+            notes.append(f"warning: the service's conservative net of the base run is not available ({conservative.get('error')})")
+        else:
+            notes.append(f"the base net is the local Python simulator's (one-level full fill, synthetic touch): {b_net}; the research service's "
+                         f"conservative run of the same IR (fill_model {conservative['fill_model']}) nets {conservative['net']} "
+                         f"(difference {conservative['difference']}); AlphaKeel's own validation uses the service's model")
+        service_runs: dict[str, Any] = {"registered": True, "service_conservative_net": conservative.get("net"), "conservative": conservative, "runs": regs, "ids": [r["service_run_id"] for r in regs],
                                         "note": "one research_run ledger row per candidate run (research-service POST /runs, mode ir_strategy)"}
     else:
-        service_runs = {"registered": False, "runs": [], "ids": [],
+        service_runs = {"registered": False, "runs": [], "ids": [], "service_conservative_net": None,
                         "note": "no research-service client: the candidate runs were NOT registered in the trial ledger"}
         notes.append("warning: the candidate runs were not registered in the research service's trial ledger (no client)")
 

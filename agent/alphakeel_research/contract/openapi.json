@@ -1793,6 +1793,10 @@
           "fees": {
             "$ref": "#/components/schemas/ExecutionProfileFees"
           },
+          "fill": {
+            "description": "Optional (2026-10-11): the fill model and capital cost an `ir_strategy` run used (`model`, `capital_cost_annual`,\nand for `conservative`: `spread_floor_bps`, `observed_spread_bps`, `impact_calibration`, `scenario`). When\npresent with `model = conservative` it supersedes `matching` for the main figures. Absent = one-level fills.",
+            "type": "object"
+          },
           "funding": {
             "$ref": "#/components/schemas/ExecutionProfileFunding"
           },
@@ -3024,6 +3028,17 @@
               }
             ]
           },
+          "net_of_capital_cost": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Dec",
+                "description": "Optional (2026-10-11): `close_now` minus `capital_cost.cost_usdt`; present when the run charges a capital cost."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "open_value": {
             "oneOf": [
               {
@@ -3176,6 +3191,13 @@
           "count"
         ],
         "type": "object"
+      },
+      "ResultFillModel": {
+        "enum": [
+          "conservative",
+          "top_of_book"
+        ],
+        "type": "string"
       },
       "ResultSchema": {
         "enum": [
@@ -3490,6 +3512,17 @@
               "null"
             ]
           },
+          "approximations": {
+            "description": "Optional (2026-10-11), `ir_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_from_top_of_book_ledger`, `top_of_book_full_fill`), each starting with its identifier and a colon.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "maxItems": 40,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "by_currency": {
             "additionalProperties": {
               "$ref": "#/components/schemas/ResultByCurrencyValue"
@@ -3501,6 +3534,10 @@
           },
           "capital": {
             "$ref": "#/components/schemas/ResultCapital"
+          },
+          "capital_cost": {
+            "description": "Optional (2026-10-11): capital-occupation cost (idle margin of both legs x `annual_rate` x holding time), kept\napart from fees and deducted in `amounts.net_of_capital_cost`.",
+            "type": "object"
           },
           "counts": {
             "$ref": "#/components/schemas/BTreeMap"
@@ -3527,6 +3564,17 @@
               "null"
             ]
           },
+          "fill_model": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ResultFillModel",
+                "description": "Optional (2026-10-11), `ir_strategy` only: the fill model the main figures use. `conservative` (default) = the\nfidelity square-root impact book, lot step / minimum notional, leg-failure unwind and (dataset view) a spread\nfloor; `top_of_book` = one-level full fills (explicit `profile.fill_model` only)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "limitations": {
             "items": {
               "$ref": "#/components/schemas/Text"
@@ -3543,6 +3591,10 @@
             },
             "maxItems": 40,
             "type": "array"
+          },
+          "optimistic": {
+            "description": "Optional (2026-10-11), conservative `ir_strategy` runs only: the same run under one-level full fills\n(`fill_model`, `execution_ok`, `amounts_ok`, `amounts`, `by_currency`, `equity`, `drawdown`, `capital`,\n`counts`, `event_log`, `problems`, `events_sha256`). The main figures are the conservative ones.",
+            "type": "object"
           },
           "problems": {
             "items": {

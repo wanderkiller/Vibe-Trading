@@ -518,6 +518,7 @@ class ResultAmounts(BaseModel):
     fees: Dec
     funding: Dec
     fx_revaluation: Dec | None
+    net_of_capital_cost: Dec | None = None
     open_value: Dec | None
     price_pnl: Dec
     realized: Dec
@@ -539,6 +540,11 @@ class ResultEquity(BaseModel):
     end_by_ccy: dict[str, Dec]
     end_close_now_usdt: Dec | None
     start_by_ccy: dict[str, Dec]
+
+
+class ResultFillModel(StrEnum):
+    conservative = "conservative"
+    top_of_book = "top_of_book"
 
 
 class ResultSchema(StrEnum):
@@ -1299,8 +1305,21 @@ class RunResult(BaseModel):
     )
     amounts: ResultAmounts
     amounts_ok: bool | None
+    approximations: Annotated[
+        list[Text] | None,
+        Field(
+            description="Optional (2026-10-11), `ir_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_from_top_of_book_ledger`, `top_of_book_full_fill`), each starting with its identifier and a colon.",
+            max_length=40,
+        ),
+    ] = None
     by_currency: dict[str, ResultByCurrencyValue]
     capital: ResultCapital
+    capital_cost: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="Optional (2026-10-11): capital-occupation cost (idle margin of both legs x `annual_rate` x holding time), kept\napart from fees and deducted in `amounts.net_of_capital_cost`."
+        ),
+    ] = None
     counts: BTreeMap
     data_quality: BTreeMap
     dataset_view: Annotated[
@@ -1313,9 +1332,16 @@ class RunResult(BaseModel):
     equity: ResultEquity
     event_log: ResultEventLog
     execution_ok: bool | None
+    fill_model: ResultFillModel | None = None
     limitations: Annotated[list[Text], Field(max_length=40)]
     mode: Mode
     not_applicable_metrics: Annotated[list[Id], Field(max_length=40)]
+    optimistic: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="Optional (2026-10-11), conservative `ir_strategy` runs only: the same run under one-level full fills\n(`fill_model`, `execution_ok`, `amounts_ok`, `amounts`, `by_currency`, `equity`, `drawdown`, `capital`,\n`counts`, `event_log`, `problems`, `events_sha256`). The main figures are the conservative ones."
+        ),
+    ] = None
     problems: Annotated[list[Text], Field(max_length=50)]
     run_id: Id
     schema_: Annotated[ResultSchema, Field(alias="schema")]
@@ -1410,6 +1436,12 @@ class ExecutionProfile(BaseModel):
     engine: Annotated[str, Field(max_length=200, min_length=1)]
     event_order: ExecutionProfileEventOrder
     fees: ExecutionProfileFees
+    fill: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="Optional (2026-10-11): the fill model and capital cost an `ir_strategy` run used (`model`, `capital_cost_annual`,\nand for `conservative`: `spread_floor_bps`, `observed_spread_bps`, `impact_calibration`, `scenario`). When\npresent with `model = conservative` it supersedes `matching` for the main figures. Absent = one-level fills."
+        ),
+    ] = None
     funding: ExecutionProfileFunding
     fx: ExecutionProfileFx
     initial_state: ExecutionProfileInitialState

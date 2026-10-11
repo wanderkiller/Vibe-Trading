@@ -150,6 +150,13 @@ class FakeService:
         self.keys.append(key)
         return {"run_id": f"run-{len(self.bodies):04d}"}
 
+    def wait_run(self, run_id, *, timeout=0):
+        return {"status": "complete"}
+
+    def artifact(self, run_id, name, *, stored=False):
+        return json.dumps({"fill_model": "conservative", "approximations": ["sqrt_impact_modeled_depth"], "capital_cost": {"annual": "0.05"},
+                           "amounts": {"close_now": "10.5", "net_of_capital_cost": "9.25"}}).encode()
+
 
 def test_runs_registered_with_service(tmp_path, monkeypatch):
     monkeypatch.setattr(ir_crosscheck.time, "sleep", lambda s: None)
@@ -164,6 +171,11 @@ def test_runs_registered_with_service(tmp_path, monkeypatch):
     sr = doc["service_runs"]
     assert sr["registered"] is True and sr["ids"] == [f"run-{i:04d}" for i in range(1, n + 1)]
     assert {r["strategy_id"] for r in sr["runs"]} == set(doc["trials"]["candidate_strategy_ids"])
+    cons = sr["conservative"]
+    assert sr["service_conservative_net"] == "9.25" and cons["fill_model"] == "conservative" and cons["net_basis"] == "net_of_capital_cost"
+    assert Decimal(cons["difference"]) == Decimal("9.25") - Decimal(cons["local_net"])
+    assert any("conservative run of the same IR" in x for x in doc["notes"])
+    assert all("profile" not in b for b in svc.bodies)  # the registered runs use the server default (conservative)
     on_disk = json.loads((tmp_path / "rb" / "robustness.json").read_text())
     assert on_disk["service_runs"]["ids"] == sr["ids"]
     # no client: said so, in the document and in the notes
@@ -265,3 +277,51 @@ def test_pit_instruments_truncated_at_as_of():
     assert rows[Inst("binance", "perp", "BTCUSDT")].last_seen_ms == 900  # the pack's own rows are untouched
     assert len(Pit(SimpleNamespace(lock={}, id="pk-x", instruments=lambda: rows), 100).instruments()) == 2
     assert Pit(SimpleNamespace(lock={}, id="pk-x", instruments=lambda: rows), 99).instruments() == {}
+
+
+# --- reconciliation compares engines on the one-level fill model; L1 is the server's profile ---------------------------------
+
+def test_crosscheck_requests_top_of_book(tmp_path):
+    fill = {"fill_model": "top_of_book", "spread_floor_bps": "0", "capital_cost_annual": "0"}
+    assert ir_crosscheck.RECONCILIATION_FILL == fill
+    assert ir_crosscheck.with_reconciliation_fill({"leverage_perp": "3"}) == {"leverage_perp": "3", **fill}
+    assert ir_crosscheck.with_reconciliation_fill({"spread_floor_bps": 0, "capital_cost_annual": "0.0"}) == fill
+    for bad in ({"fill_model": "conservative"}, {"spread_floor_bps": "2"}, {"capital_cost_annual": "0.05"}):
+        with pytest.raises(ApiError, match="contradicts"):
+            ir_crosscheck.with_reconciliation_fill(bad)
+    run = _run(tmp_path)
+
+    class Svc(FakeService):
+        def wait_run(self, run_id, *, timeout=0):
+            return {"status": "failed", "error": {"code": "x"}, "created_ms": 0}
+
+    svc = Svc()
+    doc = ir_crosscheck.alphakeel_check(svc, golden_ir(), run)
+    assert doc["passed"] is False and svc.bodies[0]["profile"] == fill and svc.bodies[0]["mode"] == "ir_strategy"
+    # registration (the conservative default) is a different request
+    reg = FakeService()
+    ir_crosscheck.register_trial(reg, golden_ir(), json.loads((run / "run_card.json").read_text()))
+    assert "profile" not in reg.bodies[0] and reg.keys[0] != svc.keys[0]
+
+
+def test_profile_summary_from_server(tmp_path):
+    """``ir review`` asks the server to render the profile of the top_of_book run and uses that document; it builds none itself."""
+    pytest.importorskip("alphakeel_research.ir")
+    seen = {}
+
+    class Stop(Exception):
+        pass
+
+    class Svc:
+        def render_profile(self, pack_id, mode, profile=None):
+            seen.update(pack_id=pack_id, mode=mode, profile=profile)
+            raise Stop
+
+    insts, pd = _market(tmp_path)
+    pack = Pack.from_directory(pd)
+    with pytest.raises(Stop):
+        workflow.ir_review(Svc(), pack, _ir(), out_dir=tmp_path / "rv")
+    assert seen["mode"] == "ir_strategy" and seen["pack_id"] == pack.id
+    assert {k: seen["profile"][k] for k in ir_crosscheck.RECONCILIATION_FILL} == ir_crosscheck.RECONCILIATION_FILL
+    with pytest.raises(ApiError, match="contradicts"):
+        workflow.ir_review(Svc(), pack, _ir(), out_dir=tmp_path / "rv2", profile={"fill_model": "conservative"})
