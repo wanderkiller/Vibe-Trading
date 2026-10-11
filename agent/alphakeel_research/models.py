@@ -317,6 +317,9 @@ class ExecutionProfileFundingRounding(StrEnum):
 
 class ExecutionProfileFundingSettlementPrice(StrEnum):
     last_mark_price = "last_mark_price"
+    official_mark_when_published_else_last_frame_mark = (
+        "official_mark_when_published_else_last_frame_mark"
+    )
 
 
 class ExecutionProfileFundingSign(StrEnum):
@@ -898,6 +901,12 @@ class DataLockScans(BaseModel):
     last_ms: Annotated[int, Field(ge=0)]
     manifest_sha256: Sha256
     max_gap_ms: Annotated[int, Field(ge=0)]
+    scope_missing: Annotated[
+        BTreeMap | None,
+        Field(
+            description="Per requested venue: scans in the window where the venue was absent from the frame."
+        ),
+    ] = None
     start_seq: Annotated[int, Field(ge=0)]
     venue_failures: BTreeMap
 
@@ -915,6 +924,12 @@ class DataLockSourcesItem(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    fee_source: Annotated[
+        str | None,
+        Field(
+            description='Fee role only: "recorded" (scan configs) or "request_override" (request fees_override applied).'
+        ),
+    ] = None
     identity: Annotated[str, Field(max_length=400, min_length=1)]
     note: Text | None = None
     role: DataLockSourcesItemRole

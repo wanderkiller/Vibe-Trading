@@ -782,6 +782,10 @@
             "minimum": 0,
             "type": "integer"
           },
+          "scope_missing": {
+            "$ref": "#/components/schemas/BTreeMap",
+            "description": "Per requested venue: scans in the window where the venue was absent from the frame."
+          },
           "start_seq": {
             "format": "int64",
             "minimum": 0,
@@ -853,6 +857,13 @@
       "DataLockSourcesItem": {
         "additionalProperties": false,
         "properties": {
+          "fee_source": {
+            "description": "Fee role only: \"recorded\" (scan configs) or \"request_override\" (request fees_override applied).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "identity": {
             "maxLength": 400,
             "minLength": 1,
@@ -2254,7 +2265,8 @@
       },
       "ExecutionProfileFundingSettlementPrice": {
         "enum": [
-          "last_mark_price"
+          "last_mark_price",
+          "official_mark_when_published_else_last_frame_mark"
         ],
         "type": "string"
       },
