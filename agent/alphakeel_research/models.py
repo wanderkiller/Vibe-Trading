@@ -86,6 +86,12 @@ class DataLockSchema(StrEnum):
     alphakeel_data_lock_1 = "alphakeel.data-lock/1"
 
 
+class DataLockSelectionKind(StrEnum):
+    declared = "declared"
+    pit_membership = "pit_membership"
+    screener_live = "screener_live"
+
+
 class DataLockSourcesItemRole(StrEnum):
     funding_settlement = "funding_settlement"
     funding_observation = "funding_observation"
@@ -403,6 +409,14 @@ class ExecutionProfileWarmup(BaseModel):
     trades_allowed: AlwaysFalse
 
 
+class FeeOverride(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    perp_taker: str
+    spot_taker: str | None = None
+
+
 class HashOrEmpty(RootModel[str]):
     root: Annotated[
         str,
@@ -431,6 +445,15 @@ class InputAccessTable(StrEnum):
     instruments = "instruments"
     frames = "frames"
     kline_1m = "kline_1m"
+
+
+class InputFrames(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    count: Annotated[int, Field(ge=0)]
+    first_seq: Annotated[int, Field(ge=0)]
+    last_seq: Annotated[int, Field(ge=0)]
 
 
 class IntentsSchema(StrEnum):
@@ -476,6 +499,29 @@ class PackInstrumentRef(BaseModel):
     market: str
     symbol: str
     venue: str
+
+
+class PackSelection1(StrEnum):
+    declared = "declared"
+
+
+class PitMembership(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    table_sha256: Annotated[
+        str | None,
+        Field(
+            description="Optional: the SHA-256 of the published membership table the pack must be built from (the `membership.table_sha256`\nof an earlier pack's data lock). A later receipt of the same dataset version may carry an appended or upgraded\ntable; with this set the build is rejected on a mismatch, so a pinned pack is reproducible."
+        ),
+    ] = None
+    top_n: Annotated[
+        int,
+        Field(
+            description="Daily membership depth N (the first N members of each day are used; the table must have been built with N or more).",
+            ge=0,
+        ),
+    ]
 
 
 class PolicyContextAccountsItem(BaseModel):
@@ -722,6 +768,7 @@ class Verification(BaseModel):
     )
     engine_recount: Status
     external_python: Status
+    input_frames: InputFrames | None = None
     ir_ledger: Status | None = None
     ir_ledger_problems: Annotated[
         dict[str, Any] | None,
@@ -767,6 +814,19 @@ class Check(BaseModel):
     status: Status
 
 
+class DailyEquityPoint(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    day_ms: Annotated[int, Field(description="UTC day start, milliseconds.")]
+    net: Annotated[
+        Dec,
+        Field(
+            description="The run's net at the day's last valued point (decimal string)."
+        ),
+    ]
+
+
 class DataLockCoverage(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -794,6 +854,14 @@ class DataLockDatasetsItem(BaseModel):
     watermark_ms: Annotated[int | None, Field(ge=0)]
 
 
+class DataLockFeesOverride(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    frames_applied: Annotated[int, Field(description="Scan frames that used it.", ge=0)]
+    venues: dict[str, FeeOverride]
+
+
 class DataLockFunding(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -805,6 +873,16 @@ class DataLockFunding(BaseModel):
     snapshot_sha256: Sha256
     visibility: DataLockFundingVisibility
     watermark_ms: Annotated[int | None, Field(ge=0)]
+
+
+class DataLockMembership(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    days_in_window: Annotated[int, Field(ge=0)]
+    first_day: str
+    last_day: str
+    table_sha256: Sha256
 
 
 class DataLockScans(BaseModel):
@@ -822,6 +900,15 @@ class DataLockScans(BaseModel):
     max_gap_ms: Annotated[int, Field(ge=0)]
     start_seq: Annotated[int, Field(ge=0)]
     venue_failures: BTreeMap
+
+
+class DataLockSelection(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    kind: DataLockSelectionKind
+    membership: DataLockMembership | None = None
+    top_n: Annotated[int | None, Field(ge=0)] = None
 
 
 class DataLockSourcesItem(BaseModel):
@@ -865,6 +952,13 @@ class DataLockUniverse(BaseModel):
     digest: Sha256
     instruments: Annotated[int, Field(ge=0)]
     selected: Annotated[int, Field(ge=0)]
+    selection: DataLockSelection | None = None
+    survivorship: Annotated[
+        dict[str, str] | None,
+        Field(
+            description="Per venue, the worse of the funding-history side and the market side:\n`includes_delisted` < `includes_delisted_from_archive` < `survivors_before_first_seen` < `survivors_only_unobserved`."
+        ),
+    ] = None
 
 
 class DataLockWindows(BaseModel):
@@ -1188,29 +1282,17 @@ class Layer(BaseModel):
     status: Status
 
 
-class PackRequest(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    accept_partial: bool | None = None
-    dataset: DatasetSpec | None = None
-    funding_dataset: Annotated[
-        str | None,
+class PackSelection2(BaseModel):
+    pit_membership: PitMembership
+
+
+class PackSelection(RootModel[PackSelection1 | PackSelection2]):
+    root: Annotated[
+        PackSelection1 | PackSelection2,
         Field(
-            description='官方结算数据集版本；空 = 数据集可用时固定为当前最新（解析结果写进数据锁），`"none"` = 不含资金费结算。'
+            description="How a dataset pack's instrument list was chosen (see [`PackRequest::selection`])."
         ),
-    ] = None
-    include_native: bool | None = None
-    include_tables: bool | None = None
-    instruments: Annotated[
-        list[PackInstrumentRef] | None,
-        Field(
-            description="显式筛选（记录在数据锁里）；空 = 不筛选，导出全部 universe。"
-        ),
-    ] = None
-    venues: Annotated[list[str] | None, Field(description="空 = 全部九个平台。")] = None
-    warmup_frames: Annotated[int | None, Field(ge=0)] = None
-    window: WindowMs
+    ]
 
 
 class PolicyContextLastResultsItem(BaseModel):
@@ -1321,6 +1403,12 @@ class RunResult(BaseModel):
         ),
     ] = None
     counts: BTreeMap
+    daily_equity: Annotated[
+        list[DailyEquityPoint] | None,
+        Field(
+            description="Optional (protocol 2.4): the run's net (close-now value, equity minus start) at the last valued point of every UTC day,\nascending by day. AlphaKeel recomputes the G1 daily returns (1.6 DSR, 1.8 bootstrap) from it."
+        ),
+    ] = None
     data_quality: BTreeMap
     dataset_view: Annotated[
         dict[str, Any] | None,
@@ -1343,6 +1431,12 @@ class RunResult(BaseModel):
         ),
     ] = None
     problems: Annotated[list[Text], Field(max_length=50)]
+    run_assumptions: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="Optional (2026-10-11), `ir_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`, and since protocol 2.3 `fees_perp_taker` (venue ->\nperp taker the run actually used), `leverage_perp`, `funding_mode`). The AlphaKeel verdict reads it (items 1.14 and the\nbinding of the robustness evidence). Only runs of the service's own engine carry it: a registered external run\n(`POST /runs/external`) that includes `run_assumptions`, `fill_model`, `capital_cost` or `optimistic` is refused."
+        ),
+    ] = None
     run_id: Id
     schema_: Annotated[ResultSchema, Field(alias="schema")]
     side: RunManifestSide
@@ -1467,6 +1561,38 @@ class InputAccess(BaseModel):
     table: InputAccessTable
 
 
+class PackRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    accept_partial: bool | None = None
+    dataset: DatasetSpec | None = None
+    fees_override: Annotated[
+        dict[str, FeeOverride] | None,
+        Field(
+            description="Scan packs only: venue -> taker fees, used for scan frames that recorded no fee schedule. Without it such\nframes reject the pack (the current account fees are never substituted). Recorded in the data lock and listed\nin the `approximations` of every run on the pack."
+        ),
+    ] = None
+    funding_dataset: Annotated[
+        str | None,
+        Field(
+            description='官方结算数据集版本；空 = 数据集可用时固定为当前最新（解析结果写进数据锁），`"none"` = 不含资金费结算。'
+        ),
+    ] = None
+    include_native: bool | None = None
+    include_tables: bool | None = None
+    instruments: Annotated[
+        list[PackInstrumentRef] | None,
+        Field(
+            description="显式筛选（记录在数据锁里）；空 = 不筛选，导出全部 universe。"
+        ),
+    ] = None
+    selection: PackSelection | None = None
+    venues: Annotated[list[str] | None, Field(description="空 = 全部九个平台。")] = None
+    warmup_frames: Annotated[int | None, Field(ge=0)] = None
+    window: WindowMs
+
+
 class PolicyContext(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1541,6 +1667,7 @@ class DataLock(BaseModel):
             max_length=8,
         ),
     ] = None
+    fees_override: DataLockFeesOverride | None = None
     funding: DataLockFunding | None
     limits: Annotated[list[Text], Field(max_length=100)]
     objects: Annotated[list[DataObject], Field(max_length=100000, min_length=1)]

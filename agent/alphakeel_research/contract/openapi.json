@@ -237,6 +237,25 @@
         ],
         "type": "string"
       },
+      "DailyEquityPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "day_ms": {
+            "description": "UTC day start, milliseconds.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "net": {
+            "$ref": "#/components/schemas/Dec",
+            "description": "The run's net at the day's last valued point (decimal string)."
+          }
+        },
+        "required": [
+          "day_ms",
+          "net"
+        ],
+        "type": "object"
+      },
       "DataLock": {
         "additionalProperties": false,
         "properties": {
@@ -2641,6 +2660,32 @@
         ],
         "type": "string"
       },
+      "InputFrames": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "first_seq": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "last_seq": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "first_seq",
+          "last_seq",
+          "count"
+        ],
+        "type": "object"
+      },
       "InstrumentRef": {
         "additionalProperties": false,
         "properties": {
@@ -3754,6 +3799,16 @@
           "counts": {
             "$ref": "#/components/schemas/BTreeMap"
           },
+          "daily_equity": {
+            "description": "Optional (protocol 2.4): the run's net (close-now value, equity minus start) at the last valued point of every UTC day,\nascending by day. AlphaKeel recomputes the G1 daily returns (1.6 DSR, 1.8 bootstrap) from it.",
+            "items": {
+              "$ref": "#/components/schemas/DailyEquityPoint"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "data_quality": {
             "$ref": "#/components/schemas/BTreeMap"
           },
@@ -4209,6 +4264,17 @@
           },
           "external_python": {
             "$ref": "#/components/schemas/Status"
+          },
+          "input_frames": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InputFrames",
+                "description": "Optional (protocol 2.4), scan-frame runs only: the scan frames actually replayed (archive sequence numbers of the\nfirst and last replayed frame and their count). AlphaKeel's G3 item 3.9 checks that the matched replays of a\nstrategy cover every input frame its paper journal used."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "ir_ledger": {
             "oneOf": [
