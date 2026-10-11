@@ -23,7 +23,7 @@ D = Decimal
 
 class FakePack:
     def __init__(self, obs, official=()):
-        """``obs``: (time, rate, interval hours, venue next boundary) per frame; ``official``: (boundary, rate)."""
+        """``obs``: (time, rate, interval hours, venue next boundary) per frame; ``official``: (boundary, rate[, published mark])."""
         self._frames = [Frame(i, i + 1, t, t, "h", False, {"binance": {"ok": True, "fetched_ms": t}}, None, False) for i, (t, *_) in enumerate(obs)]
         self._obs = obs
         self._official = list(official)
@@ -47,7 +47,8 @@ class FakePack:
         return [Observation(t, D(r), h, n, D(100), "mark", i) for i, (t, r, h, n) in enumerate(self._obs)]
 
     def settlements(self, inst, t0, t1):
-        return [Settlement(t, "BTCUSDT", D(r), "regular", None, "ok", "USDT", "linear", "x", None, t, None, "0" * 64, True) for t, r in self._official]
+        return [Settlement(t, "BTCUSDT", D(r), "regular", None, "ok", "USDT", "linear", "x", None, t, None if not m else D(m[0]), "0" * 64, True)
+                for t, r, *m in self._official]
 
     def accesses(self):
         return []
@@ -128,3 +129,18 @@ def test_the_plan_feeds_every_skipped_boundary_once_from_the_last_observation():
     assert funding_feed_plan([(0, b8 - 5 * 60_000, 1, b8), (1, b8 + 5 * 60_000, 8, b8 + 8 * H)]) == ({}, [])
     # consecutive scans: nothing extra
     assert funding_feed_plan([(0, b8 - 5 * 60_000, 1, b8), (1, b8 + 5 * 60_000, 1, b8 + H)]) == ({}, [])
+
+
+def test_official_mode_prices_the_settlement_at_the_published_mark_rounded_half_even_to_the_price_dp():
+    """F04: the settlement row's mark replaces the frame mark (100 here) where the official rate is used, rounded like AlphaKeel
+    (price_dp = 0 on these frames, half-even: 2.5 -> 2, 3.5 -> 4); a row without a mark keeps the frame mark."""
+    b8 = BASE + 16 * H
+    obs = [(b8 - 5 * 60_000, "0.01", 1, b8), (b8 + H - 60_000, "0.01", 1, b8 + H), (b8 + 2 * H - 60_000, "0.01", 1, b8 + 2 * H), (b8 + 2 * H + 60_000, "0.01", 1, b8 + 3 * H)]
+    out, sim = run(obs, official=[(b8, "0.01", "2.5"), (b8 + H, "0.01", "3.5"), (b8 + 2 * H, "0.01")], prof=profile(official=True))
+    # long 1: amount = -qty * settlement price * rate
+    assert [(b, a) for b, a, _ in settled(out)] == [(b8, "-0.02"), (b8 + H, "-0.04"), (b8 + 2 * H, "-1")]
+    assert [e["data"]["settlement_price"] for e in out.events if e["kind"] == "funding"] == ["2", "4", "100"]
+    assert sim.estimate_fallbacks == 0
+    # estimate mode never reads the published mark
+    out, _ = run(obs, official=[(b8, "0.01", "2.5")], prof=profile(official=False))
+    assert {e["data"]["settlement_price"] for e in out.events if e["kind"] == "funding"} == {"100"}

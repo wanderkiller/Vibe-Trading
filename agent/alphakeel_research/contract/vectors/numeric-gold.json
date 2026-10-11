@@ -49,6 +49,48 @@
    "unrounded": "0.123456785"
   },
   {
+   "calc": "qty 100, rate -0.02, frame mark 1: official mark 2 -> amount = 100*2*0.02 = 4; official mark 4 -> 8 (long receives when the rate is negative); no published mark -> frame mark 1 -> 2",
+   "cases": [
+    {
+     "amount": "4",
+     "official_mark": "2"
+    },
+    {
+     "amount": "8",
+     "official_mark": "4"
+    },
+    {
+     "amount": "2",
+     "official_mark": null
+    }
+   ],
+   "frame_mark": "1",
+   "name": "funding priced at the published official mark (4 and 8)",
+   "qty": "100",
+   "rate": "-0.02",
+   "side": "long"
+  },
+  {
+   "calc": "price_dp 3: 2.00049999 -> 2.000 (amount 4); 2.0015 is a midpoint -> 2.002 (even, not 2.001; amount 4.004); qty 100, rate -0.02, long",
+   "cases": [
+    {
+     "amount": "4",
+     "official_mark": "2.00049999",
+     "rounded": "2"
+    },
+    {
+     "amount": "4.004",
+     "official_mark": "2.0015",
+     "rounded": "2.002"
+    }
+   ],
+   "name": "official mark is rounded half-even to the price dp once",
+   "price_dp": 3,
+   "qty": "100",
+   "rate": "-0.02",
+   "side": "long"
+  },
+  {
    "calc": "native 2 USDC * 1.01 = 2.02 USDT",
    "fx": "1.01",
    "name": "usdc to usdt once at close",

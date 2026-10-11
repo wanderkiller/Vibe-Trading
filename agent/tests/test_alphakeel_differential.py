@@ -51,7 +51,7 @@ def client(server):
 
 @pytest.fixture(scope="module")
 def pack(server, client, tmp_path_factory):
-    return workflow.freeze_pack(client, {"window": {"start_ms": server.start_ms, "end_ms": server.end_ms}}, cache_dir=tmp_path_factory.mktemp("c"))
+    return workflow.freeze_pack(client, {"window": {"start_ms": server.start_ms, "end_ms": server.end_ms}, "venues": ["binance", "okx"]}, cache_dir=tmp_path_factory.mktemp("c"))
 
 
 def intent_lists(start_ms: int):

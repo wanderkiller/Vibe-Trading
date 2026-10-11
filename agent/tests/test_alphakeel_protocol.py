@@ -50,7 +50,7 @@ class StepProtocol(RuleBasedStateMachine):
     def __init__(self):
         super().__init__()
         c = self.client
-        pack = workflow.freeze_pack(c, {"window": {"start_ms": self.server.start_ms, "end_ms": self.server.end_ms}}, cache_dir=self.tmp / "cache")
+        pack = workflow.freeze_pack(c, {"window": {"start_ms": self.server.start_ms, "end_ms": self.server.end_ms}, "venues": ["binance", "okx"]}, cache_dir=self.tmp / "cache")
         d = self.tmp / "s"
         if not d.exists():
             shutil.copytree(FIX / "carry_policy", d)

@@ -769,6 +769,10 @@
             "minimum": 0,
             "type": "integer"
           },
+          "instrument_missing": {
+            "$ref": "#/components/schemas/BTreeMap",
+            "description": "Per requested instrument (`venue|market|symbol`): scans in the window where the instrument's venue had data but the\ninstrument was absent from the frame. Absent in packs frozen before this field existed."
+          },
           "last_ms": {
             "format": "int64",
             "minimum": 0,
@@ -3812,7 +3816,7 @@
             "$ref": "#/components/schemas/BTreeMap"
           },
           "daily_equity": {
-            "description": "Optional (protocol 2.4): the run's net (close-now value, equity minus start) at the last valued point of every UTC day,\nascending by day. AlphaKeel recomputes the G1 daily returns (1.6 DSR, 1.8 bootstrap) from it.",
+            "description": "Optional (protocol 2.4): the run's net (close-now value, equity minus start) at the last valued point of every UTC day,\nascending by day; net of the capital cost accrued up to the day's close when the run charges one (the same basis as `amounts.net_of_capital_cost`). AlphaKeel recomputes the G1 daily returns (1.6 DSR, 1.8 bootstrap) from it.",
             "items": {
               "$ref": "#/components/schemas/DailyEquityPoint"
             },
@@ -4274,6 +4278,16 @@
           "engine_recount": {
             "$ref": "#/components/schemas/Status"
           },
+          "events": {
+            "description": "Optional (protocol 2.4), scan-frame `ir_strategy` runs only: the IR decision ledger's events of the replay\n(opens, closes, funding settlements), each keyed by the input frame it happened at. AlphaKeel's G3 item 3.9\ncompares them one by one with the events of the strategy's paper journal.",
+            "items": {
+              "$ref": "#/components/schemas/VerificationEvent"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "external_python": {
             "$ref": "#/components/schemas/Status"
           },
@@ -4313,6 +4327,59 @@
           "external_python"
         ],
         "type": "object"
+      },
+      "VerificationEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Dec",
+                "description": "Funding only: the settlement amount in USDT (decimal string, paid by the long side negative)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/VerificationEventKind"
+          },
+          "pair": {
+            "description": "The paper position id (`cross:<base>:<long leg>><short leg>`).",
+            "maxLength": 300,
+            "minLength": 1,
+            "type": "string"
+          },
+          "seq": {
+            "description": "Archive sequence number of the input frame the event happened at.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ts_ms": {
+            "description": "Funding only: the settlement time, milliseconds.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "seq",
+          "kind",
+          "pair"
+        ],
+        "type": "object"
+      },
+      "VerificationEventKind": {
+        "enum": [
+          "open",
+          "close",
+          "funding"
+        ],
+        "type": "string"
       },
       "Window": {
         "additionalProperties": false,

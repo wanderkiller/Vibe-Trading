@@ -46,7 +46,7 @@ def client(server):
 
 @pytest.fixture(scope="module")
 def pack(server, client, tmp_path_factory):
-    req = {"window": {"start_ms": server.start_ms, "end_ms": server.end_ms}}
+    req = {"window": {"start_ms": server.start_ms, "end_ms": server.end_ms}, "venues": ["binance", "okx"]}
     return workflow.freeze_pack(client, req, cache_dir=tmp_path_factory.mktemp("cache"))
 
 
@@ -121,7 +121,7 @@ def test_reads_are_logged_as_actual_inputs_with_recomputable_chains(server, pack
 
 
 def test_cache_hits_need_verified_bytes_and_a_corrupt_cache_is_downloaded_again(server, client, tmp_path):
-    p1 = Pack.open(client, workflow.freeze_pack(client, {"window": {"start_ms": server.start_ms, "end_ms": server.end_ms}}, cache_dir=tmp_path).id, tmp_path)
+    p1 = Pack.open(client, workflow.freeze_pack(client, {"window": {"start_ms": server.start_ms, "end_ms": server.end_ms}, "venues": ["binance", "okx"]}, cache_dir=tmp_path).id, tmp_path)
     obj = next(o for o in p1.lock["objects"] if o["role"] == "quotes")
     path = p1._path(obj)
     assert p1.cache.has(obj["content_sha256"])
@@ -135,7 +135,7 @@ def test_cache_hits_need_verified_bytes_and_a_corrupt_cache_is_downloaded_again(
 
 def test_without_zstandard_the_service_decompresses_and_the_client_still_verifies(server, client, tmp_path, monkeypatch):
     monkeypatch.setattr(packfile, "_zstd", None)
-    p = Pack.open(client, workflow.freeze_pack(client, {"window": {"start_ms": server.start_ms, "end_ms": server.end_ms}}, cache_dir=tmp_path).id, tmp_path / "fresh")
+    p = Pack.open(client, workflow.freeze_pack(client, {"window": {"start_ms": server.start_ms, "end_ms": server.end_ms}, "venues": ["binance", "okx"]}, cache_dir=tmp_path).id, tmp_path / "fresh")
     assert len(p.quotes(Inst("binance", "perp", "BTCUSDT"), server.start_ms, server.end_ms)) == 61
 
 

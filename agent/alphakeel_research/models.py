@@ -765,21 +765,10 @@ class Venue(StrEnum):
     backpack = "backpack"
 
 
-class Verification(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    engine_recount: Status
-    external_python: Status
-    input_frames: InputFrames | None = None
-    ir_ledger: Status | None = None
-    ir_ledger_problems: Annotated[
-        dict[str, Any] | None,
-        Field(
-            description="`ir_strategy` with `ir_ledger = mismatch` only: why (the engine-vs-ledger audit: maximum differences and the\nfirst problems). Absent otherwise."
-        ),
-    ] = None
-    native_rule_ledger: Status
+class VerificationEventKind(StrEnum):
+    open = "open"
+    close = "close"
+    funding = "funding"
 
 
 class Window(BaseModel):
@@ -898,6 +887,12 @@ class DataLockScans(BaseModel):
     first_ms: Annotated[int, Field(ge=0)]
     frames: Annotated[int, Field(ge=0)]
     gaps_over_3_minutes: Annotated[int, Field(ge=0)]
+    instrument_missing: Annotated[
+        BTreeMap | None,
+        Field(
+            description="Per requested instrument (`venue|market|symbol`): scans in the window where the instrument's venue had data but the\ninstrument was absent from the frame. Absent in packs frozen before this field existed."
+        ),
+    ] = None
     last_ms: Annotated[int, Field(ge=0)]
     manifest_sha256: Sha256
     max_gap_ms: Annotated[int, Field(ge=0)]
@@ -1396,71 +1391,6 @@ class RunManifestStrategy(BaseModel):
     strategy_id: Id
 
 
-class RunResult(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    amounts: ResultAmounts
-    amounts_ok: bool | None
-    approximations: Annotated[
-        list[Text] | None,
-        Field(
-            description="Optional (2026-10-11), `ir_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_from_top_of_book_ledger`, `top_of_book_full_fill`), each starting with its identifier and a colon.",
-            max_length=40,
-        ),
-    ] = None
-    by_currency: dict[str, ResultByCurrencyValue]
-    capital: ResultCapital
-    capital_cost: Annotated[
-        dict[str, Any] | None,
-        Field(
-            description="Optional (2026-10-11): capital-occupation cost (idle margin of both legs x `annual_rate` x holding time), kept\napart from fees and deducted in `amounts.net_of_capital_cost`."
-        ),
-    ] = None
-    counts: BTreeMap
-    daily_equity: Annotated[
-        list[DailyEquityPoint] | None,
-        Field(
-            description="Optional (protocol 2.4): the run's net (close-now value, equity minus start) at the last valued point of every UTC day,\nascending by day. AlphaKeel recomputes the G1 daily returns (1.6 DSR, 1.8 bootstrap) from it."
-        ),
-    ] = None
-    data_quality: BTreeMap
-    dataset_view: Annotated[
-        dict[str, Any] | None,
-        Field(
-            description="`ir_strategy` on a dataset pack only: the `dataset_view` request, instants, instants without data and the\nview's approximations."
-        ),
-    ] = None
-    drawdown: ResultDrawdown
-    equity: ResultEquity
-    event_log: ResultEventLog
-    execution_ok: bool | None
-    fill_model: ResultFillModel | None = None
-    limitations: Annotated[list[Text], Field(max_length=40)]
-    mode: Mode
-    not_applicable_metrics: Annotated[list[Id], Field(max_length=40)]
-    optimistic: Annotated[
-        dict[str, Any] | None,
-        Field(
-            description="Optional (2026-10-11), conservative `ir_strategy` runs only: the same run under one-level full fills\n(`fill_model`, `execution_ok`, `amounts_ok`, `amounts`, `by_currency`, `equity`, `drawdown`, `capital`,\n`counts`, `event_log`, `problems`, `events_sha256`). The main figures are the conservative ones."
-        ),
-    ] = None
-    problems: Annotated[list[Text], Field(max_length=50)]
-    run_assumptions: Annotated[
-        dict[str, Any] | None,
-        Field(
-            description="Optional (2026-10-11), `ir_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`, and since protocol 2.3 `fees_perp_taker` (venue ->\nperp taker the run actually used), `leverage_perp`, `funding_mode`). The AlphaKeel verdict reads it (items 1.14 and the\nbinding of the robustness evidence). Only runs of the service's own engine carry it: a registered external run\n(`POST /runs/external`) that includes `run_assumptions`, `fill_model`, `capital_cost` or `optimistic` is refused."
-        ),
-    ] = None
-    run_id: Id
-    schema_: Annotated[ResultSchema, Field(alias="schema")]
-    side: RunManifestSide
-    strategy_id: Id | None = None
-    strategy_sha256: Sha256 | None = None
-    verification: Verification
-    window: ResultWindow | None = None
-
-
 class StrategyManifest(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1480,6 +1410,33 @@ class StrategyManifest(BaseModel):
     seed: Annotated[int | None, Field(ge=0)]
     strategy_id: Id
     supports: StrategyManifestSupports
+
+
+class VerificationEvent(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    amount: Dec | None = None
+    kind: VerificationEventKind
+    pair: Annotated[
+        str,
+        Field(
+            description="The paper position id (`cross:<base>:<long leg>><short leg>`).",
+            max_length=300,
+            min_length=1,
+        ),
+    ]
+    seq: Annotated[
+        int,
+        Field(
+            description="Archive sequence number of the input frame the event happened at.",
+            ge=0,
+        ),
+    ]
+    ts_ms: Annotated[
+        int | None,
+        Field(description="Funding only: the settlement time, milliseconds."),
+    ] = None
 
 
 class ComparisonAffected(BaseModel):
@@ -1649,6 +1606,29 @@ class RunManifest(BaseModel):
     strategy: RunManifestStrategy | None
 
 
+class Verification(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    engine_recount: Status
+    events: Annotated[
+        list[VerificationEvent] | None,
+        Field(
+            description="Optional (protocol 2.4), scan-frame `ir_strategy` runs only: the IR decision ledger's events of the replay\n(opens, closes, funding settlements), each keyed by the input frame it happened at. AlphaKeel's G3 item 3.9\ncompares them one by one with the events of the strategy's paper journal."
+        ),
+    ] = None
+    external_python: Status
+    input_frames: InputFrames | None = None
+    ir_ledger: Status | None = None
+    ir_ledger_problems: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="`ir_strategy` with `ir_ledger = mismatch` only: why (the engine-vs-ledger audit: maximum differences and the\nfirst problems). Absent otherwise."
+        ),
+    ] = None
+    native_rule_ledger: Status
+
+
 class Comparison(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1696,3 +1676,68 @@ class DataLock(BaseModel):
     units: DataLockUnits
     universe: DataLockUniverse
     windows: DataLockWindows
+
+
+class RunResult(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    amounts: ResultAmounts
+    amounts_ok: bool | None
+    approximations: Annotated[
+        list[Text] | None,
+        Field(
+            description="Optional (2026-10-11), `ir_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_from_top_of_book_ledger`, `top_of_book_full_fill`), each starting with its identifier and a colon.",
+            max_length=40,
+        ),
+    ] = None
+    by_currency: dict[str, ResultByCurrencyValue]
+    capital: ResultCapital
+    capital_cost: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="Optional (2026-10-11): capital-occupation cost (idle margin of both legs x `annual_rate` x holding time), kept\napart from fees and deducted in `amounts.net_of_capital_cost`."
+        ),
+    ] = None
+    counts: BTreeMap
+    daily_equity: Annotated[
+        list[DailyEquityPoint] | None,
+        Field(
+            description="Optional (protocol 2.4): the run's net (close-now value, equity minus start) at the last valued point of every UTC day,\nascending by day; net of the capital cost accrued up to the day's close when the run charges one (the same basis as `amounts.net_of_capital_cost`). AlphaKeel recomputes the G1 daily returns (1.6 DSR, 1.8 bootstrap) from it."
+        ),
+    ] = None
+    data_quality: BTreeMap
+    dataset_view: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="`ir_strategy` on a dataset pack only: the `dataset_view` request, instants, instants without data and the\nview's approximations."
+        ),
+    ] = None
+    drawdown: ResultDrawdown
+    equity: ResultEquity
+    event_log: ResultEventLog
+    execution_ok: bool | None
+    fill_model: ResultFillModel | None = None
+    limitations: Annotated[list[Text], Field(max_length=40)]
+    mode: Mode
+    not_applicable_metrics: Annotated[list[Id], Field(max_length=40)]
+    optimistic: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="Optional (2026-10-11), conservative `ir_strategy` runs only: the same run under one-level full fills\n(`fill_model`, `execution_ok`, `amounts_ok`, `amounts`, `by_currency`, `equity`, `drawdown`, `capital`,\n`counts`, `event_log`, `problems`, `events_sha256`). The main figures are the conservative ones."
+        ),
+    ] = None
+    problems: Annotated[list[Text], Field(max_length=50)]
+    run_assumptions: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="Optional (2026-10-11), `ir_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`, and since protocol 2.3 `fees_perp_taker` (venue ->\nperp taker the run actually used), `leverage_perp`, `funding_mode`). The AlphaKeel verdict reads it (items 1.14 and the\nbinding of the robustness evidence). Only runs of the service's own engine carry it: a registered external run\n(`POST /runs/external`) that includes `run_assumptions`, `fill_model`, `capital_cost` or `optimistic` is refused."
+        ),
+    ] = None
+    run_id: Id
+    schema_: Annotated[ResultSchema, Field(alias="schema")]
+    side: RunManifestSide
+    strategy_id: Id | None = None
+    strategy_sha256: Sha256 | None = None
+    verification: Verification
+    window: ResultWindow | None = None

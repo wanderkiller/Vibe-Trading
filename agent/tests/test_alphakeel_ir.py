@@ -514,7 +514,7 @@ def test_the_example_ir_runs_locally_on_the_fixture_pack_and_writes_evidence(tmp
     server = start()
     client = Client(server.url, server.token)
     try:
-        pack = workflow.freeze_pack(client, {"window": {"start_ms": server.start_ms, "end_ms": server.end_ms}}, cache_dir=tmp_path / "cache")
+        pack = workflow.freeze_pack(client, {"window": {"start_ms": server.start_ms, "end_ms": server.end_ms}, "venues": ["binance", "okx"]}, cache_dir=tmp_path / "cache")
         prof = client.render_profile(pack.id, "python_policy")["profile"]
         pack_dir = pack.export(tmp_path / "pack")  # downloads and verifies every object while the client is open
         doc = json.loads(EXAMPLE.read_text())

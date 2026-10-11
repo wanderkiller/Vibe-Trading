@@ -197,7 +197,7 @@
      "mode": "official_settlement",
      "notional": "abs_qty_times_settlement_price",
      "rounding": "currency_min_unit_1e-8",
-     "settlement_price": "last_mark_price",
+     "settlement_price": "official_mark_when_published_else_last_frame_mark",
      "sign": "long_pays_when_rate_positive",
      "strict": true
     },
@@ -1963,7 +1963,7 @@
      "mode": "official_settlement",
      "notional": "abs_qty_times_settlement_price",
      "rounding": "currency_min_unit_1e-8",
-     "settlement_price": "last_mark_price",
+     "settlement_price": "official_mark_when_published_else_last_frame_mark",
      "sign": "long_pays_when_rate_positive",
      "strict": true
     },
@@ -2068,7 +2068,7 @@
      "mode": "official_settlement",
      "notional": "abs_qty_times_settlement_price",
      "rounding": "currency_min_unit_1e-8",
-     "settlement_price": "last_mark_price",
+     "settlement_price": "official_mark_when_published_else_last_frame_mark",
      "sign": "long_pays_when_rate_positive",
      "strict": true
     },
@@ -5338,7 +5338,7 @@
      "mode": "official_settlement",
      "notional": "abs_qty_times_settlement_price",
      "rounding": "currency_min_unit_1e-8",
-     "settlement_price": "last_mark_price",
+     "settlement_price": "official_mark_when_published_else_last_frame_mark",
      "sign": "long_pays_when_rate_positive",
      "strict": true
     },
@@ -5446,7 +5446,7 @@
      "mode": "official_settlement",
      "notional": "abs_qty_times_settlement_price",
      "rounding": "currency_min_unit_1e-8",
-     "settlement_price": "last_mark_price",
+     "settlement_price": "official_mark_when_published_else_last_frame_mark",
      "sign": "long_pays_when_rate_positive",
      "strict": true
     },
@@ -5555,7 +5555,7 @@
      "mode": "official_settlement",
      "notional": "abs_qty_times_settlement_price",
      "rounding": "currency_min_unit_1e-8",
-     "settlement_price": "last_mark_price",
+     "settlement_price": "official_mark_when_published_else_last_frame_mark",
      "sign": "long_pays_when_rate_positive",
      "strict": true
     },
@@ -5660,7 +5660,7 @@
      "mode": "official_settlement",
      "notional": "abs_qty_times_settlement_price",
      "rounding": "currency_min_unit_1e-8",
-     "settlement_price": "last_mark_price",
+     "settlement_price": "official_mark_when_published_else_last_frame_mark",
      "sign": "long_pays_when_rate_positive",
      "strict": true
     },
@@ -5769,7 +5769,7 @@
      "mode": "official_settlement",
      "notional": "abs_qty_times_settlement_price",
      "rounding": "currency_min_unit_1e-8",
-     "settlement_price": "last_mark_price",
+     "settlement_price": "official_mark_when_published_else_last_frame_mark",
      "sign": "long_pays_when_rate_positive",
      "strict": true
     },
@@ -5878,7 +5878,7 @@
      "mode": "official_settlement",
      "notional": "abs_qty_times_settlement_price",
      "rounding": "currency_min_unit_1e-8",
-     "settlement_price": "last_mark_price",
+     "settlement_price": "official_mark_when_published_else_last_frame_mark",
      "sign": "long_pays_when_rate_positive",
      "strict": true
     },
@@ -5987,7 +5987,7 @@
      "mode": "official_settlement",
      "notional": "abs_qty_times_settlement_price",
      "rounding": "currency_min_unit_1e-8",
-     "settlement_price": "last_mark_price",
+     "settlement_price": "official_mark_when_published_else_last_frame_mark",
      "sign": "long_pays_when_rate_positive",
      "strict": true
     },

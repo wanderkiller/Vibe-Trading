@@ -382,13 +382,13 @@ class Simulator:
             for g in gaps:
                 self._gaps.append({**g, "inst": inst, "held": False})
         self.unobserved_funding: list[dict] = []
-        self._official_tables: dict[Inst, list[tuple[int, Decimal]]] = {}
+        self._official_tables: dict[Inst, list[tuple[int, Decimal, Decimal | None]]] = {}
         if self.official:
             for inst in self.insts:
                 if inst.market != "perp":
                     continue
                 rows = [s for s in self.pack.settlements(inst, t0 - BOUNDARY_TOLERANCE_MS, t1 + BOUNDARY_TOLERANCE_MS + 1) if s.event_kind == "regular"]
-                self._official_tables[inst] = sorted((s.t, s.rate) for s in rows)
+                self._official_tables[inst] = sorted(((s.t, s.rate, s.mark_price) for s in rows), key=lambda x: (x[0], x[1]))
 
     def _cancelled_boundaries(self) -> set[tuple[Inst, int]]:
         seen: dict[Inst, list[tuple[int, int]]] = {}
@@ -416,12 +416,21 @@ class Simulator:
         self.evs.append(Ev(ns, rank, o, kind, inst.ref() if inst else None, pair_id, intent_id, order_id, position_ref, data))
         return o
 
-    def _official_rate(self, inst: Inst, boundary: int) -> Decimal | None:
+    def _official_near(self, inst: Inst, boundary: int) -> tuple[Decimal, Decimal | None] | None:
         t = self._official_tables.get(inst)
         if not t:
             return None
-        near = [r for ts, r in t if abs(ts - boundary) <= BOUNDARY_TOLERANCE_MS]
+        near = [(r, m) for ts, r, m in t if abs(ts - boundary) <= BOUNDARY_TOLERANCE_MS]
         return near[0] if len(near) == 1 else None
+
+    def _official_rate(self, inst: Inst, boundary: int) -> Decimal | None:
+        o = self._official_near(inst, boundary)
+        return None if o is None else o[0]
+
+    def _official_mark(self, inst: Inst, boundary: int) -> Decimal | None:
+        """The settlement's published mark price (F04), only where the official rate is also used (same as AlphaKeel)."""
+        o = self._official_near(inst, boundary)
+        return None if o is None else o[1]
 
     # ------------------------------------------------------------------ run
 
@@ -763,10 +772,12 @@ class Simulator:
 
     def _settle(self, inst: Inst, b: int, rate: Decimal, *, last_mark_at, k: int) -> None:
         """Funding at boundary ``b`` for every open position of ``inst`` (price: last mark seen at or before b)."""
-        mk = None
-        # last mark at or before b: frame data up to and including b
+        mk = self._official_mark(inst, b) if self.official and self.fed_official.get((inst.leg(), b), False) else None
+        # last mark at or before b: frame data up to and including b (the settlement's published mark, when present, wins)
         kk = max(0, k if last_mark_at is self.frames[k] else k - 1)
         for j in range(kk, -1, -1):
+            if mk is not None:
+                break
             if self.frames[j].t <= b and inst in self.snaps[j]:
                 mk = self.snaps[j][inst].mark
                 break
