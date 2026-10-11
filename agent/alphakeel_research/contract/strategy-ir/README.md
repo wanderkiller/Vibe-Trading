@@ -60,7 +60,7 @@
 | `sizing.max_open` | 整数 1–50 | 同时持仓上限。 |
 | `sizing.leverage` | 十进制串 > 0 或 `null` | 必填（可为 null = 运行环境的值）。 |
 | `parameters` | 对象 | 参数名 → `{value, robust: [lo, hi], path}`，供人审阅；见 §3。可为 `{}`。 |
-| `provenance` | 对象 | 自由内容（工具、run_id、研究窗口、试验数、数据审计、研究凭证……）；只检查形状：`tool`（非空字符串）与 `window.start`、`window.end`（字符串）必填。不进 id。 |
+| `provenance` | 对象 | 自由内容（工具、run_id、研究窗口、试验数、数据审计、研究凭证……）；只检查形状：`tool`（非空字符串）与 `window.start`、`window.end`（字符串）必填。不进 id。可选 `fixed_literals`：路径（写法同 `parameters.*.path`）→ 十进制串，列出入场/出场里**刻意固定**、没有声明成参数的数值字面量；AlphaKeel 判决 G1 1.19 要求每个入场/出场数值字面量要么是声明参数的位置、要么列在这里且值与 IR 一致（0、1、24、60、1000、3600 豁免），值不一致或路径不指向字面量即 FAIL。 |
 
 条件：`{"feature": <特征名>, "op": ">=" | "<=" | ">" | "<" | "between", "value": <十进制串> | [<lo>, <hi>]}`。
 `between` 是闭区间 `lo ≤ x ≤ hi`，要求 `lo ≤ hi`，且只有 `between` 的 value 是区间。所有比较值都是十进制串

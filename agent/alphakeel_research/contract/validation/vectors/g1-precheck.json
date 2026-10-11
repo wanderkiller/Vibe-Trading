@@ -1,7 +1,7 @@
 {
  "schema": "alphakeel.validation-vectors/1",
  "protocol": "validation/protocol.json",
- "rule": "each case: evaluate the research-side G1 items of the protocol on `robustness` with `other_registered_candidates` added to the DSR trial count; results must equal `expected` exactly (PASS | FAIL | N/A); an optional case field `trials_floor` (default 0) is the trial-count floor passed to the DSR item (max with dsr_inputs.trials); 1.6 also needs dsr_inputs.daily_returns (V[SR] floor recomputed with the statistics module) and 1.13 needs rating.facts.synthetic_view (protocol v2)",
+ "rule": "each case: evaluate the research-side G1 items of the protocol on `robustness` with `other_registered_candidates` added to the DSR trial count; results must equal `expected` exactly (PASS | FAIL | N/A); an optional case field `trials_floor` (default 0) is the trial-count floor passed to the DSR item (max with dsr_inputs.trials); 1.6 also needs dsr_inputs.daily_returns (V[SR] floor recomputed with the statistics module) and 1.13 needs rating.facts.synthetic_view (protocol v2) Protocol 2.1: each entry of `ir_cases` evaluates the AlphaKeel-side G1 items on a Strategy IR `ir` and the universe facts `pack_universe` of the robustness IS pack ({selection, top_n, survivorship}, or null = unknown): `expected` holds 1.18 and 1.19 (PASS | FAIL), `robust_width` (PASS | FAIL: every parameter's robust interval satisfies (hi-lo)/(2|value|) >= 0.2, value 0 needs hi-lo >= 0.2 x the allowed range width: 0.001 for funding_hourly_net, 1 for funding_apr / price_estimated, 0.01 for the other rate features / basis_stress, 1e6 for volume_min, 60000 for the millisecond features, 1440 for cooldown_minutes; unknown position = FAIL) and `grade_cap` (the G1 grade cap 1.18 imposes, or null). 1.18: screener_live -> PASS; pit_membership with survivorship includes_delisted* -> PASS; pit_membership with survivors_* or declared with includes_delisted* -> PASS with cap C; declared with survivors_* -> FAIL; missing annotation -> FAIL. 1.19: every numeric literal of the entry/exit expressions (entry/exit conditions' values, entry.candidate_limit, entry.cooldown_minutes, exit.max_hold_hours, exit.max_loss, exit.take_profit) is a declared parameter's path, one of 0 1 24 60 1000 3600, or listed in provenance.fixed_literals with an equal value; a listed path that is no literal also fails.",
  "cases": [
   {
    "name": "all_pass",
@@ -3746,6 +3746,1854 @@
     "1.12": "N/A",
     "1.13": "PASS",
     "1.16": "PASS"
+   }
+  }
+ ],
+ "ir_cases": [
+  {
+   "name": "clear",
+   "why": "point-in-time universe with delisted contracts, every literal declared or listed, wide robust range",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "archive_delisted_passes",
+   "why": "includes_delisted_from_archive still counts as excluding survivor bias",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted_from_archive"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "declared_survivors",
+   "why": "a declared list on a survivors-only universe fails 1.18",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "declared",
+    "top_n": null,
+    "survivorship": "survivors_only_unobserved"
+   },
+   "expected": {
+    "1.18": "FAIL",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "declared_survivors_before_first_seen",
+   "why": "survivors_before_first_seen is a survivors_* annotation too",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "declared",
+    "top_n": null,
+    "survivorship": "survivors_before_first_seen"
+   },
+   "expected": {
+    "1.18": "FAIL",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "pit_survivor_side_caps_c",
+   "why": "pit_membership but one side only has survivors: pass, grade capped at C",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "survivors_only_unobserved"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": "C"
+   }
+  },
+  {
+   "name": "declared_includes_delisted_caps_c",
+   "why": "declared list over a universe that includes delisted contracts: pass, grade capped at C",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "declared",
+    "top_n": null,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": "C"
+   }
+  },
+  {
+   "name": "scan_pack_passes",
+   "why": "scan packs (screener_live) saw the then-listed contracts: pass, no cap",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "screener_live",
+    "top_n": null,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "old_pack_without_annotation",
+   "why": "a pack whose data lock has no universe.selection fails: re-pack",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": null,
+    "top_n": null,
+    "survivorship": null
+   },
+   "expected": {
+    "1.18": "FAIL",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "pack_unknown",
+   "why": "no universe facts for the IS pack fail 1.18",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": null,
+   "expected": {
+    "1.18": "FAIL",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "selection_without_survivorship",
+   "why": "a selection without survivorship fails 1.18",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": null
+   },
+   "expected": {
+    "1.18": "FAIL",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "literal_unlisted",
+   "why": "candidate_limit / cooldown / max_hold / max_loss are neither parameters, exempt nor listed",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "FAIL",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "literal_value_mismatch",
+   "why": "a listed value that differs from the IR fails",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "25"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "FAIL",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "literal_stale_path",
+   "why": "a listed path that points at no literal fails",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20",
+      "entry.conditions[7].value": "3"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "FAIL",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "literal_exemptions",
+   "why": "0, 1, 24, 60, 1000 and 3600 need no declaration (time-unit and structural constants)",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": "between",
+       "value": [
+        "0",
+        "1"
+       ]
+      },
+      {
+       "feature": "quote_age_ms",
+       "op": "<=",
+       "value": "1000"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 1,
+     "cooldown_minutes": 60,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "leg_skew_ms",
+       "op": ">=",
+       "value": "3600"
+      }
+     ],
+     "max_hold_hours": 24,
+     "max_loss": "1",
+     "take_profit": "60"
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {},
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "literal_next_to_exempt",
+   "why": "59 is not 60: it must be declared",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": "between",
+       "value": [
+        "0",
+        "1"
+       ]
+      },
+      {
+       "feature": "quote_age_ms",
+       "op": "<=",
+       "value": "1000"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 1,
+     "cooldown_minutes": 59,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "leg_skew_ms",
+       "op": ">=",
+       "value": "3600"
+      }
+     ],
+     "max_hold_hours": 24,
+     "max_loss": "1",
+     "take_profit": "60"
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {},
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "FAIL",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "sizing_and_assumptions_are_not_expressions",
+   "why": "sizing and assumptions literals are not entry/exit expressions",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 71,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1234",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "robust_width_exactly_twenty_percent",
+   "why": "(hi-lo)/(2|value|) = 0.2 exactly passes",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0004",
+       "0.0006"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "robust_width_just_below",
+   "why": "a hair under 20% fails (the neighbour test would test nothing)",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.00041",
+       "0.00059"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "PASS",
+    "robust_width": "FAIL",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "robust_width_asymmetric_wide_enough",
+   "why": "only the total relative width counts: [0.0004, 0.00062] has (hi-lo)/(2|v|) = 0.22",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0004",
+       "0.00062"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "robust_width_zero_value_wide",
+   "why": "value 0: hi-lo must be at least 0.2 x the allowed range width (0.01 for a net-rate feature, i.e. 0.002)",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "-0.001",
+       "0.002"
+      ],
+      "value": "0"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "robust_width_zero_value_narrow",
+   "why": "value 0 with hi-lo = 0.001 < 0.002 fails",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0",
+       "0.001"
+      ],
+      "value": "0"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "PASS",
+    "robust_width": "FAIL",
+    "grade_cap": null
    }
   }
  ]

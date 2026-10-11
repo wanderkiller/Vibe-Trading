@@ -24,10 +24,10 @@ PIN = contract.local_pin()
 
 
 def test_the_contract_pin_is_the_v2_protocol_and_vectors():
-    assert PIN["validation/protocol.json"] == "9f46ba92d5e643ab2e9fe4e7f50d6b9b2512b717c41148afbb020a5104359ac9"
-    assert PIN["validation/vectors/g1-precheck.json"] == "17205c38f5b468bd805ae88a57ae720b71de6f91faf708bb42b1ed67b79821a2"
+    assert PIN["validation/protocol.json"] == "d3743b790e04c1402057e1240e2c835f8c2dbd27577c45b2a6b43876a58d92c3"
+    assert PIN["validation/vectors/g1-precheck.json"] == "ab865eb91822fe465897ff393fb86fb4e7b98b660410cf9a35e537c654feaf53"
     p = precheck.load_protocol()
-    assert p["version"] == "2"
+    assert p["version"] == "2.1"
     # an optional informational item (3.11, not research-side) never reaches the research-side list
     assert "3.11" not in {i["id"] for i in precheck.research_items(p)}
     stripped = copy.deepcopy(p)

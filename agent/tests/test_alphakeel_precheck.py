@@ -145,3 +145,28 @@ def _mutate_value(path, filter_on):
     for k in path:
         cur = cur[k]
     return "0.01" if filter_on and path[-1] == "filter_p" else cur
+
+
+# ---- protocol 2.1: 1.9 width, 1.18 universe, 1.19 literals (the shared vector's ir_cases) ----
+
+@pytest.mark.parametrize("case", VECTOR["ir_cases"], ids=[c["name"] for c in VECTOR["ir_cases"]])
+def test_every_shared_ir_case_matches_exactly(case):
+    extra = precheck.ir_items(case["ir"], case["pack_universe"], precheck.load_protocol(), "pk")
+    got = {i["id"]: i["result"] for i in extra["items"]}
+    exp = case["expected"]
+    assert got["1.18"] == exp["1.18"], (case["why"], extra["items"])
+    assert got["1.19"] == exp["1.19"], (case["why"], extra["items"])
+    assert ("FAIL" if extra["robust_width_problems"] else "PASS") == exp["robust_width"], (case["why"], extra["robust_width_problems"])
+    assert extra["grade_cap"] == exp["grade_cap"], case["why"]
+    assert all(i["note"] for i in extra["items"] if i["result"] == "FAIL")
+
+
+def test_evaluate_without_an_ir_is_unchanged_and_with_one_appends_1_18_and_1_19():
+    case = VECTOR["cases"][0]
+    plain = precheck.evaluate(case["robustness"], precheck.load_protocol(), case["other_registered_candidates"])
+    assert {g["id"] for g in plain}.isdisjoint({"1.18", "1.19"})
+    ir_case = VECTOR["ir_cases"][0]
+    full = precheck.evaluate(case["robustness"], precheck.load_protocol(), case["other_registered_candidates"],
+                             ir=ir_case["ir"], pack_universe=ir_case["pack_universe"])
+    assert [g["id"] for g in full][-2:] == ["1.18", "1.19"]
+    assert [g["id"] for g in full][:-2] == [g["id"] for g in plain]

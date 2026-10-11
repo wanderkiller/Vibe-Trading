@@ -291,6 +291,13 @@
        "type": "string"
       }
      }
+    },
+    "fixed_literals": {
+     "type": "object",
+     "description": "Optional. Numeric literals of the entry/exit expressions that are deliberately fixed (not tuned and not declared as parameters): path (same grammar as parameters.*.path) -> the literal's value. AlphaKeel G1 1.19 requires each value to equal the one in the IR; 0, 1, 24, 60, 1000 and 3600 need no entry.",
+     "additionalProperties": {
+      "$ref": "#/$defs/decimal"
+     }
     }
    }
   }

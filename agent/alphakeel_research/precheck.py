@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,15 @@ VAR_FLOOR_TOLERANCE = 1e-9
 MIN_ROBUST_REL_WIDTH = Decimal("0.2")
 SYNTHETIC_VIEW = "kline_close_synthetic_bbo"
 GRADE_ORDER = ("A", "B", "C", "D", "F")
+
+#: Numeric literals that need no declaration (G1 1.19, protocol 2.1; AlphaKeel ``strategy_ir::ir::EXEMPT_LITERALS``):
+#: 0 and 1 are structural constants (a zero threshold, a boolean), 24 / 60 / 1000 / 3600 are time-unit conversions
+#: (hours per day, minutes per hour, milliseconds per second, seconds per hour) -- none of them is a tuned number.
+EXEMPT_LITERALS = (0, 1, 24, 60, 1000, 3600)
+#: Survivorship annotation of a data lock, best to worst (AlphaKeel ``SURVIVORSHIP_ORDER``); unknown values rank worst.
+SURVIVORSHIP_ORDER = ("includes_delisted", "includes_delisted_from_archive", "survivors_before_first_seen", "survivors_only_unobserved")
+#: G1 grade cap when the research universe does not exclude survivor bias (1.18).
+UNIVERSE_GRADE_CAP = "C"
 
 _MISSING = object()
 
@@ -328,7 +338,167 @@ def _item(rb: dict, item: dict, other: int, trials_floor: int = 0) -> tuple[str,
     return "FAIL", None, f"item {i} is not implemented in this client (protocol newer than the client)"
 
 
-def evaluate(robustness: dict | None, protocol: dict, other_candidates: int = 0, trials_floor: int = 0) -> list[dict]:
+# --------------------------------------------------------------------------------------------------------------------
+# protocol 2.1: AlphaKeel-side items on the IR and on the universe facts of the IS pack (1.9 width, 1.18, 1.19)
+# --------------------------------------------------------------------------------------------------------------------
+
+def survivorship_rank(s: Any) -> int:
+    return SURVIVORSHIP_ORDER.index(s) if s in SURVIVORSHIP_ORDER else len(SURVIVORSHIP_ORDER)
+
+
+def worse_survivorship(a: str, b: str) -> str:
+    return b if survivorship_rank(b) > survivorship_rank(a) else a
+
+
+def numeric_literals(doc: dict) -> list[tuple[str, Decimal]]:
+    """Every numeric literal of the entry / exit expressions, in document order (AlphaKeel ``numeric_literals``): the condition
+    values (a ``between`` range contributes ``value[0]`` and ``value[1]``), ``entry.candidate_limit``, ``entry.cooldown_minutes``,
+    ``exit.max_hold_hours``, ``exit.max_loss`` and ``exit.take_profit`` (when not null). Paths use the ``parameters.*.path`` grammar.
+    ``sizing`` and ``assumptions`` are cost / capital assumptions, not entry or exit expressions."""
+    out: list[tuple[str, Decimal]] = []
+
+    def conds(prefix: str, cs: list) -> None:
+        for i, c in enumerate(cs):
+            v = c["value"]
+            if isinstance(v, list):
+                out.append((f"{prefix}.conditions[{i}].value[0]", Decimal(v[0])))
+                out.append((f"{prefix}.conditions[{i}].value[1]", Decimal(v[1])))
+            else:
+                out.append((f"{prefix}.conditions[{i}].value", Decimal(v)))
+
+    e, x = doc["entry"], doc["exit"]
+    conds("entry", e["conditions"])
+    out.append(("entry.candidate_limit", Decimal(e["candidate_limit"])))
+    out.append(("entry.cooldown_minutes", Decimal(e["cooldown_minutes"])))
+    conds("exit", x["conditions"])
+    out.append(("exit.max_hold_hours", Decimal(x["max_hold_hours"])))
+    out.append(("exit.max_loss", Decimal(x["max_loss"])))
+    if x.get("take_profit") is not None:
+        out.append(("exit.take_profit", Decimal(x["take_profit"])))
+    return out
+
+
+def _zero_scale(doc: dict, path: str) -> Decimal | None:
+    """AlphaKeel's judging scale for a parameter whose value is 0 (the "allowed range width"); None = unknown position."""
+    m = re.fullmatch(r"(entry|exit)\.conditions\[([0-9]+)\]\.value(\[[01]\])?", path)
+    if m:
+        try:
+            feature = doc[m.group(1)]["conditions"][int(m.group(2))]["feature"]
+        except (KeyError, IndexError, TypeError):
+            return None
+        table = {"funding_hourly_net": "0.001", "funding_apr": "1", "funding": "0.01", "basis": "0.01", "spread": "0.01", "fees": "0.01",
+                 "stress": "0.01", "net_expected": "0.01", "net_conservative": "0.01", "volume_min": "1000000", "quote_age_ms": "60000",
+                 "leg_skew_ms": "60000", "price_estimated": "1"}
+        return Decimal(table[feature]) if feature in table else None
+    return {"entry.cooldown_minutes": Decimal("1440"), "assumptions.basis_stress": Decimal("0.01")}.get(path)
+
+
+def robust_width_problems(doc: dict) -> list[str]:
+    """1.9, AlphaKeel's own check of every parameter's ``robust`` interval: ``(hi - lo) / (2 |value|) >= 0.2``; for value 0,
+    ``hi - lo >= 0.2 x`` the allowed range width of the position. Empty = all fine."""
+    bad: list[str] = []
+    params = doc.get("parameters")
+    if not isinstance(params, dict):
+        return bad
+    for name in sorted(params):
+        p = params[name]
+        robust = p.get("robust") if isinstance(p.get("robust"), list) and len(p["robust"]) == 2 else [None, None]
+        v, lo, hi = _dec(p.get("value"), "str"), _dec(robust[0], "str"), _dec(robust[1], "str")
+        if v is None or lo is None or hi is None:
+            bad.append(f"{name}: value/robust are not decimal strings")
+            continue
+        width = hi - lo
+        if v == 0:
+            scale = _zero_scale(doc, str(p.get("path", "")))
+            if scale is None:
+                bad.append(f"{name}: value 0 at {p.get('path')}: no allowed range width is known to judge the robust interval")
+            elif width < MIN_ROBUST_REL_WIDTH * scale:
+                bad.append(f"{name}: value 0, robust width {_show(width)} below 0.2 x the allowed range width {_show(scale)}")
+        elif width < MIN_ROBUST_REL_WIDTH * 2 * abs(v):
+            bad.append(f"{name}: robust [{_show(lo)}, {_show(hi)}] around {_show(v)} is narrower than +-20% (relative half width {_show(width / (2 * abs(v)))})")
+    return bad
+
+
+def literal_report(doc: dict) -> dict:
+    """1.19: classify every entry / exit numeric literal as declared (a ``parameters.*.path``), listed in
+    ``provenance.fixed_literals`` with an equal value, exempt (:data:`EXEMPT_LITERALS`) or undeclared; also report listed
+    values that differ and listed paths that point at no literal."""
+    literals = numeric_literals(doc)
+    fixed = (doc.get("provenance") or {}).get("fixed_literals")
+    fixed = fixed if isinstance(fixed, dict) else {}
+    declared_paths = {p.get("path") for p in (doc.get("parameters") or {}).values()}
+    rep = {"total": len(literals), "declared": 0, "exempt": 0, "fixed": 0, "undeclared": [], "mismatched": [], "stale": []}
+    for path, value in literals:
+        if path in declared_paths:
+            rep["declared"] += 1
+        elif path in fixed:
+            listed = fixed[path]
+            if _dec(listed, "any") == value:
+                rep["fixed"] += 1
+            else:
+                rep["mismatched"].append(f"{path}: listed {json.dumps(listed)}, IR has {value}")
+        elif any(value == Decimal(x) for x in EXEMPT_LITERALS):
+            rep["exempt"] += 1
+        else:
+            rep["undeclared"].append(f"{path} = {value}")
+    paths = {p for p, _ in literals}
+    rep["stale"] = [k for k in fixed if k not in paths]
+    return rep
+
+
+def universe_verdict(pu: dict | None, pack_id: str | None = None) -> tuple[str, Any, str | None, str | None]:
+    """1.18 on the universe facts of the robustness IS pack (``{"selection", "top_n", "survivorship"}``; None = unknown):
+    ``(result, observed, note, grade_cap)``. screener_live -> PASS; pit_membership with includes_delisted* -> PASS;
+    pit_membership with survivors_* or declared with includes_delisted* -> PASS with grade cap C; declared with survivors_* -> FAIL;
+    a missing annotation (old pack) -> FAIL, re-pack."""
+    if pu is None:
+        return "FAIL", {"pack_id": pack_id}, "universe annotation unavailable: no data lock for the IS pack, or it was not reachable (需重新打包)", None
+    sel, surv = pu.get("selection"), pu.get("survivorship")
+    obs = {"pack_id": pack_id, "selection": sel, "top_n": pu.get("top_n"), "survivorship": surv}
+    if sel is None:
+        return "FAIL", obs, "the IS pack's data lock has no universe.selection (built before the survivorship annotation): 需重新打包", None
+    if sel == "screener_live":
+        return "PASS", obs, "scan pack: the universe is what the screener saw listed at scan time", None
+    if surv is None:
+        return "FAIL", obs, "the IS pack's data lock has no universe.survivorship: 需重新打包", None
+    delisted = survivorship_rank(surv) < 2
+    if (sel, delisted) == ("pit_membership", True):
+        return "PASS", obs, None, None
+    if (sel, delisted) in (("pit_membership", False), ("declared", True)):
+        return "PASS", obs, f"G1 grade capped at {UNIVERSE_GRADE_CAP}: selection {sel} with survivorship {surv} does not exclude survivor bias", UNIVERSE_GRADE_CAP
+    if (sel, delisted) == ("declared", False):
+        return "FAIL", obs, f"declared universe with survivorship {surv}: the evidence universe is today's survivors; rebuild the pack with selection pit_membership", None
+    return "FAIL", obs, f"unknown universe.selection {sel!r}", None
+
+
+def ir_items(doc: dict, pack_universe: dict | None, protocol: dict, pack_id: str | None = None) -> dict:
+    """The AlphaKeel-side items that need the IR / the IS pack's universe: ``{"items": [1.18, 1.19 results the protocol has],
+    "robust_width_problems": [...], "grade_cap": "C" | None}``. Protocol copies without 1.18 / 1.19 (before 2.1) yield no items."""
+    have = {i["id"]: i for i in protocol["stages"]["validated"]["items"]}
+    items, cap = [], None
+    if "1.18" in have:
+        result, observed, note, cap = universe_verdict(pack_universe, pack_id)
+        items.append({"id": "1.18", "label": have["1.18"]["label"], "result": result, "observed": observed, "note": note})
+    if "1.19" in have:
+        try:
+            r = literal_report(doc)
+            ok = not (r["undeclared"] or r["mismatched"] or r["stale"])
+            why = "; ".join(x for x in (
+                f"undeclared literal(s): {'; '.join(r['undeclared'])}" if r["undeclared"] else "",
+                f"fixed_literals value differs from the IR: {'; '.join(r['mismatched'])}" if r["mismatched"] else "",
+                f"fixed_literals path(s) point at no literal: {', '.join(r['stale'])}" if r["stale"] else "") if x)
+            items.append({"id": "1.19", "label": have["1.19"]["label"], "result": "PASS" if ok else "FAIL", "observed": r, "note": why or None})
+        except (KeyError, TypeError, ValueError, InvalidOperation) as e:
+            items.append({"id": "1.19", "label": have["1.19"]["label"], "result": "FAIL", "observed": None,
+                          "note": f"the IR cannot be read for the literal scan: {e}"})
+    return {"items": items, "robust_width_problems": robust_width_problems(doc), "grade_cap": cap}
+
+
+_UNSET: Any = object()
+
+
+def evaluate(robustness: dict | None, protocol: dict, other_candidates: int = 0, trials_floor: int = 0, *,
+             ir: dict | None = None, pack_universe: Any = _UNSET) -> list[dict]:
     """The research-side G1 items of ``protocol`` evaluated on ``robustness`` (``robustness.json``), in protocol order.
     ``other_candidates`` is the number of other registered candidates added to the DSR trial count (AlphaKeel's registry
     knows it; a research-side run has 0). ``trials_floor`` is the trial-count floor (IR provenance + battery candidates, or
@@ -342,4 +512,23 @@ def evaluate(robustness: dict | None, protocol: dict, other_candidates: int = 0,
             if result == "FAIL" and not note:
                 note = f"observed {observed}, threshold {json.dumps(item['threshold'], sort_keys=True)}"
         out.append({"id": item["id"], "label": item["label"], "result": result, "observed": observed, "note": note})
+    if ir is not None:
+        # protocol 2.1, AlphaKeel-side: 1.9 also checks the robust widths of the IR itself, 1.13 takes the universe cap,
+        # 1.18 / 1.19 are appended (they are not research_side items).
+        extra = ir_items(ir, None if pack_universe is _UNSET else pack_universe, protocol,
+                         (robustness or {}).get("inputs", {}).get("pack_id") if isinstance(robustness, dict) else None)
+        for o in out:
+            if o["id"] == "1.9" and extra["robust_width_problems"]:
+                o["result"] = "FAIL"
+                msg = "robust interval too narrow (AK check): " + "; ".join(extra["robust_width_problems"])
+                o["note"] = f"{o['note']}; {msg}" if o["note"] else msg
+            if o["id"] == "1.13" and extra["grade_cap"] and isinstance(robustness, dict):
+                g = _get(robustness, "rating", "grade")
+                over = g in GRADE_ORDER and GRADE_ORDER.index(g) < GRADE_ORDER.index(extra["grade_cap"])
+                msg = (f"cap violated: the research universe (1.18) caps the G1 grade at {extra['grade_cap']}" if over
+                       else f"grade capped at {extra['grade_cap']} by the research universe (1.18)")
+                if over:
+                    o["result"] = "FAIL"
+                o["note"] = f"{o['note']}; {msg}" if o["note"] else msg
+        out.extend(extra["items"])
     return out

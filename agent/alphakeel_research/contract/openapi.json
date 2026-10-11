@@ -259,6 +259,17 @@
               "null"
             ]
           },
+          "fees_override": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DataLockFeesOverride",
+                "description": "Present when the request's `fees_override` was applied (scan packs); runs on the pack list it in `approximations`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "funding": {
             "oneOf": [
               {
@@ -521,6 +532,32 @@
         ],
         "type": "object"
       },
+      "DataLockFeesOverride": {
+        "additionalProperties": false,
+        "description": "The fee schedule supplied with the request for scan frames that recorded none.",
+        "properties": {
+          "frames_applied": {
+            "description": "Scan frames that used it.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "venues": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FeeOverride"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "venues",
+          "frames_applied"
+        ],
+        "type": "object"
+      },
       "DataLockFunding": {
         "additionalProperties": false,
         "properties": {
@@ -576,6 +613,32 @@
           "observed_pit"
         ],
         "type": "string"
+      },
+      "DataLockMembership": {
+        "additionalProperties": false,
+        "properties": {
+          "days_in_window": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "first_day": {
+            "type": "string"
+          },
+          "last_day": {
+            "type": "string"
+          },
+          "table_sha256": {
+            "$ref": "#/components/schemas/Sha256"
+          }
+        },
+        "required": [
+          "first_day",
+          "last_day",
+          "days_in_window",
+          "table_sha256"
+        ],
+        "type": "object"
       },
       "DataLockRequest": {
         "additionalProperties": false,
@@ -727,6 +790,44 @@
       "DataLockSchema": {
         "enum": [
           "alphakeel.data-lock/1"
+        ],
+        "type": "string"
+      },
+      "DataLockSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/DataLockSelectionKind"
+          },
+          "membership": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DataLockMembership"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "top_n": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "DataLockSelectionKind": {
+        "enum": [
+          "declared",
+          "pit_membership",
+          "screener_live"
         ],
         "type": "string"
       },
@@ -882,6 +983,30 @@
             "format": "int64",
             "minimum": 0,
             "type": "integer"
+          },
+          "selection": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DataLockSelection",
+                "description": "How the instrument list was chosen. Absent in packs built before the survivorship annotation (re-pack them)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "survivorship": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Per venue, the worse of the funding-history side and the market side:\n`includes_delisted` < `includes_delisted_from_archive` < `survivors_before_first_seen` < `survivors_only_unobserved`.",
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2430,6 +2555,25 @@
         ],
         "type": "object"
       },
+      "FeeOverride": {
+        "additionalProperties": false,
+        "description": "Taker fees (decimal strings, fractions of notional) for one venue.",
+        "properties": {
+          "perp_taker": {
+            "type": "string"
+          },
+          "spot_taker": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "perp_taker"
+        ],
+        "type": "object"
+      },
       "HashOrEmpty": {
         "description": "空串或 SHA-256（链锚点：首份没有上一份）。",
         "pattern": "^([0-9a-f]{64})?$",
@@ -2694,6 +2838,19 @@
               }
             ]
           },
+          "fees_override": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FeeOverride"
+            },
+            "description": "Scan packs only: venue -> taker fees, used for scan frames that recorded no fee schedule. Without it such\nframes reject the pack (the current account fees are never substituted). Recorded in the data lock and listed\nin the `approximations` of every run on the pack.",
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "funding_dataset": {
             "description": "官方结算数据集版本；空 = 数据集可用时固定为当前最新（解析结果写进数据锁），`\"none\"` = 不含资金费结算。",
             "type": [
@@ -2717,6 +2874,17 @@
               "null"
             ]
           },
+          "selection": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PackSelection",
+                "description": "Dataset packs only: how the instrument list was chosen. Absent = `\"declared\"` (the caller's own list, which\ncarries today's survivors unless proven otherwise). `{\"pit_membership\": {\"top_n\": N}}` = the list must equal the\nperpetuals, on the requested venues, of every base that was a top-N member on any UTC day of the window\n(the point-in-time membership table published with the market dataset); a missing day rejects the request."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "venues": {
             "description": "空 = 全部九个平台。",
             "items": {
@@ -2735,6 +2903,43 @@
         },
         "required": [
           "window"
+        ],
+        "type": "object"
+      },
+      "PackSelection": {
+        "description": "How a dataset pack's instrument list was chosen (see [`PackRequest::selection`]).",
+        "oneOf": [
+          {
+            "enum": [
+              "declared"
+            ],
+            "type": "string"
+          },
+          {
+            "properties": {
+              "pit_membership": {
+                "$ref": "#/components/schemas/PitMembership"
+              }
+            },
+            "required": [
+              "pit_membership"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PitMembership": {
+        "additionalProperties": false,
+        "properties": {
+          "top_n": {
+            "description": "Daily membership depth N (the first N members of each day are used; the table must have been built with N or more).",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "top_n"
         ],
         "type": "object"
       },
