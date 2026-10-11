@@ -2931,6 +2931,13 @@
       "PitMembership": {
         "additionalProperties": false,
         "properties": {
+          "table_sha256": {
+            "description": "Optional: the SHA-256 of the published membership table the pack must be built from (the `membership.table_sha256`\nof an earlier pack's data lock). A later receipt of the same dataset version may carry an appended or upgraded\ntable; with this set the build is rejected on a mismatch, so a pinned pack is reproducible.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "top_n": {
             "description": "Daily membership depth N (the first N members of each day are used; the table must have been built with N or more).",
             "format": "int32",
@@ -3807,6 +3814,10 @@
             },
             "maxItems": 50,
             "type": "array"
+          },
+          "run_assumptions": {
+            "description": "Optional (2026-10-11), `ir_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`). The AlphaKeel verdict reads it (item 1.14).",
+            "type": "object"
           },
           "run_id": {
             "$ref": "#/components/schemas/Id"

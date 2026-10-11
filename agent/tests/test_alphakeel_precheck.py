@@ -40,7 +40,8 @@ def test_a_protocol_file_that_differs_from_the_pin_is_refused(tmp_path, monkeypa
 
 @pytest.mark.parametrize("case", VECTOR["cases"], ids=[c["name"] for c in VECTOR["cases"]])
 def test_every_shared_vector_case_matches_exactly(case):
-    got = precheck.evaluate(case["robustness"], precheck.load_protocol(), case["other_registered_candidates"], case.get("trials_floor", 0))
+    got = precheck.evaluate(case["robustness"], precheck.load_protocol(), case["other_registered_candidates"], case.get("trials_floor", 0),
+                            filter_required_by_ir=case.get("filter_required_by_ir", False), ak_synthetic=case.get("ak_synthetic"))
     assert [g["id"] for g in got] == list(case["expected"]), case["why"]
     assert {g["id"]: g["result"] for g in got} == case["expected"], case["why"]
     assert all(g["label"] for g in got)

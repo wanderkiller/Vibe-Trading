@@ -24,10 +24,10 @@ PIN = contract.local_pin()
 
 
 def test_the_contract_pin_is_the_v2_protocol_and_vectors():
-    assert PIN["validation/protocol.json"] == "d3743b790e04c1402057e1240e2c835f8c2dbd27577c45b2a6b43876a58d92c3"
-    assert PIN["validation/vectors/g1-precheck.json"] == "ab865eb91822fe465897ff393fb86fb4e7b98b660410cf9a35e537c654feaf53"
+    assert PIN["validation/protocol.json"] == "7636c480a65b031b8c7bca3e1764d794e5600e7af958c94dc61b6cb634263de3"
+    assert PIN["validation/vectors/g1-precheck.json"] == "abe15837aaa9cd6124e43ca4b6a92f62d24e33cc526bad4222a6f0a72b1eebbc"
     p = precheck.load_protocol()
-    assert p["version"] == "2.1"
+    assert p["version"] == "2.2"
     # an optional informational item (3.11, not research-side) never reaches the research-side list
     assert "3.11" not in {i["id"] for i in precheck.research_items(p)}
     stripped = copy.deepcopy(p)
@@ -38,7 +38,8 @@ def test_the_contract_pin_is_the_v2_protocol_and_vectors():
 
 @pytest.mark.parametrize("case", VECTOR["cases"], ids=[c["name"] for c in VECTOR["cases"]])
 def test_precheck_vectors_v2(case):
-    got = precheck.evaluate(case["robustness"], precheck.load_protocol(), case["other_registered_candidates"], case.get("trials_floor", 0))
+    got = precheck.evaluate(case["robustness"], precheck.load_protocol(), case["other_registered_candidates"], case.get("trials_floor", 0),
+                            filter_required_by_ir=case.get("filter_required_by_ir", False), ak_synthetic=case.get("ak_synthetic"))
     assert {g["id"]: g["result"] for g in got} == case["expected"], case["why"]
     assert all(g["note"] for g in got if g["result"] == "FAIL")
 
@@ -325,3 +326,17 @@ def test_profile_summary_from_server(tmp_path):
     assert {k: seen["profile"][k] for k in ir_crosscheck.RECONCILIATION_FILL} == ir_crosscheck.RECONCILIATION_FILL
     with pytest.raises(ApiError, match="contradicts"):
         workflow.ir_review(Svc(), pack, _ir(), out_dir=tmp_path / "rv2", profile={"fill_model": "conservative"})
+
+
+def test_protocol_22_ak_side_inputs_come_from_the_ir_and_the_pack_not_from_the_battery():
+    p = precheck.load_protocol()
+    case = next(c for c in VECTOR["cases"] if c["name"] == "filter_forced_by_ir_tested")
+    ir = {"universe": {"excluded_bases": ["BTC"]}}
+    assert precheck.ir_filter_required(ir, set()) and not precheck.ir_filter_required({"universe": {}}, {"ETH"})
+    assert precheck.ir_filter_required({"universe": {"bases": ["eth"]}}, {"ETH", "SOL"}) and not precheck.ir_filter_required({"universe": {"bases": ["eth"]}}, {"ETH"})
+    assert precheck.pack_is_synthetic(None) and precheck.pack_is_synthetic({"selection": "pit_membership"})
+    assert not precheck.pack_is_synthetic({"selection": "screener_live"}) and precheck.pack_is_synthetic({"selection": "screener_live", "dataset_pack": True})
+    rb = copy.deepcopy(case["robustness"])
+    rb["rating"]["facts"]["filter_tested"] = False
+    got = {g["id"]: g for g in precheck.evaluate(rb, p, 0, ir=ir, pack_universe={"selection": "screener_live"})}
+    assert got["1.12"]["result"] == "FAIL"  # forced by the IR even though the battery says filter_required false

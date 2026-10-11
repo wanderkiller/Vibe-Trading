@@ -1,7 +1,7 @@
 {
  "schema": "alphakeel.validation-vectors/1",
  "protocol": "validation/protocol.json",
- "rule": "each case: evaluate the research-side G1 items of the protocol on `robustness` with `other_registered_candidates` added to the DSR trial count; results must equal `expected` exactly (PASS | FAIL | N/A); an optional case field `trials_floor` (default 0) is the trial-count floor passed to the DSR item (max with dsr_inputs.trials); 1.6 also needs dsr_inputs.daily_returns (V[SR] floor recomputed with the statistics module) and 1.13 needs rating.facts.synthetic_view (protocol v2) Protocol 2.1: each entry of `ir_cases` evaluates the AlphaKeel-side G1 items on a Strategy IR `ir` and the universe facts `pack_universe` of the robustness IS pack ({selection, top_n, survivorship}, or null = unknown): `expected` holds 1.18 and 1.19 (PASS | FAIL), `robust_width` (PASS | FAIL: every parameter's robust interval satisfies (hi-lo)/(2|value|) >= 0.2, value 0 needs hi-lo >= 0.2 x the allowed range width: 0.001 for funding_hourly_net, 1 for funding_apr / price_estimated, 0.01 for the other rate features / basis_stress, 1e6 for volume_min, 60000 for the millisecond features, 1440 for cooldown_minutes; unknown position = FAIL) and `grade_cap` (the G1 grade cap 1.18 imposes, or null). 1.18: screener_live -> PASS; pit_membership with survivorship includes_delisted* -> PASS; pit_membership with survivors_* or declared with includes_delisted* -> PASS with cap C; declared with survivors_* -> FAIL; missing annotation -> FAIL. 1.19: every numeric literal of the entry/exit expressions (entry/exit conditions' values, entry.candidate_limit, entry.cooldown_minutes, exit.max_hold_hours, exit.max_loss, exit.take_profit) is a declared parameter's path, one of 0 1 24 60 1000 3600, or listed in provenance.fixed_literals with an equal value; a listed path that is no literal also fails.",
+ "rule": "each case: evaluate the research-side G1 items of the protocol on `robustness` with `other_registered_candidates` added to the DSR trial count; results must equal `expected` exactly (PASS | FAIL | N/A); an optional case field `trials_floor` (default 0) is the trial-count floor passed to the DSR item (max with dsr_inputs.trials); 1.6 also needs dsr_inputs.daily_returns (V[SR] floor recomputed with the statistics module) and 1.13 needs rating.facts.synthetic_view (protocol v2). Protocol 2.2 (research review 2026-10-11) adds: `robustness.service_runs.service_conservative_net` (the research service's conservative-fill net of the base IR; 1.3-1.5 need both the local net and the service-side net to exceed the threshold; for 1.4 / 1.5 the service-side net is adjusted by the local stress delta (stressed local net - base local net); missing = FAIL), and two optional case fields that AlphaKeel computes itself instead of reading the researcher's report: `filter_required_by_ir` (default false; the IR restricts its universe, so 1.12 fails when filter_tested is false) and `ak_synthetic` (default null; true = the IS pack data lock has no scans, i.e. a dataset pack: 1.13 caps the grade at B whatever synthetic_view says). Protocol 2.1+: each entry of `ir_cases` evaluates the AlphaKeel-side G1 items on a Strategy IR `ir` and the universe facts `pack_universe` of the robustness IS pack ({selection, top_n, survivorship}, or null = unknown): `expected` holds 1.18 and 1.19 (PASS | FAIL), `robust_width` (PASS | FAIL: the robust interval of every parameter deviates from its value by at least 20% on EACH side, (value-lo) >= 0.2|value| and (hi-value) >= 0.2|value|; value 0 needs hi-lo >= 0.2 x the allowed range width: 0.001 for funding_hourly_net, 1 for funding_apr / price_estimated, 0.01 for the other rate features / basis_stress, 1e6 for volume_min, 60000 for the millisecond features, 1440 for cooldown_minutes; unknown position = FAIL) and `grade_cap` (always null since 2.2). 1.18 (2.2): screener_live -> PASS; pit_membership with survivorship includes_delisted* -> PASS; anything with a survivors side (survivors_*, partial_from_archive) or declared -> FAIL; missing annotation -> FAIL. 1.19 (2.2): every numeric literal of the entry/exit expressions (entry/exit conditions' values, entry.candidate_limit, entry.cooldown_minutes, exit.max_hold_hours, exit.max_loss, exit.take_profit) is a declared parameter's path, a structural constant by POSITION (a condition's compare value 0; the compare value 1 of price_estimated; entry.cooldown_minutes 0), or listed in provenance.fixed_literals with an equal value; a listed path that is no literal also fails.",
  "cases": [
   {
    "name": "all_pass",
@@ -258,6 +258,10 @@
       }
      ],
      "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -348,6 +352,10 @@
       }
      ],
      "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -599,6 +607,10 @@
     "walk_forward": {
      "computable": false,
      "reason": "IS window too short for 3 folds of 30 days"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -873,6 +885,10 @@
       }
      ],
      "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -1147,6 +1163,10 @@
       }
      ],
      "efficiency": "0.5"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -1421,6 +1441,10 @@
       }
      ],
      "efficiency": "0.5"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -1695,6 +1719,10 @@
       }
      ],
      "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -1969,6 +1997,10 @@
       }
      ],
      "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -2244,6 +2276,10 @@
       }
      ],
      "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -2519,6 +2555,10 @@
       }
      ],
      "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -2631,6 +2671,10 @@
       }
      ],
      "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -2905,6 +2949,10 @@
       }
      ],
      "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -3178,6 +3226,10 @@
       }
      ],
      "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -3455,6 +3507,10 @@
     },
     "data_view": {
      "view": "kline_close_synthetic_bbo"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -3729,6 +3785,10 @@
       }
      ],
      "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
     }
    },
    "expected": {
@@ -3747,6 +3807,1952 @@
     "1.13": "PASS",
     "1.16": "PASS"
    }
+  },
+  {
+   "name": "service_net_negative",
+   "why": "the service-side conservative net is negative while the local one-level-fill net is positive: 1.3-1.5 fail",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": false,
+      "filter_p": null,
+      "synthetic_view": false
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7,
+      "daily_returns": [
+       -0.011387,
+       0.000899,
+       -0.000217,
+       0.00311,
+       -0.014871,
+       0.002223,
+       -0.004385,
+       -0.015977,
+       -0.013439,
+       0.020439,
+       -0.015361,
+       -0.011827,
+       -0.001974,
+       0.000703,
+       0.002905,
+       0.021133,
+       0.000628,
+       0.006878,
+       0.012868,
+       -0.009246,
+       -0.001092,
+       -0.000851,
+       -0.000188,
+       0.010691,
+       -0.009292,
+       0.013428,
+       -0.006227,
+       0.018634,
+       -0.014942,
+       -0.000563,
+       -0.001105,
+       -0.003198,
+       0.006575,
+       -0.006358,
+       -0.005516,
+       0.006887,
+       0.013111,
+       -0.012585,
+       0.001273,
+       0.005202,
+       0.002031,
+       0.014119,
+       0.00098,
+       0.020498,
+       0.008813,
+       0.018173,
+       -0.002324,
+       0.008044,
+       -0.01642,
+       -0.006325,
+       0.002417,
+       0.01016,
+       -0.008657,
+       0.010234,
+       0.004129,
+       -0.002297,
+       -0.008021,
+       -0.007493,
+       0.006233,
+       0.022825,
+       -0.008845,
+       -0.007686,
+       0.015108,
+       -0.006685,
+       -0.001116,
+       -0.007516,
+       0.013737,
+       -0.001777,
+       0.013896,
+       0.009517,
+       -0.010557,
+       -0.008297,
+       0.014794,
+       -0.008691,
+       -0.013865,
+       -0.002684,
+       0.019909,
+       0.001241,
+       0.01476,
+       0.013768,
+       0.005387,
+       -0.009402,
+       -0.018487,
+       0.020134,
+       -0.000214,
+       -0.010498,
+       -0.004181,
+       0.011451,
+       -0.016738,
+       -0.004245,
+       -0.017942,
+       0.005623,
+       -0.014358,
+       -0.008213,
+       -0.017764,
+       0.022403,
+       0.009861,
+       0.007462,
+       -0.001701,
+       -0.012955,
+       0.013209,
+       0.004277,
+       -0.000637,
+       -0.006507,
+       0.008403,
+       -0.019835,
+       -0.004133,
+       0.01386,
+       0.006975,
+       0.001528,
+       0.020711,
+       0.001675,
+       0.01619,
+       0.00333,
+       -0.003943,
+       0.00834,
+       0.009049,
+       0.003575,
+       -0.009611,
+       -0.005294,
+       0.015856,
+       -0.015249,
+       0.01193,
+       0.012834,
+       -0.012006,
+       0.011544,
+       -0.006411,
+       -0.00639,
+       -0.01606,
+       -0.024245,
+       0.009782,
+       -0.008268,
+       -0.019574,
+       -0.009968,
+       -0.005067,
+       -0.01106,
+       -0.011463,
+       0.001662,
+       0.025393,
+       0.000147,
+       -0.009344,
+       0.010955,
+       -0.008053,
+       0.002616,
+       0.009138,
+       0.005486,
+       -0.0025,
+       -0.017631,
+       0.012039,
+       -0.002531,
+       0.005452,
+       -0.004965,
+       -0.000108,
+       -0.019826,
+       0.008317,
+       -0.017263,
+       0.006968,
+       0.012547,
+       0.003916,
+       0.007148
+      ]
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "-1"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "FAIL",
+    "1.4": "FAIL",
+    "1.5": "FAIL",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "N/A",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   }
+  },
+  {
+   "name": "service_net_missing",
+   "why": "no service-side conservative net (not registered / not verified): the local figure alone does not count",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": false,
+      "filter_p": null,
+      "synthetic_view": false
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7,
+      "daily_returns": [
+       -0.011387,
+       0.000899,
+       -0.000217,
+       0.00311,
+       -0.014871,
+       0.002223,
+       -0.004385,
+       -0.015977,
+       -0.013439,
+       0.020439,
+       -0.015361,
+       -0.011827,
+       -0.001974,
+       0.000703,
+       0.002905,
+       0.021133,
+       0.000628,
+       0.006878,
+       0.012868,
+       -0.009246,
+       -0.001092,
+       -0.000851,
+       -0.000188,
+       0.010691,
+       -0.009292,
+       0.013428,
+       -0.006227,
+       0.018634,
+       -0.014942,
+       -0.000563,
+       -0.001105,
+       -0.003198,
+       0.006575,
+       -0.006358,
+       -0.005516,
+       0.006887,
+       0.013111,
+       -0.012585,
+       0.001273,
+       0.005202,
+       0.002031,
+       0.014119,
+       0.00098,
+       0.020498,
+       0.008813,
+       0.018173,
+       -0.002324,
+       0.008044,
+       -0.01642,
+       -0.006325,
+       0.002417,
+       0.01016,
+       -0.008657,
+       0.010234,
+       0.004129,
+       -0.002297,
+       -0.008021,
+       -0.007493,
+       0.006233,
+       0.022825,
+       -0.008845,
+       -0.007686,
+       0.015108,
+       -0.006685,
+       -0.001116,
+       -0.007516,
+       0.013737,
+       -0.001777,
+       0.013896,
+       0.009517,
+       -0.010557,
+       -0.008297,
+       0.014794,
+       -0.008691,
+       -0.013865,
+       -0.002684,
+       0.019909,
+       0.001241,
+       0.01476,
+       0.013768,
+       0.005387,
+       -0.009402,
+       -0.018487,
+       0.020134,
+       -0.000214,
+       -0.010498,
+       -0.004181,
+       0.011451,
+       -0.016738,
+       -0.004245,
+       -0.017942,
+       0.005623,
+       -0.014358,
+       -0.008213,
+       -0.017764,
+       0.022403,
+       0.009861,
+       0.007462,
+       -0.001701,
+       -0.012955,
+       0.013209,
+       0.004277,
+       -0.000637,
+       -0.006507,
+       0.008403,
+       -0.019835,
+       -0.004133,
+       0.01386,
+       0.006975,
+       0.001528,
+       0.020711,
+       0.001675,
+       0.01619,
+       0.00333,
+       -0.003943,
+       0.00834,
+       0.009049,
+       0.003575,
+       -0.009611,
+       -0.005294,
+       0.015856,
+       -0.015249,
+       0.01193,
+       0.012834,
+       -0.012006,
+       0.011544,
+       -0.006411,
+       -0.00639,
+       -0.01606,
+       -0.024245,
+       0.009782,
+       -0.008268,
+       -0.019574,
+       -0.009968,
+       -0.005067,
+       -0.01106,
+       -0.011463,
+       0.001662,
+       0.025393,
+       0.000147,
+       -0.009344,
+       0.010955,
+       -0.008053,
+       0.002616,
+       0.009138,
+       0.005486,
+       -0.0025,
+       -0.017631,
+       0.012039,
+       -0.002531,
+       0.005452,
+       -0.004965,
+       -0.000108,
+       -0.019826,
+       0.008317,
+       -0.017263,
+       0.006968,
+       0.012547,
+       0.003916,
+       0.007148
+      ]
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "FAIL",
+    "1.4": "FAIL",
+    "1.5": "FAIL",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "N/A",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   }
+  },
+  {
+   "name": "service_net_small_fails_the_stress_adjustment",
+   "why": "service net 30 passes 1.3 but the stressed local deltas (98.1-152.3, 120.0-152.3) push 1.4 down, 1.5 stays positive",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": false,
+      "filter_p": null,
+      "synthetic_view": false
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7,
+      "daily_returns": [
+       -0.011387,
+       0.000899,
+       -0.000217,
+       0.00311,
+       -0.014871,
+       0.002223,
+       -0.004385,
+       -0.015977,
+       -0.013439,
+       0.020439,
+       -0.015361,
+       -0.011827,
+       -0.001974,
+       0.000703,
+       0.002905,
+       0.021133,
+       0.000628,
+       0.006878,
+       0.012868,
+       -0.009246,
+       -0.001092,
+       -0.000851,
+       -0.000188,
+       0.010691,
+       -0.009292,
+       0.013428,
+       -0.006227,
+       0.018634,
+       -0.014942,
+       -0.000563,
+       -0.001105,
+       -0.003198,
+       0.006575,
+       -0.006358,
+       -0.005516,
+       0.006887,
+       0.013111,
+       -0.012585,
+       0.001273,
+       0.005202,
+       0.002031,
+       0.014119,
+       0.00098,
+       0.020498,
+       0.008813,
+       0.018173,
+       -0.002324,
+       0.008044,
+       -0.01642,
+       -0.006325,
+       0.002417,
+       0.01016,
+       -0.008657,
+       0.010234,
+       0.004129,
+       -0.002297,
+       -0.008021,
+       -0.007493,
+       0.006233,
+       0.022825,
+       -0.008845,
+       -0.007686,
+       0.015108,
+       -0.006685,
+       -0.001116,
+       -0.007516,
+       0.013737,
+       -0.001777,
+       0.013896,
+       0.009517,
+       -0.010557,
+       -0.008297,
+       0.014794,
+       -0.008691,
+       -0.013865,
+       -0.002684,
+       0.019909,
+       0.001241,
+       0.01476,
+       0.013768,
+       0.005387,
+       -0.009402,
+       -0.018487,
+       0.020134,
+       -0.000214,
+       -0.010498,
+       -0.004181,
+       0.011451,
+       -0.016738,
+       -0.004245,
+       -0.017942,
+       0.005623,
+       -0.014358,
+       -0.008213,
+       -0.017764,
+       0.022403,
+       0.009861,
+       0.007462,
+       -0.001701,
+       -0.012955,
+       0.013209,
+       0.004277,
+       -0.000637,
+       -0.006507,
+       0.008403,
+       -0.019835,
+       -0.004133,
+       0.01386,
+       0.006975,
+       0.001528,
+       0.020711,
+       0.001675,
+       0.01619,
+       0.00333,
+       -0.003943,
+       0.00834,
+       0.009049,
+       0.003575,
+       -0.009611,
+       -0.005294,
+       0.015856,
+       -0.015249,
+       0.01193,
+       0.012834,
+       -0.012006,
+       0.011544,
+       -0.006411,
+       -0.00639,
+       -0.01606,
+       -0.024245,
+       0.009782,
+       -0.008268,
+       -0.019574,
+       -0.009968,
+       -0.005067,
+       -0.01106,
+       -0.011463,
+       0.001662,
+       0.025393,
+       0.000147,
+       -0.009344,
+       0.010955,
+       -0.008053,
+       0.002616,
+       0.009138,
+       0.005486,
+       -0.0025,
+       -0.017631,
+       0.012039,
+       -0.002531,
+       0.005452,
+       -0.004965,
+       -0.000108,
+       -0.019826,
+       0.008317,
+       -0.017263,
+       0.006968,
+       0.012547,
+       0.003916,
+       0.007148
+      ]
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "30"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "FAIL",
+    "1.5": "FAIL",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "N/A",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   }
+  },
+  {
+   "name": "filter_forced_by_ir_not_tested",
+   "why": "the IR restricts its universe (excluded_bases) but filter_tested is false: 1.12 fails",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": false,
+      "filter_p": null,
+      "synthetic_view": false
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7,
+      "daily_returns": [
+       -0.011387,
+       0.000899,
+       -0.000217,
+       0.00311,
+       -0.014871,
+       0.002223,
+       -0.004385,
+       -0.015977,
+       -0.013439,
+       0.020439,
+       -0.015361,
+       -0.011827,
+       -0.001974,
+       0.000703,
+       0.002905,
+       0.021133,
+       0.000628,
+       0.006878,
+       0.012868,
+       -0.009246,
+       -0.001092,
+       -0.000851,
+       -0.000188,
+       0.010691,
+       -0.009292,
+       0.013428,
+       -0.006227,
+       0.018634,
+       -0.014942,
+       -0.000563,
+       -0.001105,
+       -0.003198,
+       0.006575,
+       -0.006358,
+       -0.005516,
+       0.006887,
+       0.013111,
+       -0.012585,
+       0.001273,
+       0.005202,
+       0.002031,
+       0.014119,
+       0.00098,
+       0.020498,
+       0.008813,
+       0.018173,
+       -0.002324,
+       0.008044,
+       -0.01642,
+       -0.006325,
+       0.002417,
+       0.01016,
+       -0.008657,
+       0.010234,
+       0.004129,
+       -0.002297,
+       -0.008021,
+       -0.007493,
+       0.006233,
+       0.022825,
+       -0.008845,
+       -0.007686,
+       0.015108,
+       -0.006685,
+       -0.001116,
+       -0.007516,
+       0.013737,
+       -0.001777,
+       0.013896,
+       0.009517,
+       -0.010557,
+       -0.008297,
+       0.014794,
+       -0.008691,
+       -0.013865,
+       -0.002684,
+       0.019909,
+       0.001241,
+       0.01476,
+       0.013768,
+       0.005387,
+       -0.009402,
+       -0.018487,
+       0.020134,
+       -0.000214,
+       -0.010498,
+       -0.004181,
+       0.011451,
+       -0.016738,
+       -0.004245,
+       -0.017942,
+       0.005623,
+       -0.014358,
+       -0.008213,
+       -0.017764,
+       0.022403,
+       0.009861,
+       0.007462,
+       -0.001701,
+       -0.012955,
+       0.013209,
+       0.004277,
+       -0.000637,
+       -0.006507,
+       0.008403,
+       -0.019835,
+       -0.004133,
+       0.01386,
+       0.006975,
+       0.001528,
+       0.020711,
+       0.001675,
+       0.01619,
+       0.00333,
+       -0.003943,
+       0.00834,
+       0.009049,
+       0.003575,
+       -0.009611,
+       -0.005294,
+       0.015856,
+       -0.015249,
+       0.01193,
+       0.012834,
+       -0.012006,
+       0.011544,
+       -0.006411,
+       -0.00639,
+       -0.01606,
+       -0.024245,
+       0.009782,
+       -0.008268,
+       -0.019574,
+       -0.009968,
+       -0.005067,
+       -0.01106,
+       -0.011463,
+       0.001662,
+       0.025393,
+       0.000147,
+       -0.009344,
+       0.010955,
+       -0.008053,
+       0.002616,
+       0.009138,
+       0.005486,
+       -0.0025,
+       -0.017631,
+       0.012039,
+       -0.002531,
+       0.005452,
+       -0.004965,
+       -0.000108,
+       -0.019826,
+       0.008317,
+       -0.017263,
+       0.006968,
+       0.012547,
+       0.003916,
+       0.007148
+      ]
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "PASS",
+    "1.5": "PASS",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "FAIL",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   },
+   "filter_required_by_ir": true
+  },
+  {
+   "name": "filter_forced_by_ir_tested",
+   "why": "the IR restricts its universe and the filter was permutation-tested with p 0.01: 1.12 passes",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": true,
+      "filter_p": "0.01",
+      "synthetic_view": false
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7,
+      "daily_returns": [
+       -0.011387,
+       0.000899,
+       -0.000217,
+       0.00311,
+       -0.014871,
+       0.002223,
+       -0.004385,
+       -0.015977,
+       -0.013439,
+       0.020439,
+       -0.015361,
+       -0.011827,
+       -0.001974,
+       0.000703,
+       0.002905,
+       0.021133,
+       0.000628,
+       0.006878,
+       0.012868,
+       -0.009246,
+       -0.001092,
+       -0.000851,
+       -0.000188,
+       0.010691,
+       -0.009292,
+       0.013428,
+       -0.006227,
+       0.018634,
+       -0.014942,
+       -0.000563,
+       -0.001105,
+       -0.003198,
+       0.006575,
+       -0.006358,
+       -0.005516,
+       0.006887,
+       0.013111,
+       -0.012585,
+       0.001273,
+       0.005202,
+       0.002031,
+       0.014119,
+       0.00098,
+       0.020498,
+       0.008813,
+       0.018173,
+       -0.002324,
+       0.008044,
+       -0.01642,
+       -0.006325,
+       0.002417,
+       0.01016,
+       -0.008657,
+       0.010234,
+       0.004129,
+       -0.002297,
+       -0.008021,
+       -0.007493,
+       0.006233,
+       0.022825,
+       -0.008845,
+       -0.007686,
+       0.015108,
+       -0.006685,
+       -0.001116,
+       -0.007516,
+       0.013737,
+       -0.001777,
+       0.013896,
+       0.009517,
+       -0.010557,
+       -0.008297,
+       0.014794,
+       -0.008691,
+       -0.013865,
+       -0.002684,
+       0.019909,
+       0.001241,
+       0.01476,
+       0.013768,
+       0.005387,
+       -0.009402,
+       -0.018487,
+       0.020134,
+       -0.000214,
+       -0.010498,
+       -0.004181,
+       0.011451,
+       -0.016738,
+       -0.004245,
+       -0.017942,
+       0.005623,
+       -0.014358,
+       -0.008213,
+       -0.017764,
+       0.022403,
+       0.009861,
+       0.007462,
+       -0.001701,
+       -0.012955,
+       0.013209,
+       0.004277,
+       -0.000637,
+       -0.006507,
+       0.008403,
+       -0.019835,
+       -0.004133,
+       0.01386,
+       0.006975,
+       0.001528,
+       0.020711,
+       0.001675,
+       0.01619,
+       0.00333,
+       -0.003943,
+       0.00834,
+       0.009049,
+       0.003575,
+       -0.009611,
+       -0.005294,
+       0.015856,
+       -0.015249,
+       0.01193,
+       0.012834,
+       -0.012006,
+       0.011544,
+       -0.006411,
+       -0.00639,
+       -0.01606,
+       -0.024245,
+       0.009782,
+       -0.008268,
+       -0.019574,
+       -0.009968,
+       -0.005067,
+       -0.01106,
+       -0.011463,
+       0.001662,
+       0.025393,
+       0.000147,
+       -0.009344,
+       0.010955,
+       -0.008053,
+       0.002616,
+       0.009138,
+       0.005486,
+       -0.0025,
+       -0.017631,
+       0.012039,
+       -0.002531,
+       0.005452,
+       -0.004965,
+       -0.000108,
+       -0.019826,
+       0.008317,
+       -0.017263,
+       0.006968,
+       0.012547,
+       0.003916,
+       0.007148
+      ]
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "PASS",
+    "1.5": "PASS",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "PASS",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   },
+   "filter_required_by_ir": true
+  },
+  {
+   "name": "synthetic_by_data_lock",
+   "why": "grade A with synthetic_view false and no data_view, but the IS pack data lock has no scans (dataset pack): AlphaKeel caps at B, A fails",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "A",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": false,
+      "filter_p": null,
+      "synthetic_view": false
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7,
+      "daily_returns": [
+       -0.011387,
+       0.000899,
+       -0.000217,
+       0.00311,
+       -0.014871,
+       0.002223,
+       -0.004385,
+       -0.015977,
+       -0.013439,
+       0.020439,
+       -0.015361,
+       -0.011827,
+       -0.001974,
+       0.000703,
+       0.002905,
+       0.021133,
+       0.000628,
+       0.006878,
+       0.012868,
+       -0.009246,
+       -0.001092,
+       -0.000851,
+       -0.000188,
+       0.010691,
+       -0.009292,
+       0.013428,
+       -0.006227,
+       0.018634,
+       -0.014942,
+       -0.000563,
+       -0.001105,
+       -0.003198,
+       0.006575,
+       -0.006358,
+       -0.005516,
+       0.006887,
+       0.013111,
+       -0.012585,
+       0.001273,
+       0.005202,
+       0.002031,
+       0.014119,
+       0.00098,
+       0.020498,
+       0.008813,
+       0.018173,
+       -0.002324,
+       0.008044,
+       -0.01642,
+       -0.006325,
+       0.002417,
+       0.01016,
+       -0.008657,
+       0.010234,
+       0.004129,
+       -0.002297,
+       -0.008021,
+       -0.007493,
+       0.006233,
+       0.022825,
+       -0.008845,
+       -0.007686,
+       0.015108,
+       -0.006685,
+       -0.001116,
+       -0.007516,
+       0.013737,
+       -0.001777,
+       0.013896,
+       0.009517,
+       -0.010557,
+       -0.008297,
+       0.014794,
+       -0.008691,
+       -0.013865,
+       -0.002684,
+       0.019909,
+       0.001241,
+       0.01476,
+       0.013768,
+       0.005387,
+       -0.009402,
+       -0.018487,
+       0.020134,
+       -0.000214,
+       -0.010498,
+       -0.004181,
+       0.011451,
+       -0.016738,
+       -0.004245,
+       -0.017942,
+       0.005623,
+       -0.014358,
+       -0.008213,
+       -0.017764,
+       0.022403,
+       0.009861,
+       0.007462,
+       -0.001701,
+       -0.012955,
+       0.013209,
+       0.004277,
+       -0.000637,
+       -0.006507,
+       0.008403,
+       -0.019835,
+       -0.004133,
+       0.01386,
+       0.006975,
+       0.001528,
+       0.020711,
+       0.001675,
+       0.01619,
+       0.00333,
+       -0.003943,
+       0.00834,
+       0.009049,
+       0.003575,
+       -0.009611,
+       -0.005294,
+       0.015856,
+       -0.015249,
+       0.01193,
+       0.012834,
+       -0.012006,
+       0.011544,
+       -0.006411,
+       -0.00639,
+       -0.01606,
+       -0.024245,
+       0.009782,
+       -0.008268,
+       -0.019574,
+       -0.009968,
+       -0.005067,
+       -0.01106,
+       -0.011463,
+       0.001662,
+       0.025393,
+       0.000147,
+       -0.009344,
+       0.010955,
+       -0.008053,
+       0.002616,
+       0.009138,
+       0.005486,
+       -0.0025,
+       -0.017631,
+       0.012039,
+       -0.002531,
+       0.005452,
+       -0.004965,
+       -0.000108,
+       -0.019826,
+       0.008317,
+       -0.017263,
+       0.006968,
+       0.012547,
+       0.003916,
+       0.007148
+      ]
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "PASS",
+    "1.5": "PASS",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "N/A",
+    "1.13": "FAIL",
+    "1.16": "PASS"
+   },
+   "ak_synthetic": true
+  },
+  {
+   "name": "synthetic_by_data_lock_grade_b",
+   "why": "a dataset pack rated B is within the cap",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": false,
+      "filter_p": null,
+      "synthetic_view": false
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7,
+      "daily_returns": [
+       -0.011387,
+       0.000899,
+       -0.000217,
+       0.00311,
+       -0.014871,
+       0.002223,
+       -0.004385,
+       -0.015977,
+       -0.013439,
+       0.020439,
+       -0.015361,
+       -0.011827,
+       -0.001974,
+       0.000703,
+       0.002905,
+       0.021133,
+       0.000628,
+       0.006878,
+       0.012868,
+       -0.009246,
+       -0.001092,
+       -0.000851,
+       -0.000188,
+       0.010691,
+       -0.009292,
+       0.013428,
+       -0.006227,
+       0.018634,
+       -0.014942,
+       -0.000563,
+       -0.001105,
+       -0.003198,
+       0.006575,
+       -0.006358,
+       -0.005516,
+       0.006887,
+       0.013111,
+       -0.012585,
+       0.001273,
+       0.005202,
+       0.002031,
+       0.014119,
+       0.00098,
+       0.020498,
+       0.008813,
+       0.018173,
+       -0.002324,
+       0.008044,
+       -0.01642,
+       -0.006325,
+       0.002417,
+       0.01016,
+       -0.008657,
+       0.010234,
+       0.004129,
+       -0.002297,
+       -0.008021,
+       -0.007493,
+       0.006233,
+       0.022825,
+       -0.008845,
+       -0.007686,
+       0.015108,
+       -0.006685,
+       -0.001116,
+       -0.007516,
+       0.013737,
+       -0.001777,
+       0.013896,
+       0.009517,
+       -0.010557,
+       -0.008297,
+       0.014794,
+       -0.008691,
+       -0.013865,
+       -0.002684,
+       0.019909,
+       0.001241,
+       0.01476,
+       0.013768,
+       0.005387,
+       -0.009402,
+       -0.018487,
+       0.020134,
+       -0.000214,
+       -0.010498,
+       -0.004181,
+       0.011451,
+       -0.016738,
+       -0.004245,
+       -0.017942,
+       0.005623,
+       -0.014358,
+       -0.008213,
+       -0.017764,
+       0.022403,
+       0.009861,
+       0.007462,
+       -0.001701,
+       -0.012955,
+       0.013209,
+       0.004277,
+       -0.000637,
+       -0.006507,
+       0.008403,
+       -0.019835,
+       -0.004133,
+       0.01386,
+       0.006975,
+       0.001528,
+       0.020711,
+       0.001675,
+       0.01619,
+       0.00333,
+       -0.003943,
+       0.00834,
+       0.009049,
+       0.003575,
+       -0.009611,
+       -0.005294,
+       0.015856,
+       -0.015249,
+       0.01193,
+       0.012834,
+       -0.012006,
+       0.011544,
+       -0.006411,
+       -0.00639,
+       -0.01606,
+       -0.024245,
+       0.009782,
+       -0.008268,
+       -0.019574,
+       -0.009968,
+       -0.005067,
+       -0.01106,
+       -0.011463,
+       0.001662,
+       0.025393,
+       0.000147,
+       -0.009344,
+       0.010955,
+       -0.008053,
+       0.002616,
+       0.009138,
+       0.005486,
+       -0.0025,
+       -0.017631,
+       0.012039,
+       -0.002531,
+       0.005452,
+       -0.004965,
+       -0.000108,
+       -0.019826,
+       0.008317,
+       -0.017263,
+       0.006968,
+       0.012547,
+       0.003916,
+       0.007148
+      ]
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "PASS",
+    "1.5": "PASS",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "N/A",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   },
+   "ak_synthetic": true
   }
  ],
  "ir_cases": [
@@ -4108,7 +6114,7 @@
   },
   {
    "name": "pit_survivor_side_caps_c",
-   "why": "pit_membership but one side only has survivors: pass, grade capped at C",
+   "why": "pit_membership but one side only has survivors: fails (protocol 2.2; 2.1 passed it with a grade cap of C, which could never pass 1.13 min B)",
    "ir": {
     "schema": "alphakeel.strategy-ir/1",
     "name": "carry-basic",
@@ -4189,15 +6195,15 @@
     "survivorship": "survivors_only_unobserved"
    },
    "expected": {
-    "1.18": "PASS",
+    "1.18": "FAIL",
     "1.19": "PASS",
     "robust_width": "PASS",
-    "grade_cap": "C"
+    "grade_cap": null
    }
   },
   {
    "name": "declared_includes_delisted_caps_c",
-   "why": "declared list over a universe that includes delisted contracts: pass, grade capped at C",
+   "why": "declared list over a universe that includes delisted contracts: fails (protocol 2.2: only a point-in-time selection or a scan pack passes)",
    "ir": {
     "schema": "alphakeel.strategy-ir/1",
     "name": "carry-basic",
@@ -4278,10 +6284,10 @@
     "survivorship": "includes_delisted"
    },
    "expected": {
-    "1.18": "PASS",
+    "1.18": "FAIL",
     "1.19": "PASS",
     "robust_width": "PASS",
-    "grade_cap": "C"
+    "grade_cap": null
    }
   },
   {
@@ -4900,7 +6906,7 @@
   },
   {
    "name": "literal_exemptions",
-   "why": "0, 1, 24, 60, 1000 and 3600 need no declaration (time-unit and structural constants)",
+   "why": "exemptions are by POSITION: a condition compare value 0 and entry.cooldown_minutes 0 need no declaration (the other literals are listed)",
    "ir": {
     "schema": "alphakeel.strategy-ir/1",
     "name": "carry-basic",
@@ -4924,11 +6930,8 @@
      "conditions": [
       {
        "feature": "net_conservative",
-       "op": "between",
-       "value": [
-        "0",
-        "1"
-       ]
+       "op": ">=",
+       "value": "0"
       },
       {
        "feature": "quote_age_ms",
@@ -4938,7 +6941,7 @@
      ],
      "rank_by": "net_conservative",
      "candidate_limit": 1,
-     "cooldown_minutes": 60,
+     "cooldown_minutes": 0,
      "one_per_base": true
     },
     "exit": {
@@ -4965,6 +6968,14 @@
      "window": {
       "start": "2026-07-01",
       "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.conditions[1].value": "1000",
+      "entry.candidate_limit": "1",
+      "exit.conditions[0].value": "3600",
+      "exit.max_hold_hours": "24",
+      "exit.max_loss": "1",
+      "exit.take_profit": "60"
      }
     }
    },
@@ -4982,7 +6993,7 @@
   },
   {
    "name": "literal_next_to_exempt",
-   "why": "59 is not 60: it must be declared",
+   "why": "59 is not 0: an unlisted cooldown fails (and 24 / 60 / 1000 / 3600 are no longer exempt by value)",
    "ir": {
     "schema": "alphakeel.strategy-ir/1",
     "name": "carry-basic",
@@ -5567,6 +7578,443 @@
        "0.001"
       ],
       "value": "0"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "PASS",
+    "robust_width": "FAIL",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "pit_partial_from_archive_fails",
+   "why": "the archive discovery was partial (skipped or failed candidates, or the window starts before the archive): partial_from_archive counts like survivors_*",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0003",
+       "0.001"
+      ],
+      "value": "0.0005"
+     }
+    },
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "5",
+      "entry.cooldown_minutes": "360",
+      "exit.max_hold_hours": "72",
+      "exit.max_loss": "20"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "partial_from_archive"
+   },
+   "expected": {
+    "1.18": "FAIL",
+    "1.19": "PASS",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "literal_max_hold_24_not_exempt",
+   "why": "max_hold_hours = 24 was exempt by value before 2.2; it now has to be declared or listed",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0"
+      },
+      {
+       "feature": "quote_age_ms",
+       "op": "<=",
+       "value": "1000"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 1,
+     "cooldown_minutes": 0,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "leg_skew_ms",
+       "op": ">=",
+       "value": "3600"
+      }
+     ],
+     "max_hold_hours": 24,
+     "max_loss": "1",
+     "take_profit": "60"
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {},
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.conditions[1].value": "1000",
+      "entry.candidate_limit": "1",
+      "exit.conditions[0].value": "3600",
+      "exit.max_loss": "1",
+      "exit.take_profit": "60"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "FAIL",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "literal_cooldown_60_not_exempt",
+   "why": "cooldown_minutes = 60 is not exempt by position (only 0 is)",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0"
+      },
+      {
+       "feature": "quote_age_ms",
+       "op": "<=",
+       "value": "1000"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 1,
+     "cooldown_minutes": 60,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "leg_skew_ms",
+       "op": ">=",
+       "value": "3600"
+      }
+     ],
+     "max_hold_hours": 24,
+     "max_loss": "1",
+     "take_profit": "60"
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {},
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.conditions[1].value": "1000",
+      "entry.candidate_limit": "1",
+      "exit.conditions[0].value": "3600",
+      "exit.max_hold_hours": "24",
+      "exit.max_loss": "1",
+      "exit.take_profit": "60"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "FAIL",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "literal_volume_1000_not_exempt",
+   "why": "a volume_min / compare value 1000 is not exempt by value",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0"
+      },
+      {
+       "feature": "quote_age_ms",
+       "op": "<=",
+       "value": "1000"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 1,
+     "cooldown_minutes": 0,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "leg_skew_ms",
+       "op": ">=",
+       "value": "3600"
+      }
+     ],
+     "max_hold_hours": 24,
+     "max_loss": "1",
+     "take_profit": "60"
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {},
+    "provenance": {
+     "tool": "vibe-trading",
+     "run_id": "run-0001",
+     "window": {
+      "start": "2026-07-01",
+      "end": "2026-09-30"
+     },
+     "fixed_literals": {
+      "entry.candidate_limit": "1",
+      "exit.conditions[0].value": "3600",
+      "exit.max_hold_hours": "24",
+      "exit.max_loss": "1",
+      "exit.take_profit": "60"
+     }
+    }
+   },
+   "pack_universe": {
+    "selection": "pit_membership",
+    "top_n": 16,
+    "survivorship": "includes_delisted"
+   },
+   "expected": {
+    "1.18": "PASS",
+    "1.19": "FAIL",
+    "robust_width": "PASS",
+    "grade_cap": null
+   }
+  },
+  {
+   "name": "robust_width_one_side_narrow",
+   "why": "[0.0005, 0.0007] around 0.0005 has a total relative half width of 0.2 (passed before protocol 2.2) but the low side deviates by 0: each side must be at least 20%",
+   "ir": {
+    "schema": "alphakeel.strategy-ir/1",
+    "name": "carry-basic",
+    "kind": "cross_venue_carry",
+    "universe": {
+     "pairs": "any",
+     "shape": "cross_perp",
+     "excluded_bases": [
+      "LUNA"
+     ],
+     "quote_ccys": [
+      "USDT"
+     ]
+    },
+    "assumptions": {
+     "horizon_hours": 72,
+     "basis_stress": "0.0005",
+     "funding_estimate": "predicted"
+    },
+    "entry": {
+     "conditions": [
+      {
+       "feature": "net_conservative",
+       "op": ">=",
+       "value": "0.0005"
+      }
+     ],
+     "rank_by": "net_conservative",
+     "candidate_limit": 5,
+     "cooldown_minutes": 360,
+     "one_per_base": true
+    },
+    "exit": {
+     "conditions": [
+      {
+       "feature": "funding_hourly_net",
+       "op": "<",
+       "value": "0"
+      }
+     ],
+     "max_hold_hours": 72,
+     "max_loss": "20",
+     "take_profit": null
+    },
+    "sizing": {
+     "notional_per_leg": "1000",
+     "max_open": 3,
+     "leverage": null
+    },
+    "parameters": {
+     "min_net": {
+      "path": "entry.conditions[0].value",
+      "robust": [
+       "0.0005",
+       "0.0007"
+      ],
+      "value": "0.0005"
      }
     },
     "provenance": {

@@ -37,8 +37,9 @@ GRADE_ORDER = ("A", "B", "C", "D", "F")
 #: (hours per day, minutes per hour, milliseconds per second, seconds per hour) -- none of them is a tuned number.
 EXEMPT_LITERALS = (0, 1, 24, 60, 1000, 3600)
 #: Survivorship annotation of a data lock, best to worst (AlphaKeel ``SURVIVORSHIP_ORDER``); unknown values rank worst.
-SURVIVORSHIP_ORDER = ("includes_delisted", "includes_delisted_from_archive", "survivors_before_first_seen", "survivors_only_unobserved")
-#: G1 grade cap when the research universe does not exclude survivor bias (1.18).
+SURVIVORSHIP_ORDER = ("includes_delisted", "includes_delisted_from_archive", "partial_from_archive", "survivors_before_first_seen",
+                      "survivors_only_unobserved")
+#: G1 grade cap when the research universe does not exclude survivor bias (protocol 2.1 copies only; 2.2 fails instead).
 UNIVERSE_GRADE_CAP = "C"
 
 _MISSING = object()
@@ -130,6 +131,24 @@ def _gt(doc, path, thr, kind="any"):
 def _le(doc, path, thr, kind="any"):
     d, note = _need(doc, *path, kind=kind)
     return ("FAIL", None, note) if d is None else _res(d <= Decimal(thr), _show(d))
+
+
+def _cost_net(rb: dict, t: dict, path: tuple[str, ...]):
+    """1.3-1.5: the local (one-level-fill) net > net_gt and, from protocol 2.2 (``service_net_gt``), the research service's
+    conservative net -- adjusted by (stress net - base net) for 1.4 / 1.5 -- > service_net_gt. The service net is
+    ``service_runs.service_conservative_net`` (AlphaKeel checks it against the service's own run records)."""
+    res, obs, note = _gt(rb, path, t["net_gt"], "str")
+    if "service_net_gt" not in t or (res == "FAIL" and obs is None):  # no service gate, or the local figure is missing / mistyped
+        return res, obs, note
+    local, base = _dec(_get(rb, *path), "str"), _dec(_get(rb, "rating", "facts", "base_net"), "str")
+    cons = _dec(_get(rb, "service_runs", "service_conservative_net"), "str")
+    if local is None or base is None or cons is None:
+        return "FAIL", obs, ("service-side conservative net unavailable (not registered, not verified against the research service, or "
+                             "base_net missing): the local one-level-fill figure alone does not count")
+    adj = cons + (local - base)
+    ok = local > Decimal(t["net_gt"]) and adj > Decimal(t["service_net_gt"])
+    return _res(ok, {"local": _show(local), "service_conservative_adjusted": _show(adj)}, None if ok else
+                f"local net {_show(local)}, service-side conservative net (adjusted) {_show(adj)}")
 
 
 def _dsr(rb: dict, t: dict, other: int, trials_floor: int = 0):
@@ -265,14 +284,14 @@ def _walk_forward(rb: dict, t: dict):
     return _res(eff >= Decimal(t["min_efficiency"]), obs, None)
 
 
-def _filter(rb: dict, t: dict):
+def _filter(rb: dict, t: dict, required_by_ir: bool = False):
     tested = _get(rb, "rating", "facts", "filter_tested")
     if tested is _MISSING:
         return "FAIL", None, "rating.facts.filter_tested missing"
     if tested is None or not isinstance(tested, bool):
         return "FAIL", None, "rating.facts.filter_tested has the wrong JSON type (type: must be a boolean, not null)"
     if tested is not True:
-        if _get(rb, "rating", "facts", "filter_required") is True:
+        if required_by_ir or _get(rb, "rating", "facts", "filter_required") is True:
             return "FAIL", None, "the IR restricts its universe (excluded_bases / a narrower bases list) but its filter was not permutation-tested"
         return "N/A", None, "no filter under test in the IR"
     p = _get(rb, "rating", "facts", "filter_p")
@@ -281,7 +300,7 @@ def _filter(rb: dict, t: dict):
     return _le(rb, ("rating", "facts", "filter_p"), t["max_p"], "str")
 
 
-def _grade(rb: dict, t: dict):
+def _grade(rb: dict, t: dict, ak_synthetic: bool | None = None):
     g = _get(rb, "rating", "grade")
     if g not in GRADE_ORDER:
         return "FAIL", None, "rating.grade missing"
@@ -289,7 +308,7 @@ def _grade(rb: dict, t: dict):
     if not isinstance(sv, bool):
         return "FAIL", g, "rating.facts.synthetic_view missing: the synthetic-quote cap cannot be checked"
     view = _get(rb, "data_view", "view")
-    synthetic = sv or (isinstance(view, str) and ("synthetic" in view or view == SYNTHETIC_VIEW))
+    synthetic = sv or (isinstance(view, str) and ("synthetic" in view or view == SYNTHETIC_VIEW)) or ak_synthetic is True
     if synthetic and GRADE_ORDER.index(g) < GRADE_ORDER.index("B"):
         return "FAIL", g, "cap violated: a synthetic-quote view is capped at B"
     return _res(GRADE_ORDER.index(g) <= GRADE_ORDER.index(t["min_grade"]), g, None)
@@ -302,7 +321,8 @@ def _coverage(rb: dict, t: dict):
     return _res(v is False, v, "a pack frozen with accept_partial has data gaps" if v else None)
 
 
-def _item(rb: dict, item: dict, other: int, trials_floor: int = 0) -> tuple[str, Any, str | None]:
+def _item(rb: dict, item: dict, other: int, trials_floor: int = 0, filter_required_by_ir: bool = False,
+          ak_synthetic: bool | None = None) -> tuple[str, Any, str | None]:
     i, t = item["id"], item["threshold"]
     facts = ("rating", "facts")
     if i == "1.1":
@@ -310,13 +330,13 @@ def _item(rb: dict, item: dict, other: int, trials_floor: int = 0) -> tuple[str,
     if i == "1.2":
         return _ge(rb, (*facts, "trades_closed"), t["min_trades"], "int")
     if i == "1.3":
-        return _gt(rb, (*facts, "base_net"), t["net_gt"], "str")
+        return _cost_net(rb, t, (*facts, "base_net"))
     if i == "1.4":
-        return _gt(rb, ("cost_stress", "1.5", "net"), t["net_gt"], "str")
+        return _cost_net(rb, t, ("cost_stress", "1.5", "net"))
     if i == "1.5":
         if _get(rb, "cost_stress", "basis_stress_x2") is _MISSING:
             return "FAIL", None, "basis stress x2 was not run (basis_stress 0 or too large)"
-        return _gt(rb, ("cost_stress", "basis_stress_x2", "net"), t["net_gt"], "str")
+        return _cost_net(rb, t, ("cost_stress", "basis_stress_x2", "net"))
     if i == "1.6":
         return _dsr(rb, t, other, trials_floor)
     if i == "1.7":
@@ -330,9 +350,9 @@ def _item(rb: dict, item: dict, other: int, trials_floor: int = 0) -> tuple[str,
     if i == "1.11":
         return _walk_forward(rb, t)
     if i == "1.12":
-        return _filter(rb, t)
+        return _filter(rb, t, filter_required_by_ir and t.get("ir_restrictions") == "forced")
     if i == "1.13":
-        return _grade(rb, t)
+        return _grade(rb, t, ak_synthetic if t.get("synthetic_source") == "data_lock" else None)
     if i == "1.16":
         return _coverage(rb, t)
     return "FAIL", None, f"item {i} is not implemented in this client (protocol newer than the client)"
@@ -393,8 +413,9 @@ def _zero_scale(doc: dict, path: str) -> Decimal | None:
     return {"entry.cooldown_minutes": Decimal("1440"), "assumptions.basis_stress": Decimal("0.01")}.get(path)
 
 
-def robust_width_problems(doc: dict) -> list[str]:
-    """1.9, AlphaKeel's own check of every parameter's ``robust`` interval: ``(hi - lo) / (2 |value|) >= 0.2``; for value 0,
+def robust_width_problems(doc: dict, per_side: bool = True) -> list[str]:
+    """1.9, AlphaKeel's own check of every parameter's ``robust`` interval: each side deviates >= 20% of |value| (protocol 2.2;
+    ``per_side=False`` is the 2.1 total-width rule ``(hi - lo) / (2 |value|) >= 0.2``); for value 0,
     ``hi - lo >= 0.2 x`` the allowed range width of the position. Empty = all fine."""
     bad: list[str] = []
     params = doc.get("parameters")
@@ -414,12 +435,32 @@ def robust_width_problems(doc: dict) -> list[str]:
                 bad.append(f"{name}: value 0 at {p.get('path')}: no allowed range width is known to judge the robust interval")
             elif width < MIN_ROBUST_REL_WIDTH * scale:
                 bad.append(f"{name}: value 0, robust width {_show(width)} below 0.2 x the allowed range width {_show(scale)}")
+        elif per_side:
+            need = MIN_ROBUST_REL_WIDTH * abs(v)
+            if v - lo < need or hi - v < need:
+                bad.append(f"{name}: robust [{_show(lo)}, {_show(hi)}] around {_show(v)} deviates by less than 20% of the value on a side "
+                           f"(low side {_show((v - lo) / abs(v))}, high side {_show((hi - v) / abs(v))})")
         elif width < MIN_ROBUST_REL_WIDTH * 2 * abs(v):
             bad.append(f"{name}: robust [{_show(lo)}, {_show(hi)}] around {_show(v)} is narrower than +-20% (relative half width {_show(width / (2 * abs(v)))})")
     return bad
 
 
-def literal_report(doc: dict) -> dict:
+def literal_exempt_at(doc: dict, path: str, value: Decimal) -> bool:
+    """1.19 (protocol 2.2; AlphaKeel ``strategy_ir::ir::literal_exempt_at``): exemption by *position*, not by value: a condition
+    comparison value of 0, the comparison value 1 of a ``price_estimated`` condition, ``entry.cooldown_minutes`` 0."""
+    if path == "entry.cooldown_minutes":
+        return value == 0
+    m = re.fullmatch(r"(entry|exit)\.conditions\[([0-9]+)\](\.value(?:\[[01]\])?)", path)
+    if not m:
+        return False
+    try:
+        feature = doc[m.group(1)]["conditions"][int(m.group(2))]["feature"]
+    except (KeyError, IndexError, TypeError):
+        return False
+    return value == 0 or (value == 1 and m.group(3) == ".value" and feature == "price_estimated")
+
+
+def literal_report(doc: dict, by_position: bool = True) -> dict:
     """1.19: classify every entry / exit numeric literal as declared (a ``parameters.*.path``), listed in
     ``provenance.fixed_literals`` with an equal value, exempt (:data:`EXEMPT_LITERALS`) or undeclared; also report listed
     values that differ and listed paths that point at no literal."""
@@ -437,7 +478,7 @@ def literal_report(doc: dict) -> dict:
                 rep["fixed"] += 1
             else:
                 rep["mismatched"].append(f"{path}: listed {json.dumps(listed)}, IR has {value}")
-        elif any(value == Decimal(x) for x in EXEMPT_LITERALS):
+        elif literal_exempt_at(doc, path, value) if by_position else any(value == Decimal(x) for x in EXEMPT_LITERALS):
             rep["exempt"] += 1
         else:
             rep["undeclared"].append(f"{path} = {value}")
@@ -446,7 +487,7 @@ def literal_report(doc: dict) -> dict:
     return rep
 
 
-def universe_verdict(pu: dict | None, pack_id: str | None = None) -> tuple[str, Any, str | None, str | None]:
+def universe_verdict(pu: dict | None, pack_id: str | None = None, strict: bool = True) -> tuple[str, Any, str | None, str | None]:
     """1.18 on the universe facts of the robustness IS pack (``{"selection", "top_n", "survivorship"}``; None = unknown):
     ``(result, observed, note, grade_cap)``. screener_live -> PASS; pit_membership with includes_delisted* -> PASS;
     pit_membership with survivors_* or declared with includes_delisted* -> PASS with grade cap C; declared with survivors_* -> FAIL;
@@ -462,6 +503,15 @@ def universe_verdict(pu: dict | None, pack_id: str | None = None) -> tuple[str, 
     if surv is None:
         return "FAIL", obs, "the IS pack's data lock has no universe.survivorship: 需重新打包", None
     delisted = survivorship_rank(surv) < 2
+    if strict:  # protocol 2.2: a survivor side fails outright; only a pit_membership pack that includes delisted contracts passes
+        if (sel, delisted) == ("pit_membership", True):
+            return "PASS", obs, None, None
+        if sel == "pit_membership":
+            return "FAIL", obs, (f"the evidence universe does not exclude survivor bias: survivorship {surv} (survivors_* / partial_from_archive: the "
+                                 "point-in-time membership or the archive of delisted contracts is incomplete for this window); rebuild after the data is repaired, or use a scan pack"), None
+        if sel == "declared":
+            return "FAIL", obs, f"declared universe (survivorship {surv}): the instrument list is the caller's own, not point in time; rebuild the pack with selection pit_membership", None
+        return "FAIL", obs, f"unknown universe.selection {sel!r}", None
     if (sel, delisted) == ("pit_membership", True):
         return "PASS", obs, None, None
     if (sel, delisted) in (("pit_membership", False), ("declared", True)):
@@ -477,11 +527,11 @@ def ir_items(doc: dict, pack_universe: dict | None, protocol: dict, pack_id: str
     have = {i["id"]: i for i in protocol["stages"]["validated"]["items"]}
     items, cap = [], None
     if "1.18" in have:
-        result, observed, note, cap = universe_verdict(pack_universe, pack_id)
+        result, observed, note, cap = universe_verdict(pack_universe, pack_id, "grade_cap" not in have["1.18"]["threshold"])
         items.append({"id": "1.18", "label": have["1.18"]["label"], "result": result, "observed": observed, "note": note})
     if "1.19" in have:
         try:
-            r = literal_report(doc)
+            r = literal_report(doc, "exempt" in have["1.19"]["threshold"] and "position" in str(have["1.19"]["threshold"]["exempt"]))
             ok = not (r["undeclared"] or r["mismatched"] or r["stale"])
             why = "; ".join(x for x in (
                 f"undeclared literal(s): {'; '.join(r['undeclared'])}" if r["undeclared"] else "",
@@ -491,24 +541,54 @@ def ir_items(doc: dict, pack_universe: dict | None, protocol: dict, pack_id: str
         except (KeyError, TypeError, ValueError, InvalidOperation) as e:
             items.append({"id": "1.19", "label": have["1.19"]["label"], "result": "FAIL", "observed": None,
                           "note": f"the IR cannot be read for the literal scan: {e}"})
-    return {"items": items, "robust_width_problems": robust_width_problems(doc), "grade_cap": cap}
+    side = "min_side_rel_width" in next((i["threshold"] for i in protocol["stages"]["validated"]["items"] if i["id"] == "1.9"), {})
+    return {"items": items, "robust_width_problems": robust_width_problems(doc, side), "grade_cap": cap}
 
 
 _UNSET: Any = object()
 
 
+def ir_filter_required(ir: dict, traded: set[str]) -> bool:
+    """1.12 (protocol 2.2, AlphaKeel ``ir_filter_required``): the IR restricts its universe -- ``universe.excluded_bases`` is not
+    empty, or ``universe.bases`` is an allow-list and the battery traded a coin outside it -- so the permutation test is mandatory."""
+    u = ir.get("universe") or {}
+    if u.get("excluded_bases"):
+        return True
+    allow = u.get("bases")
+    if isinstance(allow, list):
+        allowed = {str(x).upper() for x in allow}
+        return any(c.upper() not in allowed for c in traded)
+    return False
+
+
+def pack_is_synthetic(pu: dict | None) -> bool:
+    """1.13 (AlphaKeel ``pack_is_synthetic``): the IS pack is a dataset pack (synthetic quotes) unless its data lock says
+    ``screener_live``; an unreachable data lock counts as synthetic."""
+    if pu is None:
+        return True
+    dp = pu.get("dataset_pack")
+    return bool(dp) if isinstance(dp, bool) else pu.get("selection") != "screener_live"
+
+
 def evaluate(robustness: dict | None, protocol: dict, other_candidates: int = 0, trials_floor: int = 0, *,
-             ir: dict | None = None, pack_universe: Any = _UNSET) -> list[dict]:
+             ir: dict | None = None, pack_universe: Any = _UNSET, filter_required_by_ir: bool | None = None,
+             ak_synthetic: bool | None = None) -> list[dict]:
     """The research-side G1 items of ``protocol`` evaluated on ``robustness`` (``robustness.json``), in protocol order.
     ``other_candidates`` is the number of other registered candidates added to the DSR trial count (AlphaKeel's registry
     knows it; a research-side run has 0). ``trials_floor`` is the trial-count floor (IR provenance + battery candidates, or
     the research-service ledger count): the DSR uses max(dsr_inputs.trials, trials_floor) + other_candidates."""
     out = []
+    if ir is not None and isinstance(robustness, dict):  # AK derives these from the IR and the IS pack's data lock, not from the battery's own flags
+        if filter_required_by_ir is None:
+            traded = set((_get(robustness, "statistics", "concentration", "net_by_coin") or {}) if isinstance(_get(robustness, "statistics", "concentration", "net_by_coin"), dict) else ())
+            filter_required_by_ir = ir_filter_required(ir, traded)
+        if ak_synthetic is None and pack_universe is not _UNSET:
+            ak_synthetic = pack_is_synthetic(pack_universe)
     for item in research_items(protocol):
         if robustness is None:
             result, observed, note = "FAIL", None, "robustness.json missing"
         else:
-            result, observed, note = _item(robustness, item, int(other_candidates), int(trials_floor))
+            result, observed, note = _item(robustness, item, int(other_candidates), int(trials_floor), bool(filter_required_by_ir), ak_synthetic)
             if result == "FAIL" and not note:
                 note = f"observed {observed}, threshold {json.dumps(item['threshold'], sort_keys=True)}"
         out.append({"id": item["id"], "label": item["label"], "result": result, "observed": observed, "note": note})
