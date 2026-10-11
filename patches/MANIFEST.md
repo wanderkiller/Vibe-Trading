@@ -129,6 +129,7 @@ reachable are the next groups.
 - `agent/tests/test_alphakeel_metrics.py`
 - `agent/tests/test_alphakeel_policy_host.py`
 - `agent/tests/test_alphakeel_precheck.py`
+- `agent/tests/test_alphakeel_validation_v2.py`
 - `agent/tests/test_alphakeel_protocol.py`
 - `agent/tests/test_alphakeel_registration.py`
 - `agent/tests/test_alphakeel_robustness.py`

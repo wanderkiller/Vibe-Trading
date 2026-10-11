@@ -405,9 +405,10 @@ def ir_backtest(client: Client | None, ir_doc: dict, instruments: list[dict], *,
 
 
 def ir_export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_credential: dict | None = None,
-              robustness_dir: str | Path | None = None) -> dict:
+              robustness_dir: str | Path | None = None, reconciliation: str | Path | None = None) -> dict:
     """``strategy.json`` (IR + ``strategy_id`` + ``provenance``), ``evidence/ir-backtest-audit.json`` and the robustness
     evidence from an ``ir backtest`` run directory (``ir_backtest.export``)."""
     from . import ir_backtest as bt
 
-    return bt.export(ir_doc, run_dir, out_dir, research_credential=research_credential, robustness_dir=robustness_dir)
+    return bt.export(ir_doc, run_dir, out_dir, research_credential=research_credential, robustness_dir=robustness_dir,
+                     reconciliation=reconciliation)

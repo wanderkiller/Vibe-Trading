@@ -423,7 +423,7 @@ def test_ir_backtest_cli_end_to_end_on_an_exported_pack_writes_the_run_card(tmp_
     (tmp_path / "inst.json").write_text(json.dumps([OK, BN, {**BS, "venue": "bybit"}]))  # bybit spot: not in the universe
     (tmp_path / "trials.csv").write_text("trial,min_net\n1,0\n2,0.0001\n3,0.0002\n")
     out = tmp_path / "run"
-    rc = cli.main(["ir", "backtest", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END), "--instruments",
+    rc = cli.main(["ir", "backtest", "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END), "--instruments",
                    str(tmp_path / "inst.json"), "--pack-dir", str(pd), "--trials", "3", "--trials-evidence", str(tmp_path / "trials.csv"),
                    "--verbose", "--out", str(out)])
     assert rc == 0
@@ -490,7 +490,7 @@ def _run(tmp_path, *trials_args):
     (tmp_path / "ir.json").write_text(json.dumps(golden_ir()))
     (tmp_path / "inst.json").write_text(json.dumps([BN, OK]))
     out = tmp_path / "run"
-    assert cli.main(["ir", "backtest", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END), "--instruments",
+    assert cli.main(["ir", "backtest", "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END), "--instruments",
                      str(tmp_path / "inst.json"), "--pack-dir", str(pd), *trials_args, "--out", str(out)]) == 0
     return out
 
@@ -812,7 +812,7 @@ def test_ir_backtest_without_out_creates_a_vt_run_with_the_list_files(tmp_path, 
     pd = export_dir(tmp_path, golden_built())
     (tmp_path / "ir.json").write_text(json.dumps(golden_ir()))
     (tmp_path / "inst.json").write_text(json.dumps([BN, OK]))
-    assert cli.main(["ir", "backtest", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END), "--instruments",
+    assert cli.main(["ir", "backtest", "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END), "--instruments",
                      str(tmp_path / "inst.json"), "--pack-dir", str(pd)]) == 0
     printed = json.loads(capsys.readouterr().out)
     run = Path(printed["run_dir"])
@@ -836,7 +836,7 @@ def test_a_failed_ir_backtest_leaves_state_failed(tmp_path, capsys):
     (tmp_path / "ir.json").write_text(json.dumps(golden_ir()))
     (tmp_path / "inst.json").write_text(json.dumps([BN, OK]))
     out = tmp_path / "bad"
-    assert cli.main(["ir", "backtest", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(END), "--end-ms", str(START), "--instruments",
+    assert cli.main(["ir", "backtest", "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(END), "--end-ms", str(START), "--instruments",
                      str(tmp_path / "inst.json"), "--pack-dir", str(pd), "--out", str(out)]) == 1
     st = json.loads((out / "state.json").read_text())
     assert st["status"] == "failed" and "does not match" in st["error"] and not (out / "review_report.json").exists()
@@ -844,9 +844,10 @@ def test_a_failed_ir_backtest_leaves_state_failed(tmp_path, capsys):
 
 def _fake_robustness(d: Path, sid: str, grade="C", schema="vibe-trading.ir-robustness/2", inputs=None):
     d.mkdir(parents=True, exist_ok=True)
-    (d / "robustness.json").write_text(json.dumps({"schema": schema, "strategy_id": sid, "rating": {"grade": grade}, "inputs": inputs}))
+    (d / "robustness.json").write_text(json.dumps({"schema": schema, "strategy_id": sid, "rating": {"grade": grade}, "inputs": inputs,
+                                                 "trials": {"distinct_candidate_variants": 1}}))
     (d / "robustness.md").write_text("# report\n")
-    (d / "trials.jsonl").write_text('{"seq": 1}\n')
+    (d / "trials.jsonl").write_text('{"seq": 1, "counted_trial": true}\n')
 
 
 def test_ir_export_carries_the_robustness_evidence_or_warns(tmp_path, capsys):
@@ -859,12 +860,13 @@ def test_ir_export_carries_the_robustness_evidence_or_warns(tmp_path, capsys):
     assert not (tmp_path / "e0" / "evidence" / "robustness.json").exists()
     # default directory <run>/robustness
     w = json.loads((run / "run_card.json").read_text())["window"]
-    _fake_robustness(run / "robustness", sid, "B", inputs={"is_window": {"start_ms": w["start_ms"], "end_ms": w["end_ms"]}, "oos_window": None})
+    pid = json.loads((run / "run_card.json").read_text())["pack"]["pack_id"]
+    _fake_robustness(run / "robustness", sid, "B", inputs={"is_window": {"start_ms": w["start_ms"], "end_ms": w["end_ms"]}, "oos_window": None, "pack_id": pid})
     r = workflow.ir_export(golden_ir(), run, tmp_path / "e1")
     assert r["provenance"]["robustness_windows"] == {"is": {"start_ms": w["start_ms"], "end_ms": w["end_ms"]}, "oos": None}
     ev = tmp_path / "e1" / "evidence"
     assert sorted(p.name for p in ev.iterdir() if p.name.startswith("robustness")) == ["robustness-trials.jsonl", "robustness.json", "robustness.md"]
-    assert (ev / "robustness-trials.jsonl").read_text() == '{"seq": 1}\n'
+    assert (ev / "robustness-trials.jsonl").read_text() == '{"seq": 1, "counted_trial": true}\n'
     pr = r["provenance"]["robustness"]
     assert pr == {"file": "evidence/robustness.json", "schema": "vibe-trading.ir-robustness/2", "grade": "B",
                   "sha256": hashlib.sha256((ev / "robustness.json").read_bytes()).hexdigest()}
@@ -932,9 +934,10 @@ def test_export_binds_the_robustness_windows_to_the_run_card(tmp_path):
     w = json.loads((run / "run_card.json").read_text())["window"]
     s0, e0 = w["start_ms"], w["end_ms"]
     isw = {"start_ms": s0, "end_ms": e0}
+    PID = json.loads((run / "run_card.json").read_text())["pack"]["pack_id"]
 
     def go(name, inputs):
-        _fake_robustness(tmp_path / name, sid, inputs=inputs)
+        _fake_robustness(tmp_path / name, sid, inputs={**inputs, "pack_id": PID})
         return workflow.ir_export(golden_ir(), run, tmp_path / f"o-{name}", robustness_dir=tmp_path / name)
 
     for bad in ({"start_ms": s0, "end_ms": e0 + 1}, {"start_ms": s0 - 1, "end_ms": e0}):  # is_window mismatch
@@ -948,8 +951,8 @@ def test_export_binds_the_robustness_windows_to_the_run_card(tmp_path):
     r = go("good", {"is_window": isw, "oos_window": oos})
     assert r["provenance"]["robustness_windows"] == {"is": isw, "oos": oos}
     cred = {"credential": "c", "data_horizon": {"max_window_end_ms": oos["end_ms"]}}
-    _fake_robustness(tmp_path / "good2", sid, inputs={"is_window": isw, "oos_window": oos})
+    _fake_robustness(tmp_path / "good2", sid, inputs={"is_window": isw, "oos_window": oos, "pack_id": PID})
     workflow.ir_export(golden_ir(), run, tmp_path / "o-ok", research_credential=cred, robustness_dir=tmp_path / "good2")
-    _fake_robustness(tmp_path / "good3", sid, inputs={"is_window": isw, "oos_window": None})
+    _fake_robustness(tmp_path / "good3", sid, inputs={"is_window": isw, "oos_window": None, "pack_id": PID})
     with pytest.raises(ApiError, match="data horizon|research window"):
         workflow.ir_export(golden_ir(), run, tmp_path / "o-no", research_credential=cred, robustness_dir=tmp_path / "good3")

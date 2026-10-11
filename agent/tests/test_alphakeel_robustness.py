@@ -278,7 +278,7 @@ def test_battery_cli_with_process_workers_matches_in_process(tmp_path, capsys):
     (tmp_path / "ir.json").write_text(json.dumps(_ir()))
     (tmp_path / "inst.json").write_text(json.dumps(insts))
     out = tmp_path / "cli"
-    rc = cli.main(["ir", "robustness", "--ir", str(tmp_path / "ir.json"), "--pack-dir", str(pd), "--instruments", str(tmp_path / "inst.json"),
+    rc = cli.main(["ir", "robustness", "--no-register", "--ir", str(tmp_path / "ir.json"), "--pack-dir", str(pd), "--instruments", str(tmp_path / "inst.json"),
                    "--is-start-ms", str(START), "--is-end-ms", str(START + H6), "--permutations", "0", "--workers", "2",
                    "--step-minutes", "2", "--out", str(out)])
     assert rc == 0
@@ -453,10 +453,10 @@ def test_robustness_run_defaults_come_from_the_run_and_export_carries_the_eviden
     (tmp_path / "ir.json").write_text(json.dumps(_ir()))
     (tmp_path / "inst.json").write_text(json.dumps(insts))
     run = tmp_path / "run"
-    assert cli.main(["ir", "backtest", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(START + H6), "--instruments",
+    assert cli.main(["ir", "backtest", "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(START + H6), "--instruments",
                      str(tmp_path / "inst.json"), "--pack-dir", str(pd), "--step-minutes", "2", "--trials", "1", "--out", str(run)]) == 0
     capsys.readouterr()
-    base = ["ir", "robustness", "--run", str(run), "--permutations", "0", "--workers", "1", "--step-minutes", "2"]
+    base = ["ir", "robustness", "--no-register", "--run", str(run), "--permutations", "0", "--workers", "1", "--step-minutes", "2"]
     # explicit arguments must agree with the run card
     assert cli.main([*base, "--is-end-ms", str(START + H6 - 1)]) == 1
     assert "differs from the run card" in capsys.readouterr().out
@@ -465,7 +465,7 @@ def test_robustness_run_defaults_come_from_the_run_and_export_carries_the_eviden
     (tmp_path / "other.json").write_text(json.dumps(other))
     assert cli.main([*base, "--ir", str(tmp_path / "other.json")]) == 1
     assert "run card is for" in capsys.readouterr().out
-    assert cli.main(["ir", "robustness", "--ir", str(tmp_path / "ir.json")]) == 1  # no --run: the old arguments are required
+    assert cli.main(["ir", "robustness", "--no-register", "--ir", str(tmp_path / "ir.json")]) == 1  # no --run: the old arguments are required
     assert "--pack-dir" in capsys.readouterr().out
     assert cli.main([*base, "--is-start-ms", str(START), "--is-end-ms", str(START + H6)]) == 0
     printed = json.loads(capsys.readouterr().out)

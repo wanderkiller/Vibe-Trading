@@ -862,7 +862,7 @@ def write_run_files(out: Path, ir_doc: dict, instruments: list[dict], card: dict
 
 
 def backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, end_ms: int, out_dir: str | Path,
-             cache_dir: str | Path | None = None, pack_dir: str | Path | None = None, accept_partial: bool = False, **kw: Any) -> dict:
+             cache_dir: str | Path | None = None, pack_dir: str | Path | None = None, accept_partial: bool = False, register: bool = False, **kw: Any) -> dict:
     """Freeze (or reuse, the request key is content-derived) the dataset pack through the research service -- or open an
     exported one (``pack_dir``) -- check it is the pack asked for, and :func:`run`; then write the Vibe-Trading run files
     (:func:`write_run_files`; ``state.json`` says ``failed`` when anything raised)."""
@@ -870,6 +870,18 @@ def backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, en
     try:
         card = _backtest(client, ir_doc, instruments, start_ms=start_ms, end_ms=end_ms, out_dir=out, cache_dir=cache_dir,
                          pack_dir=pack_dir, accept_partial=accept_partial, **kw)
+        # Trial ledger (audit 2 P1-1 c): every run is a trial of the research service's global ledger; an unregistered run is
+        # refused here rather than left to look like the only one.
+        if register:
+            if client is None:
+                raise ApiError("request.invalid", "registering the run needs the research-service client (or --no-register)", field="register")
+            from .ir_crosscheck import register_trial
+
+            card["service_registration"] = {"registered": True, "service_run_id": register_trial(client, IR.load(ir_doc).doc, card),
+                                            "ledger": "research-service trial ledger (POST /runs, mode ir_strategy)"}
+        else:
+            card["service_registration"] = {"registered": False, "reason": "not requested (--no-register / no client)"}
+        (out / "run_card.json").write_text(json.dumps(card, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
         write_run_files(out, ir_doc, instruments, card)
         return card
     except Exception as e:
@@ -996,8 +1008,53 @@ def _robustness_evidence(rd: Path, robustness_dir: str | Path | None, sid: str) 
     return d, doc
 
 
+def _counted_trial_rows(path: Path) -> int:
+    n = 0
+    for ln in path.read_text(encoding="utf-8").splitlines():
+        if not ln.strip():
+            continue
+        try:
+            n += json.loads(ln).get("counted_trial") is True
+        except (ValueError, AttributeError):
+            raise ApiError("request.invalid", f"{path} has a line that is not a JSON object", field="robustness") from None
+    return n
+
+
+def check_handoff_consistency(rdir: Path, rdoc: dict, card: dict, reconciliation: str | Path | None, run_dir: Path) -> None:
+    """Refuse an export whose evidence disagrees with itself (audit 2 P1-1 b, 2 P2-4): the robustness trial ledger has exactly
+    ``trials.distinct_candidate_variants`` counted rows, ``inputs.pack_id`` is present (and the run card's pack), and a
+    reconciliation file (``--reconciliation``, else ``<run>/reconciliation.json`` when present) carries a ``pack_id`` equal to
+    the robustness IS pack. AlphaKeel's 1.6 / 1.15 re-check all three; failing here saves a rejected import."""
+    tri = rdoc.get("trials")
+    want = tri.get("distinct_candidate_variants") if isinstance(tri, dict) else None
+    have = _counted_trial_rows(rdir / "trials.jsonl")
+    if type(want) is not int or want != have:
+        raise ApiError("request.invalid", f"trials ledger mismatch: robustness.json trials.distinct_candidate_variants is {want!r} but "
+                       f"trials.jsonl has {have} counted_trial rows: re-run `ir robustness`", field="robustness")
+    inputs = rdoc.get("inputs")
+    pid = inputs.get("pack_id") if isinstance(inputs, dict) else None
+    if not (isinstance(pid, str) and pid):
+        raise ApiError("request.invalid", "robustness.json has no inputs.pack_id: re-run `ir robustness`", field="robustness")
+    if pid != card["pack"]["pack_id"]:
+        raise ApiError("request.invalid", f"robustness.json ran on pack {pid}, the run card on {card['pack']['pack_id']}: re-run "
+                       "`ir robustness --run` on this run", field="robustness")
+    rec = Path(reconciliation) if reconciliation is not None else run_dir / "reconciliation.json"
+    if reconciliation is None and not rec.is_file():
+        return
+    try:
+        rd = json.loads(rec.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise ApiError("request.invalid", f"{rec} is not a readable JSON reconciliation file", field="reconciliation") from None
+    rp = rd.get("pack_id") if isinstance(rd, dict) else None
+    if not (isinstance(rp, str) and rp):
+        raise ApiError("request.invalid", f"{rec} has no pack_id: re-run `ir review` / `ir crosscheck`", field="reconciliation")
+    if rp != pid:
+        raise ApiError("request.invalid", f"{rec} reconciles pack {rp}, the robustness in-sample pack is {pid}: AlphaKeel's 1.15 needs "
+                       "the reconciliation on the same pack", field="reconciliation")
+
+
 def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_credential: dict | None = None,
-           robustness_dir: str | Path | None = None) -> dict:
+           robustness_dir: str | Path | None = None, reconciliation: str | Path | None = None) -> dict:
     """Write ``strategy.json`` (the IR with ``strategy_id`` and ``provenance``), the trials evidence,
     ``evidence/ir-backtest-audit.json`` and -- when the battery was run (``robustness_dir``, default ``<run_dir>/robustness``
     if present) -- ``evidence/robustness.json``, ``robustness.md``, ``robustness-trials.jsonl`` into ``out_dir``. Without
@@ -1025,6 +1082,8 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
         raise ApiError("request.invalid", f"the trials evidence {src} is missing or differs from the run card", field="trials")
     rob = _robustness_evidence(rd, robustness_dir, sid)
     rob_windows = _robustness_windows(rob[1], card) if rob is not None else None
+    if rob is not None:
+        check_handoff_consistency(rob[0], rob[1], card, reconciliation, rd)
     out = Path(out_dir)
     (out / "evidence").mkdir(parents=True, exist_ok=True)
     for n in EVIDENCE_ROBUSTNESS:  # an earlier export into this directory must not leave stale evidence behind
@@ -1062,6 +1121,9 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
         prov["robustness"] = {"file": "evidence/robustness.json", "schema": rdoc["schema"], "grade": rdoc["rating"]["grade"],
                               "sha256": hashlib.sha256((out / "evidence" / "robustness.json").read_bytes()).hexdigest()}
         prov["robustness_windows"] = rob_windows
+        if not (rdoc.get("service_runs") or {}).get("registered"):
+            warnings.append("the battery's candidate runs were not registered in the research service's trial ledger "
+                            "(service_runs.registered is not true): AlphaKeel's DSR trial floor will not include them")
     else:
         warnings.append("no robustness evidence: run `ir robustness --run DIR` first; without it AlphaKeel's G1 precheck fails every "
                         "research-side item (provenance.robustness is null)")

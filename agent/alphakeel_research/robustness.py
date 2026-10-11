@@ -632,9 +632,14 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
             out_dir: str | Path, fees: dict | None = None, filter_spec: dict | None = None, permutations: int = 30, seed: int = 7,
             step_minutes: int = 5, capital_base: Decimal | str | None = None, workers: int = 2, prior_trials: int = 0,
             segments: int = SEGMENTS, wf_folds: int = WF_FOLDS, wf_test_days: int = WF_TEST_DAYS,
-            wf_min_train_days: int = WF_MIN_TRAIN_DAYS) -> dict:
+            wf_min_train_days: int = WF_MIN_TRAIN_DAYS, prior_trials_floor: int = 0, registry: Any = None) -> dict:
     """Run the battery (module docstring) and write ``robustness.json``, ``robustness.md`` and ``trials.jsonl`` into
-    ``out_dir``. Returns the robustness document."""
+    ``out_dir``. Returns the robustness document.
+
+    ``prior_trials_floor``: the IR run card's ``trials.count`` (docs/45 audit 2 P1-1 b): ``prior_trials`` is never below it (the larger
+    is used, a smaller declared value is reported in ``notes``). ``registry``: the research-service client; every candidate run is
+    registered in the service's trial ledger (``ir_crosscheck.register_trial``) and the returned ids are written to
+    ``robustness.json`` ``service_runs``. Without it ``service_runs.registered`` is false (and says so in ``notes``)."""
     from backtest import alphakeel_metrics as M
 
     loaded = IR.load(ir_doc)
@@ -670,10 +675,16 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     out.mkdir(parents=True, exist_ok=True)
     R = _Runner(out, packs, instruments, windows, step_minutes, capital, workers)
     notes: list[str] = []
+    declared_prior = prior_trials
+    if isinstance(prior_trials_floor, int) and prior_trials < prior_trials_floor:
+        notes.append(f"warning: prior_trials {prior_trials} is below the IR run card's trials.count {prior_trials_floor}: "
+                     f"{prior_trials_floor} is used (the larger of the two)")
+        prior_trials = prior_trials_floor
 
     # --- phase 1: everything independent ---------------------------------------------------------------------------
     base = R.job("base", "base", base_doc, fees=fees)
-    jobs = [base]
+    R.execute([base])  # first alone: the coins it had data for decide whether the IR's universe restrictions are forced under test
+    jobs: list[dict] = []
     eff_fees = ir_views.default_fees() if fees is None else fees
     cost = {m: R.job(f"cost-x{m}", "cost_stress", base_doc, fees=scale_fees(eff_fees, m), fees_source=f"base x{m}", fee_multiplier=m)
             for m in COST_MULTIPLIERS}
@@ -708,11 +719,32 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     oos_job = R.job("oos", "oos", base_doc, window="oos", fees=fees) if "oos" in windows else None
     if oos_job:
         jobs.append(oos_job)
+    # Forced filter test (audit 2 P1-7): an IR that excludes bases, or allows fewer bases than the battery had data for, has chosen
+    # its coins; that choice is tested whether or not the caller passed --filter. An allow-list is tested as the equivalent
+    # exclusion of the researched coins outside it (README: a base trades when it is in ``bases`` and not in ``excluded_bases``).
+    researched = {IR.ascii_upper(i["base"]) for i in R.result(base)["card"]["instruments"] if i.get("base")}
+    allow = base_doc["universe"].get("bases")
+    implicit = {b for b in researched if allow is not None and b not in {IR.ascii_upper(x) for x in allow}}
+    forced = set(base_doc["universe"]["excluded_bases"]) | implicit
+    filter_doc = base_doc
+    if implicit:
+        filter_doc = copy.deepcopy(base_doc)
+        del filter_doc["universe"]["bases"]
+        filter_doc["universe"]["excluded_bases"] = sorted(forced)
+    if forced:
+        if bases_f is not None and set(bases_f) != forced:
+            notes.append(f"the filter under test is forced to the IR's own restrictions {sorted(forced)} (excluded_bases"
+                         f"{' and the bases outside universe.bases' if implicit else ''}); the given filter {bases_f} is not tested")
+        elif bases_f is None:
+            notes.append(f"filter permutation test forced: the IR restricts its universe ({sorted(forced)}); no --filter was needed")
+        if implicit:
+            notes.append(f"universe.bases allows fewer coins than the battery had data for: {sorted(implicit)} are tested as excluded")
+        bases_f = sorted(forced)
     f_off = f_on = None
     if bases_f is not None:
-        excl = set(base_doc["universe"]["excluded_bases"])
-        f_off = R.job("filter-off", "filter", with_excluded(base_doc, excl - set(bases_f)), fees=fees)
-        f_on = R.job("filter-on", "filter", with_excluded(base_doc, excl | set(bases_f)), fees=fees)
+        excl = set(filter_doc["universe"]["excluded_bases"])
+        f_off = R.job("filter-off", "filter", with_excluded(filter_doc, excl - set(bases_f)), fees=fees)
+        f_on = R.job("filter-on", "filter", with_excluded(filter_doc, excl | set(bases_f)), fees=fees)
         jobs += [f_off, f_on]
     wf_train: dict[int, list[tuple[dict, dict]]] = {}
     for f in wf_plan["folds"]:
@@ -770,8 +802,10 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         # the null: random exclusion sets of the same size from the strategy's universe (its ``bases`` allow-list when
         # given -- excluding a base that never traded is a legitimate draw with zero effect), else the traded bases
         traded = {IR.ascii_upper(t["base"]) for t in off_tr}
-        universe_bases = base_doc["universe"].get("bases")
+        universe_bases = filter_doc["universe"].get("bases")
         pool = sorted({IR.ascii_upper(b) for b in universe_bases} - set(bases_f) | set(bases_f) if universe_bases else traded)
+        if implicit:  # the allow-list was a coin choice among the researched coins: the null draws from all of them
+            pool = sorted(researched | set(bases_f))
         k = len(bases_f)
         perm: dict[str, Any] = {"draws": permutations, "set_size": k, "pool": pool, "seed": seed}
         if permutations == 0:
@@ -782,8 +816,8 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
             perm["note"] = f"only {len(pool)} bases traded in the unfiltered run: no random set of size {k}"
         else:
             sets, matched = _draw_sets(pool, k, off_tr, filt["blocked"]["count"], permutations, seed)
-            excl_off = set(base_doc["universe"]["excluded_bases"]) - set(bases_f)
-            pjobs = [R.job(f"perm-{i + 1:04d}", "permutation", with_excluded(base_doc, excl_off | set(s)), fees=fees) for i, s in enumerate(sets)]
+            excl_off = set(filter_doc["universe"]["excluded_bases"]) - set(bases_f)
+            pjobs = [R.job(f"perm-{i + 1:04d}", "permutation", with_excluded(filter_doc, excl_off | set(s)), fees=fees) for i, s in enumerate(sets)]
             R.execute(pjobs)
             imps = [net(j) - net(f_off) for j in pjobs]
             pv = permutation_p_value(real, imps)
@@ -851,7 +885,13 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
            "sharpe_annualised": R.result(j)["card"]["alphakeel_metrics"].get("sharpe_annualised"),
            "trades_closed": R.result(j)["card"]["counts"]["closed"]} for m, j in neigh]
     worst_nb = min((Decimal(x["net"]) for x in nb), default=None)
-    params_doc = {"neighbours": nb, "skipped": skipped_params, "positive_fraction": _positive_fraction([x["net"] for x in nb]),
+    ranges = [{"name": n, "path": base_doc["parameters"][n]["path"], "value": base_doc["parameters"][n]["value"],
+               "lo": base_doc["parameters"][n]["robust"][0], "hi": base_doc["parameters"][n]["robust"][1]} for n in sorted(base_doc["parameters"])]
+    from .precheck import narrow_ranges
+
+    for w in narrow_ranges({"parameters": {"ranges": ranges}}):
+        notes.append(f"warning: robust range too narrow to test anything (G1 1.9 fails): {w}")
+    params_doc = {"ranges": ranges, "neighbours": nb, "skipped": skipped_params, "positive_fraction": _positive_fraction([x["net"] for x in nb]),
                   "worst_net": _s(worst_nb), "worst_over_base": _ratio(worst_nb, b_net)}
     oos_doc = None
     if oos_job:
@@ -877,8 +917,9 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         "trades_closed": counts["closed"], "days": len(b_days), "funding_unpriced_fraction": fu_frac,
         # the filter counts toward the grade only when it is PART of the graded IR (its bases are in excluded_bases);
         # a candidate filter tested against an IR without it is decision support, not evidence about that IR
-        "filter_tested": bases_f is not None and set(bases_f) <= set(base_doc["universe"]["excluded_bases"]),
-        "filter_candidate_only": bases_f is not None and not set(bases_f) <= set(base_doc["universe"]["excluded_bases"]),
+        "filter_tested": bases_f is not None and set(bases_f) <= set(filter_doc["universe"]["excluded_bases"]),
+        "filter_candidate_only": bases_f is not None and not set(bases_f) <= set(filter_doc["universe"]["excluded_bases"]),
+        "filter_required": bool(forced),
         "filter_p": (filt or {}).get("permutation", {}).get("p_value") if filt else None,
         "synthetic_view": base_card["view"] == ir_views.DATASET_VIEW, "dsr": ak["dsr"], "psr": ak["psr_vs_zero"], "pbo": pbo,
         "bootstrap_lower": None if boot is None else boot["ci_lower"], "segments_positive_fraction": seg_frac,
@@ -889,12 +930,30 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     }
     rating = rate(facts)
 
+    # --- research-service trial ledger (audit 2 P1-1 c): every candidate run is registered; the ids go into robustness.json -------
+    if registry is not None:
+        from .ir_crosscheck import register_trial
+
+        regs = [{"strategy_id": s_, "label": j["label"], "role": j["role"],
+                 "service_run_id": register_trial(registry, IR.load(j["args"]["doc"]).doc, R.result(j)["card"])}
+                for s_, j in sorted(candidates.items())]
+        service_runs: dict[str, Any] = {"registered": True, "runs": regs, "ids": [r["service_run_id"] for r in regs],
+                                        "note": "one research_run ledger row per candidate run (research-service POST /runs, mode ir_strategy)"}
+    else:
+        service_runs = {"registered": False, "runs": [], "ids": [],
+                        "note": "no research-service client: the candidate runs were NOT registered in the trial ledger"}
+        notes.append("warning: the candidate runs were not registered in the research service's trial ledger (no client)")
+
     # --- trials.jsonl and the documents --------------------------------------------------------------------------------
-    counted = set(candidates)
+    # exactly one counted row per distinct candidate definition (the first IS run of it; fee stresses and repeats share its
+    # strategy_id): AlphaKeel's 1.6 checks that the rows marked counted_trial equal trials.distinct_candidate_variants
+    counted, seen = set(candidates), set()
     with open(out / "trials.jsonl", "w", encoding="utf-8") as fh:
         for i, r in enumerate(R.records):
-            fh.write(json.dumps({**r, "seq": i + 1, "counted_trial": r["window"] == "is" and r["role"] != "permutation" and r["strategy_id"] in counted},
-                                sort_keys=True) + "\n")
+            first = r["window"] == "is" and r["role"] != "permutation" and r["strategy_id"] in counted and r["strategy_id"] not in seen
+            if first:
+                seen.add(r["strategy_id"])
+            fh.write(json.dumps({**r, "seq": i + 1, "counted_trial": first}, sort_keys=True) + "\n")
     doc = {
         "schema": SCHEMA, "strategy_id": sid, "name": base_doc["name"],
         "inputs": {"is_window": {"start_ms": windows["is"][0], "end_ms": windows["is"][1]}, "pack_id": pack.id,
@@ -902,14 +961,14 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
                    "fees": eff_fees, "fees_given": fees is not None, "filter": filter_spec, "permutations": permutations, "seed": seed,
                    "step_minutes": step_minutes, "capital_base": _s(capital), "workers": workers,
                    "execution": R.serial_reason or ("process pool (spawn)" if workers > 1 else "in process"), "segments": segments, "walk_forward": wf_cfg},
-        "trials": {"count": n_trials, "distinct_candidate_variants": len(candidates), "prior_trials_declared": prior_trials,
+        "trials": {"count": n_trials, "distinct_candidate_variants": len(candidates), "prior_trials_declared": declared_prior, "prior_trials_used": prior_trials, "prior_trials_floor": prior_trials_floor,
                    "candidate_strategy_ids": sorted(candidates), "permutation_draws_not_counted": sum(1 for r in R.records if r["role"] == "permutation"),
                    "walk_forward_runs_not_counted": sum(1 for r in R.records if r["role"] == "walk_forward"),
                    "evidence": "trials.jsonl",
-                   "rule": "distinct IR definitions run on the IS window as candidates (base, basis stress, parameter neighbours, "
+                   "rule": "distinct IR definitions (one counted_trial row each in trials.jsonl) run on the IS window as candidates (base, basis stress, parameter neighbours, "
                            "filter off/on) + declared prior trials; permutation draws are null-model draws and walk-forward training grids are a "
                            "selection procedure on each fold's training window; neither is counted"},
-        "runs": R.records,
+        "runs": R.records, "service_runs": service_runs,
         "statistics": {"alphakeel_metrics": ak, "dsr_inputs": dsr_in, "pbo": {"value": pbo, "variants": len(var_ret), "blocks": s_blocks if pbo is not None else None,
                                                         "note": None if pbo is not None else "needs >= 4 candidate variants and >= 20 days"},
                        "bootstrap": boot, "t_stat_effective": t_eff, "trades_closed": counts["closed"], "open_at_end": counts["open_at_end"],

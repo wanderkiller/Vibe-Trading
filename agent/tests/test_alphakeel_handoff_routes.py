@@ -71,11 +71,11 @@ def make_ir_run(env, name="20261010_120000_ir", *, robustness=True, trials=True,
     (tmp / "ir.json").write_text(json.dumps(_ir()))
     (tmp / "inst.json").write_text(json.dumps(insts))
     run = env.runs / name
-    assert cli.main(["ir", "backtest", "--ir", str(tmp / "ir.json"), "--start-ms", str(START), "--end-ms", str(START + H6), "--instruments",
+    assert cli.main(["ir", "backtest", "--no-register", "--ir", str(tmp / "ir.json"), "--start-ms", str(START), "--end-ms", str(START + H6), "--instruments",
                      str(tmp / "inst.json"), "--pack-dir", str(pd), "--step-minutes", "2", *(["--trials", "1"] if trials else []),
                      "--out", str(run)]) == 0
     if robustness:
-        assert cli.main(["ir", "robustness", "--run", str(run), "--permutations", "0", "--workers", "1", "--step-minutes", "2"]) == 0
+        assert cli.main(["ir", "robustness", "--no-register", "--run", str(run), "--permutations", "0", "--workers", "1", "--step-minutes", "2"]) == 0
     return run
 
 
@@ -109,7 +109,7 @@ def test_ir_run_without_robustness_shows_an_empty_precheck_and_export_is_409(env
     assert body["ir"] is True and body["robustness"] is None and body["precheck"] == [] and body["exported"] is None
     assert body["strategy_id"].startswith("ir-") and body["window"] == {"start_day": "2023-01-01", "end_day": "2023-01-01"}
     assert body["target"] == {"container_path": f"{env.handoff}/{body['strategy_id']}/", "host_path": f"/host/handoff/{body['strategy_id']}/"}
-    assert body["credential"] is True and body["protocol"] == {"version": "1", "sha256": precheck.protocol_sha256()}
+    assert body["credential"] is True and body["protocol"] == {"version": precheck.load_protocol()["version"], "sha256": precheck.protocol_sha256()}
     r = env.client.post(f"/runs/{run.name}/alphakeel/export")
     assert r.status_code == 409 and r.json()["detail"]["code"] == "robustness.missing"
     assert not env.handoff.exists() or not any(env.handoff.iterdir())

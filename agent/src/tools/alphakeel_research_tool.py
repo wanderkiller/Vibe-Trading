@@ -136,7 +136,7 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
     elif action == "ir_crosscheck":
         add("--ir", "ir", True), add("--run", "run", True), add("--timeout-s", "timeout_s")
     elif action == "ir_export":
-        add("--ir", "ir", True), add("--run", "run", True), add("--out", "out", True), add("--robustness", "robustness")
+        add("--ir", "ir", True), add("--run", "run", True), add("--out", "out", True), add("--robustness", "robustness"), add("--reconciliation", "reconciliation")
         if _under_handoff(str(a["out"])):
             raise ValueError("ir_export: writing into AlphaKeel's hand-off directory is not an agent action. Hand-off is the user's "
                              "decision: the user presses 'Hand off to AlphaKeel' on the run page (docs/45 section 7). Export to another "

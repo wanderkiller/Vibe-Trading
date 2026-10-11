@@ -24,6 +24,11 @@ from .errors import ApiError
 PROTOCOL_FILE = "validation/protocol.json"
 #: the battery's own DSR recomputation may differ from the reported one by at most this (floating point only)
 DSR_TOLERANCE = 1e-6
+#: relative tolerance of the V[SR] floor recomputed from daily_returns (protocol v2, 1.6)
+VAR_FLOOR_TOLERANCE = 1e-9
+#: 1.9 (research-side addition, audit 2 P1-7): a robust range narrower than this relative half-width on either side tests nothing
+MIN_ROBUST_REL_WIDTH = Decimal("0.2")
+SYNTHETIC_VIEW = "kline_close_synthetic_bbo"
 GRADE_ORDER = ("A", "B", "C", "D", "F")
 
 _MISSING = object()
@@ -117,7 +122,7 @@ def _le(doc, path, thr, kind="any"):
     return ("FAIL", None, note) if d is None else _res(d <= Decimal(thr), _show(d))
 
 
-def _dsr(rb: dict, t: dict, other: int):
+def _dsr(rb: dict, t: dict, other: int, trials_floor: int = 0):
     from backtest import alphakeel_metrics as M
 
     inp = _get(rb, "statistics", "dsr_inputs")
@@ -139,11 +144,25 @@ def _dsr(rb: dict, t: dict, other: int):
         return "FAIL", None, "statistics.dsr_inputs is malformed"
     if own is None or abs(own - reported) > DSR_TOLERANCE:
         return "FAIL", None, (f"dsr_inputs do not reproduce the reported DSR ({reported} vs {own}): the inputs are not trusted")
-    n = int(trials) + other
+    # protocol v2: V[SR] floor from the daily returns (Mertens asymptotic variance of the Sharpe estimator) and a trial-count floor
+    rets = _get(inp, "daily_returns")
+    if rets is _MISSING or not isinstance(rets, list) or len(rets) < 3 or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in rets):
+        return "FAIL", None, "statistics.dsr_inputs.daily_returns missing: the V[SR] floor cannot be recomputed"
+    try:
+        s_r, mo, te_r = M.sharpe(rets), M.moments(rets), M.effective_sample_size(rets)
+        if s_r is None or mo is None or te_r <= 1:
+            return "FAIL", None, "statistics.dsr_inputs.daily_returns has no variance: the V[SR] floor cannot be recomputed"
+        floor_var = (1 - mo[0] * s_r + (mo[1] - 1) / 4 * s_r * s_r) / (te_r - 1)
+    except (TypeError, ValueError, ZeroDivisionError, OverflowError):
+        return "FAIL", None, "statistics.dsr_inputs.daily_returns is malformed"
+    if var < floor_var * (1 - VAR_FLOOR_TOLERANCE):
+        return "FAIL", None, f"var_sr below floor: var_sr_used {var} < {floor_var} recomputed from daily_returns"
+    n = max(int(trials), int(trials_floor)) + other
     value = M.psr(s, M.sr0(var, n), te, g3, g4)
     if value is None:
         return "FAIL", None, "DSR is not defined for these inputs"
-    return _res(Decimal(repr(value)) >= Decimal(t["min_dsr"]), round(value, 6), f"trials {int(trials)} + {other} other registered candidates")
+    return _res(Decimal(repr(value)) >= Decimal(t["min_dsr"]), round(value, 6),
+                f"trials {max(int(trials), int(trials_floor))} + {other} other registered candidates (floor {int(trials_floor)})")
 
 
 def _pbo(rb: dict, t: dict):
@@ -155,6 +174,26 @@ def _pbo(rb: dict, t: dict):
     if variants < int(t["applies_min_variants"]):
         return "N/A", None, f"{variants} variants < {t['applies_min_variants']}: PBO is not applicable"
     return _le(rb, ("statistics", "pbo", "value"), t["max_pbo"], "num")
+
+
+def narrow_ranges(rb: dict) -> list[str]:
+    """Parameters whose ``robust`` range is narrower than +-MIN_ROBUST_REL_WIDTH of the value (``parameters.ranges`` of
+    robustness.json; absent in older files = not checked). A zero value has no relative width: its range must just be non-empty."""
+    ranges = _get(rb, "parameters", "ranges")
+    if not isinstance(ranges, list):
+        return []
+    out = []
+    for r in ranges:
+        v, lo, hi = (_dec(r.get(k), "str") if isinstance(r, dict) else None for k in ("value", "lo", "hi"))
+        name = r.get("name") if isinstance(r, dict) else None
+        if v is None or lo is None or hi is None:
+            out.append(f"{name}: malformed range")
+        elif v == 0:
+            if not hi > lo:
+                out.append(f"{name}: empty range")
+        elif (v - lo) / abs(v) < MIN_ROBUST_REL_WIDTH or (hi - v) / abs(v) < MIN_ROBUST_REL_WIDTH:
+            out.append(f"{name}: [{_show(lo)}, {_show(hi)}] around {_show(v)}")
+    return out
 
 
 def _neighbours(rb: dict, t: dict):
@@ -170,6 +209,11 @@ def _neighbours(rb: dict, t: dict):
     if any(n is None for n in nets):
         return "FAIL", None, "a parameter neighbour has no net"
     bad = sum(1 for n in nets if not n > Decimal(t["every_net_gt"]))
+    narrow = narrow_ranges(rb)
+    if narrow:
+        return "FAIL", f"{len(nets) - bad} of {len(nets)} positive", (
+            f"robust range too narrow (less than +-{MIN_ROBUST_REL_WIDTH * 100:.0f}% of the value on a side): {', '.join(narrow)}; "
+            "the neighbour test checks nothing -- widen the range or drop the parameter claim")
     return _res(bad == 0, f"{len(nets) - bad} of {len(nets)} positive", None)
 
 
@@ -218,6 +262,8 @@ def _filter(rb: dict, t: dict):
     if tested is None or not isinstance(tested, bool):
         return "FAIL", None, "rating.facts.filter_tested has the wrong JSON type (type: must be a boolean, not null)"
     if tested is not True:
+        if _get(rb, "rating", "facts", "filter_required") is True:
+            return "FAIL", None, "the IR restricts its universe (excluded_bases / a narrower bases list) but its filter was not permutation-tested"
         return "N/A", None, "no filter under test in the IR"
     p = _get(rb, "rating", "facts", "filter_p")
     if p is _MISSING or p is None:
@@ -229,6 +275,13 @@ def _grade(rb: dict, t: dict):
     g = _get(rb, "rating", "grade")
     if g not in GRADE_ORDER:
         return "FAIL", None, "rating.grade missing"
+    sv = _get(rb, "rating", "facts", "synthetic_view")
+    if not isinstance(sv, bool):
+        return "FAIL", g, "rating.facts.synthetic_view missing: the synthetic-quote cap cannot be checked"
+    view = _get(rb, "data_view", "view")
+    synthetic = sv or (isinstance(view, str) and ("synthetic" in view or view == SYNTHETIC_VIEW))
+    if synthetic and GRADE_ORDER.index(g) < GRADE_ORDER.index("B"):
+        return "FAIL", g, "cap violated: a synthetic-quote view is capped at B"
     return _res(GRADE_ORDER.index(g) <= GRADE_ORDER.index(t["min_grade"]), g, None)
 
 
@@ -239,7 +292,7 @@ def _coverage(rb: dict, t: dict):
     return _res(v is False, v, "a pack frozen with accept_partial has data gaps" if v else None)
 
 
-def _item(rb: dict, item: dict, other: int) -> tuple[str, Any, str | None]:
+def _item(rb: dict, item: dict, other: int, trials_floor: int = 0) -> tuple[str, Any, str | None]:
     i, t = item["id"], item["threshold"]
     facts = ("rating", "facts")
     if i == "1.1":
@@ -255,7 +308,7 @@ def _item(rb: dict, item: dict, other: int) -> tuple[str, Any, str | None]:
             return "FAIL", None, "basis stress x2 was not run (basis_stress 0 or too large)"
         return _gt(rb, ("cost_stress", "basis_stress_x2", "net"), t["net_gt"], "str")
     if i == "1.6":
-        return _dsr(rb, t, other)
+        return _dsr(rb, t, other, trials_floor)
     if i == "1.7":
         return _pbo(rb, t)
     if i == "1.8":
@@ -275,16 +328,17 @@ def _item(rb: dict, item: dict, other: int) -> tuple[str, Any, str | None]:
     return "FAIL", None, f"item {i} is not implemented in this client (protocol newer than the client)"
 
 
-def evaluate(robustness: dict | None, protocol: dict, other_candidates: int = 0) -> list[dict]:
+def evaluate(robustness: dict | None, protocol: dict, other_candidates: int = 0, trials_floor: int = 0) -> list[dict]:
     """The research-side G1 items of ``protocol`` evaluated on ``robustness`` (``robustness.json``), in protocol order.
     ``other_candidates`` is the number of other registered candidates added to the DSR trial count (AlphaKeel's registry
-    knows it; a research-side run has 0)."""
+    knows it; a research-side run has 0). ``trials_floor`` is the trial-count floor (IR provenance + battery candidates, or
+    the research-service ledger count): the DSR uses max(dsr_inputs.trials, trials_floor) + other_candidates."""
     out = []
     for item in research_items(protocol):
         if robustness is None:
             result, observed, note = "FAIL", None, "robustness.json missing"
         else:
-            result, observed, note = _item(robustness, item, int(other_candidates))
+            result, observed, note = _item(robustness, item, int(other_candidates), int(trials_floor))
             if result == "FAIL" and not note:
                 note = f"observed {observed}, threshold {json.dumps(item['threshold'], sort_keys=True)}"
         out.append({"id": item["id"], "label": item["label"], "result": result, "observed": observed, "note": note})

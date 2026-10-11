@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from . import canon
+from .errors import ApiError
 
 SCHEMA = "vibe-trading.ir-crosscheck/1"
 TOLERANCE = Decimal("0.00000002")
@@ -157,12 +158,36 @@ def compare(vt: dict[int, dict], ak: dict[int, dict]) -> dict:
             "differences": len(diffs), "first_differences": diffs[:30]}
 
 
+def mirror_request(ir_doc: dict, card: dict) -> tuple[dict, str]:
+    """(body, idempotency key) of the AlphaKeel ``ir_strategy`` + ``dataset_view`` run that mirrors a VT run card. The one
+    definition for the cross-check and for trial registration, so a candidate registered with the same IR text and the later
+    cross-check of it are one service run (idempotent by key)."""
+    body = {"mode": "ir_strategy", "pack_id": card["pack"]["pack_id"], "ir": ir_doc, "dataset_view": view_of(card)}
+    return body, "vt-xcheck-" + hashlib.sha256(canon.canonical_bytes(body)).hexdigest()[:32]
+
+
+def register_trial(client: Any, ir_doc: dict, card: dict, *, queue_wait_s: float = 600.0, poll_s: float = 5.0) -> str:
+    """Register one research run in the research service's trial ledger and return the service run id. The service writes a
+    ``research_run`` ledger row for every ``POST /runs`` it accepts (docs/29 s14, ``record_trial``; the same request digest is
+    recorded once) and refuses the run when the row cannot be written, so creating the mirrored ``ir_strategy`` run IS the
+    registration; this does not wait for the run to finish. A full run queue is waited out; any other error propagates (a trial
+    that could not be registered must not be used as evidence)."""
+    body, key = mirror_request(ir_doc, card)
+    deadline = time.monotonic() + queue_wait_s
+    while True:
+        try:
+            return str(client.create_run(body, key=key)["run_id"])
+        except ApiError as e:
+            if e.code != "resource.queue_full" or time.monotonic() >= deadline:
+                raise
+            time.sleep(poll_s)
+
+
 def alphakeel_check(client: Any, ir_doc: dict, run_dir: str | Path, *, timeout: float = 7200.0) -> dict:
     """Run the mirrored AlphaKeel ``ir_strategy`` + ``dataset_view`` run and compare; writes ``alphakeel-check.json``."""
     run_dir = Path(run_dir)
     card = json.loads((run_dir / "run_card.json").read_text())
-    body = {"mode": "ir_strategy", "pack_id": card["pack"]["pack_id"], "ir": ir_doc, "dataset_view": view_of(card)}
-    key = "vt-xcheck-" + hashlib.sha256(canon.canonical_bytes(body)).hexdigest()[:32]
+    body, key = mirror_request(ir_doc, card)
     submitted = int(time.time() * 1000)
     run = client.create_run(body, key=key)
     st = client.wait_run(run["run_id"], timeout=timeout)

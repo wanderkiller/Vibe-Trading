@@ -120,7 +120,10 @@ def describe(run_dir: Path) -> dict:
         rating = doc.get("rating") or {}
         summary = {"grade": rating.get("grade"), "score": rating.get("score"), "caps": [c.get("id") for c in rating.get("caps") or []],
                    "schema": doc.get("schema"), "sha256": sha}
-        checks = precheck.evaluate(doc, protocol)
+        # AlphaKeel's 1.6 trial floor: IR provenance.trials.count + the battery's candidates (it adds the service ledger on its side)
+        tri, brt = card.get("trials") or {}, doc.get("trials") or {}
+        floor = (tri.get("count") if type(tri.get("count")) is int else 0) + (brt.get("distinct_candidate_variants") if type(brt.get("distinct_candidate_variants")) is int else 0)
+        checks = precheck.evaluate(doc, protocol, 0, floor)
     marker = _read_json(run_dir / MARKER)
     exported = None
     if isinstance(marker, dict):

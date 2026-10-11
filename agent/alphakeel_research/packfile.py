@@ -16,7 +16,7 @@ import hashlib
 import io
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
@@ -691,8 +691,10 @@ class Pit:
         return m
 
     def instruments(self) -> dict[Inst, Instrument]:
-        """Contract identities of the pack (first/last seen are scan facts of the whole window: use with care)."""
-        return self.__pack.instruments()
+        """Contract identities of the pack visible at ``as_of``: a contract first seen after ``as_of`` is not returned, and
+        ``last_seen_ms`` is cut at ``as_of`` (the pack's value is a scan fact of the whole window, i.e. a look-ahead)."""
+        return {k: replace(v, last_seen_ms=None if v.last_seen_ms is None else min(v.last_seen_ms, self.as_of_ms))
+                for k, v in self.__pack.instruments().items() if v.first_seen_ms is None or v.first_seen_ms <= self.as_of_ms}
 
     def fees(self) -> dict:
         """The pack's static fee table (it does not change inside a pack)."""

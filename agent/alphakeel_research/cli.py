@@ -137,6 +137,17 @@ def _robustness_inputs(a) -> tuple[str, str, str, tuple[int, int], str]:
     return ir_path, inst, pack_dir, window, a.out or str(run / "robustness")
 
 
+def _battery(robustness, registry, ir_path, pack, inst_path, window, oos, a, trials_floor) -> dict:
+    from decimal import Decimal
+
+    return robustness.battery(_load(ir_path), pack, _load(inst_path), is_window=window, oos_window=oos,
+                              oos_pack=Pack.from_directory(a.oos_pack_dir) if a.oos_pack_dir else None, out_dir=a.out,
+                              fees=_load(a.fees), filter_spec=_load(a.filter), permutations=a.permutations, seed=a.seed,
+                              step_minutes=a.step_minutes, capital_base=Decimal(a.capital_base) if a.capital_base else None,
+                              workers=a.workers, prior_trials=a.prior_trials, wf_folds=a.wf_folds, wf_test_days=a.wf_test_days,
+                              wf_min_train_days=a.wf_min_train_days, prior_trials_floor=trials_floor, registry=registry)
+
+
 def _ir_research(a) -> int:
     """``ir backtest`` / ``ir export``: the service is only contacted when it is needed (freezing, credential)."""
     from decimal import Decimal
@@ -152,15 +163,22 @@ def _ir_research(a) -> int:
             raise ApiError("request.invalid", f"--pack-dir is pack {pack.id}, the run used {_run_card(a.run)['pack']['pack_id']}", field="pack_dir")
         oos = None if a.oos_start_ms is None else (a.oos_start_ms, a.oos_end_ms)
         a.out = out_dir
-        doc = robustness.battery(_load(ir_path), pack, _load(inst_path), is_window=window, oos_window=oos,
-                                 oos_pack=Pack.from_directory(a.oos_pack_dir) if a.oos_pack_dir else None, out_dir=a.out,
-                                 fees=_load(a.fees), filter_spec=_load(a.filter), permutations=a.permutations, seed=a.seed,
-                                 step_minutes=a.step_minutes, capital_base=Decimal(a.capital_base) if a.capital_base else None,
-                                 workers=a.workers, prior_trials=a.prior_trials, wf_folds=a.wf_folds, wf_test_days=a.wf_test_days,
-                                 wf_min_train_days=a.wf_min_train_days)
+        # prior_trials is never below the IR run card's trials.count (audit 2 P1-1 b): the battery uses the larger and says so
+        floor = ((_run_card(a.run).get("trials") or {}).get("count") or 0) if a.run else 0
+        # every candidate run is registered in the research service's trial ledger (audit 2 P1-1 c); --no-register opts out, visibly
+        reg = None if a.no_register else Client(a.url)
+        try:
+            doc = _battery(robustness, reg, ir_path, pack, inst_path, window, oos, a, floor)
+        finally:
+            if reg is not None:
+                reg.close()
+        for n in doc["notes"]:
+            if n.startswith("warning:"):
+                print(n, file=sys.stderr)
         r = doc["rating"]
         _out({"strategy_id": doc["strategy_id"], "grade": r["grade"], "score": r["score"], "caps": [c["id"] for c in r["caps"]],
               "reasons": r["reasons"], "trials": doc["trials"]["count"], "runs": len(doc["runs"]),
+              "service_runs": doc["service_runs"]["ids"],
               "report": str(Path(a.out) / "robustness.md"), "json": str(Path(a.out) / "robustness.json"),
               "note": "research evidence on the synthetic-touch dataset view; not an approval"})
         return 0
@@ -180,10 +198,11 @@ def _ir_research(a) -> int:
             from . import ir_backtest
 
             a.out = str(ir_backtest.new_run_dir())
-        c = None if a.pack_dir else Client(a.url)
+        c = None if (a.pack_dir and a.no_register) else Client(a.url)
         try:
             card = workflow.ir_backtest(c, _load(a.ir), _load(a.instruments), start_ms=a.start_ms, end_ms=a.end_ms, out_dir=a.out,
-                                        cache_dir=a.cache, pack_dir=a.pack_dir, step_minutes=a.step_minutes, fees=_load(a.fees),
+                                        cache_dir=a.cache, pack_dir=a.pack_dir, register=not a.no_register,
+                                        step_minutes=a.step_minutes, fees=_load(a.fees),
                                         fees_source=a.fees or "default", trials=a.trials, trials_evidence=a.trials_evidence,
                                         capital_base=Decimal(a.capital_base) if a.capital_base else None,
                                         accept_partial=a.accept_partial, verbose=a.verbose)
@@ -193,6 +212,7 @@ def _ir_research(a) -> int:
         _out({"run_id": card["run_id"], "strategy_id": card["strategy_id"], "pack_id": card["pack"]["pack_id"],
               "window": card["window"], "view": card["view"], "counts": card["counts"], "amounts": card["amounts"],
               "max_drawdown": card["max_drawdown"], "trials": card["trials"], "assumptions": card["assumptions"],
+              "service_registration": card.get("service_registration"),
               "run_dir": str(a.out), "run_card": str(Path(a.out) / "run_card.json"), "note": "research evidence (dataset view approximations in the run card); not reconciliation input"})
         return 0
     cred = None
@@ -202,7 +222,7 @@ def _ir_research(a) -> int:
             cred = c.check()
         finally:
             c.close()
-    r = workflow.ir_export(_load(a.ir), a.run, a.out, research_credential=cred, robustness_dir=a.robustness)
+    r = workflow.ir_export(_load(a.ir), a.run, a.out, research_credential=cred, robustness_dir=a.robustness, reconciliation=a.reconciliation)
     for w in r.get("warnings", []):
         print(f"warning: {w}", file=sys.stderr)
     _out(r)
@@ -288,9 +308,10 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--capital-base", help="capital base of the daily returns (default notional_per_leg x 2 x max_open)")
     q.add_argument("--accept-partial", action="store_true")
     q.add_argument("--pack-dir", help="an exported dataset pack directory instead of freezing one through the service")
+    q.add_argument("--no-register", action="store_true", help="do not register this run in the research service's trial ledger (recorded in the run card)")
     q.add_argument("--verbose", action="store_true", help="write every rejected pair into decisions.jsonl")
     q.add_argument("--out", help="output directory (default: a new Vibe-Trading run directory RUNS_DIR/<YYYYMMDD_HHMMSS>_ir/)")
-    q = irs.add_parser("robustness", help="reliability battery + confidence grade on an exported dataset pack (no network)")
+    q = irs.add_parser("robustness", help="reliability battery + confidence grade on an exported dataset pack (data offline; each candidate run is registered with the research service)")
     q.add_argument("--run", help="an `ir backtest` run directory: defaults --out (DIR/robustness), --ir, --instruments, the IS window and --pack-dir")
     q.add_argument("--ir")
     q.add_argument("--pack-dir", help="exported dataset pack directory (lock.json + content/)")
@@ -307,7 +328,10 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--workers", type=int, default=2)
     q.add_argument("--step-minutes", type=int, default=5)
     q.add_argument("--capital-base", help="capital base shared by every variant (default notional_per_leg x 2 x max_open of the IR)")
-    q.add_argument("--prior-trials", type=int, default=0, help="variants tried BEFORE this battery (self-declared; added to the DSR count)")
+    q.add_argument("--prior-trials", type=int, default=0, help="variants tried BEFORE this battery (self-declared; added to the DSR count; "
+                   "never below the `ir backtest` run card's trials.count: the larger is used, with a warning)")
+    q.add_argument("--no-register", action="store_true", help="do not register the candidate runs in the research service's trial ledger "
+                   "(recorded in robustness.json service_runs.registered = false; AlphaKeel's DSR then relies on its own trial floor)")
     q.add_argument("--wf-folds", type=int, default=3, help="anchored walk-forward folds (test segments = the last folds x test-days days of the IS window)")
     q.add_argument("--wf-test-days", type=int, default=30)
     q.add_argument("--wf-min-train-days", type=int, default=30, help="shorter first training segment: walk-forward not computable")
@@ -321,6 +345,8 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--run", required=True, help="the `ir backtest` output directory")
     q.add_argument("--research-credential", action="store_true", help="record the research-service credential (Client.check())")
     q.add_argument("--robustness", help="directory with robustness.json/.md/trials.jsonl (default: RUN/robustness when present)")
+    q.add_argument("--reconciliation", help="reconciliation.json of `ir review` / `ir crosscheck` (default: RUN/reconciliation.json when present); "
+                   "its pack_id must equal the robustness in-sample pack")
     q.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     try:
