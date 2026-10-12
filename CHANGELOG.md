@@ -27,6 +27,13 @@ Local patch layer only (`patches/MANIFEST.md`); not an upstream release note.
 - The dataset view has no default fee table (`--fees` required) (D2-13);
   `dataset_pack_request(selection=...)` can ask for `pit_membership` (D2-14);
   `runner._get_loader` no longer swaps a no-fallback source for tushare (D2-15).
+- CI green as a release gate (`tools/deploy-vt.sh` requires it): `alphakeel_handoff_routes`
+  imports `fcntl` only where it exists (the Windows desktop smoke build imports
+  the backend; export there answers 501 `export.unsupported_platform`); the
+  `net_now` simulator test sets the `official` flag it exercises; two upstream
+  tests red on upstream main are fixed at the source (new group
+  `upstream-test-fixes`: slash-form crypto pairs ahead of the forex rule in
+  `_MARKET_PATTERNS`, `getattr(…, "meta", None)` in the bench data check).
 - Known residuals (2026-10-12 round-2 review, wave 2): official mark
   settlement prices are not rounded to the venue `price_dp` (residual up to
   0.5 * price_dp * qty per settlement; R2-D-3); `run_assumptions.fee_source`

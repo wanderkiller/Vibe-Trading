@@ -36,6 +36,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `alphakeel-handoff` | api_server (one hook), RunDetail (one import, one element), api.ts (one `export`) | local-only (follows the leaf package) |
 | `packaging-docs` | pyproject, SKILL.md, READMEs, .gitignore, .env.example, CHANGELOG (one section) | local-only |
 | `ci-env-gate` | alpha_routes (one line) | upstreamable: upstream's own gate e fails on it |
+| `upstream-test-fixes` | _market_hooks (two patterns), alpha_bench_tool (one `getattr`) | upstreamable: two upstream tests are red on upstream main without them |
 
 ---
 
@@ -511,6 +512,22 @@ the `loaders/` tree line.
 - hook `README_ko.md`: `` | `alphakeel_pack` | ``
 - upstream `README_zh.md`: `` regex (?m)^\| `local` \| `` — source-table row the alphakeel rows follow
 - hook `README_zh.md`: `` | `alphakeel_pack` | ``
+
+## `upstream-test-fixes` — two upstream tests that are red on upstream main
+
+**Purpose.** `tools/deploy-vt.sh` refuses to rebuild the production container unless the "CI" workflow is green on the
+exact commit, and two upstream tests fail on a pristine upstream checkout (`e532650b`, reproduced locally 2026-10-12):
+`test_explicit_crypto_pairs_stay_crypto[ETH/USD]` (the `^[A-Z]{3}/[A-Z]{3}$` forex rule in `_MARKET_PATTERNS` claimed
+`ETH/USD` before any crypto rule saw it) and `test_alpha_bench_does_not_follow_preexisting_report_symlink` (its registry
+stub has no `.meta` while `_validate_bench_data_requirements` read `registry.get(aid).meta`). Fixes: two slash-form
+crypto patterns ahead of the forex rule (stablecoin quote, or a major crypto base with a USD quote); `getattr(…, "meta",
+None)`. Both are candidates for an upstream PR; drop the group when upstream carries them.
+
+**Files.**
+- `agent/backtest/engines/_market_hooks.py` (also in `crypto-funding`)
+- `agent/src/tools/alpha_bench_tool.py` (also in `alpha-bench-universe`)
+
+**Commits.** (this commit; audit 2026-10-12 round-2 D6-1 follow-up).
 
 ## `ci-env-gate` — repository safety gate e
 

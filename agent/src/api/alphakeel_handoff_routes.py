@@ -13,7 +13,6 @@ directory of files. Local patch layer: group ``alphakeel-handoff`` (``patches/MA
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -23,6 +22,11 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+
+try:  # POSIX advisory lock for the export directory; the Windows desktop build has no fcntl (export is refused there)
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -212,6 +216,8 @@ def export_run(run_dir: Path, expected_robustness_sha256: str | None = None) -> 
             client.close()
         except Exception:  # noqa: BLE001
             pass
+    if fcntl is None:
+        raise _err(501, "export.unsupported_platform", "hand-off export needs a POSIX host (no advisory file locks here)")
     root = handoff_dir()
     root.mkdir(parents=True, exist_ok=True)
     lock_dir = Path(tempfile.gettempdir()) / f"alphakeel-handoff-locks-{os.getuid()}"

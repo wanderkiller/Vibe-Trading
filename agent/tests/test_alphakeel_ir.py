@@ -497,7 +497,7 @@ def test_sim_net_now_counts_every_settled_funding_estimated_or_official():
     sim, _ = _sim_with(p, (Decimal("1"), Decimal("1"), 0), fee="0")
     sim.frames, sim.snaps, sim.price_dp = [types.SimpleNamespace(t=T)], [{bn: S.Snap(Decimal(1), Decimal(1), Decimal(1), None)}], {bn: 8}
     sim.accounts, sim.fed_official, sim.official_n, sim.estimate_fallbacks = {("BINANCE", "USDT"): Decimal(0)}, {}, 0, 0
-    sim.evs, sim._ord, sim.fund_events = [], 0, []
+    sim.evs, sim._ord, sim.fund_events, sim.official = [], 0, [], False
     sim._settle(bn, T, Decimal("0.01"), last_mark_at=sim.frames[0], k=0)  # not fed by an official event: an estimate
     assert (sim.estimate_fallbacks, sim.official_n) == (1, 0)
     assert sim._view(0, _F, [])["positions"][0]["net_now"] == "-0.1"  # 10 x 1 x 0.01 paid by the long

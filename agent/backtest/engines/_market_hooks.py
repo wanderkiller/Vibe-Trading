@@ -112,6 +112,12 @@ _MARKET_PATTERNS = [
     # the a_share default, which put a leveraged futures series under T+1 and
     # no shorting, and kept it out of the futures loader chain entirely.
     (re.compile(_CN_FUTURES_MAIN_PATTERN, re.I), "futures"),
+    # Slash-spelled crypto pairs (ETH/USD, BTC/USDT, SOL/USDC). The three-letter
+    # forex rule below would otherwise claim ETH/USD: a stablecoin quote is
+    # crypto by itself, and a USD quote is crypto when the base is a major
+    # crypto asset (the same bases the dash-form rule above already accepts).
+    (re.compile(r"^[A-Z0-9]{2,}/(?:USDT|USDC|BUSD)$", re.I), "crypto"),
+    (re.compile(r"^(?:BTC|ETH|BNB|SOL|ADA|DOGE|XRP|LTC|AVAX|DOT|LINK|MATIC)/USD$", re.I), "crypto"),
     # Forex pairs: XXX/YYY or XXXXXX.FX
     (re.compile(r"^[A-Z]{3}/[A-Z]{3}$"), "forex"),
     (re.compile(r"^[A-Z]{6}\.FX$"), "forex"),
