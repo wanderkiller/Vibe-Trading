@@ -894,6 +894,12 @@ class DataLockScans(BaseModel):
     first_ms: Annotated[int, Field(ge=0)]
     frames: Annotated[int, Field(ge=0)]
     gaps_over_3_minutes: Annotated[int, Field(ge=0)]
+    instrument_gaps: Annotated[
+        BTreeMap | None,
+        Field(
+            description="Universe packs (no requested instruments): per perpetual (`venue|perp|symbol`), scans between its first and last\nappearance in the window where its venue had data but it was absent from the frame (non-zero entries only). Any\nentry makes `coverage.pnl_backtest_complete` false. Absent in packs frozen before this field existed."
+        ),
+    ] = None
     instrument_missing: Annotated[
         BTreeMap | None,
         Field(

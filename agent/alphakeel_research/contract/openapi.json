@@ -769,6 +769,10 @@
             "minimum": 0,
             "type": "integer"
           },
+          "instrument_gaps": {
+            "$ref": "#/components/schemas/BTreeMap",
+            "description": "Universe packs (no requested instruments): per perpetual (`venue|perp|symbol`), scans between its first and last\nappearance in the window where its venue had data but it was absent from the frame (non-zero entries only). Any\nentry makes `coverage.pnl_backtest_complete` false. Absent in packs frozen before this field existed."
+          },
           "instrument_missing": {
             "$ref": "#/components/schemas/BTreeMap",
             "description": "Per requested instrument (`venue|market|symbol`): scans in the window where the instrument's venue had data but the\ninstrument was absent from the frame. Absent in packs frozen before this field existed."
