@@ -360,6 +360,30 @@ class TestHistoricalFundingRate:
         engine.before_rebalance_bar(dates[1], {"BTC-USDT-PERP": frame}, ["BTC-USDT-PERP"])
         assert engine.capital == before
 
+    def test_crypto_funding_per_settlement_uses_settlement_mark(self) -> None:
+        """D2-11: each settlement of a bar is booked on its own, in Decimal, at its published mark (else the most recent
+        close), and only if the position was held over it. One 1D bar carries 01-01 08:00 (mark 61000), 16:00 (no mark)
+        and 01-02 00:00 (mark 62000); a long of 1 opened at 01-01 12:00 missed 08:00. Previous close 60500:
+        1 x (60500 x 0.001 + 62000 x 0.002) = 184.5 (the old hook: next open x the summed rate 0.004 = 252)."""
+        from decimal import Decimal
+
+        from backtest.funding_settlements import attach_settlements
+
+        engine = _make_engine(interval="1D")
+        dates = pd.date_range("2025-01-01", periods=2, freq="1D")
+        bars = pd.DataFrame({"open": [60000.0, 63000.0], "close": [60500.0, 63500.0]}, index=dates)
+        ms = lambda s: int(pd.Timestamp(s).value // 1_000_000)  # noqa: E731
+        frame = attach_settlements(bars, [(ms("2025-01-01 08:00"), Decimal("0.001"), Decimal("61000")),
+                                          (ms("2025-01-01 16:00"), Decimal("0.001"), None),
+                                          (ms("2025-01-02 00:00"), Decimal("0.002"), Decimal("62000"))])
+        code = "BTC-USDT-PERP"
+        paid = _settle_all(engine, code, frame, Position(code, 1, 60000.0, pd.Timestamp("2025-01-01 12:00"), 1.0, leverage=10.0))
+        assert paid == pytest.approx(184.5)
+        assert engine._funding.settlements == 2 and engine._funding.priced_at_close == 1
+        assert engine._funding.total == Decimal("184.5")
+        summary = engine._funding.summary()
+        assert summary["funding_estimate"] is True and summary["funding_priced_at_close"] == 1
+
     def test_a_cross_venue_hedge_gets_both_legs_funding_from_data(self) -> None:
         """P11: with settled rates the two legs no longer cancel (the fixed default made them cancel exactly)."""
         engine = _make_engine(interval="1h")

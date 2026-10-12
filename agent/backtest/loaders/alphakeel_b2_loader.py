@@ -5,10 +5,16 @@ What it serves
     the requested interval; only complete bars are returned. The index is the bar **open** time (left label, like every
     other Vibe-Trading loader); ``df.attrs["alphakeel_b2"]["bar"]`` states it and the bar length, so a consumer never has to
     guess whether a timestamp is an open or a close.
-  * For perpetual contracts the bars also carry the official funding settlements of the same frozen pack:
-    ``funding_rate`` (sum of the rates settled in ``(previous bar open, this bar open]``, 0.0 when none),
-    ``funding_settlement_time`` (the last such settlement, NaT when none) and ``funding_settlements`` (their count) — the
-    shape ``CryptoEngine`` charges at the bar open, before that bar's fills, exactly at the real settlement times.
+  * For perpetual contracts the bars also carry the official funding settlements of the same frozen pack, split by use
+    (AGENTS rule 5):
+      - accounting, by settlement time: ``funding_cash_rate`` (sum of the rates settled in ``(previous bar open, this bar
+        open]``, 0.0 when none), ``funding_settlement_time`` (the last such settlement, NaT when none),
+        ``funding_settlements`` (their count) and ``funding_events`` (each settlement with its exact ``Decimal`` rate and
+        published mark) — what ``CryptoEngine`` charges at the bar open, before that bar's fills, one settlement at a time;
+      - signals, by visibility: ``funding_visible_rate``, the rate of the last settlement visible at the bar close
+        (``available_at_ms``, else settlement time + the lock's assumed delay; NaN before the first). A settlement can be
+        charged before it is published (venues with a finality grace), so a strategy must read this column, never the
+        cash one.
   * Funding settlement history (``fetch_funding``) for all nine venues of the funding dataset (binance, okx, bybit,
     bitget, gate, aster, hyperliquid, lighter, backpack), 2019 onwards.
 
@@ -26,8 +32,10 @@ Hard rules
     explicitly for non-auditable exploration).
   * Hold-out: the service keeps the most recent N days (per credential, default 60) invisible; a window reaching into it
     is refused with ``data.holdout`` and surfaced here unchanged.
-  * Prices become ``float`` only at this boundary (the engines are float); the pack itself and ``fetch_funding`` keep exact
-    ``Decimal``.
+  * Prices become ``float`` only at this boundary (the engines are float); the pack itself, ``fetch_funding`` and
+    ``funding_events`` keep exact ``Decimal``.
+  * Pack keys carry the UTC day: a failed, interrupted or stale pack job is not returned again after the day turns, and a
+    successful pack is re-frozen against the current dataset versions once a day.
 
 Codes: ``venue:market:SYMBOL`` (e.g. ``okx:perp:BTC-USDT-SWAP``) or, for venues whose symbols are BASEQUOTE
 (binance, bybit, bitget, aster), the shorthand ``BTC-USDT`` (spot) / ``BTC-USDT-PERP`` on the default venue
@@ -47,7 +55,7 @@ from typing import Any
 import pandas as pd
 
 from backtest.data_audit import record_provenance
-from backtest.funding_settlements import attach_settlements
+from backtest.funding_settlements import attach_settlements, attach_visible_rate
 from backtest.loaders.base import NoAvailableSourceError, validate_date_range
 from backtest.loaders.registry import register
 from src.config.accessor import get_env_value
@@ -97,10 +105,21 @@ def parse_code(code: str, default_venue: str = "binance", *, force_market: str |
     return venue, market, symbol
 
 
+def _utc_naive(date: str) -> pd.Timestamp:
+    """A date as naive UTC: a timezone-aware input is converted to UTC first (its wall clock is not kept)."""
+    ts = pd.Timestamp(date)
+    return ts.tz_convert("UTC").tz_localize(None) if ts.tzinfo is not None else ts
+
+
 def _window_ms(start_date: str, end_date: str) -> tuple[int, int]:
-    s = pd.Timestamp(start_date).tz_localize(None).normalize()
-    e = pd.Timestamp(end_date).tz_localize(None).normalize() + pd.Timedelta(days=1)
+    """``[start UTC day 00:00, end UTC day + 1 00:00)`` in ms."""
+    s = _utc_naive(start_date).normalize()
+    e = _utc_naive(end_date).normalize() + pd.Timedelta(days=1)
     return int(s.timestamp() * 1000), int(e.timestamp() * 1000)
+
+
+def _utc_day() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
 
 
 def resample_klines(df: pd.DataFrame, minutes: int) -> pd.DataFrame:
@@ -184,7 +203,9 @@ class DataLoader:
             "funding_dataset": None if funding else "none",
             "dataset": {"market_tables": ["kline_1m"], "price_kinds": ["trade"]} if klines else {},
         }
-        key = key_for("pack", {"request": request, "salt": _env("ALPHAKEEL_B2_PACK_SALT")})
+        # the UTC day bounds how long a failed/interrupted job or an old dataset version is returned for the same request
+        # (the same rule as ir_backtest and the alphakeel: universe)
+        key = key_for("pack", {"request": request, "salt": _env("ALPHAKEEL_B2_PACK_SALT"), "utc_day": _utc_day()})
         try:
             if id(client) not in self._checked:
                 # Runtime contract check (version + digest of every contract file against this client's PIN): a service
@@ -296,9 +317,24 @@ class DataLoader:
                 tag["bar"]["minutes"] = minutes
                 if perp:
                     rows = self._read(lambda: pack.settlements(inst, start_ms, end_ms))
-                    df = attach_settlements(df, [(r.t, float(r.rate)) for r in rows if r.event_kind in ("regular", "special")])
+                    official = [r for r in rows if r.event_kind in ("regular", "special")]
+                    df = attach_settlements(df, [(r.t, r.rate, r.mark_price) for r in official])
+                    df = df.rename(columns={"funding_rate": "funding_cash_rate"})
+                    from src.factors.alphakeel_universe import _assumed_delay_ms  # same visibility rule as the universe panel
+
+                    try:
+                        delay = _assumed_delay_ms(pack)
+                    except ValueError as e:
+                        raise NoAvailableSourceError(f"alphakeel_b2: {e}") from e
+                    df = attach_visible_rate(
+                        df, [(r.available_at_ms if r.available_at_ms is not None else r.t + delay, r.t, r.rate) for r in official],
+                        minutes * _MINUTE_MS)
                     tag["funding"] = {"source": "official_settlements", "dataset_version": pack.dataset_version("funding"),
-                                      "settlements": len(rows), "attribution": "(previous bar open, bar open]"}
+                                      "settlements": len(rows), "attribution": "(previous bar open, bar open]",
+                                      "columns": {"funding_cash_rate": "accounting: settled in (previous bar open, bar open]",
+                                                  "funding_visible_rate": "signals: last settlement visible at the bar close "
+                                                                          "(available_at_ms, else t + assumed_delay_ms)"},
+                                      "assumed_delay_ms": delay}
                 df.attrs["alphakeel_b2"] = tag
                 result[code] = df
         finally:

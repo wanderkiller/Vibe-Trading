@@ -13,6 +13,7 @@ GlobalFutures because composite.py used a suffix-only check) cannot recur.
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from typing import Dict, List
 
 import pandas as pd
@@ -398,20 +399,30 @@ def is_perp_code(code: str) -> bool:
 
 
 FUNDING_COLUMNS = ("funding_rate", "funding_settlement_time")
+#: the per-bar cash rate, attributed by settlement time (``funding_settlements.attach_settlements``): ``alphakeel_b2`` names
+#: it ``funding_cash_rate`` (next to ``funding_visible_rate``, the column a signal may read), ccxt ``funding_rate``
+FUNDING_CASH_RATE_COLUMNS = ("funding_cash_rate", "funding_rate")
+
+
+def funding_cash_rate_column(frame) -> str | None:
+    """The cash rate column a frame carries (``FUNDING_CASH_RATE_COLUMNS`` order), or None."""
+    cols = frame.columns if isinstance(frame, pd.DataFrame) else frame.index
+    return next((c for c in FUNDING_CASH_RATE_COLUMNS if c in cols), None)
 
 
 def funding_model_for(code: str, frame: pd.DataFrame) -> str:
     """How funding is charged for ``code``; refuses a perpetual without settlement data.
 
-    * ``settlement_data``: the bars carry the venue's settled rates (``funding_rate`` = sum of the rates settled in
-      ``(previous bar open, this bar open]``, ``funding_settlement_time`` = the last such settlement).
+    * ``settlement_data``: the bars carry the venue's settled rates (``funding_rate`` / ``funding_cash_rate`` = sum of the
+      rates settled in ``(previous bar open, this bar open]``, ``funding_settlement_time`` = the last such settlement,
+      ``funding_events`` = each of them with its published mark when the loader has it).
     * ``assumed_fixed_rate``: a spot-priced proxy (no perpetual market behind it) charged an assumed fixed rate at the
       00/08/16 UTC instants — a modelling assumption reported in the metrics, never used for a perpetual.
 
     A perpetual without the funding columns used to fall back to a fixed 0.0001 per settlement, which made a
     cross-venue hedge's two legs cancel and a receiver's carry look 33 % larger; that silent default is gone.
     """
-    has = all(c in frame.columns for c in FUNDING_COLUMNS)
+    has = "funding_settlement_time" in frame.columns and funding_cash_rate_column(frame) is not None
     if has:
         return "settlement_data"
     if is_perp_code(code):
@@ -436,25 +447,49 @@ def funding_instants_between(prev_open: pd.Timestamp, open_: pd.Timestamp) -> li
 class CryptoFunding:
     """Charges crypto funding at the real settlement instants, at the bar open and before that bar's fills.
 
-    A position present before the fills of the bar opening at ``t`` was held over every settlement in
-    ``(previous bar open of that symbol, t]`` (it was opened at or before the previous open), so it pays/receives
-    exactly those settlements — whatever the bar span (the old hook charged a 1H/4H/15m bar four times a day: three grid
-    slots plus a "daily fallback"). A position opened at ``t`` was not held at a settlement at ``t``; one closed at ``t``
-    was, matching AlphaKeel's engine (open at the boundary: not charged; close at the boundary: charged).
+    Each settlement in ``(previous bar open of that symbol, t]`` is booked on its own, in ``Decimal``: a position pays or
+    receives it when it was held over that settlement (opened before its time) -- a position opened at a settlement was
+    not held at it, one closed at it was, matching AlphaKeel's engine; the old hook only looked at the bar's last
+    settlement and summed the rates. The price is the settlement's published mark when the loader carries it
+    (``funding_events``, AlphaKeel F04), else the most recent close (the previous bar's close of the symbol; the bar's open
+    for the first bar); a settlement priced at a close is an estimate and the summary says so (``funding_estimate``).
+    Frames without ``funding_events`` (one aggregated settlement per bar row) are booked as one settlement at
+    ``funding_settlement_time``. Spot-priced proxies (``assumed_fixed_rate``) keep the assumed rate at the 00/08/16 UTC
+    instants, valued at the bar open.
     """
 
     def __init__(self, assumed_rate: float):
         self.assumed_rate = float(assumed_rate)
         self.models: dict[str, str] = {}
         self._prev_open: dict[str, pd.Timestamp] = {}
+        self._prev_close: dict[str, float] = {}
         self.settlements = 0
-        self.total = 0.0
+        self.priced_at_close = 0
+        self.total = Decimal(0)
 
     def prepare(self, data_map: Dict[str, pd.DataFrame], codes: list) -> None:
         for c in codes:
             frame = data_map.get(c)
             if frame is not None:
                 self.models[c] = funding_model_for(c, frame)
+
+    @staticmethod
+    def _events(symbol: str, bar: pd.Series, ts: pd.Timestamp) -> list[tuple[int, Decimal, Decimal | None]]:
+        """The settlements of this bar row: ``(t_ms, rate, published mark or None)``."""
+        rate = bar[funding_cash_rate_column(bar)]
+        when = bar["funding_settlement_time"]
+        if pd.isna(rate):
+            raise ValueError(f"missing funding rate for {symbol} at {ts}")
+        events = bar.get("funding_events") if "funding_events" in bar.index else None
+        if isinstance(events, (tuple, list)):
+            if bool(events) == pd.isna(when):
+                raise ValueError(f"funding events and settlement time disagree for {symbol} at {ts}")
+            return [(int(t), Decimal(str(r)), None if m is None else Decimal(str(m))) for t, r, m in events]
+        if pd.isna(when):
+            if float(rate) != 0.0:
+                raise ValueError(f"funding rate without settlement time for {symbol} at {ts}")
+            return []
+        return [(int(pd.Timestamp(when).value // 1_000_000), Decimal(str(float(rate))), None)]
 
     def settle(self, symbol: str, bar: pd.Series, timestamp: pd.Timestamp, positions: Dict[str, Position]) -> float:
         """Payment for this bar open (positive = the account pays). Must be called once per (symbol, bar), pre-fill."""
@@ -463,41 +498,56 @@ class CryptoFunding:
         if prev is not None and ts <= prev:
             raise ValueError(f"funding for {symbol} settled out of order ({ts} after {prev})")
         self._prev_open[symbol] = ts
+        last_close = self._prev_close.get(symbol)
+        close_now = bar.get("close")
+        if close_now is not None and not pd.isna(close_now):
+            self._prev_close[symbol] = float(close_now)
         model = self.models.get(symbol)
         if model is None:
             raise ValueError(f"funding model for {symbol} was not prepared")
         pos = positions.get(symbol)
-        price = bar.get("mark_open") if "mark_open" in bar.index else bar.get("open")
+        open_px = bar.get("mark_open") if "mark_open" in bar.index else bar.get("open")
         if model == "settlement_data":
-            rate = bar["funding_rate"]
-            when = bar["funding_settlement_time"]
-            if pd.isna(rate):
-                raise ValueError(f"missing funding rate for {symbol} at {ts}")
-            if pd.isna(when):
-                if float(rate) != 0.0:
-                    raise ValueError(f"funding rate without settlement time for {symbol} at {ts}")
+            events = self._events(symbol, bar, ts)
+            if pos is None:
                 return 0.0
-            if pos is None or not (pd.Timestamp(pos.entry_time) < pd.Timestamp(when)):
+            entry = pd.Timestamp(pos.entry_time)
+            held = [e for e in events if entry < pd.Timestamp(e[0], unit="ms")]
+            if not held:
                 return 0.0
-            total_rate = float(rate)
-            n = int(bar["funding_settlements"]) if "funding_settlements" in bar.index else 1  # ccxt: one settlement per bar row
-        else:
-            if prev is None or pos is None:
-                return 0.0
-            instants = [s for s in funding_instants_between(prev, ts) if pd.Timestamp(pos.entry_time) < s]
-            if not instants:
-                return 0.0
-            total_rate, n = self.assumed_rate * len(instants), len(instants)
-        if price is None or pd.isna(price) or float(price) <= 0:
+            fallback = last_close if last_close is not None else open_px
+            size = Decimal(str(pos.size)) * pos.direction
+            payment = Decimal(0)
+            for _, rate, mark in held:
+                if mark is None:
+                    if fallback is None or pd.isna(fallback) or float(fallback) <= 0:
+                        raise ValueError(f"no price to value the funding of {symbol} at {ts}")
+                    px = Decimal(str(float(fallback)))
+                    self.priced_at_close += 1
+                else:
+                    px = mark
+                payment += size * px * rate
+            self.settlements += len(held)
+            self.total += payment
+            return float(payment)
+        if prev is None or pos is None:
+            return 0.0
+        instants = [s for s in funding_instants_between(prev, ts) if pd.Timestamp(pos.entry_time) < s]
+        if not instants:
+            return 0.0
+        if open_px is None or pd.isna(open_px) or float(open_px) <= 0:
             raise ValueError(f"no open price to value the funding of {symbol} at {ts}")
-        payment = pos.direction * pos.size * float(price) * total_rate
-        self.settlements += n
-        self.total += payment
+        payment = pos.direction * pos.size * float(open_px) * self.assumed_rate * len(instants)
+        self.settlements += len(instants)
+        self.total += Decimal(str(payment))
         return payment
 
     def summary(self) -> dict:
+        """``funding_estimate``: some funding was not priced at a published settlement mark (a close, or an assumed rate)."""
+        assumed = any(m == "assumed_fixed_rate" for m in self.models.values()) and self.settlements > 0
         return {"funding_models": dict(sorted(self.models.items())), "funding_settlements": self.settlements,
-                "funding_paid": self.total}
+                "funding_paid": float(self.total), "funding_priced_at_close": self.priced_at_close,
+                "funding_estimate": bool(self.priced_at_close or assumed)}
 
 
 def _liquidation_mark(bar: pd.Series, pos: Position) -> float:

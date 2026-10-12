@@ -602,6 +602,26 @@
      "file": "agent/backtest/loaders/ccxt_loader.py",
      "kind": "preimage",
      "literal": "_FUNDING_HOURS = {0, 8, 16}"
+    },
+    {
+     "file": "agent/backtest/engines/_market_hooks.py",
+     "kind": "hook",
+     "literal": "FUNDING_CASH_RATE_COLUMNS = (\"funding_cash_rate\", \"funding_rate\")"
+    },
+    {
+     "file": "agent/backtest/engines/_market_hooks.py",
+     "kind": "hook",
+     "literal": "payment += size * px * rate"
+    },
+    {
+     "file": "agent/backtest/engines/_market_hooks.py",
+     "kind": "preimage",
+     "literal": "payment = pos.direction * pos.size * float(price) * total_rate"
+    },
+    {
+     "file": "agent/backtest/engines/crypto.py",
+     "kind": "hook",
+     "literal": "\"funding_estimate\": f[\"funding_estimate\"]"
     }
    ]
   },

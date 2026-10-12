@@ -611,7 +611,8 @@ class CryptoEngine(BaseEngine):
         if not self.perpetual_strict:
             f = self._funding.summary()
             metrics.update({"funding_models": f["funding_models"], "funding_settlements": f["funding_settlements"],
-                            "funding_paid": f["funding_paid"], "fee_model": "taker_every_fill",
+                            "funding_paid": f["funding_paid"], "funding_estimate": f["funding_estimate"],
+                            "funding_priced_at_close": f["funding_priced_at_close"], "fee_model": "taker_every_fill",
                             "valuation": "close_now_net_of_exit_fee"})
         if self.perpetual_strict:
             summary = build_perpetual_summary(

@@ -541,7 +541,9 @@ def test_perpetual_bars_carry_the_settlements_of_the_same_pack_at_the_real_settl
     assert fc.requests[0]["funding_dataset"] is None and fc.requests[0]["dataset"]["market_tables"] == ["kline_1m"]
     assert len(df) == 6
     assert df["funding_settlements"].tolist() == [1, 0, 1, 0, 1, 0]
-    assert df["funding_rate"].tolist() == pytest.approx([0.0001, 0.0, -0.00005, 0.0, 0.0001, 0.0])
+    assert df["funding_cash_rate"].tolist() == pytest.approx([0.0001, 0.0, -0.00005, 0.0, 0.0001, 0.0])
+    assert "funding_rate" not in df.columns  # split: cash (by settlement time) vs visible (by available_at), D2-10
+    assert df["funding_events"].iloc[2] == ((START + 8 * 3_600_000, Decimal("-0.00005"), Decimal("100.5")),)
     assert df["funding_settlement_time"].iloc[2] == pd.Timestamp(START + 8 * 3_600_000, unit="ms")
     assert pd.isna(df["funding_settlement_time"].iloc[1])
     tag = df.attrs["alphakeel_b2"]
@@ -565,11 +567,56 @@ def test_the_engine_charges_the_loader_settlements_once_each_for_a_cross_venue_h
     before = eng.capital
     for ts in df.index:
         eng.before_rebalance_bar(ts, {"BTC-USDT-PERP": df}, ["BTC-USDT-PERP"])
-    # 3 settlements (not 24 × "daily fallback" + slots): 10 × open × rate at the bars opening at 00:00, 08:00, 16:00
-    opens = df["open"]
-    want = 10 * (opens.iloc[0] * 0.0001 + opens.iloc[8] * -0.00005 + opens.iloc[16] * 0.0001)
+    # 3 settlements (not 24 × "daily fallback" + slots) at 00:00, 08:00, 16:00, each at its published mark 100.5 (F04)
+    want = 10 * 100.5 * (0.0001 - 0.00005 + 0.0001)
     assert before - eng.capital == pytest.approx(want)
     assert eng._funding.settlements == 3
+    assert eng._funding.summary()["funding_estimate"] is False and eng._funding.priced_at_close == 0
+
+
+def test_b2_funding_signal_column_respects_available_at():
+    """D2-10: the cash column is attributed by settlement time, the signal column by visibility. A settlement at 08:00
+    published at 10:00 is charged at the 08:00 bar but readable only from the bar whose close is at or after 10:00; one
+    without available_at is visible at t + the lock's assumed delay (60 s), i.e. in the bar it settles in."""
+    inst_id = "binance:linear:USDT:BTCUSDT"
+    rows = settlement_rows(inst_id)
+    rows[1][9] = START + 10 * 3_600_000  # available_at of the 08:00 settlement
+    lock, blobs = build_pack(klines=kline_rows("BTCUSDT"), settlements=rows)
+    df = loader(FakeClient({"perp": (lock, blobs)})).fetch(["BTC-USDT-PERP"], "2023-01-01", "2023-01-01", interval="1H")["BTC-USDT-PERP"]
+    assert df["funding_cash_rate"].iloc[8] == pytest.approx(-0.00005)
+    vis = df["funding_visible_rate"]
+    assert vis.iloc[0] == pytest.approx(0.0001)          # 00:00 settlement, visible 00:01, inside the 00:00 bar
+    assert vis.iloc[8] == pytest.approx(0.0001) and vis.iloc[9] == pytest.approx(0.0001)  # 08:00 not yet published
+    assert vis.iloc[10] == pytest.approx(-0.00005)       # bar 10:00-10:59 closes after available_at
+    assert vis.iloc[16] == pytest.approx(0.0001)
+    assert df.attrs["alphakeel_b2"]["funding"]["assumed_delay_ms"] == 60_000
+
+
+def test_b2_pack_key_changes_with_utc_day(monkeypatch):
+    """D2-6: the idempotency key carries the UTC day, so a failed or interrupted job of yesterday is not handed back."""
+    import backtest.loaders.alphakeel_b2_loader as b2
+
+    keys = []
+
+    class Recording(FakeClient):
+        def create_pack(self, request, *, key=None):
+            keys.append(key)
+            return super().create_pack(request, key=key)
+
+    lock, blobs = kline_pack()
+    for day in ("2026-10-12", "2026-10-12", "2026-10-13"):
+        monkeypatch.setattr(b2, "_utc_day", lambda d=day: d)
+        loader(Recording({"kline": (lock, blobs)})).fetch(["BTC-USDT"], "2023-01-01", "2023-01-01")
+    assert keys[0] == keys[1] and keys[1] != keys[2]
+
+
+def test_window_ms_converts_tz_aware_dates_to_utc():
+    """D2-15(b): 2023-01-02T00:00+08:00 is 2023-01-01T16:00Z: its UTC day is 01-01, not the wall-clock 01-02."""
+    from backtest.loaders.alphakeel_b2_loader import _window_ms
+
+    assert _window_ms("2023-01-01", "2023-01-01") == (START, START + DAY)
+    assert _window_ms("2023-01-02T00:00+08:00", "2023-01-02T00:00+08:00") == (START, START + DAY)
+    assert _window_ms("2023-01-01T23:00-05:00", "2023-01-01T23:00-05:00") == (START + DAY, START + 2 * DAY)
 
 
 def test_a_lock_with_accept_partial_or_incomplete_funding_coverage_is_not_used():

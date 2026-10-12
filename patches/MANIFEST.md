@@ -239,9 +239,13 @@ deliberately unchanged: a file path in a web request is not offered.
 ## `crypto-funding` — crypto engine funding, fee and valuation semantics
 
 **Purpose.** Brings `CryptoEngine` (and the crypto leg of `CompositeEngine`) to AlphaKeel's accounting. Funding is
-charged at the real 00/08/16 UTC settlement instants in `(previous bar open, this bar open]`, at the bar open before
-that bar's fills (`before_rebalance_bar`), valued at the open/mark-open price; a position opened at the instant is not
-charged, one closed at it is. A perpetual without settlement data (`funding_rate` + `funding_settlement_time` columns)
+charged at the real settlement instants in `(previous bar open, this bar open]`, at the bar open before
+that bar's fills (`before_rebalance_bar`), one settlement at a time in `Decimal` (`funding_events`): a position pays a
+settlement it was held over (one opened at the instant is not charged, one closed at it is), valued at the settlement's
+published mark (AlphaKeel F04; `alphakeel_b2` carries it) or else the most recent close, which the metrics flag as
+`funding_estimate` (audit 2026-10-12 D2-11; the old hook summed the bar's rates at the next open and only checked the
+last settlement). The cash rate column is `funding_rate` (ccxt) or `funding_cash_rate` (`alphakeel_b2`, which also
+serves `funding_visible_rate` by `available_at` for signals, D2-10). A perpetual without settlement data (`funding_rate` + `funding_settlement_time` columns)
 is refused instead of being charged an assumed 0.0001; spot-priced proxies keep the assumed rate and report it
 (`funding_models`). Every fill pays taker (the old "closes are maker" assumption was optimistic), and equity is valued
 close-now, net of the taker fee to exit. The ccxt loader requires every settlement on the 8h grid and attaches the
@@ -257,7 +261,8 @@ settlements through `funding_settlements.attach_settlements` (shared with the `a
 - `agent/tests/test_crypto_engine.py`
 - `agent/tests/test_composite_engine_fallback.py`
 
-**Commits.** `622ea894` (engines, ccxt loader, funding_settlements, tests), `41f8c94b` (composite test expectation).
+**Commits.** `622ea894` (engines, ccxt loader, funding_settlements, tests), `41f8c94b` (composite test expectation), the
+2026-10-12 e2e lane commit for D2-10/D2-11 (per-settlement Decimal funding at the published mark, `funding_estimate`).
 
 **Upstreamable.** Yes, as a bug-fix PR: the daily-bar/intraday over- and under-charging of funding (the old hook
 charged a 1H bar four times a day), the silent fixed rate for perpetuals and the missing-settlement check in
@@ -300,6 +305,10 @@ would be a separate, optional PR (config switch). The PR would contain `CryptoFu
 - hook `agent/backtest/engines/_market_hooks.py`: `def funding_model_for(code: str, frame: pd.DataFrame) -> str:`
 - preimage `agent/backtest/engines/_market_hooks.py`: `def calc_crypto_funding_fee(`
 - preimage `agent/backtest/engines/_market_hooks.py`: `FUNDING_HOURS = {0, 8, 16}`
+- hook `agent/backtest/engines/_market_hooks.py`: `FUNDING_CASH_RATE_COLUMNS = ("funding_cash_rate", "funding_rate")`
+- hook `agent/backtest/engines/_market_hooks.py`: `payment += size * px * rate` — per-settlement Decimal booking at the published mark, else the most recent close
+- preimage `agent/backtest/engines/_market_hooks.py`: `payment = pos.direction * pos.size * float(price) * total_rate`
+- hook `agent/backtest/engines/crypto.py`: `"funding_estimate": f["funding_estimate"]`
 - upstream `agent/backtest/loaders/ccxt_loader.py`: `funding = cls._fetch_funding_history(exchange, symbol, since_ms, end_ms)`
 - upstream `agent/backtest/loaders/ccxt_loader.py`: `if bracket_artifact is not None:`
 - hook `agent/backtest/loaders/ccxt_loader.py`: `result = attach_settlements(result, events)`

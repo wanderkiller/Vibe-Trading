@@ -44,8 +44,10 @@ after `as_of`); it cannot drive engine runs (`capability.unsupported`). Market o
 contract counts are converted by the service with the snapshot's `contract_value`).
 
 The **`alphakeel_b2` loader** (`backtest/loaders/alphakeel_b2_loader.py`) wraps this for Vibe-Trading: `fetch()` builds
-OHLCV from `kline_1m` (1m...1D, complete bars only) and `fetch_funding()` returns official funding settlements for all nine
-venues as exact `Decimal`. It talks only to the research service (no object-store credentials, no exchange), verifies the data
+OHLCV from `kline_1m` (1m...1D, complete bars only; perps also carry `funding_cash_rate`/`funding_events` by settlement
+time for the engine's accounting and `funding_visible_rate` by `available_at` for signals -- a strategy reads only the
+latter) and `fetch_funding()` returns official funding settlements for all nine venues as exact `Decimal`. Pack keys carry
+the UTC day (a failed or interrupted job is not handed back the next day). It talks only to the research service (no object-store credentials, no exchange), verifies the data
 lock digest and every object it downloads, checks the pack matches the request, tags each frame with
 `df.attrs["alphakeel_b2"]` (pack id and digest, dataset versions and snapshot hashes) and records it for the run card. It is
 explicit-only (never in an `auto` chain) and never falls back to another source. Codes: `venue:market:SYMBOL`
@@ -174,7 +176,8 @@ approximations, written into every run card:
 
 Execution is a small separate Decimal simulator (`ir_backtest.Sim`; `sim.Simulator` is bound to scan packs and the engine
 profile): complete fills at the touch, `q8(qty × price × taker_fee)` per fill, funding at each official settlement time on
-open positions `q8(qty × mark × rate)` paid by longs / received by shorts (mark = the last close at that time), equity =
+open positions `q8(qty × mark × rate)` paid by longs / received by shorts (mark = the settlement's published mark, AlphaKeel
+F04, else the last close at that time; `ir_views.settlement_price`, shared with `sim.py`), equity =
 realized + open pairs valued close-now; after the run every trade's fills, fees and funding are redone at the quantity
 AlphaKeel's engine executes (README §5a precision cap; `ir_qty` on the trade record when it differs, usually never).
 **No margin, leverage or liquidation model**, no slippage beyond the synthetic touch,
