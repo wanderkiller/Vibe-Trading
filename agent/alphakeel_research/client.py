@@ -150,19 +150,37 @@ class Client:
     @staticmethod
     def dataset_pack_request(*, start_ms: int, end_ms: int, instruments: list[dict], funding_dataset: str | None = None,
                              market_tables: list[str] | None = None, price_kinds: list[str] | None = None,
-                             market_dataset: str | None = None, accept_partial: bool = False) -> dict:
+                             market_dataset: str | None = None, accept_partial: bool = False,
+                             selection: dict | str | None = None) -> dict:
         """Request body for a *dataset pack*: funding history and/or market tables for any window, no scan frames.
 
         ``instruments`` is required (``[{venue, market, symbol}]``): there is no scan universe to enumerate. Versions are
         pinned by the service at acceptance. ``funding_dataset="none"`` drops funding; empty ``market_tables`` drops
         market data. A window that reaches into the credential's hold-out is refused (``data.holdout``).
+
+        ``selection`` (the contract's ``PackRequest.selection``): how the instrument list was chosen. Omitted = ``"declared"``
+        (the caller's own list, survivorship not excluded); ``{"pit_membership": {"top_n": N, "table_sha256": H?}}`` = the
+        list must equal the perpetuals of every base that was a top-N member on any UTC day of the window (the service
+        checks it against the published point-in-time membership table; ``table_sha256`` pins that table).
         """
         spec: dict = {"market_tables": list(market_tables or []), "price_kinds": list(price_kinds or [])}
         if market_dataset:
             spec["market_dataset"] = market_dataset
-        return {"window": {"start_ms": start_ms, "end_ms": end_ms}, "warmup_frames": 0, "venues": [], "instruments": instruments,
-                "accept_partial": accept_partial, "funding_dataset": funding_dataset, "include_native": False, "include_tables": True,
-                "dataset": spec}
+        req = {"window": {"start_ms": start_ms, "end_ms": end_ms}, "warmup_frames": 0, "venues": [], "instruments": instruments,
+               "accept_partial": accept_partial, "funding_dataset": funding_dataset, "include_native": False, "include_tables": True,
+               "dataset": spec}
+        if selection is not None:
+            from pydantic import ValidationError
+
+            from .models import PackSelection
+
+            try:
+                PackSelection.model_validate(selection)
+            except ValidationError as e:
+                raise ApiError("request.invalid", 'selection must be "declared" or {"pit_membership": {"top_n": N, '
+                               f'"table_sha256": H?}}: {e.errors()[0].get("msg")}', field="selection") from None
+            req["selection"] = selection
+        return req
 
     def create_dataset_pack(self, **kw: Any) -> dict:
         return self.create_pack(self.dataset_pack_request(**kw))

@@ -239,7 +239,8 @@
     "agent/backtest/loaders/registry.py",
     "agent/backtest/loader_health.py",
     "agent/backtest/metrics.py",
-    "agent/tests/test_loader_contract.py"
+    "agent/tests/test_loader_contract.py",
+    "agent/backtest/runner.py"
    ],
    "anchors": [
     {
@@ -332,6 +333,21 @@
      "file": "agent/backtest/metrics.py",
      "kind": "hook",
      "literal": "\"nobitex\": 1440, \"wallex\": 1440, \"alphakeel_pack\": 1440, \"alphakeel_b2\": 1440,"
+    },
+    {
+     "file": "agent/backtest/runner.py",
+     "kind": "upstream",
+     "literal": "def _get_loader(source: str):"
+    },
+    {
+     "file": "agent/backtest/runner.py",
+     "kind": "upstream",
+     "literal": "        # Ultimate fallback for unknown sources\n        if \"tushare\" in LOADER_REGISTRY:"
+    },
+    {
+     "file": "agent/backtest/runner.py",
+     "kind": "hook",
+     "literal": "# A source that must never degrade (local, alphakeel_b2, ...) keeps its own error: no tushare \"ultimate fallback\"\n        if is_no_network_fallback_source(source):\n            raise"
     }
    ]
   },

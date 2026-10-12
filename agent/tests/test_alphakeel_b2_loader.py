@@ -233,6 +233,19 @@ def test_alphakeel_b2_is_registered_explicit_only_and_never_a_fallback(monkeypat
     assert not [e for e in loader_health.coverage_errors() if "alphakeel_b2" in e]
 
 
+def test_runner_does_not_fall_back_from_alphakeel_b2(monkeypatch):
+    """D2-15(a): an unavailable alphakeel_b2 used to be swapped for tushare by runner._get_loader's "ultimate fallback" (the
+    run then failed on missing data but logged "served by tushare"). Its own no-fallback error now reaches the caller."""
+    from backtest import runner
+
+    for k in ("ALPHAKEEL_RESEARCH_URL", "ALPHAKEEL_RESEARCH_TOKEN", "ALPHAKEEL_RESEARCH_TOKEN_FILE"):
+        monkeypatch.delenv(k, raising=False)
+    registry._ensure_registered()
+    assert "tushare" in registry.LOADER_REGISTRY
+    with pytest.raises(NoAvailableSourceError, match="does not fall back"):
+        runner._get_loader("alphakeel_b2")
+
+
 def test_codes_are_parsed_explicitly_never_guessed():
     from backtest.loaders.alphakeel_b2_loader import VENUES, parse_code
 
@@ -388,6 +401,24 @@ def test_client_builds_dataset_requests_and_reports_the_holdout():
                                       funding_dataset="none", market_tables=["kline_1m"], price_kinds=["trade", "mark"])
     assert req["dataset"] == {"market_tables": ["kline_1m"], "price_kinds": ["trade", "mark"]} and req["include_native"] is False
     assert req["funding_dataset"] == "none" and req["warmup_frames"] == 0
+
+
+def test_dataset_pack_request_with_pit_membership():
+    """D2-14: the client can ask for a point-in-time membership pack (contract PackRequest.selection), not only "declared"."""
+    from alphakeel_research import models
+    from alphakeel_research.client import Client
+
+    inst = [{"venue": "binance", "market": "perp", "symbol": "BTCUSDT"}]
+    sel = {"pit_membership": {"top_n": 50, "table_sha256": H}}
+    req = Client.dataset_pack_request(start_ms=1, end_ms=2, instruments=inst, market_tables=["kline_1m"], selection=sel)
+    assert req["selection"] == sel
+    assert models.PackRequest.model_validate(req).selection is not None  # the field the pinned openapi defines
+    assert "selection" not in Client.dataset_pack_request(start_ms=1, end_ms=2, instruments=inst)  # absent = declared
+    assert Client.dataset_pack_request(start_ms=1, end_ms=2, instruments=inst, selection="declared")["selection"] == "declared"
+    for bad in ({"pit_membership": {}}, {"pit_membership": {"top_n": 5, "extra": 1}}, "survivors"):
+        with pytest.raises(ApiError) as e:
+            Client.dataset_pack_request(start_ms=1, end_ms=2, instruments=inst, selection=bad)
+        assert e.value.code == "request.invalid" and e.value.field == "selection"
 
 
 # --- run card: ccxt is marked non-auditable ------------------------------------------------------------------------------

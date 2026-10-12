@@ -28,7 +28,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `frontend-mobile` | AgentAvatar, Agent page, index.html | small residue; upstream's own compact sidebar replaced our drawer |
 | `local-deploy` | none (new files only; derived from `Dockerfile`) | local-only |
 | `leaf-package` | none (new files only) | local-only |
-| `loader-registry-hooks` | registry, loader_health, metrics tables | local-only (follows the leaf package) |
+| `loader-registry-hooks` | registry, loader_health, metrics tables, runner `_get_loader` | local-only (follows the leaf package); the runner guard is upstreamable |
 | `alpha-bench-universe` | alpha_bench_tool, factors/cli_handlers | local-only (follows the leaf package) |
 | `crypto-funding` | engines/_market_hooks, crypto, composite; ccxt_loader | upstreamable as a bug-fix PR (see below) |
 | `metrics-conventions` | metrics, validation | partly upstreamed already; rest upstreamable |
@@ -175,10 +175,15 @@ never part of a network fallback (`_NO_NETWORK_FALLBACK_SOURCES`), excluded from
 - `agent/backtest/loader_health.py`
 - `agent/backtest/metrics.py`
 - `agent/tests/test_loader_contract.py`
+- `agent/backtest/runner.py`
 
-**Commits.** `e0245ca9` `1f83ef6f` `83ea7c2a`.
+**Commits.** `e0245ca9` `1f83ef6f` `83ea7c2a`; the 2026-10-12 e2e lane commit for D2-15(a) (runner guard).
 
-**Upstreamable.** No; it follows the leaf package. (Only `alphakeel_pack` needs the health exclusion: `alphakeel_b2`
+`runner._get_loader` re-raises the registry's no-fallback error for those sources instead of handing back tushare as
+an "ultimate fallback" (audit 2026-10-12 D2-15a: an unavailable `alphakeel_b2` was logged as "served by tushare").
+
+**Upstreamable.** No; it follows the leaf package. The `_get_loader` guard is upstreamable on its own (upstream's
+`local`, `fmp`, `nobitex`, ... have the same no-fallback promise). (Only `alphakeel_pack` needs the health exclusion: `alphakeel_b2`
 declares `requires_auth = True`, and `coverage_errors()` only maps public sources; re-check if upstream changes that rule.)
 
 **Anchors.**
@@ -200,6 +205,9 @@ declares `requires_auth = True`, and `coverage_errors()` only maps public source
 - upstream `agent/backtest/metrics.py`: `"nobitex": 365, "wallex": 365,`
 - hook `agent/backtest/metrics.py`: `"alphakeel_pack": 365, "alphakeel_b2": 365,`
 - hook `agent/backtest/metrics.py`: `"nobitex": 1440, "wallex": 1440, "alphakeel_pack": 1440, "alphakeel_b2": 1440,`
+- upstream `agent/backtest/runner.py`: `def _get_loader(source: str):`
+- upstream `agent/backtest/runner.py`: `# Ultimate fallback for unknown sources\n        if "tushare" in LOADER_REGISTRY:` — the fallback the guard sits before
+- hook `agent/backtest/runner.py`: `# A source that must never degrade (local, alphakeel_b2, ...) keeps its own error: no tushare "ultimate fallback"\n        if is_no_network_fallback_source(source):\n            raise`
 
 ## `alpha-bench-universe` — `alphakeel:<spec>` universe in the alpha bench
 

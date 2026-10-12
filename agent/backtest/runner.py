@@ -919,6 +919,9 @@ def _get_loader(source: str):
     try:
         return get_loader_cls_with_fallback(source)
     except NoAvailableSourceError:
+        # A source that must never degrade (local, alphakeel_b2, ...) keeps its own error: no tushare "ultimate fallback"
+        if is_no_network_fallback_source(source):
+            raise
         # Ultimate fallback for unknown sources
         if "tushare" in LOADER_REGISTRY:
             return LOADER_REGISTRY["tushare"]
