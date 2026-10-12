@@ -27,6 +27,13 @@ Local patch layer only (`patches/MANIFEST.md`); not an upstream release note.
 - The dataset view has no default fee table (`--fees` required) (D2-13);
   `dataset_pack_request(selection=...)` can ask for `pit_membership` (D2-14);
   `runner._get_loader` no longer swaps a no-fallback source for tushare (D2-15).
+- Known residuals (2026-10-12 round-2 review, wave 2): official mark
+  settlement prices are not rounded to the venue `price_dp` (residual up to
+  0.5 * price_dp * qty per settlement; R2-D-3); `run_assumptions.fee_source`
+  is not emitted (contract change); `selection` is only exposed on the Python
+  `Client`, not the CLI; the generic `CryptoEngine` keeps its default taker
+  fee 0.0005 and `ir robustness --run <old card>` inherits that card's fees
+  (R2-D-4).
 - Rollback: revert the lane's commits; strategies that read `funding_rate` from
   `alphakeel_b2` bars must read `funding_visible_rate`, and `ir backtest`
   callers must pass `--fees`.

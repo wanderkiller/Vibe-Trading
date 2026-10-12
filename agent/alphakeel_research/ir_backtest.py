@@ -54,6 +54,8 @@ WARMUP_MS = DAY_MS
 UNIT = Decimal("0.00000001")
 
 APPROXIMATIONS = [
+    "settlement_price from an official mark is used as published, not rounded to the venue price_dp (AlphaKeel rounds); "
+    "residual up to 0.5 * price_dp * qty per settlement (2026-10-12 audit R2-D-3)",
     "touch: bid = ask = close of the last 1m trade bar closed at the decision time (close_time_ms <= now); spread 0",
     "bbo = true is synthetic (no order book in the dataset); price_estimated is false by construction",
     "mark / funding_px in the decision frame = that close (no mark or index series)",
