@@ -17,7 +17,7 @@
                                           (the IR in Python under the local simulator AND in AlphaKeel's Rust evaluator,
                                            compared layer by layer; prints the comparison, writes DIR/reconciliation.json)
     python -m alphakeel_research ir backtest --ir strategy.json --start-ms N --end-ms N --instruments inst.json [--step-minutes 2]
-                                          [--fees fees.json] [--trials N [--trials-evidence FILE]] [--capital-base X]
+                                          --fees fees.json [--trials N [--trials-evidence FILE]] [--capital-base X]
                                           [--accept-partial] [--pack-dir DIR] [--verbose] [--out DIR]
                                           (--out defaults to a new Vibe-Trading run directory RUNS_DIR/<YYYYMMDD_HHMMSS>_ir/, which
                                            also gets ir.json, instruments.json, req.json, review_report.json, state.json)
@@ -142,7 +142,8 @@ def _battery(robustness, registry, ir_path, pack, inst_path, window, oos, a, tri
 
     return robustness.battery(_load(ir_path), pack, _load(inst_path), is_window=window, oos_window=oos,
                               oos_pack=Pack.from_directory(a.oos_pack_dir) if a.oos_pack_dir else None, out_dir=a.out,
-                              fees=_load(a.fees), filter_spec=_load(a.filter), permutations=a.permutations, seed=a.seed,
+                              fees=_load(a.fees) if a.fees else (_run_card(a.run)["assumptions"]["fees"] if a.run else None),
+                              filter_spec=_load(a.filter), permutations=a.permutations, seed=a.seed,
                               step_minutes=a.step_minutes, capital_base=Decimal(a.capital_base) if a.capital_base else None,
                               workers=a.workers, prior_trials=a.prior_trials, wf_folds=a.wf_folds, wf_test_days=a.wf_test_days,
                               wf_min_train_days=a.wf_min_train_days, prior_trials_floor=trials_floor, registry=registry)
@@ -203,7 +204,7 @@ def _ir_research(a) -> int:
             card = workflow.ir_backtest(c, _load(a.ir), _load(a.instruments), start_ms=a.start_ms, end_ms=a.end_ms, out_dir=a.out,
                                         cache_dir=a.cache, pack_dir=a.pack_dir, register=not a.no_register,
                                         step_minutes=a.step_minutes, fees=_load(a.fees),
-                                        fees_source=a.fees or "default", trials=a.trials, trials_evidence=a.trials_evidence,
+                                        fees_source=a.fees, trials=a.trials, trials_evidence=a.trials_evidence,
                                         capital_base=Decimal(a.capital_base) if a.capital_base else None,
                                         accept_partial=a.accept_partial, verbose=a.verbose)
         finally:
@@ -302,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--end-ms", type=int, required=True)
     q.add_argument("--instruments", required=True, help="JSON list of {venue, market, symbol, base?, quote?}")
     q.add_argument("--step-minutes", type=int, default=2)
-    q.add_argument("--fees", help="JSON {venue: {perp: rate, spot: rate}} (default: 0.0005 perp taker on every venue)")
+    q.add_argument("--fees", required=True, help="JSON {venue: {perp: rate, spot: rate}} (required: there is no default fee)")
     q.add_argument("--trials", type=int)
     q.add_argument("--trials-evidence")
     q.add_argument("--capital-base", help="capital base of the daily returns (default notional_per_leg x 2 x max_open)")
@@ -321,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--oos-start-ms", type=int)
     q.add_argument("--oos-end-ms", type=int)
     q.add_argument("--oos-pack-dir", help="exported pack for the OOS window (default: --pack-dir)")
-    q.add_argument("--fees", help="JSON {venue: {perp: rate, spot: rate}} (default: 0.0005 perp taker on every venue)")
+    q.add_argument("--fees", help="JSON {venue: {perp: rate, spot: rate}} (default: the --run card's fee table; otherwise required)")
     q.add_argument("--filter", help='JSON {"kind": "excluded_bases", "bases": ["XYZ", ...]}: the filter under test')
     q.add_argument("--permutations", type=int, default=30)
     q.add_argument("--seed", type=int, default=7)

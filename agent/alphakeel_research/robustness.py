@@ -242,8 +242,8 @@ def neighbour_doc(ir_doc: dict, name: str, new_value: str) -> dict:
 
 
 def scale_fees(fees: dict | None, multiplier: str) -> dict:
-    """Every rate of the effective fee table (``ir_views.default_fees()`` when None) times ``multiplier`` (Decimal)."""
-    base = ir_views.default_fees() if fees is None else fees
+    """Every rate of the fee table times ``multiplier`` (Decimal)."""
+    base = ir_views.require_fees(fees)
     m = Decimal(multiplier)
     return {v: {mk: IR.fmt(Decimal(str(r)) * m) for mk, r in row.items() if r not in (None, "")}
             for v, row in sorted(base.items()) if isinstance(row, dict)}
@@ -662,6 +662,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     ``robustness.json`` ``service_runs``. Without it ``service_runs.registered`` is false (and says so in ``notes``)."""
     from backtest import alphakeel_metrics as M
 
+    fees = ir_views.require_fees(fees)  # no default fee table (D2-13); every variant runs on the same explicit table
     loaded = IR.load(ir_doc)
     base_doc = copy.deepcopy(loaded.doc)
     base_doc.pop("strategy_id", None)
@@ -705,8 +706,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     base = R.job("base", "base", base_doc, fees=fees)
     R.execute([base])  # first alone: the coins it had data for decide whether the IR's universe restrictions are forced under test
     jobs: list[dict] = []
-    eff_fees = ir_views.default_fees() if fees is None else fees
-    cost = {m: R.job(f"cost-x{m}", "cost_stress", base_doc, fees=scale_fees(eff_fees, m), fees_source=f"base x{m}", fee_multiplier=m)
+    cost = {m: R.job(f"cost-x{m}", "cost_stress", base_doc, fees=scale_fees(fees, m), fees_source=f"base x{m}", fee_multiplier=m)
             for m in COST_MULTIPLIERS}
     jobs += cost.values()
     bs = Decimal(base_doc["assumptions"]["basis_stress"])
@@ -986,7 +986,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         "schema": SCHEMA, "strategy_id": sid, "name": base_doc["name"],
         "inputs": {"is_window": {"start_ms": windows["is"][0], "end_ms": windows["is"][1]}, "pack_id": pack.id,
                    "oos_window": oos_doc["window"] if oos_doc else None, "oos_pack_id": packs["oos"].id if oos_doc else None,
-                   "fees": eff_fees, "fees_given": fees is not None, "filter": filter_spec, "permutations": permutations, "seed": seed,
+                   "fees": fees, "filter": filter_spec, "permutations": permutations, "seed": seed,
                    "step_minutes": step_minutes, "capital_base": _s(capital), "workers": workers,
                    "execution": R.serial_reason or ("process pool (spawn)" if workers > 1 else "in process"), "segments": segments, "walk_forward": wf_cfg},
         "trials": {"count": n_trials, "distinct_candidate_variants": len(candidates), "prior_trials_declared": declared_prior, "prior_trials_used": prior_trials, "prior_trials_floor": prior_trials_floor,

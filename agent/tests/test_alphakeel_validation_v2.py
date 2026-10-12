@@ -16,7 +16,7 @@ import pytest
 from alphakeel_research import cli, contract, ir_backtest, ir_crosscheck, precheck, robustness, workflow
 from alphakeel_research.errors import ApiError
 from alphakeel_research.packfile import Inst, Instrument, Pack, Pit
-from tests.test_alphakeel_ir_backtest import _fake_robustness, _run, golden_ir
+from tests.test_alphakeel_ir_backtest import FEES, _fake_robustness, _run, golden_ir
 from tests.test_alphakeel_robustness import H6, START, _ir, _market
 
 CONTRACT = Path(contract.__file__).parent / "contract"
@@ -65,8 +65,8 @@ def test_prior_trials_floor(tmp_path, capsys):
     insts, pd = _market(tmp_path)
     pack = Pack.from_directory(pd)
     kw = dict(is_window=(START, START + H6), permutations=0, seed=3, step_minutes=2, workers=1)
-    low = robustness.battery(_ir(), pack, insts, out_dir=tmp_path / "a", prior_trials=2, prior_trials_floor=9, **kw)
-    ok = robustness.battery(_ir(), pack, insts, out_dir=tmp_path / "b", prior_trials=12, prior_trials_floor=9, **kw)
+    low = robustness.battery(_ir(), pack, insts, fees=FEES, out_dir=tmp_path / "a", prior_trials=2, prior_trials_floor=9, **kw)
+    ok = robustness.battery(_ir(), pack, insts, fees=FEES, out_dir=tmp_path / "b", prior_trials=12, prior_trials_floor=9, **kw)
     n = low["trials"]["distinct_candidate_variants"]
     assert low["trials"]["count"] == n + 9 and low["trials"]["prior_trials_used"] == 9 and low["trials"]["prior_trials_declared"] == 2
     assert any(x.startswith("warning:") and "below the IR run card's trials.count 9" in x for x in low["notes"])
@@ -129,7 +129,7 @@ def test_export_rejects_trial_mismatch(tmp_path):
 def test_a_real_battery_ledger_has_one_counted_row_per_variant(tmp_path):
     insts, pd = _market(tmp_path)
     out = tmp_path / "rb"
-    doc = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, START + H6), out_dir=out, permutations=0, step_minutes=2, workers=1)
+    doc = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, START + H6), fees=FEES, out_dir=out, permutations=0, step_minutes=2, workers=1)
     rows = [json.loads(x) for x in (out / "trials.jsonl").read_text().splitlines()]
     assert sum(r["counted_trial"] for r in rows) == doc["trials"]["distinct_candidate_variants"] > 0
     assert doc["inputs"]["pack_id"]
@@ -167,7 +167,7 @@ def test_runs_registered_with_service(tmp_path, monkeypatch):
     insts, pd = _market(tmp_path)
     pack = Pack.from_directory(pd)
     svc = FakeService(fail_first_with_queue_full=2)
-    doc = robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), out_dir=tmp_path / "rb", permutations=0, step_minutes=2,
+    doc = robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), fees=FEES, out_dir=tmp_path / "rb", permutations=0, step_minutes=2,
                              workers=1, registry=svc)
     n = doc["trials"]["distinct_candidate_variants"]
     assert len(svc.bodies) == n == len(set(svc.keys)) and all(b["mode"] == "ir_strategy" and b["pack_id"] == pack.id for b in svc.bodies)
@@ -183,12 +183,12 @@ def test_runs_registered_with_service(tmp_path, monkeypatch):
     on_disk = json.loads((tmp_path / "rb" / "robustness.json").read_text())
     assert on_disk["service_runs"]["ids"] == sr["ids"]
     # no client: said so, in the document and in the notes
-    bare = robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), out_dir=tmp_path / "rb2", permutations=0, step_minutes=2, workers=1)
+    bare = robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), fees=FEES, out_dir=tmp_path / "rb2", permutations=0, step_minutes=2, workers=1)
     assert bare["service_runs"]["registered"] is False and any("not registered" in x for x in bare["notes"])
     # a registration that fails stops the battery before robustness.json is written
     bad = FakeService(fail_with=ApiError("internal.error", "ledger write failed"))
     with pytest.raises(ApiError, match="ledger write failed"):
-        robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), out_dir=tmp_path / "rb3", permutations=0, step_minutes=2,
+        robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), fees=FEES, out_dir=tmp_path / "rb3", permutations=0, step_minutes=2,
                            workers=1, registry=bad)
     assert not (tmp_path / "rb3" / "robustness.json").exists()
 
@@ -198,14 +198,14 @@ def test_ir_backtest_registers_its_run(tmp_path):
 
     pd = export_dir(tmp_path, golden_built())
     svc = FakeService()
-    card = ir_backtest.backtest(svc, golden_ir(), [BN, OK], start_ms=S0, end_ms=END, out_dir=tmp_path / "r1", pack_dir=pd, register=True, trials=1)
+    card = ir_backtest.backtest(svc, golden_ir(), [BN, OK], start_ms=S0, end_ms=END, out_dir=tmp_path / "r1", pack_dir=pd, register=True, trials=1, fees=FEES)
     assert len(svc.bodies) == 1 and card["service_registration"] == {
         "registered": True, "service_run_id": "run-0001", "ledger": "research-service trial ledger (POST /runs, mode ir_strategy)"}
     assert json.loads((tmp_path / "r1" / "run_card.json").read_text())["service_registration"]["service_run_id"] == "run-0001"
-    off = ir_backtest.backtest(None, golden_ir(), [BN, OK], start_ms=S0, end_ms=END, out_dir=tmp_path / "r2", pack_dir=pd, trials=1)
+    off = ir_backtest.backtest(None, golden_ir(), [BN, OK], start_ms=S0, end_ms=END, out_dir=tmp_path / "r2", pack_dir=pd, trials=1, fees=FEES)
     assert off["service_registration"]["registered"] is False
     with pytest.raises(ApiError, match="needs the research-service client"):
-        ir_backtest.backtest(None, golden_ir(), [BN, OK], start_ms=S0, end_ms=END, out_dir=tmp_path / "r3", pack_dir=pd, register=True, trials=1)
+        ir_backtest.backtest(None, golden_ir(), [BN, OK], start_ms=S0, end_ms=END, out_dir=tmp_path / "r3", pack_dir=pd, register=True, trials=1, fees=FEES)
     assert json.loads((tmp_path / "r3" / "state.json").read_text())["status"] == "failed"
 
 
@@ -219,7 +219,7 @@ def test_forced_filter_permutation(tmp_path):
     # excluded_bases in the IR, no --filter: the filter is tested anyway
     doc_ir = _ir()
     doc_ir["universe"]["excluded_bases"] = ["ETH"]
-    d = robustness.battery(doc_ir, pack, insts, out_dir=tmp_path / "a", **kw)
+    d = robustness.battery(doc_ir, pack, insts, fees=FEES, out_dir=tmp_path / "a", **kw)
     f = d["rating"]["facts"]
     assert f["filter_tested"] is True and f["filter_required"] is True and f["filter_p"] is not None
     assert d["filter"]["bases"] == ["ETH"] and any("forced" in x for x in d["notes"])
@@ -227,14 +227,14 @@ def test_forced_filter_permutation(tmp_path):
     # an allow-list narrower than the coins the battery had data for: the dropped coins are the tested filter
     allow = _ir()
     allow["universe"]["bases"] = ["BTC", "SOL"]
-    e = robustness.battery(allow, pack, insts, out_dir=tmp_path / "b", **kw)
+    e = robustness.battery(allow, pack, insts, fees=FEES, out_dir=tmp_path / "b", **kw)
     assert e["rating"]["facts"]["filter_tested"] is True and e["filter"]["bases"] == ["ETH"]
     assert e["filter"]["permutation"]["pool"] == ["BTC", "ETH", "SOL"] and any("universe.bases" in x for x in e["notes"])
     # a given --filter cannot replace the IR's own restriction
-    g = robustness.battery(doc_ir, pack, insts, out_dir=tmp_path / "c", filter_spec={"kind": "excluded_bases", "bases": ["SOL"]}, **kw)
+    g = robustness.battery(doc_ir, pack, insts, fees=FEES, out_dir=tmp_path / "c", filter_spec={"kind": "excluded_bases", "bases": ["SOL"]}, **kw)
     assert g["filter"]["bases"] == ["ETH"] and any("is not tested" in x for x in g["notes"])
     # an IR with no restriction and no filter keeps 1.12 not applicable
-    free = robustness.battery(_ir(), pack, insts, out_dir=tmp_path / "d", **kw)
+    free = robustness.battery(_ir(), pack, insts, fees=FEES, out_dir=tmp_path / "d", **kw)
     assert free["rating"]["facts"]["filter_required"] is False and {x["id"]: x for x in precheck.evaluate(free, p)}["1.12"]["result"] == "N/A"
     # precheck: a restricted IR whose filter was not tested is a FAIL, not N/A
     tampered = copy.deepcopy(d)
@@ -260,7 +260,7 @@ def test_robust_width_floor(tmp_path):
     assert one("0", "-1", "1")["result"] == "PASS" and one("0", "0", "0")["result"] == "FAIL"
     # the battery writes the ranges and warns about a narrow one
     insts, pd = _market(tmp_path)
-    d = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, START + H6), out_dir=tmp_path / "rb", permutations=0, step_minutes=2, workers=1)
+    d = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, START + H6), fees=FEES, out_dir=tmp_path / "rb", permutations=0, step_minutes=2, workers=1)
     assert d["parameters"]["ranges"] == [{"name": "hold", "path": "exit.max_hold_hours", "value": "1", "lo": "1", "hi": "2"}]
     assert any(x.startswith("warning: robust range too narrow") for x in d["notes"])
     assert {g["id"]: g for g in precheck.evaluate(d, p)}["1.9"]["result"] == "FAIL"

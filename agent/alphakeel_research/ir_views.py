@@ -14,6 +14,7 @@ from collections.abc import Callable
 from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any
 
+from .errors import ApiError
 from .ir import VENUES, fmt
 
 PairView = dict  # README §4.1 PairView as a JSON document
@@ -203,7 +204,6 @@ def exit_quoted(p, quoted):
 DATASET_VIEW = "kline_close_synthetic_bbo"
 DATASET_VOLUME_BARS = 1440
 DATASET_MAX_BAR_AGE_MS = 5 * 60_000
-DEFAULT_PERP_TAKER_FEE = "0.0005"
 SETTLEMENT_KINDS = ("regular", "special")
 SETTLEMENT_LOOKBACK_MS = 86_400_000  # longest funding interval of the nine venues is 8 h
 KLINE_SPAN_MS = 59_999
@@ -226,13 +226,18 @@ def settlement_price(official_mark: Decimal | None, last_seen: Callable[[], Deci
     return px.quantize(Decimal(1).scaleb(-price_dp), rounding=ROUND_HALF_EVEN)
 
 
-def default_fees() -> dict:
-    """``{venue: {"perp": "0.0005"}}`` for every IR venue (AlphaKeel's public lowest-tier perp taker fee)."""
-    return {v: {"perp": DEFAULT_PERP_TAKER_FEE} for v in VENUES}
+def require_fees(fees) -> dict:
+    """The dataset view's fee table ``{venue: {perp|spot: rate}}``, which must be given: there is no default rate (the same
+    rule as AlphaKeel's ``dataset_view``, whose ``fees`` is required; audit 2026-10-12 D2-13)."""
+    if not isinstance(fees, dict) or not fees:
+        raise ApiError("request.invalid", "the dataset view needs an explicit fee table {venue: {perp: rate, spot: rate}} "
+                       "(--fees); there is no default taker fee", field="fees")
+    return fees
 
 
-def dataset_fee(fees: dict | None, venue: str, market: str) -> str | None:
-    row = (default_fees() if fees is None else fees).get(venue)
+def dataset_fee(fees: dict, venue: str, market: str) -> str | None:
+    """The taker fee of ``(venue, market)`` in the fee table (None: that market has no fee and is left out of the frame)."""
+    row = require_fees(fees).get(venue)
     v = row.get(market) if isinstance(row, dict) else None
     return None if v in (None, "") else fmt(Decimal(str(v)))
 
@@ -296,7 +301,7 @@ def settlement_tuple(last, prev=None) -> tuple[Decimal, int, int | None]:
     return (last.rate, last.t, iv)
 
 
-def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict | None = None, view: str = DATASET_VIEW) -> list[dict]:
+def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, view: str = DATASET_VIEW) -> list[dict]:
     """The legs of the dataset frame at ``now_ms`` (see the block comment above), in (venue, market, symbol) order.
 
     ``pit_or_pack``: a ``Pit`` whose ``as_of_ms == now_ms`` or a dataset ``Pack`` (wrapped in ``Pit(pack, now_ms)``).
@@ -343,6 +348,6 @@ def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict | No
     return legs
 
 
-def dataset_frame_pairs(pit_or_pack, insts: list, now_ms: int, *, fees: dict | None = None, view: str = DATASET_VIEW) -> list[PairView]:
+def dataset_frame_pairs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, view: str = DATASET_VIEW) -> list[PairView]:
     """All candidate pairs of the dataset frame at ``now_ms`` (§4.1a rules 4–5 over :func:`dataset_frame_legs`), by ``id``."""
     return pairs_of_legs(dataset_frame_legs(pit_or_pack, insts, now_ms, fees=fees, view=view))

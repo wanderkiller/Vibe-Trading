@@ -33,6 +33,15 @@ LO = START - DAY  # pack window start (warm-up day)
 BN = {"venue": "binance", "market": "perp", "symbol": "BTCUSDT", "base": "BTC", "quote": "USDT"}
 OK = {"venue": "okx", "market": "perp", "symbol": "BTC-USDT-SWAP", "base": "BTC", "quote": "USDT"}
 BS = {"venue": "binance", "market": "spot", "symbol": "BTCUSDT-SPOT", "base": "BTC", "quote": "USDT"}
+#: the explicit fee table every dataset-view run needs (there is no default, D2-13): 0.0005 perp taker on every venue
+FEES = {v: {"perp": "0.0005"} for v in ir.VENUES}
+
+
+def fees_file(d) -> str:
+    """``FEES`` written as the ``--fees`` file of a CLI run."""
+    p = Path(d) / "fees.json"
+    p.write_text(json.dumps(FEES))
+    return str(p)
 
 
 # --- a dataset pack in the service's formats -------------------------------------------------------------------------------
@@ -320,7 +329,7 @@ def _view_pack():
 def test_dataset_view_touch_funding_volume_interval_and_synthetic_bbo(tmp_path):
     pack = Pack.from_directory(export_dir(tmp_path, _view_pack()))
     now = START + 60_000
-    pairs = ir_views.dataset_frame_pairs(pack, [BN, OK], now)
+    pairs = ir_views.dataset_frame_pairs(pack, [BN, OK], now, fees=FEES)
     assert [p["id"] for p in pairs] == ["cross:BTC:binance:BTCUSDT>okx:BTC-USDT-SWAP", "cross:BTC:okx:BTC-USDT-SWAP>binance:BTCUSDT"]
     lg, sh = pairs[0]["long"], pairs[0]["short"]
     # touch = close of the last bar closed at now (bar START, closes START+59999), bid = ask, bbo synthetic
@@ -333,16 +342,16 @@ def test_dataset_view_touch_funding_volume_interval_and_synthetic_bbo(tmp_path):
     assert lg["volume_quote"] == "2880" and sh["volume_quote"] == "4320"
     assert lg["taker_fee"] == "0.0005" and lg["quote_ccy"] == "USDT" and pairs[0]["base"] == "BTC"
     # once the START settlement is visible it is the rate
-    later = ir_views.dataset_frame_pairs(pack, [BN, OK], START + 120_000)
+    later = ir_views.dataset_frame_pairs(pack, [BN, OK], START + 120_000, fees=FEES)
     assert later[0]["long"]["funding_rate"] == "0.00015" and later[0]["long"]["next_funding_ms"] == START + 4 * 3_600_000
     # fewer than 1440 bars in the 24 h: volume unknown (not 0)
-    early = ir_views.dataset_frame_legs(pack, [BN], LO + 20 * 3_600_000 + 5 * MIN)  # 1205 bars so far
+    early = ir_views.dataset_frame_legs(pack, [BN], LO + 20 * 3_600_000 + 5 * MIN, fees=FEES)  # 1205 bars so far
     assert early[0]["view"]["volume_quote"] is None
     # the Pit form must be at the decision time; other views are refused
     with pytest.raises(ValueError):
-        ir_views.dataset_frame_pairs(Pit(pack, now + 1), [BN, OK], now)
+        ir_views.dataset_frame_pairs(Pit(pack, now + 1), [BN, OK], now, fees=FEES)
     with pytest.raises(ValueError):
-        ir_views.dataset_frame_pairs(pack, [BN, OK], now, view="bbo")
+        ir_views.dataset_frame_pairs(pack, [BN, OK], now, view="bbo", fees=FEES)
 
 
 def test_dataset_view_leaves_out_unknown_intervals_stale_bars_and_spot_without_klines_or_fee(tmp_path):
@@ -350,17 +359,17 @@ def test_dataset_view_leaves_out_unknown_intervals_stale_bars_and_spot_without_k
     st = {"binance": [settle("binance:linear:USDT:BTCUSDT", START - 3_600_000, "0.0001")],
           "okx": [settle("okx:linear:USDT:BTC-USDT-SWAP", START - 3_600_000, "0.0001", hours=0)]}
     pack = Pack.from_directory(export_dir(tmp_path, build([BN, OK], kl, st)))
-    legs = ir_views.dataset_frame_legs(pack, [BN, OK], START)
+    legs = ir_views.dataset_frame_legs(pack, [BN, OK], START, fees=FEES)
     assert [x["view"]["venue"] for x in legs] == ["binance"]  # okx: bars stale (> 5 min) and its interval is unknown
     # okx with fresh bars but an unknown interval: still out
     kl[("okx", "BTC-USDT-SWAP")] = bars("BTC-USDT-SWAP", p_ok)
     pack = Pack.from_directory(export_dir(tmp_path / "b", build([BN, OK], kl, st)))
-    assert [x["view"]["venue"] for x in ir_views.dataset_frame_legs(pack, [BN, OK], START)] == ["binance"]
+    assert [x["view"]["venue"] for x in ir_views.dataset_frame_legs(pack, [BN, OK], START, fees=FEES)] == ["binance"]
     # okx's latest settlement has an unusable interval: the leg is out (an older settlement is not used instead)
     # spot: a spot leg needs klines and a spot fee; with both, the same-venue spot_perp pair appears
     spot_kl = {("binance", "BTCUSDT"): bars("BTCUSDT", p_bn), ("binance", "BTCUSDT-SPOT"): bars("BTCUSDT-SPOT", lambda t: "99.9")}
     pack_s = Pack.from_directory(export_dir(tmp_path / "s", build([BN, BS], spot_kl, st)))
-    assert ir_views.dataset_frame_pairs(pack_s, [BN, BS], START) == []  # default fees have no spot rate
+    assert ir_views.dataset_frame_pairs(pack_s, [BN, BS], START, fees=FEES) == []  # FEES has no spot rate
     fees = {"binance": {"perp": "0.0005", "spot": "0.001"}}
     pairs = ir_views.dataset_frame_pairs(pack_s, [BN, BS], START, fees=fees)
     assert [p["id"] for p in pairs] == ["spot:BTC:binance:BTCUSDT-SPOT>binance:BTCUSDT"] and pairs[0]["long"]["taker_fee"] == "0.001"
@@ -372,11 +381,11 @@ def test_dataset_view_leaves_out_unknown_intervals_stale_bars_and_spot_without_k
 
 def test_the_streaming_cursor_builds_the_same_legs_as_the_point_in_time_view(tmp_path):
     pack = Pack.from_directory(export_dir(tmp_path, _view_pack()))
-    cur = ir_backtest.DatasetCursor(pack, [BN, OK], START, END, fees=None, work=tmp_path / "w")
+    cur = ir_backtest.DatasetCursor(pack, [BN, OK], START, END, fees=FEES, work=tmp_path / "w")
     try:
         for now in [LO + 10 * MIN, START - 1, START, START + 60_000, START + 61_000, START + 90_000, START + 3 * 3_600_000 // 3, END - 1]:
             cur.advance(now)
-            assert cur.legs() == ir_views.dataset_frame_legs(pack, [BN, OK], now), now
+            assert cur.legs() == ir_views.dataset_frame_legs(pack, [BN, OK], now, fees=FEES), now
     finally:
         cur.close()
 
@@ -395,7 +404,7 @@ def test_simulator_golden_one_pair_one_settlement_one_close(tmp_path):
     """
     pack = Pack.from_directory(export_dir(tmp_path, golden_built()))
     out = tmp_path / "bt"
-    card = ir_backtest.run(golden_ir(), pack, [BN, OK], start_ms=START, end_ms=END, out_dir=out, step_minutes=2)
+    card = ir_backtest.run(golden_ir(), pack, [BN, OK], start_ms=START, end_ms=END, out_dir=out, step_minutes=2, fees=FEES)
     assert card["amounts"]["realized"] == "5.0919"
     assert card["amounts"]["price_pnl_closed"] == "7" and card["amounts"]["funding"] == "0.1004" and card["amounts"]["fees"] == "2.0085"
     assert card["counts"]["opened"] == 1 and card["counts"]["closed"] == 1 and card["counts"]["open_at_end"] == 0
@@ -424,7 +433,7 @@ def test_dataset_sim_prices_funding_at_the_official_mark_when_published(tmp_path
     pack = Pack.from_directory(export_dir(tmp_path, golden_built(bn_mark="100.7")))
     out = tmp_path / "bt"
     card = ir_backtest.run(golden_ir(), pack, [BN, OK], start_ms=START, end_ms=END, out_dir=out, step_minutes=2,
-                           fees={"binance": {"perp": "0.0005"}, "okx": {"perp": "0.0005"}})
+                           fees=FEES)
     t = json.loads((out / "trades.jsonl").read_text().splitlines()[0])
     assert (t["long"]["funding"], t["short"]["funding"]) == ("-0.1007", "0.2004")
     assert card["amounts"]["funding"] == "0.0997" and card["amounts"]["realized"] == "5.0912"
@@ -435,6 +444,24 @@ def test_dataset_sim_prices_funding_at_the_official_mark_when_published(tmp_path
     assert ir_views.settlement_price(None, lambda: Decimal("100")) == Decimal("100")
     assert ir_views.settlement_price(None, lambda: None) is None
     assert ir_views.settlement_price(Decimal("100.123456"), lambda: None, 2) == Decimal("100.12")
+
+
+def test_default_fees_removed_requires_explicit_fees(tmp_path):
+    """D2-13: the silent 0.0005 default is gone (AlphaKeel's dataset_view requires the fee table too): the view, the run and
+    the CLI refuse a missing table; an explicit one is recorded with where it came from."""
+    assert not hasattr(ir_views, "default_fees") and not hasattr(ir_views, "DEFAULT_PERP_TAKER_FEE")
+    pack = Pack.from_directory(export_dir(tmp_path, golden_built()))
+    with pytest.raises(ApiError, match="explicit fee table") as e:
+        ir_views.dataset_frame_legs(pack, [BN, OK], START, fees=None)
+    assert e.value.code == "request.invalid"
+    with pytest.raises(ApiError, match="explicit fee table"):
+        ir_backtest.run(golden_ir(), pack, [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "bt", step_minutes=2)
+    with pytest.raises(SystemExit):
+        cli.main(["ir", "backtest", "--no-register", "--ir", "x.json", "--start-ms", str(START), "--end-ms", str(END),
+                  "--instruments", "i.json", "--pack-dir", "p"])
+    card = ir_backtest.run(golden_ir(), pack, [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "ok", step_minutes=2,
+                           fees=FEES, fees_source="fees.json")
+    assert card["assumptions"]["fees"] == FEES and card["assumptions"]["fees_source"] == "fees.json"
 
 
 def test_crosscheck_notes_cite_no_funding_price_difference():
@@ -454,7 +481,7 @@ def test_ir_backtest_cli_end_to_end_on_an_exported_pack_writes_the_run_card(tmp_
     (tmp_path / "inst.json").write_text(json.dumps([OK, BN, {**BS, "venue": "bybit"}]))  # bybit spot: not in the universe
     (tmp_path / "trials.csv").write_text("trial,min_net\n1,0\n2,0.0001\n3,0.0002\n")
     out = tmp_path / "run"
-    rc = cli.main(["ir", "backtest", "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END), "--instruments",
+    rc = cli.main(["ir", "backtest", "--fees", fees_file(tmp_path), "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END), "--instruments",
                    str(tmp_path / "inst.json"), "--pack-dir", str(pd), "--trials", "3", "--trials-evidence", str(tmp_path / "trials.csv"),
                    "--verbose", "--out", str(out)])
     assert rc == 0
@@ -466,7 +493,7 @@ def test_ir_backtest_cli_end_to_end_on_an_exported_pack_writes_the_run_card(tmp_
     from alphakeel_research import handoff
 
     assert handoff.classify(card)["classification"] == "auditable"
-    assert card["assumptions"]["fees_source"] == "default" and card["assumptions"]["fees"]["okx"] == {"perp": "0.0005"}
+    assert card["assumptions"]["fees_source"] == str(tmp_path / "fees.json") and card["assumptions"]["fees"]["okx"] == {"perp": "0.0005"}
     assert card["assumptions"]["capital_base"] == "2000"
     assert card["trials"]["count"] == 3 and (out / card["trials"]["evidence"]).is_file()
     assert card["alphakeel_metrics"] is not None and card["amounts"]["realized"] == "5.0919"
@@ -503,7 +530,7 @@ def test_ir_backtest_freezes_through_the_service_and_refuses_a_swapped_pack(tmp_
             return types.SimpleNamespace(content=blobs[name][start:end + 1])
 
     fc = FakeClient(lock)
-    card = workflow.ir_backtest(fc, golden_ir(), [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "o", cache_dir=tmp_path / "c")
+    card = workflow.ir_backtest(fc, golden_ir(), [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "o", cache_dir=tmp_path / "c", fees=FEES)
     req = fc.requests[0]
     assert req["window"] == {"start_ms": LO, "end_ms": END} and req["dataset"] == {"market_tables": ["kline_1m"], "price_kinds": ["trade"]}
     assert req["instruments"] == [{"venue": "binance", "market": "perp", "symbol": "BTCUSDT"}, {"venue": "okx", "market": "perp", "symbol": "BTC-USDT-SWAP"}]
@@ -511,7 +538,7 @@ def test_ir_backtest_freezes_through_the_service_and_refuses_a_swapped_pack(tmp_
     assert card["research_service"] == {"used": True, "credential": "tok-fake", "data_horizon": None, "holdout_days": 60}
     # the service answers with a pack for another window: refused, not used
     with pytest.raises(ApiError):
-        workflow.ir_backtest(fc, golden_ir(), [BN, OK], start_ms=START + 60_000, end_ms=END, out_dir=tmp_path / "o2", cache_dir=tmp_path / "c")
+        workflow.ir_backtest(fc, golden_ir(), [BN, OK], start_ms=START + 60_000, end_ms=END, out_dir=tmp_path / "o2", cache_dir=tmp_path / "c", fees=FEES)
 
 
 # --- (4) ir export ---------------------------------------------------------------------------------------------------------
@@ -521,7 +548,7 @@ def _run(tmp_path, *trials_args):
     (tmp_path / "ir.json").write_text(json.dumps(golden_ir()))
     (tmp_path / "inst.json").write_text(json.dumps([BN, OK]))
     out = tmp_path / "run"
-    assert cli.main(["ir", "backtest", "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END), "--instruments",
+    assert cli.main(["ir", "backtest", "--fees", fees_file(tmp_path), "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END), "--instruments",
                      str(tmp_path / "inst.json"), "--pack-dir", str(pd), *trials_args, "--out", str(out)]) == 0
     return out
 
@@ -593,7 +620,7 @@ def test_ir_export_refuses_missing_trials_evidence_and_another_strategy(tmp_path
     # trials > 1 without the file that lists them is refused at backtest time
     with pytest.raises(ApiError, match="trials-evidence"):
         ir_backtest.run(golden_ir(), Pack.from_directory(export_dir(tmp_path / "y", golden_built())), [BN, OK], start_ms=START,
-                        end_ms=END, out_dir=tmp_path / "z", trials=5)
+                        end_ms=END, out_dir=tmp_path / "z", trials=5, fees=FEES)
 
 
 # --- (5) the agent tool's argv ---------------------------------------------------------------------------------------------
@@ -745,7 +772,7 @@ def test_every_equity_point_is_valued_at_the_engines_quantity(tmp_path):
     doc["exit"]["max_loss"] = "1000000"
     pack = Pack.from_directory(export_dir(tmp_path, golden_built()))
     out = tmp_path / "bt"
-    card = ir_backtest.run(doc, pack, [BN, OK], start_ms=START, end_ms=END, out_dir=out, step_minutes=2)
+    card = ir_backtest.run(doc, pack, [BN, OK], start_ms=START, end_ms=END, out_dir=out, step_minutes=2, fees=FEES)
     assert card["counts"]["legs_engine_qty_adjusted"] == 2
     t = json.loads((out / "trades.jsonl").read_text().splitlines()[0])
     assert (t["long"]["qty"], t["long"]["ir_qty"]) == ("100000", "100000.00000001")
@@ -763,7 +790,7 @@ def test_the_crosscheck_l0_compares_the_run_manifest_input_chains(tmp_path):
     from alphakeel_research import ir_crosscheck as X
 
     pack = Pack.from_directory(export_dir(tmp_path, golden_built()))
-    card = ir_backtest.run(golden_ir(), pack, [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "bt", step_minutes=2)
+    card = ir_backtest.run(golden_ir(), pack, [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "bt", step_minutes=2, fees=FEES)
     vt = card["inputs"]
     assert {a["table"] for a in vt} >= {"kline_1m"}
     # AlphaKeel records an empty read and other tables too; neither enters L0
@@ -843,7 +870,7 @@ def test_ir_backtest_without_out_creates_a_vt_run_with_the_list_files(tmp_path, 
     pd = export_dir(tmp_path, golden_built())
     (tmp_path / "ir.json").write_text(json.dumps(golden_ir()))
     (tmp_path / "inst.json").write_text(json.dumps([BN, OK]))
-    assert cli.main(["ir", "backtest", "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END), "--instruments",
+    assert cli.main(["ir", "backtest", "--fees", fees_file(tmp_path), "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END), "--instruments",
                      str(tmp_path / "inst.json"), "--pack-dir", str(pd)]) == 0
     printed = json.loads(capsys.readouterr().out)
     run = Path(printed["run_dir"])
@@ -867,7 +894,7 @@ def test_a_failed_ir_backtest_leaves_state_failed(tmp_path, capsys):
     (tmp_path / "ir.json").write_text(json.dumps(golden_ir()))
     (tmp_path / "inst.json").write_text(json.dumps([BN, OK]))
     out = tmp_path / "bad"
-    assert cli.main(["ir", "backtest", "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(END), "--end-ms", str(START), "--instruments",
+    assert cli.main(["ir", "backtest", "--fees", fees_file(tmp_path), "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(END), "--end-ms", str(START), "--instruments",
                      str(tmp_path / "inst.json"), "--pack-dir", str(pd), "--out", str(out)]) == 1
     st = json.loads((out / "state.json").read_text())
     assert st["status"] == "failed" and "does not match" in st["error"] and not (out / "review_report.json").exists()

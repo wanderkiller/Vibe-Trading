@@ -19,7 +19,7 @@ import api_server
 from alphakeel_research import cli, precheck
 from src.api import alphakeel_handoff_routes as routes
 from src.api.runs_routes import register_runs_routes
-from tests.test_alphakeel_ir_backtest import START
+from tests.test_alphakeel_ir_backtest import START, fees_file
 from tests.test_alphakeel_robustness import H6, _ir, _market
 
 CRED = {"credential": "cred-test", "holdout_days": 60, "data_horizon": {"max_window_end_ms": START + 1}}
@@ -71,7 +71,7 @@ def make_ir_run(env, name="20261010_120000_ir", *, robustness=True, trials=True,
     (tmp / "ir.json").write_text(json.dumps(_ir()))
     (tmp / "inst.json").write_text(json.dumps(insts))
     run = env.runs / name
-    assert cli.main(["ir", "backtest", "--no-register", "--ir", str(tmp / "ir.json"), "--start-ms", str(START), "--end-ms", str(START + H6), "--instruments",
+    assert cli.main(["ir", "backtest", "--fees", fees_file(tmp), "--no-register", "--ir", str(tmp / "ir.json"), "--start-ms", str(START), "--end-ms", str(START + H6), "--instruments",
                      str(tmp / "inst.json"), "--pack-dir", str(pd), "--step-minutes", "2", *(["--trials", "1"] if trials else []),
                      "--out", str(run)]) == 0
     if robustness:

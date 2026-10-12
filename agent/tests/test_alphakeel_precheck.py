@@ -17,6 +17,7 @@ import pytest
 from alphakeel_research import contract, precheck, robustness
 from alphakeel_research.errors import ApiError
 from alphakeel_research.packfile import Pack
+from tests.test_alphakeel_ir_backtest import FEES
 from tests.test_alphakeel_robustness import H6, START, _ir, _market, _wf_market, WF_HI
 
 CONTRACT = Path(contract.__file__).parent / "contract"
@@ -75,7 +76,7 @@ def test_missing_robustness_fails_every_item_and_a_missing_field_is_a_fail_not_a
 
 def test_battery_output_has_every_item_and_agrees_with_its_own_facts(tmp_path):
     insts, pd = _market(tmp_path)
-    doc = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, START + H6), out_dir=tmp_path / "rb", permutations=0,
+    doc = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, START + H6), fees=FEES, out_dir=tmp_path / "rb", permutations=0,
                              step_minutes=2, workers=1)
     doc = json.loads((tmp_path / "rb" / "robustness.json").read_text())  # the file the route reads
     got = {g["id"]: g for g in precheck.evaluate(doc, precheck.load_protocol())}
@@ -98,7 +99,7 @@ def test_battery_output_has_every_item_and_agrees_with_its_own_facts(tmp_path):
 
 def test_walk_forward_result_of_a_real_battery_feeds_item_1_11(tmp_path):
     insts, pd = _wf_market(tmp_path)
-    doc = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, WF_HI), out_dir=tmp_path / "wf", permutations=0,
+    doc = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, WF_HI), fees=FEES, out_dir=tmp_path / "wf", permutations=0,
                              step_minutes=10, workers=1, wf_folds=2, wf_test_days=1, wf_min_train_days=1)
     got = {g["id"]: g for g in precheck.evaluate(json.loads((tmp_path / "wf" / "robustness.json").read_text()), precheck.load_protocol())}
     assert got["1.11"]["result"] == "FAIL"  # 2 folds < the protocol's 3, whatever the nets

@@ -17,7 +17,7 @@ from alphakeel_research.errors import ApiError
 from alphakeel_research.packfile import Pack
 from backtest import alphakeel_metrics as M
 from tests.test_alphakeel_ir import _carry_doc
-from tests.test_alphakeel_ir_backtest import DAY, LO, MIN, START, bars, build, export_dir, settle
+from tests.test_alphakeel_ir_backtest import DAY, FEES, LO, MIN, START, bars, build, export_dir, fees_file, settle
 
 # --- rating rules ----------------------------------------------------------------------------------------------------------
 
@@ -130,7 +130,8 @@ def test_set_path_and_neighbour_doc_edit_the_literal_and_the_parameter_value():
 
 def test_scale_fees_multiplies_every_rate_exactly():
     assert robustness.scale_fees({"binance": {"perp": "0.0004", "spot": "0.001"}}, "1.5") == {"binance": {"perp": "0.0006", "spot": "0.0015"}}
-    assert robustness.scale_fees(None, "2")["okx"] == {"perp": "0.001"}
+    with pytest.raises(ApiError, match="explicit fee table"):  # no default table to scale (D2-13)
+        robustness.scale_fees(None, "2")
 
 
 # --- filter accounting -----------------------------------------------------------------------------------------------------
@@ -221,7 +222,7 @@ def test_battery_end_to_end_counts_trials_honestly_and_tests_the_filter(tmp_path
     insts, pd = _market(tmp_path)
     pack = Pack.from_directory(pd)
     out = tmp_path / "rb"
-    doc = robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), oos_window=(START + H6, HI), out_dir=out,
+    doc = robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), oos_window=(START + H6, HI), fees=FEES, out_dir=out,
                              filter_spec={"kind": "excluded_bases", "bases": ["ETH"]}, permutations=4, seed=11, step_minutes=2,
                              workers=1)
     assert doc["schema"] == "vibe-trading.ir-robustness/2" and (out / "robustness.md").is_file() and (out / "trials.jsonl").is_file()
@@ -267,7 +268,7 @@ def test_battery_end_to_end_counts_trials_honestly_and_tests_the_filter(tmp_path
     caps = {c["id"] for c in doc["rating"]["caps"]}
     assert {"synthetic_view", "short_window", "few_trades"} <= caps and doc["rating"]["grade"] in ("C", "D", "F")
     # deterministic: the same seed draws the same sets
-    again = robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), out_dir=tmp_path / "rb2",
+    again = robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), fees=FEES, out_dir=tmp_path / "rb2",
                                filter_spec={"kind": "excluded_bases", "bases": ["ETH"]}, permutations=4, seed=11, step_minutes=2, workers=1)
     assert [d["bases"] for d in again["filter"]["permutation"]["draws_detail"]] == [d["bases"] for d in pm["draws_detail"]]
     assert "no_oos" in {c["id"] for c in again["rating"]["caps"]}
@@ -278,14 +279,14 @@ def test_battery_cli_with_process_workers_matches_in_process(tmp_path, capsys):
     (tmp_path / "ir.json").write_text(json.dumps(_ir()))
     (tmp_path / "inst.json").write_text(json.dumps(insts))
     out = tmp_path / "cli"
-    rc = cli.main(["ir", "robustness", "--no-register", "--ir", str(tmp_path / "ir.json"), "--pack-dir", str(pd), "--instruments", str(tmp_path / "inst.json"),
+    rc = cli.main(["ir", "robustness", "--no-register", "--fees", fees_file(tmp_path), "--ir", str(tmp_path / "ir.json"), "--pack-dir", str(pd), "--instruments", str(tmp_path / "inst.json"),
                    "--is-start-ms", str(START), "--is-end-ms", str(START + H6), "--permutations", "0", "--workers", "2",
                    "--step-minutes", "2", "--out", str(out)])
     assert rc == 0
     printed = json.loads(capsys.readouterr().out)
     doc = json.loads((out / "robustness.json").read_text())
     assert printed["grade"] == doc["rating"]["grade"] and doc["inputs"]["execution"] == "process pool (spawn)"
-    ser = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, START + H6), out_dir=tmp_path / "ser",
+    ser = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, START + H6), fees=FEES, out_dir=tmp_path / "ser",
                              permutations=0, step_minutes=2, workers=1)
     assert [(r["label"], r["net"]) for r in ser["runs"]] == [(r["label"], r["net"]) for r in doc["runs"]]
     assert ser["rating"]["grade"] == doc["rating"]["grade"]
@@ -297,15 +298,15 @@ def test_battery_refuses_bad_inputs(tmp_path):
     insts, pd = _market(tmp_path)
     pack = Pack.from_directory(pd)
     with pytest.raises(ApiError, match="filter"):
-        robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), out_dir=tmp_path / "x", filter_spec={"kind": "x"}, workers=1)
+        robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), fees=FEES, out_dir=tmp_path / "x", filter_spec={"kind": "x"}, workers=1)
     with pytest.raises(ApiError, match="filter"):
-        robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), out_dir=tmp_path / "x",
+        robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), fees=FEES, out_dir=tmp_path / "x",
                            filter_spec={"kind": "excluded_bases", "bases": ["eth"]}, workers=1)
     with pytest.raises(ApiError, match="overlaps"):
         robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), oos_window=(START + H6 - DAY // 24, HI),
-                           out_dir=tmp_path / "x", workers=1)
+                           fees=FEES, out_dir=tmp_path / "x", workers=1)
     with pytest.raises(ApiError, match="permutations"):
-        robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), out_dir=tmp_path / "x", permutations=-1, workers=1)
+        robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), fees=FEES, out_dir=tmp_path / "x", permutations=-1, workers=1)
     assert ir_backtest.DAY_MS == DAY and MIN == 60_000
 
 
@@ -392,7 +393,7 @@ def _wf_market(tmp_path):
 def test_walk_forward_battery_vector_fixed_seed(tmp_path):
     insts, pd = _wf_market(tmp_path)
     out = tmp_path / "wf"
-    doc = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, WF_HI), out_dir=out, permutations=0, seed=5,
+    doc = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, WF_HI), fees=FEES, out_dir=out, permutations=0, seed=5,
                              step_minutes=10, workers=1, wf_folds=2, wf_test_days=1, wf_min_train_days=1)
     assert doc["schema"] == "vibe-trading.ir-robustness/2"
     wf = doc["walk_forward"]
@@ -435,7 +436,7 @@ def test_walk_forward_battery_vector_fixed_seed(tmp_path):
 
 def test_walk_forward_not_computable_on_a_short_window(tmp_path):
     insts, pd = _market(tmp_path)
-    doc = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, START + H6), out_dir=tmp_path / "rb", permutations=0,
+    doc = robustness.battery(_ir(), Pack.from_directory(pd), insts, is_window=(START, START + H6), fees=FEES, out_dir=tmp_path / "rb", permutations=0,
                              step_minutes=2, workers=1)
     wf = doc["walk_forward"]
     assert wf["computable"] is False and "wf_min_train_days" in wf["reason"] and wf["config"] == {"folds": 3, "test_days": 30, "min_train_days": 30}
@@ -453,7 +454,7 @@ def test_robustness_run_defaults_come_from_the_run_and_export_carries_the_eviden
     (tmp_path / "ir.json").write_text(json.dumps(_ir()))
     (tmp_path / "inst.json").write_text(json.dumps(insts))
     run = tmp_path / "run"
-    assert cli.main(["ir", "backtest", "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(START + H6), "--instruments",
+    assert cli.main(["ir", "backtest", "--fees", fees_file(tmp_path), "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(START + H6), "--instruments",
                      str(tmp_path / "inst.json"), "--pack-dir", str(pd), "--step-minutes", "2", "--trials", "1", "--out", str(run)]) == 0
     capsys.readouterr()
     base = ["ir", "robustness", "--no-register", "--run", str(run), "--permutations", "0", "--workers", "1", "--step-minutes", "2"]

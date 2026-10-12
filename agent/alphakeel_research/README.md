@@ -150,7 +150,7 @@ The scan archive (real top of book, predicted funding) only starts 2026-10. For 
 
 ```bash
 python -m alphakeel_research ir backtest --ir strategy.json --start-ms N --end-ms N --instruments inst.json \
-    [--step-minutes 2] [--fees fees.json] [--trials N [--trials-evidence trials.csv]] [--capital-base X] \
+    [--step-minutes 2] --fees fees.json [--trials N [--trials-evidence trials.csv]] [--capital-base X] \
     [--accept-partial] [--pack-dir DIR] [--verbose] --out RUN
 python -m alphakeel_research ir export --ir strategy.json --run RUN [--research-credential] --out EXPORT
 ```
@@ -171,8 +171,8 @@ approximations, written into every run card:
   `predicted`; this is the view's approximation, not a change of the strategy. `interval_hours` from that settlement
   (unknown → the perp is left out), `next_funding_ms` = settlement + interval;
 - `volume_quote` = 24 h sum over 1440 bars (null if any is missing); `quote_ms` = the bar's close time;
-- `taker_fee` from `--fees` (`{venue: {"perp": "0.0005", "spot": …}}`); default AlphaKeel's public lowest-tier perp taker
-  0.0005 on every venue (stated as an assumption); spot legs need a spot fee and spot klines (otherwise only cross_perp).
+- `taker_fee` from `--fees` (`{venue: {"perp": "0.0005", "spot": …}}`), required: there is no default fee (AlphaKeel's
+  `dataset_view` requires the table too); spot legs need a spot fee and spot klines (otherwise only cross_perp).
 
 Execution is a small separate Decimal simulator (`ir_backtest.Sim`; `sim.Simulator` is bound to scan packs and the engine
 profile): complete fills at the touch, `q8(qty × price × taker_fee)` per fill, funding at each official settlement time on

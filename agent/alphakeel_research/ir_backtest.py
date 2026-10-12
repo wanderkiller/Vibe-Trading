@@ -563,12 +563,13 @@ def run_id_of(sid: str, pack_id: str, start_ms: int, end_ms: int, step: int, fee
 
 
 def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end_ms: int, out_dir: str | Path, step_minutes: int = 2,
-        fees: dict | None = None, fees_source: str = "default", capital_base: Decimal | None = None, trials: int | None = None,
+        fees: dict | None = None, fees_source: str = "request", capital_base: Decimal | None = None, trials: int | None = None,
         trials_evidence: str | Path | None = None, verbose: bool = False, research_service: dict | None = None) -> dict:
     """Run the IR over the dataset pack and write ``run_card.json``, ``trades.jsonl``, ``equity.jsonl``,
     ``decisions.jsonl`` into ``out_dir``. Returns the run card."""
     loaded = IR.load(ir_doc)
     sid = loaded.strategy_id
+    fees = ir_views.require_fees(fees)
     if not (isinstance(step_minutes, int) and step_minutes >= 1):
         raise ApiError("request.invalid", "step_minutes must be an integer >= 1", field="step_minutes")
     if not end_ms > start_ms:
@@ -773,7 +774,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         "data_window": {"start_ms": lo, "end_ms": end_ms, "start_day": utc_day(lo), "end_day": utc_day(end_ms - 1), "warmup_ms": start_ms - lo},
         "step_minutes": step_minutes, "view": ir_views.DATASET_VIEW, "approximations": APPROXIMATIONS, "simulator": SIM_CONVENTIONS,
         "assumptions": {"funding_estimate_of_ir": loaded.doc["assumptions"]["funding_estimate"],
-                        "fees": fees if fees is not None else ir_views.default_fees(), "fees_source": fees_source,
+                        "fees": fees, "fees_source": fees_source,
                         "fees_note": None if fees is not None else "AlphaKeel's public lowest-tier perp taker fee 0.0005 on every venue (assumption)",
                         "capital_base": _s(capital_base), "capital_base_source": capital_source},
         "instruments": [{**d, "base": cursor.identity[Inst(d["venue"], d["market"], d["symbol"])][0],
@@ -871,6 +872,7 @@ def backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, en
     (:func:`write_run_files`; ``state.json`` says ``failed`` when anything raised)."""
     out = Path(out_dir)
     try:
+        ir_views.require_fees(kw.get("fees"))  # before a pack is frozen
         card = _backtest(client, ir_doc, instruments, start_ms=start_ms, end_ms=end_ms, out_dir=out, cache_dir=cache_dir,
                          pack_dir=pack_dir, accept_partial=accept_partial, **kw)
         # Trial ledger (audit 2 P1-1 c): every run is a trial of the research service's global ledger; an unregistered run is
