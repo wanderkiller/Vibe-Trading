@@ -925,7 +925,8 @@
     "README_zh.md",
     "patches/",
     "agent/tests/test_alphakeel_patch_layer.py",
-    "AGENTS.md"
+    "AGENTS.md",
+    "CHANGELOG.md"
    ],
    "anchors": [
     {
@@ -1104,6 +1105,16 @@
      "file": ".gitignore",
      "kind": "hook",
      "literal": "/deploy-log.jsonl"
+    },
+    {
+     "file": "CHANGELOG.md",
+     "kind": "upstream",
+     "literal": "## [Unreleased]"
+    },
+    {
+     "file": "CHANGELOG.md",
+     "kind": "hook",
+     "literal": "### AlphaKeel patch layer — 2026-10-12 (end-to-end audit)"
     }
    ]
   },

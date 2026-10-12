@@ -5,6 +5,32 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### AlphaKeel patch layer — 2026-10-12 (end-to-end audit)
+
+Local patch layer only (`patches/MANIFEST.md`); not an upstream release note.
+
+- CI gate e passes: the patch layer reads its environment through
+  `src.config.accessor`, `/alpha/readiness` through `get_env_config()` (new
+  group `ci-env-gate`), so the CI job reaches the test suite again (D6-1).
+- `tools/deploy-vt.sh` is the release gate for the production container: CI
+  green on the exact commit, commit = AlphaKeel `ci/vibe-trading.ref`, contract
+  PIN = `ci/vibe-trading.pin`, backup, health + `contract_pin: matched`,
+  rollback, `deploy-log.jsonl` (D6-1).
+- Funding is priced at the settlement's published mark in both simulators
+  (`ir_views.settlement_price`, AlphaKeel F04), and in `CryptoEngine`, one
+  settlement at a time in `Decimal`; close-priced funding is flagged
+  `funding_estimate` (D2-3, D2-11).
+- `alphakeel_b2` serves `funding_cash_rate` (accounting) and
+  `funding_visible_rate` (signals, by `available_at`) instead of
+  `funding_rate`; pack keys carry the UTC day; timezone-aware dates are
+  converted to UTC (D2-10, D2-6, D2-15).
+- The dataset view has no default fee table (`--fees` required) (D2-13);
+  `dataset_pack_request(selection=...)` can ask for `pit_membership` (D2-14);
+  `runner._get_loader` no longer swaps a no-fallback source for tushare (D2-15).
+- Rollback: revert the lane's commits; strategies that read `funding_rate` from
+  `alphakeel_b2` bars must read `funding_visible_rate`, and `ir backtest`
+  callers must pass `--fees`.
+
 ### Maintenance — 2026-10-08
 
 - Optional AES-256 protection for Email PDF reports (#1709): Web, CLI

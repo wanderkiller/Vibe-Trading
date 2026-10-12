@@ -34,7 +34,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `metrics-conventions` | metrics, validation | partly upstreamed already; rest upstreamable |
 | `run-card-data-audit` | run_card | local-only as written; a generic provenance hook is upstreamable |
 | `alphakeel-handoff` | api_server (one hook), RunDetail (one import, one element), api.ts (one `export`) | local-only (follows the leaf package) |
-| `packaging-docs` | pyproject, SKILL.md, READMEs, .gitignore, .env.example | local-only |
+| `packaging-docs` | pyproject, SKILL.md, READMEs, .gitignore, .env.example, CHANGELOG (one section) | local-only |
 | `ci-env-gate` | alpha_routes (one line) | upstreamable: upstream's own gate e fails on it |
 
 ---
@@ -84,7 +84,7 @@ documents the build, backup and upgrade rules.
 
 **Commits.** `8cfc14f0` (Dockerfile.local, compose override, DEPLOYMENT.local.md), `e0245ca9` (AlphaKeel paragraph in
 DEPLOYMENT.local.md), merge `98e8248e` (`requirements-local-providers-lock.txt` exists only in that merge), and
-`7d8b0772` (T8, pointer to `patches/`).
+`7d8b0772` (T8, pointer to `patches/`), `2925c004` (`tools/deploy-vt.sh`, audit 2026-10-12 D6-1).
 
 **Upstreamable.** No, local-only (host networking, local listener, extra providers).
 
@@ -177,7 +177,7 @@ never part of a network fallback (`_NO_NETWORK_FALLBACK_SOURCES`), excluded from
 - `agent/tests/test_loader_contract.py`
 - `agent/backtest/runner.py`
 
-**Commits.** `e0245ca9` `1f83ef6f` `83ea7c2a`; the 2026-10-12 e2e lane commit for D2-15(a) (runner guard).
+**Commits.** `e0245ca9` `1f83ef6f` `83ea7c2a`; `ce16793f` (audit 2026-10-12 D2-15a, runner guard).
 
 `runner._get_loader` re-raises the registry's no-fallback error for those sources instead of handing back tushare as
 an "ultimate fallback" (audit 2026-10-12 D2-15a: an unavailable `alphakeel_b2` was logged as "served by tushare").
@@ -269,8 +269,8 @@ settlements through `funding_settlements.attach_settlements` (shared with the `a
 - `agent/tests/test_crypto_engine.py`
 - `agent/tests/test_composite_engine_fallback.py`
 
-**Commits.** `622ea894` (engines, ccxt loader, funding_settlements, tests), `41f8c94b` (composite test expectation), the
-2026-10-12 e2e lane commit for D2-10/D2-11 (per-settlement Decimal funding at the published mark, `funding_estimate`).
+**Commits.** `622ea894` (engines, ccxt loader, funding_settlements, tests), `41f8c94b` (composite test expectation), `fdab5523`
+(audit 2026-10-12 D2-10/D2-11: per-settlement Decimal funding at the published mark, `funding_estimate`).
 
 **Upstreamable.** Yes, as a bug-fix PR: the daily-bar/intraday over- and under-charging of funding (the old hook
 charged a 1H bar four times a day), the silent fixed rate for perpetuals and the missing-settlement check in
@@ -461,6 +461,7 @@ layer itself (`patches/`).
 - `README_zh.md`
 - `patches/`
 - `agent/tests/test_alphakeel_patch_layer.py`
+- `CHANGELOG.md`
 
 **Commits.** `e0245ca9` `220330b0` `1f83ef6f` `83ea7c2a` `9257a920`, `7d8b0772` (T8, `patches/`), `456b918f`
 (upgrade-rehearsal record), `ff1d0f04` (T9b: `alphakeel_b2` in every README, 30 sources; cherry-picked from the
@@ -491,6 +492,8 @@ the `loaders/` tree line.
 - upstream `.gitignore`: `# Agent tool aliases (auto-generated mirror of CLAUDE.md)`
 - hook `.gitignore`: `!AGENTS.md`
 - hook `.gitignore`: `/deploy-log.jsonl` — written by `tools/deploy-vt.sh` (group `local-deploy`)
+- upstream `CHANGELOG.md`: `## [Unreleased]`
+- hook `CHANGELOG.md`: `### AlphaKeel patch layer — 2026-10-12 (end-to-end audit)` — the patch layer's own section under Unreleased; on an upstream upgrade keep it at the top of Unreleased (upstream edits this file constantly)
 - upstream `agent/.env.example`: `# ETORO_USER_KEY=your_user_key`
 - hook `agent/.env.example`: `# ALPHAKEEL_RESEARCH_URL=`
 - upstream `README.md`: `` regex (?m)^\| `local` \| `` — source-table row the alphakeel rows follow
@@ -520,7 +523,7 @@ runs (audit 2026-10-12 D6-1: every production commit 10-05..10-12 was red at thi
 **Files.**
 - `agent/src/api/alpha_routes.py`
 
-**Commits.** The 2026-10-12 e2e lane commit "ci: route environment reads through the config layer".
+**Commits.** `2925c004` (audit 2026-10-12 D6-1).
 
 **Upstreamable.** Yes: the readiness line is a defect against upstream's own gate.
 
