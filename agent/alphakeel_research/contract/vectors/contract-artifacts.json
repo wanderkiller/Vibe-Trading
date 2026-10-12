@@ -6778,6 +6778,319 @@
      "fees": "0.2",
      "funding": "0",
      "fx_revaluation": "0",
+     "liquidation_penalty": "0.1",
+     "net_of_capital_cost": "-0.41",
+     "open_value": "0",
+     "price_pnl": "-0.2",
+     "realized": "-0.4"
+    },
+    "amounts_ok": true,
+    "approximations": [
+     "synthetic_spread_floor: bid = ask in the view; 2 bp floor",
+     "sqrt_impact_modeled_depth: impact x2"
+    ],
+    "by_currency": {
+     "USDT": {
+      "cash_flow": "-0.2",
+      "fees": "0.2",
+      "funding": "0"
+     }
+    },
+    "capital": {
+     "peak_margin_usdt": "33.3333"
+    },
+    "capital_cost": {
+     "annual_rate": "0.05",
+     "cost_usdt": "0.01",
+     "deducted_from": "amounts.close_now"
+    },
+    "counts": {
+     "fills": 4,
+     "intents": 4
+    },
+    "data_quality": {
+     "estimate_fallbacks": 0,
+     "stale_points": 0
+    },
+    "drawdown": {
+     "max": "0.4",
+     "points": 2
+    },
+    "equity": {
+     "end_by_ccy": {
+      "USDT": "9999.6"
+     },
+     "end_close_now_usdt": "-0.4",
+     "start_by_ccy": {
+      "USDT": "10000"
+     }
+    },
+    "event_log": {
+     "count": 5,
+     "name": "events.jsonl",
+     "sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "execution": {
+     "decision_blockers": [
+      "impact for okx is ASSUMED, not calibrated"
+     ],
+     "decision_grade": false,
+     "decision_grade_waivers": []
+    },
+    "execution_ok": true,
+    "fill_model": "conservative",
+    "limitations": [
+     "scan snapshots only"
+    ],
+    "mode": "ir_strategy",
+    "not_applicable_metrics": [
+     "win_rate"
+    ],
+    "optimistic": {
+     "amounts": {
+      "close_now": "-0.4",
+      "fees": "0.2",
+      "funding": "0",
+      "fx_revaluation": "0",
+      "open_value": "0",
+      "price_pnl": "-0.2",
+      "realized": "-0.4"
+     },
+     "events_sha256": "abababababababababababababababababababababababababababababababab",
+     "fill_model": "top_of_book"
+    },
+    "problems": [],
+    "run_id": "run-1",
+    "schema": "alphakeel.result/1",
+    "side": "alphakeel_engine",
+    "verification": {
+     "engine_recount": "matched",
+     "external_python": "not_applicable",
+     "native_rule_ledger": "not_applicable"
+    }
+   },
+   "kind": "result",
+   "name": "result: execution decision grade and liquidation penalty (optional, 2026-10-12)",
+   "valid": true
+  },
+  {
+   "doc": {
+    "amounts": {
+     "close_now": "-0.4",
+     "fees": "0.2",
+     "funding": "0",
+     "fx_revaluation": "0",
+     "liquidation_penalty": "0.1",
+     "net_of_capital_cost": "-0.41",
+     "open_value": "0",
+     "price_pnl": "-0.2",
+     "realized": "-0.4"
+    },
+    "amounts_ok": true,
+    "approximations": [
+     "synthetic_spread_floor: bid = ask in the view; 2 bp floor",
+     "sqrt_impact_modeled_depth: impact x2"
+    ],
+    "by_currency": {
+     "USDT": {
+      "cash_flow": "-0.2",
+      "fees": "0.2",
+      "funding": "0"
+     }
+    },
+    "capital": {
+     "peak_margin_usdt": "33.3333"
+    },
+    "capital_cost": {
+     "annual_rate": "0.05",
+     "cost_usdt": "0.01",
+     "deducted_from": "amounts.close_now"
+    },
+    "counts": {
+     "fills": 4,
+     "intents": 4
+    },
+    "data_quality": {
+     "estimate_fallbacks": 0,
+     "stale_points": 0
+    },
+    "drawdown": {
+     "max": "0.4",
+     "points": 2
+    },
+    "equity": {
+     "end_by_ccy": {
+      "USDT": "9999.6"
+     },
+     "end_close_now_usdt": "-0.4",
+     "start_by_ccy": {
+      "USDT": "10000"
+     }
+    },
+    "event_log": {
+     "count": 5,
+     "name": "events.jsonl",
+     "sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "execution": {
+     "decision_blockers": [
+      "impact for okx is ASSUMED, not calibrated"
+     ],
+     "decision_grade": "no",
+     "decision_grade_waivers": []
+    },
+    "execution_ok": true,
+    "fill_model": "conservative",
+    "limitations": [
+     "scan snapshots only"
+    ],
+    "mode": "ir_strategy",
+    "not_applicable_metrics": [
+     "win_rate"
+    ],
+    "optimistic": {
+     "amounts": {
+      "close_now": "-0.4",
+      "fees": "0.2",
+      "funding": "0",
+      "fx_revaluation": "0",
+      "open_value": "0",
+      "price_pnl": "-0.2",
+      "realized": "-0.4"
+     },
+     "events_sha256": "abababababababababababababababababababababababababababababababab",
+     "fill_model": "top_of_book"
+    },
+    "problems": [],
+    "run_id": "run-1",
+    "schema": "alphakeel.result/1",
+    "side": "alphakeel_engine",
+    "verification": {
+     "engine_recount": "matched",
+     "external_python": "not_applicable",
+     "native_rule_ledger": "not_applicable"
+    }
+   },
+   "errors": [
+    "schema.type"
+   ],
+   "kind": "result",
+   "name": "result: execution decision grade must be a boolean",
+   "path": "/execution/decision_grade",
+   "valid": false
+  },
+  {
+   "doc": {
+    "account": {
+     "currencies": [
+      "USDT",
+      "USDC"
+     ],
+     "leverage_perp": "3",
+     "leverage_spot": "1",
+     "liquidation": "conservative_tiered_margin",
+     "margin_mode": "per_venue_margin",
+     "position_mode": "hedging",
+     "same_instant_margin": "cumulative_initial_margin",
+     "starting_balance_per_venue": "10000"
+    },
+    "decision_clock": {
+     "history_len": 0,
+     "kind": "scan"
+    },
+    "end_of_run": {
+     "open_positions": "valued_close_now_not_closed"
+    },
+    "engine": "NautilusTrader nautilus-backtest 0.64.0 (Rust, high-precision)",
+    "event_order": {
+     "same_time": [
+      "quote",
+      "mark",
+      "funding_rate",
+      "submit",
+      "fill",
+      "valuation"
+     ],
+     "tie_ns": true
+    },
+    "fees": {
+     "maker": "same_as_taker",
+     "model": "taker_rate_per_venue_market",
+     "rounding": "currency_min_unit_1e-8_per_fill",
+     "table_sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "funding": {
+     "boundary_match": "nearest-within-60s-unique-v1",
+     "mode": "official_settlement",
+     "notional": "abs_qty_times_settlement_price",
+     "rounding": "currency_min_unit_1e-8",
+     "settlement_price": "official_mark_when_published_else_last_frame_mark",
+     "sign": "long_pays_when_rate_positive",
+     "strict": true
+    },
+    "fx": {
+     "end_value": "last_known_rate",
+     "fill_time": "rate_at_fill_scan",
+     "pair": "USDC/USDT",
+     "realized": "rate_at_close_scan",
+     "source": "scan_mid_of_usdc_usdt_spot"
+    },
+    "initial_state": {
+     "cash": "starting_balance_per_venue_and_currency",
+     "positions": "flat"
+    },
+    "matching": {
+     "depth": "not_modeled",
+     "impact": "not_modeled",
+     "lot_step": "not_modeled",
+     "min_notional": "not_modeled",
+     "model": "top_of_book_ioc",
+     "order_types": [
+      "limit_ioc",
+      "market"
+     ],
+     "queue": "not_modeled",
+     "quote_size": "30000000000000",
+     "reduce_only": true,
+     "submit_after_decision_ns": 1,
+     "valuation_after_decision_ns": 2
+    },
+    "precision": {
+     "money_unit": "1e-8",
+     "price": "inferred_from_data_max16",
+     "price_rounding": "buy_up_sell_down",
+     "quantity_rounding": "toward_zero_f64_stable",
+     "size": "inferred_from_intents_max16"
+    },
+    "profile_id": "ak-top-of-book-ioc-taker-v2",
+    "sampling": {
+     "drawdown": "close_now_from_zero_peak",
+     "valuation": "each_scan"
+    },
+    "schema": "alphakeel.execution-profile/1",
+    "unsupported": [
+     "order-book depth",
+     "queue position",
+     "market impact",
+     "borrowing",
+     "liquidation"
+    ],
+    "warmup": {
+     "frames": 0,
+     "trades_allowed": false
+    }
+   },
+   "kind": "execution-profile",
+   "name": "profile: liquidation modelled under the conservative fill (optional, 2026-10-12)",
+   "valid": true
+  },
+  {
+   "doc": {
+    "amounts": {
+     "close_now": "-0.4",
+     "fees": "0.2",
+     "funding": "0",
+     "fx_revaluation": "0",
      "open_value": "0",
      "price_pnl": "-0.2",
      "realized": -0.4

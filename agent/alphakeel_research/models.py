@@ -259,6 +259,7 @@ class ExecutionProfileAccountLeverageSpot(StrEnum):
 
 class ExecutionProfileAccountLiquidation(StrEnum):
     disabled = "disabled"
+    conservative_tiered_margin = "conservative_tiered_margin"
 
 
 class ExecutionProfileAccountMarginMode(StrEnum):
@@ -574,6 +575,7 @@ class ResultAmounts(BaseModel):
     fees: Dec
     funding: Dec
     fx_revaluation: Dec | None
+    liquidation_penalty: Dec | None = None
     net_of_capital_cost: Dec | None = None
     open_value: Dec | None
     price_pnl: Dec
@@ -1379,6 +1381,32 @@ class ResultEventLog(BaseModel):
     sha256: Sha256
 
 
+class ResultExecution(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    decision_blockers: Annotated[
+        list[Text],
+        Field(
+            description="Every decision blocker, worded exactly as the console's fidelity result block words it (margin tiers that are a proxy\nor the unverified venue-wide table, a single assumed depth level, the minute-level stop/liquidation check that cannot\nrun, impact parameters that are assumed). Empty = nothing blocks.",
+            max_length=40,
+        ),
+    ]
+    decision_grade: Annotated[
+        bool,
+        Field(
+            description="True when every decision blocker is waived (`profile.decision_grade_waivers`); false otherwise."
+        ),
+    ]
+    decision_grade_waivers: Annotated[
+        list[Text],
+        Field(
+            description="The blockers the request waived explicitly (`profile.decision_grade_waivers`, exact text). Default empty.",
+            max_length=40,
+        ),
+    ]
+
+
 class RunManifestOutputs(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1729,6 +1757,7 @@ class RunResult(BaseModel):
     drawdown: ResultDrawdown
     equity: ResultEquity
     event_log: ResultEventLog
+    execution: ResultExecution | None = None
     execution_ok: bool | None
     fill_model: ResultFillModel | None = None
     limitations: Annotated[list[Text], Field(max_length=40)]
@@ -1744,7 +1773,7 @@ class RunResult(BaseModel):
     run_assumptions: Annotated[
         dict[str, Any] | None,
         Field(
-            description="Optional (2026-10-11), `ir_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`, and since protocol 2.3 `fees_perp_taker` (venue ->\nperp taker the run actually used), `leverage_perp`, `funding_mode`). The AlphaKeel verdict reads it (items 1.14 and the\nbinding of the robustness evidence). Only runs of the service's own engine carry it: a registered external run\n(`POST /runs/external`) that includes `run_assumptions`, `fill_model`, `capital_cost` or `optimistic` is refused."
+            description="Optional (2026-10-11), `ir_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`, and since protocol 2.3 `fees_perp_taker` (venue ->\nperp taker the run actually used), `leverage_perp`, `funding_mode`; since 2026-10-12 `decision_grade_waivers`). The AlphaKeel verdict reads it (items 1.14 and the\nbinding of the robustness evidence). Only runs of the service's own engine carry it: a registered external run\n(`POST /runs/external`) that includes `run_assumptions`, `fill_model`, `capital_cost`, `optimistic` or `execution` is refused."
         ),
     ] = None
     run_id: Id

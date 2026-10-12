@@ -2085,7 +2085,8 @@
       },
       "ExecutionProfileAccountLiquidation": {
         "enum": [
-          "disabled"
+          "disabled",
+          "conservative_tiered_margin"
         ],
         "type": "string"
       },
@@ -3318,6 +3319,17 @@
               }
             ]
           },
+          "liquidation_penalty": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Dec",
+                "description": "Optional (2026-10-12), conservative `ir_strategy` runs only: the margin the venues keep from liquidated legs (USDT,\nisolated: what is left of the isolated margin; cross: liquidated notional x maintenance rate). Already deducted from\n`close_now`, `daily_equity` and `drawdown` (the realized / open-value split stays the engine's own account)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "net_of_capital_cost": {
             "oneOf": [
               {
@@ -3479,6 +3491,38 @@
           "name",
           "sha256",
           "count"
+        ],
+        "type": "object"
+      },
+      "ResultExecution": {
+        "additionalProperties": false,
+        "description": "Optional (2026-10-12), conservative `ir_strategy` runs only: whether the run is decision-grade under the execution model.",
+        "properties": {
+          "decision_blockers": {
+            "description": "Every decision blocker, worded exactly as the console's fidelity result block words it (margin tiers that are a proxy\nor the unverified venue-wide table, a single assumed depth level, the minute-level stop/liquidation check that cannot\nrun, impact parameters that are assumed). Empty = nothing blocks.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "maxItems": 40,
+            "type": "array"
+          },
+          "decision_grade": {
+            "description": "True when every decision blocker is waived (`profile.decision_grade_waivers`); false otherwise.",
+            "type": "boolean"
+          },
+          "decision_grade_waivers": {
+            "description": "The blockers the request waived explicitly (`profile.decision_grade_waivers`, exact text). Default empty.",
+            "items": {
+              "$ref": "#/components/schemas/Text"
+            },
+            "maxItems": 40,
+            "type": "array"
+          }
+        },
+        "required": [
+          "decision_grade",
+          "decision_blockers",
+          "decision_grade_waivers"
         ],
         "type": "object"
       },
@@ -3858,6 +3902,17 @@
           "event_log": {
             "$ref": "#/components/schemas/ResultEventLog"
           },
+          "execution": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ResultExecution",
+                "description": "Optional (2026-10-12), conservative `ir_strategy` runs only: decision grade and decision blockers of the execution\nmodel (the same judgement as the console's fidelity result). Server-only, like `run_assumptions`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "execution_ok": {
             "type": [
               "boolean",
@@ -3904,7 +3959,7 @@
             "type": "array"
           },
           "run_assumptions": {
-            "description": "Optional (2026-10-11), `ir_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`, and since protocol 2.3 `fees_perp_taker` (venue ->\nperp taker the run actually used), `leverage_perp`, `funding_mode`). The AlphaKeel verdict reads it (items 1.14 and the\nbinding of the robustness evidence). Only runs of the service's own engine carry it: a registered external run\n(`POST /runs/external`) that includes `run_assumptions`, `fill_model`, `capital_cost` or `optimistic` is refused.",
+            "description": "Optional (2026-10-11), `ir_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`, and since protocol 2.3 `fees_perp_taker` (venue ->\nperp taker the run actually used), `leverage_perp`, `funding_mode`; since 2026-10-12 `decision_grade_waivers`). The AlphaKeel verdict reads it (items 1.14 and the\nbinding of the robustness evidence). Only runs of the service's own engine carry it: a registered external run\n(`POST /runs/external`) that includes `run_assumptions`, `fill_model`, `capital_cost`, `optimistic` or `execution` is refused.",
             "type": "object"
           },
           "run_id": {
