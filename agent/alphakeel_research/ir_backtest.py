@@ -17,8 +17,8 @@ both legs the same qty, named ``n<trade>-<L|S>-<open|close>`` / ``pair-<trade>``
 ``Sim`` conventions (stated in the run card): fills are complete and immediate at the frame's touch (long opens buy at the
 ask, short opens sell at the bid, closes the other side); a taker fee ``q8(qty * price * taker_fee)`` per fill; funding at
 each official settlement time ``t`` on every open position of that contract: ``q8(qty * mark * rate)`` paid by longs and
-received by shorts for a positive rate (``sim.py``'s sign), ``mark`` = close of the last 1m bar closed at or before ``t``
-(the settlement's own mark price when no bar is there); ``q8`` = half-even to 1e-8. No margin, leverage, liquidation,
+received by shorts for a positive rate (``sim.py``'s sign), ``mark`` = the settlement's own published mark price (AlphaKeel
+F04), else the close of the last 1m bar closed at or before ``t`` (``ir_views.settlement_price``); ``q8`` = half-even to 1e-8. No margin, leverage, liquidation,
 partial fills, latency or funding of spot legs. Equity = realized + every open pair valued close-now (§5a ``net_now``
 formula at the touch; a leg without a quote this instant at its last close). Amounts are in the legs' quote currency:
 only ``USDT`` is accepted (no FX model).
@@ -56,7 +56,7 @@ UNIT = Decimal("0.00000001")
 APPROXIMATIONS = [
     "touch: bid = ask = close of the last 1m trade bar closed at the decision time (close_time_ms <= now); spread 0",
     "bbo = true is synthetic (no order book in the dataset); price_estimated is false by construction",
-    "mark / funding_px = that close (no mark or index series)",
+    "mark / funding_px in the decision frame = that close (no mark or index series)",
     "funding_rate = the last official settlement visible at the decision time (available_at, or settlement time + the pack's "
     "assumed delay): a last_settled proxy for the predicted rate live scans use; the IR's assumptions.funding_estimate is unchanged",
     "interval_hours from that settlement's interval_seconds; when the dataset leaves it null (Binance/OKX/Bybit/Bitget/Gate/"
@@ -64,8 +64,9 @@ APPROXIMATIONS = [
     "or 8 h within 60 s (timestamps jitter by milliseconds) (perps with neither are left out; after an interval change the inference lags one settlement); "
     "next_funding_ms = settlement time + interval",
     "volume_quote = sum of volume_quote over the 1440 bars of the 24 h ending with the last closed bar (null unless all 1440 exist)",
-    "a funding settlement on an open leg with no 1m bar in the 5 minutes before it and no mark price in the settlement row "
-    "is NOT booked (counts.funding_unpriced); a leg that stops trading is valued at its last close (stale) and cannot exit",
+    "a funding settlement on an open leg is booked at the settlement row's published mark price (AlphaKeel F04); without one "
+    "at the close of the last 1m bar in the 5 minutes before it; with neither it is NOT booked (counts.funding_unpriced); "
+    "a leg that stops trading is valued at its last close (stale) and cannot exit",
     f"a leg whose last closed bar is older than {ir_views.DATASET_MAX_BAR_AGE_MS // MINUTE_MS} minutes is not in the frame",
     "base / quote_ccy from the pack's instruments table, or from the declared instrument when the dataset pack leaves them null",
 ]
@@ -73,7 +74,8 @@ SIM_CONVENTIONS = {
     "fills": "complete and immediate at the frame's touch (long open buys the ask, short open sells the bid, closes the other side)",
     "fee": "q8(qty * price * taker_fee) per fill, taker_fee from the view's fee table",
     "funding": "at each official settlement time t on open positions of that contract: q8(qty * mark * rate), paid by longs and "
-               "received by shorts for a positive rate; mark = close of the last 1m bar closed at or before t (else the settlement's mark)",
+               "received by shorts for a positive rate; mark = the settlement's published mark price (AlphaKeel F04), else the close "
+               "of the last 1m bar closed at or before t (within 5 minutes)",
     "rounding": "q8 = half-even to 1e-8; quantity half-even to 8 places (README §5a); the trade's executed quantity is that "
                 "quantity truncated toward zero to the decimals AlphaKeel's engine can hold exactly (README §5a engine precision: a "
                 "contract's largest position x 10^dp <= 2^43); decisions (net_now) use the IR quantity, fills, fees, funding and "
@@ -622,8 +624,9 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                     continue
                 cursor.advance(st)
                 b = cursor.bars[inst].last
-                mark = b[2] if b is not None and st - b[1] <= ir_views.DATASET_MAX_BAR_AGE_MS else None
-                sim.settle(inst, s.rate, mark if mark is not None else s.mark)
+                # F04: the settlement's published mark, else the last 1m close within DATASET_MAX_BAR_AGE_MS before it
+                sim.settle(inst, s.rate, ir_views.settlement_price(
+                    s.mark, lambda: b[2] if b is not None and st - b[1] <= ir_views.DATASET_MAX_BAR_AGE_MS else None))
             last_settled_t = t_incl if last_settled_t is None else max(last_settled_t, t_incl)
 
         def equity_point(t: int, touch: dict) -> None:

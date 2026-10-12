@@ -13,8 +13,8 @@ and event log, and compares trade by trade:
 
 Amounts must agree to ``TOLERANCE`` per amount (both sides round each amount to 1e-8). A difference is a finding, not a
 failure to hide: the report lists the first ones. The engine fills IOC at the synthetic touch, so on this view the two
-sides should agree exactly; known structural differences (the engine marks funding at the last FRAME's price, the
-simulator at the last 1m bar's close -- equal when frames sit on the settlement grid) are stated in the report.
+sides should agree exactly. Funding is priced by one rule on both sides (the settlement's published mark, AlphaKeel F04);
+the known structural differences are stated in the report (``NOTES``).
 """
 
 from __future__ import annotations
@@ -33,8 +33,10 @@ SCHEMA = "vibe-trading.ir-crosscheck/1"
 TOLERANCE = Decimal("0.00000002")
 NOTES = [
     "both sides use the kline_close_synthetic_bbo view on the same frozen dataset pack: same input, independent code",
-    "AlphaKeel marks a funding settlement at the last frame's mark at or before it; the simulator at the last 1m bar's "
-    "close; they are the same price when decision frames sit on the settlement grid (start aligned, step divides the interval)",
+    "funding settlements are booked at the settlement row's published mark price on both sides (AlphaKeel F04, docs/37 "
+    "'settlement notional price'; ir_views.settlement_price); only a row without one falls back to the last price at or "
+    "before it (AlphaKeel: the last frame's mark; the simulator: the last 1m close within 5 minutes), the same price when "
+    "decision frames sit on the settlement grid (start aligned, step divides the interval)",
     "the engine checks same-instant cumulative initial margin (profile leverage) and may refuse an entry the simulator, "
     "which models no margin, makes: AlphaKeel then voids that entry (no position, no cooldown, its number skipped; "
     "Strategy IR README §5a) and the trade appears on the simulator's side only",

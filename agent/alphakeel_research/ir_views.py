@@ -10,6 +10,7 @@ Pure apart from reading the ``Pit``; standard library only (imported inside the 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any
 
@@ -209,6 +210,20 @@ KLINE_SPAN_MS = 59_999
 #: settlement gaps accepted as a contract's interval when the dataset does not state it (seconds)
 INFERABLE_INTERVALS = (3600, 7200, 14400, 28800)
 _MIN_MS = 60_000
+
+
+def settlement_price(official_mark: Decimal | None, last_seen: Callable[[], Decimal | None],
+                     price_dp: int | None = None) -> Decimal | None:
+    """The price a funding settlement is booked at (AlphaKeel F04: its engine and event ledger use the same rule).
+
+    The settlement's own published mark when it has one; otherwise ``last_seen()``, the last price observed at or before
+    the settlement (``None``: unpriced, the caller counts it). Rounded half-even to ``price_dp`` decimals when given
+    (AlphaKeel ``round_official_mark``: the engine holds prices at the contract's price precision). The one rule for
+    ``sim.Simulator._settle`` (scan packs) and ``ir_backtest`` (dataset packs)."""
+    px = official_mark if official_mark is not None else last_seen()
+    if px is None or price_dp is None:
+        return px
+    return px.quantize(Decimal(1).scaleb(-price_dp), rounding=ROUND_HALF_EVEN)
 
 
 def default_fees() -> dict:

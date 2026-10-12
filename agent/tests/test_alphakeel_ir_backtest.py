@@ -153,12 +153,13 @@ def p_ok(t):
     return "100.5" if t >= START + 40 * MIN else "100.2"
 
 
-def golden_built(**kw):
+def golden_built(*, bn_mark=None, **kw):
+    """``bn_mark``: the published mark price of Binance's START+30m settlement (none in the golden market)."""
     kl = {("binance", "BTCUSDT"): bars("BTCUSDT", p_bn), ("okx", "BTC-USDT-SWAP"): bars("BTC-USDT-SWAP", p_ok)}
     st = {"binance": [settle("binance:linear:USDT:BTCUSDT", START - 8 * 3_600_000, "-0.0001"),
-                      settle("binance:linear:USDT:BTCUSDT", START + 30 * MIN, "0.0001")],
+                      settle("binance:linear:USDT:BTCUSDT", START + 30 * MIN, "0.0001", mark=bn_mark)],
           "okx": [settle("okx:linear:USDT:BTC-USDT-SWAP", START - 8 * 3_600_000, "0.0003"),
-                  settle("okx:linear:USDT:BTC-USDT-SWAP", START + 30 * MIN, "0.0002", mark="999")]}
+                  settle("okx:linear:USDT:BTC-USDT-SWAP", START + 30 * MIN, "0.0002")]}
     return build([BN, OK], kl, st, **kw)
 
 
@@ -386,8 +387,7 @@ def test_simulator_golden_one_pair_one_settlement_one_close(tmp_path):
     """Hand calculation (notional 1000 per leg, taker 0.0005):
     entry at START: long Binance at its ask 100 -> qty 1000/100 = 10; short OKX sells at its bid 100.2
       fees 10 x 100 x 0.0005 = 0.5 and 10 x 100.2 x 0.0005 = 0.501
-    settlement at START+30m (both venues): mark = close of the last bar closed by then (100 / 100.2; OKX's own settlement
-      mark 999 is NOT used while a bar is there)
+    settlement at START+30m (both venues, no published mark): mark = close of the last bar closed by then (100 / 100.2)
       long pays 10 x 100 x 0.0001 = 0.1; short receives 10 x 100.2 x 0.0002 = 0.2004
     max_hold (1 h) at START+60m, both legs quoted: long sells at 101 (+10), short buys at 100.5 (-3)
       fees 10 x 101 x 0.0005 = 0.505 and 10 x 100.5 x 0.0005 = 0.5025
@@ -415,6 +415,37 @@ def test_simulator_golden_one_pair_one_settlement_one_close(tmp_path):
     assert eq[0]["equity"] == "-2.002"  # close-now right after entry: entry fees 0.5 + 0.501, exit fees at the touch the same (spread 0)
     assert eq[-1]["equity"] == "5.0919"
     assert Decimal(card["max_drawdown"]["amount"]) >= 0
+
+
+def test_dataset_sim_prices_funding_at_the_official_mark_when_published(tmp_path):
+    """AlphaKeel F04 (docs/37): a settlement row's published mark wins over the last 1m close. The golden run with Binance's
+    START+30m settlement publishing mark 100.7 (its last close is 100): the long pays 10 x 100.7 x 0.0001 = 0.1007 instead of
+    0.1; OKX publishes none and stays at its close (receives 0.2004). funding = 0.0997, realized = 7 + 0.0997 - 2.0085."""
+    pack = Pack.from_directory(export_dir(tmp_path, golden_built(bn_mark="100.7")))
+    out = tmp_path / "bt"
+    card = ir_backtest.run(golden_ir(), pack, [BN, OK], start_ms=START, end_ms=END, out_dir=out, step_minutes=2,
+                           fees={"binance": {"perp": "0.0005"}, "okx": {"perp": "0.0005"}})
+    t = json.loads((out / "trades.jsonl").read_text().splitlines()[0])
+    assert (t["long"]["funding"], t["short"]["funding"]) == ("-0.1007", "0.2004")
+    assert card["amounts"]["funding"] == "0.0997" and card["amounts"]["realized"] == "5.0912"
+    assert card["counts"]["funding_events"] == 2 and card["counts"]["funding_unpriced"] == 0
+    assert "published mark" in card["simulator"]["funding"]
+    # the one rule both simulators share
+    assert ir_views.settlement_price(Decimal("100.7"), lambda: Decimal("100")) == Decimal("100.7")
+    assert ir_views.settlement_price(None, lambda: Decimal("100")) == Decimal("100")
+    assert ir_views.settlement_price(None, lambda: None) is None
+    assert ir_views.settlement_price(Decimal("100.123456"), lambda: None, 2) == Decimal("100.12")
+
+
+def test_crosscheck_notes_cite_no_funding_price_difference():
+    """The pre-F04 note ("AlphaKeel marks a funding settlement at the last frame's mark ...") is gone: with a published mark
+    both sides use it; only the fallback for rows without one is described."""
+    from alphakeel_research import ir_crosscheck as X
+
+    funding = [n for n in X.NOTES if "funding" in n]
+    assert funding and all("published mark" in n for n in funding)
+    assert not any(n.startswith("AlphaKeel marks a funding settlement") for n in X.NOTES)
+    assert "last FRAME" not in (X.__doc__ or "")
 
 
 def test_ir_backtest_cli_end_to_end_on_an_exported_pack_writes_the_run_card(tmp_path):

@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_EVEN, Decimal
 from typing import Callable
 
-from . import contract
+from . import contract, ir_views
 from .errors import ApiError, Unsupported
 from .packfile import Inst, Pack
 
@@ -771,19 +771,20 @@ class Simulator:
     # ------------------------------------------------------------------ funding
 
     def _settle(self, inst: Inst, b: int, rate: Decimal, *, last_mark_at, k: int) -> None:
-        """Funding at boundary ``b`` for every open position of ``inst`` (price: last mark seen at or before b)."""
-        mk = self._official_mark(inst, b) if self.official and self.fed_official.get((inst.leg(), b), False) else None
-        # last mark at or before b: frame data up to and including b (the settlement's published mark, when present, wins)
-        kk = max(0, k if last_mark_at is self.frames[k] else k - 1)
-        for j in range(kk, -1, -1):
-            if mk is not None:
-                break
-            if self.frames[j].t <= b and inst in self.snaps[j]:
-                mk = self.snaps[j][inst].mark
-                break
+        """Funding at boundary ``b`` for every open position of ``inst`` (price: ``ir_views.settlement_price``)."""
+        official_mark = self._official_mark(inst, b) if self.official and self.fed_official.get((inst.leg(), b), False) else None
+
+        def last_seen() -> Decimal | None:
+            # last mark at or before b: frame data up to and including b
+            kk = max(0, k if last_mark_at is self.frames[k] else k - 1)
+            for j in range(kk, -1, -1):
+                if self.frames[j].t <= b and inst in self.snaps[j]:
+                    return self.snaps[j][inst].mark
+            return None
+
+        mk = ir_views.settlement_price(official_mark, last_seen, self.price_dp[inst])
         if mk is None:
             return
-        mk = mk.quantize(Decimal(1).scaleb(-self.price_dp[inst]), rounding=ROUND_HALF_EVEN)
         for ref, p in sorted(self.pos.items()):
             if p.inst != inst or p.net == 0:
                 continue
