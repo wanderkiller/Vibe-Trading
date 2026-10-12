@@ -35,6 +35,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `run-card-data-audit` | run_card | local-only as written; a generic provenance hook is upstreamable |
 | `alphakeel-handoff` | api_server (one hook), RunDetail (one import, one element), api.ts (one `export`) | local-only (follows the leaf package) |
 | `packaging-docs` | pyproject, SKILL.md, READMEs, .gitignore, .env.example | local-only |
+| `ci-env-gate` | alpha_routes (one line) | upstreamable: upstream's own gate e fails on it |
 
 ---
 
@@ -79,6 +80,7 @@ documents the build, backup and upgrade rules.
 - `docker-compose.override.yml`
 - `requirements-local-providers-lock.txt`
 - `DEPLOYMENT.local.md`
+- `tools/deploy-vt.sh`
 
 **Commits.** `8cfc14f0` (Dockerfile.local, compose override, DEPLOYMENT.local.md), `e0245ca9` (AlphaKeel paragraph in
 DEPLOYMENT.local.md), merge `98e8248e` (`requirements-local-providers-lock.txt` exists only in that merge), and
@@ -99,6 +101,8 @@ The `langchain-core==1.6.1` anchor fails when upstream moves that pin; then the 
 - hook `docker-compose.override.yml`: `ALPHAKEEL_HANDOFF_DIR: /home/vibe/handoff` — the hand-off bind mount and its two variables
 - upstream `requirements-lock.txt`: `langchain-core==1.6.1 \` — the overlay's langchain-core 1.6.3 pin replaces exactly this base pin; a change means regenerating the overlay
 - hook `requirements-local-providers-lock.txt`: `langchain-anthropic==1.7.2`
+- hook `tools/deploy-vt.sh`: `refuse pairing "contract/PIN differs from $AK_PIN"` — the release gate (audit 2026-10-12 D6-1): CI success on the exact commit, commit = AlphaKeel `ci/vibe-trading.ref`, PIN = `ci/vibe-trading.pin`, backup, health + `contract_pin: matched`, rollback; log in `deploy-log.jsonl`
+- hook `DEPLOYMENT.local.md`: `tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref`
 
 ## `leaf-package` — AlphaKeel research client
 
@@ -469,6 +473,7 @@ the `loaders/` tree line.
 - hook `.gitignore`: `agent/alphakeel_research/*.egg-info/`
 - upstream `.gitignore`: `# Agent tool aliases (auto-generated mirror of CLAUDE.md)`
 - hook `.gitignore`: `!AGENTS.md`
+- hook `.gitignore`: `/deploy-log.jsonl` — written by `tools/deploy-vt.sh` (group `local-deploy`)
 - upstream `agent/.env.example`: `# ETORO_USER_KEY=your_user_key`
 - hook `agent/.env.example`: `# ALPHAKEEL_RESEARCH_URL=`
 - upstream `README.md`: `` regex (?m)^\| `local` \| `` — source-table row the alphakeel rows follow
@@ -485,3 +490,28 @@ the `loaders/` tree line.
 - hook `README_ko.md`: `` | `alphakeel_pack` | ``
 - upstream `README_zh.md`: `` regex (?m)^\| `local` \| `` — source-table row the alphakeel rows follow
 - hook `README_zh.md`: `` | `alphakeel_pack` | ``
+
+## `ci-env-gate` — repository safety gate e
+
+**Purpose.** Upstream's CI step "Repository safety gates" (`tools/ci_grep_gates.sh`, gate e = `tools/ci_env_var_gate.py`)
+rejects any raw `os.getenv`/`os.environ` read outside `agent/src/config/`; the job stops there and the test suite never
+runs (audit 2026-10-12 D6-1: every production commit 10-05..10-12 was red at this step). Upstream's own
+`/alpha/readiness` read `TUSHARE_TOKEN` raw; it now reads the typed field `get_env_config().data.tushare_token`
+(the mechanism `src/preflight.py` uses). The patch layer's own reads (`alphakeel_handoff_routes.py`,
+`alphakeel_research_tool.py`) go through `src.config.accessor.get_env_value`, like `alphakeel_universe.py`.
+
+**Files.**
+- `agent/src/api/alpha_routes.py`
+
+**Commits.** The 2026-10-12 e2e lane commit "ci: route environment reads through the config layer".
+
+**Upstreamable.** Yes: the readiness line is a defect against upstream's own gate.
+
+**Anchors.**
+- upstream `tools/ci_env_var_gate.py`: `ALLOWED_PREFIX: str = "agent/src/config/"`
+- upstream `tools/ci_grep_gates.sh`: `E_OUTPUT=$(python tools/ci_env_var_gate.py 2>&1)`
+- upstream `agent/src/config/accessor.py`: `def get_env_config() -> EnvConfig:`
+- upstream `agent/src/config/env_schema.py`: `tushare_token: str = Field(alias="TUSHARE_TOKEN", default="")`
+- upstream `agent/src/api/alpha_routes.py`: `async def alpha_readiness():`
+- hook `agent/src/api/alpha_routes.py`: `configured = bool(get_env_config().data.tushare_token)`
+- preimage `agent/src/api/alpha_routes.py`: `configured = bool(os.getenv("TUSHARE_TOKEN"))`

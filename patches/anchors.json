@@ -65,7 +65,8 @@
     "Dockerfile.local",
     "docker-compose.override.yml",
     "requirements-local-providers-lock.txt",
-    "DEPLOYMENT.local.md"
+    "DEPLOYMENT.local.md",
+    "tools/deploy-vt.sh"
    ],
    "anchors": [
     {
@@ -123,6 +124,16 @@
      "file": "docker-compose.override.yml",
      "kind": "hook",
      "literal": "ALPHAKEEL_HANDOFF_DIR: /home/vibe/handoff"
+    },
+    {
+     "file": "tools/deploy-vt.sh",
+     "kind": "hook",
+     "literal": "refuse pairing \"contract/PIN differs from $AK_PIN\""
+    },
+    {
+     "file": "DEPLOYMENT.local.md",
+     "kind": "hook",
+     "literal": "tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref"
     }
    ]
   },
@@ -1052,6 +1063,55 @@
      "file": ".gitignore",
      "kind": "hook",
      "literal": "!AGENTS.md"
+    },
+    {
+     "file": ".gitignore",
+     "kind": "hook",
+     "literal": "/deploy-log.jsonl"
+    }
+   ]
+  },
+  {
+   "id": "ci-env-gate",
+   "title": "Repository safety gate e: environment reads through the config layer",
+   "files": [
+    "agent/src/api/alpha_routes.py"
+   ],
+   "anchors": [
+    {
+     "file": "tools/ci_env_var_gate.py",
+     "kind": "upstream",
+     "literal": "ALLOWED_PREFIX: str = \"agent/src/config/\""
+    },
+    {
+     "file": "tools/ci_grep_gates.sh",
+     "kind": "upstream",
+     "literal": "E_OUTPUT=$(python tools/ci_env_var_gate.py 2>&1)"
+    },
+    {
+     "file": "agent/src/config/accessor.py",
+     "kind": "upstream",
+     "literal": "def get_env_config() -> EnvConfig:"
+    },
+    {
+     "file": "agent/src/config/env_schema.py",
+     "kind": "upstream",
+     "literal": "tushare_token: str = Field(alias=\"TUSHARE_TOKEN\", default=\"\")"
+    },
+    {
+     "file": "agent/src/api/alpha_routes.py",
+     "kind": "upstream",
+     "literal": "async def alpha_readiness():"
+    },
+    {
+     "file": "agent/src/api/alpha_routes.py",
+     "kind": "hook",
+     "literal": "configured = bool(get_env_config().data.tushare_token)"
+    },
+    {
+     "file": "agent/src/api/alpha_routes.py",
+     "kind": "preimage",
+     "literal": "configured = bool(os.getenv(\"TUSHARE_TOKEN\"))"
     }
    ]
   }

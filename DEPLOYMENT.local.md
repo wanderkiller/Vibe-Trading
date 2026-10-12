@@ -22,13 +22,24 @@ The Docker user home and its configuration are retained by the vibe-home
 volume. Environment files, credentials, transcripts, and runtime data are not
 included in the repository.
 
-Build and start the configured service:
+Build and start the configured service only through `tools/deploy-vt.sh` (and only with the user's explicit
+go-ahead), from this checkout with the commit to deploy checked out:
 
 ```bash
-docker compose config --quiet
-docker compose build vibe-trading
-docker compose up -d --no-build --no-deps vibe-trading
+tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref   # --ak-pin defaults to ci/vibe-trading.pin next to it
 ```
+
+It refuses (exit 1, nothing touched) unless the checkout is clean, GitHub workflow `CI` succeeded on exactly this commit,
+the commit equals AlphaKeel's `ci/vibe-trading.ref` and `agent/alphakeel_research/contract/PIN` equals AlphaKeel's
+`ci/vibe-trading.pin`. It then builds the new image while the old container serves, keeps the old image as
+`vibe-trading-rollback:<ts>`, copies `agent/.env` and archives every named volume (service stopped) into
+`~/vibe-trading-backups/<ts>/`, starts the new image, and requires `/health` plus `python -m alphakeel_research check`
+in the container to report `contract_pin: matched`; on failure it re-tags the rollback image and recreates the old
+container. Every attempt appends one JSON line (sha, step, status, old/new image id, PIN digest, backup dir) to
+`deploy-log.jsonl` next to this file (git-ignored). When the contract PIN changed, deploy AlphaKeel first: the
+in-container check talks to the running research service. Manual rollback to an earlier deployment:
+`docker tag vibe-trading-rollback:<ts> "$(docker compose config --images vibe-trading)"` then
+`docker compose up -d --no-build --no-deps vibe-trading`.
 
 Back up the existing image, environment files, and named volumes before
 upgrading. Stop the service while archiving its volumes to preserve a consistent

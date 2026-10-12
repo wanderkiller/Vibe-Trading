@@ -16,6 +16,7 @@ import tempfile
 from typing import Any
 
 from src.agent.tools import BaseTool
+from src.config.accessor import get_env_value
 
 _ACTIONS = ("check", "freeze", "read", "review", "policy", "native", "compare", "ir_validate", "ir_review", "ir_backtest", "ir_robustness", "ir_crosscheck", "ir_export")
 #: ``read`` tables: scan packs have quotes/observations/settlements; dataset packs have klines/bbo/instrument_meta (and settlements).
@@ -32,7 +33,7 @@ _HANDOFF_DEFAULT = "/home/vibe/handoff"
 
 
 def _handoff_dir() -> str:
-    return os.environ.get("ALPHAKEEL_HANDOFF_DIR") or _HANDOFF_DEFAULT
+    return get_env_value("ALPHAKEEL_HANDOFF_DIR") or _HANDOFF_DEFAULT
 
 
 def _under_handoff(path: str) -> bool:

@@ -27,6 +27,8 @@ from typing import Any, Awaitable, Callable
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
+from src.config.accessor import get_env_value
+
 AuthDep = Callable[..., Awaitable[Any] | Any]
 
 DEFAULT_HANDOFF_DIR = "/home/vibe/handoff"
@@ -37,12 +39,12 @@ SID_RE = r"^ir-[0-9a-f]{24}$"
 
 def handoff_dir() -> Path:
     """Where exports land, as the container sees it (``ALPHAKEEL_HANDOFF_DIR``)."""
-    return Path(os.environ.get("ALPHAKEEL_HANDOFF_DIR") or DEFAULT_HANDOFF_DIR)
+    return Path(get_env_value("ALPHAKEEL_HANDOFF_DIR") or DEFAULT_HANDOFF_DIR)
 
 
 def handoff_host_dir() -> str:
     """The same directory on the host (``ALPHAKEEL_HANDOFF_HOST_DIR``), shown to the user; never opened here."""
-    return os.environ.get("ALPHAKEEL_HANDOFF_HOST_DIR") or DEFAULT_HANDOFF_HOST_DIR
+    return get_env_value("ALPHAKEEL_HANDOFF_HOST_DIR") or DEFAULT_HANDOFF_HOST_DIR
 
 
 def _client_cls():
@@ -53,7 +55,7 @@ def _client_cls():
 
 
 def credential_configured() -> bool:
-    f = os.environ.get("ALPHAKEEL_RESEARCH_TOKEN_FILE")
+    f = get_env_value("ALPHAKEEL_RESEARCH_TOKEN_FILE")
     return bool(f) and os.path.isfile(f) and os.access(f, os.R_OK)
 
 

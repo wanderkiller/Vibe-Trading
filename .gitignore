@@ -181,3 +181,6 @@ agent/tests/artifacts/
 # AlphaKeel research client build artifacts
 agent/alphakeel_research/*.egg-info/
 agent/alphakeel_research/build/
+
+# Production deploy log written by tools/deploy-vt.sh (local patch layer, group local-deploy)
+/deploy-log.jsonl
