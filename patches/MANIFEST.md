@@ -492,6 +492,7 @@ the `loaders/` tree line.
 - upstream `.gitignore`: `# Agent tool aliases (auto-generated mirror of CLAUDE.md)`
 - hook `.gitignore`: `!AGENTS.md`
 - hook `.gitignore`: `/deploy-log.jsonl` — written by `tools/deploy-vt.sh` (group `local-deploy`)
+- hook `.gitignore`: `\n.schemathesis/\n` — the schemathesis run cache of the contract tests (a test artifact)
 - upstream `CHANGELOG.md`: `## [Unreleased]`
 - hook `CHANGELOG.md`: `### AlphaKeel patch layer — 2026-10-12 (end-to-end audit)` — the patch layer's own section under Unreleased; on an upstream upgrade keep it at the top of Unreleased (upstream edits this file constantly)
 - upstream `agent/.env.example`: `# ETORO_USER_KEY=your_user_key`

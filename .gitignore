@@ -184,3 +184,5 @@ agent/alphakeel_research/build/
 
 # Production deploy log written by tools/deploy-vt.sh (local patch layer, group local-deploy)
 /deploy-log.jsonl
+# schemathesis run cache (a test artifact; one was committed by accident in bf635296)
+.schemathesis/

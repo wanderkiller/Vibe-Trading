@@ -1115,6 +1115,11 @@
      "file": "CHANGELOG.md",
      "kind": "hook",
      "literal": "### AlphaKeel patch layer — 2026-10-12 (end-to-end audit)"
+    },
+    {
+     "file": ".gitignore",
+     "kind": "hook",
+     "literal": "\n.schemathesis/\n"
     }
    ]
   },
