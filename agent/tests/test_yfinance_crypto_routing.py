@@ -15,12 +15,12 @@ from backtest.runner import _create_market_engine
 
 class TestYfinanceCryptoRouting:
     def test_usdt_pair_routes_to_crypto_engine(self) -> None:
-        engine = _create_market_engine("yfinance", {"initial_cash": 100_000}, ["BTC-USDT"])
+        engine = _create_market_engine("yfinance", {"initial_cash": 100_000, "taker_rate": 0.0005}, ["BTC-USDT"])
         assert isinstance(engine, CryptoEngine)
 
     def test_usd_pair_routes_to_crypto_engine(self) -> None:
         # yfinance's native crypto spelling
-        engine = _create_market_engine("yfinance", {"initial_cash": 100_000}, ["BTC-USD"])
+        engine = _create_market_engine("yfinance", {"initial_cash": 100_000, "taker_rate": 0.0005}, ["BTC-USD"])
         assert isinstance(engine, CryptoEngine)
 
     def test_us_equity_still_routes_to_global_equity_engine(self) -> None:

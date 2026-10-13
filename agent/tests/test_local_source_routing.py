@@ -37,7 +37,7 @@ class TestLocalSourceEngineRouting:
         assert engine.market == "ca"
 
     def test_local_crypto_still_routes_to_crypto_engine(self) -> None:
-        engine = _create_market_engine("local", {"initial_cash": 100_000}, ["BTC-USDT"])
+        engine = _create_market_engine("local", {"initial_cash": 100_000, "taker_rate": 0.0005}, ["BTC-USDT"])
         assert isinstance(engine, CryptoEngine)
 
     def test_local_a_share_routes_to_china_a_engine(self) -> None:

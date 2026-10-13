@@ -307,6 +307,12 @@ def resample_bars(frame: pd.DataFrame, interval: str) -> pd.DataFrame:
         One row per period: first open, highest high, lowest low, last close,
         summed volume and amount, volume-weighted vwap, mean funding rate, last
         value of any other column. Frame attributes (quote currency) are kept.
+        Settlement-attributed funding (a ``funding_events`` column, from
+        ``backtest.funding_settlements.attach_settlements``) is kept whole:
+        events are concatenated, ``funding_rate`` / ``funding_cash_rate`` /
+        ``funding_settlements`` summed and ``funding_settlement_time`` is the
+        period's last settlement, so the engine books every settlement of the
+        period instead of the last day's (AlphaKeel patch layer, R2-D-6).
     """
     if interval not in RESAMPLED_INTERVALS or frame.empty:
         return frame
@@ -315,9 +321,18 @@ def resample_bars(frame: pd.DataFrame, interval: str) -> pd.DataFrame:
     periods = naive.to_period(RESAMPLED_INTERVALS[interval])
     grouped = frame.groupby(periods)
     columns = {}
+    settled = "funding_events" in frame.columns
     for column in frame.columns:
         values = grouped[column]
-        if column == "open":
+        if settled and column == "funding_events":
+            merged = {key: tuple(e for day in group for e in (day or ())) for key, group in values}
+            keys = values.size().index
+            columns[column] = pd.Series([merged[key] for key in keys], index=keys, dtype=object)
+        elif settled and column in ("funding_rate", "funding_cash_rate", "funding_settlements"):
+            columns[column] = values.sum()
+        elif settled and column == "funding_settlement_time":
+            columns[column] = values.max()
+        elif column == "open":
             columns[column] = values.first()
         elif column == "high":
             columns[column] = values.max()

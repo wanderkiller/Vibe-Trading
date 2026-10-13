@@ -137,7 +137,7 @@ class TestCompositeRunInterval:
 
     def test_run_backtest_rereads_the_interval(self) -> None:
         codes = ["BTC-USDT"]
-        engine = CompositeEngine({"initial_cash": 100_000, "interval": "1D"}, codes)
+        engine = CompositeEngine({"initial_cash": 100_000, "interval": "1D", "taker_rate": 0.0005}, codes)
         assert engine._run_interval == "1D"
         try:
             engine.run_backtest({"codes": codes, "interval": "4H"}, None, None, None)

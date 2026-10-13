@@ -14,7 +14,7 @@ class TestCompositeEngineFallback:
 
     def test_unknown_symbol_round_size(self):
         """round_size for a symbol not in the original codes should not crash."""
-        config = {"initial_cash": 100_000}
+        config = {"initial_cash": 100_000, "taker_rate": 0.0005}
         engine = CompositeEngine(config, ["BTC-USDT", "ETH-USDT"])
         result = engine.round_size(1.0, 100.0)
         assert isinstance(result, float)
@@ -22,7 +22,7 @@ class TestCompositeEngineFallback:
 
     def test_unknown_symbol_calc_commission(self):
         """calc_commission for a symbol not in the original codes should not crash."""
-        config = {"initial_cash": 100_000}
+        config = {"initial_cash": 100_000, "taker_rate": 0.0005}
         engine = CompositeEngine(config, ["BTC-USDT"])
         fee = engine.calc_commission(1.0, 100.0, 1, True)
         assert isinstance(fee, float)
@@ -30,7 +30,7 @@ class TestCompositeEngineFallback:
 
     def test_unknown_symbol_leverage(self):
         """_leverage_for_symbol for a symbol not in the original codes should not crash."""
-        config = {"initial_cash": 100_000}
+        config = {"initial_cash": 100_000, "taker_rate": 0.0005}
         engine = CompositeEngine(config, ["BTC-USDT"])
         lev = engine._leverage_for_symbol("UNKNOWN-SYMBOL")
         assert isinstance(lev, float)
@@ -46,7 +46,7 @@ class TestCompositeEngineFallback:
 
     def test_empty_rule_engines_raises(self):
         """If somehow _rule_engines is empty, should raise ValueError."""
-        config = {"initial_cash": 100_000}
+        config = {"initial_cash": 100_000, "taker_rate": 0.0005}
         engine = CompositeEngine(config, ["BTC-USDT"])
         engine._rule_engines = {}
         with pytest.raises(ValueError, match="No sub-engines available"):
@@ -112,3 +112,18 @@ class TestSharedSubEngineActiveSymbol:
         # 100 oz is exactly 1 standard gold lot (100 oz/lot); the standard
         # FX lot (100,000 units) would understate this to 0.001 lots.
         assert engine.capital == pytest.approx(initial_capital - 1.0, abs=0.01)
+
+
+def test_composite_metrics_carry_the_crypto_funding_summary(monkeypatch) -> None:
+    """R2-D-6: the composite books crypto funding through ``CryptoFunding`` and reports it like ``CryptoEngine``."""
+    from backtest.engines.base import BaseEngine
+
+    engine = CompositeEngine({"initial_cash": 100_000, "taker_rate": 0.0005}, ["BTC-USDT", "AAPL.US"])
+    engine._funding.models["BTC-USDT"] = "settlement_data"
+    engine._funding.settlements, engine._funding.priced_at_close = 3, 1
+    seen = {}
+    monkeypatch.setattr(BaseEngine, "_write_artifacts", lambda self, *a: seen.update(a[7]))
+    metrics: dict = {}
+    engine._write_artifacts(None, {}, None, None, None, None, None, metrics, ["BTC-USDT", "AAPL.US"])
+    assert seen["funding_estimate"] is True and seen["funding_priced_at_close"] == 1 and seen["funding_settlements"] == 3
+    assert seen["funding_models"] == {"BTC-USDT": "settlement_data"}

@@ -41,12 +41,31 @@ from backtest.perpetual_risk import (
 )
 
 
+def taker_rate_of(config: dict) -> float:
+    """The config's ``taker_rate``: required (no default fee), a finite rate in ``[0, 1)``."""
+    raw = config.get("taker_rate")
+    if raw is None or isinstance(raw, bool):
+        raise ValueError(
+            "crypto backtests need config.taker_rate: the taker fee rate of the account being modelled (e.g. 0.0005 = 5 bp "
+            "per fill); there is no default fee"
+        )
+    try:
+        rate = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"config.taker_rate must be a number, not {raw!r}") from None
+    if not 0 <= rate < 1:
+        raise ValueError(f"config.taker_rate must be in [0, 1), not {raw!r}")
+    return rate
+
+
 class CryptoEngine(BaseEngine):
     """Crypto perpetual contract engine.
 
     Config keys:
       - leverage: default 1.0
-      - taker_rate: default 0.0005 (every fill; ``maker_rate`` is accepted for old configs and not used)
+      - taker_rate: REQUIRED, the account's taker fee rate (every fill; ``maker_rate`` is accepted for old configs and not
+        used). There is no default: a run without it is refused (a silent 0.0005 is a fee assumption nobody chose;
+        AlphaKeel audit 2026-10-12 R2-D-4). The rate used is reported in the metrics (``taker_rate``)
       - slippage: default 0.0005
       - margin_mode: "isolated" (default) or "cross"
       - funding_rate: assumed fixed rate per 8h settlement for **spot-priced proxies only** (default 0.0001); a
@@ -56,7 +75,7 @@ class CryptoEngine(BaseEngine):
     def __init__(self, config: dict):
         super().__init__(config)
         self.maker_rate: float = config.get("maker_rate", 0.0002)
-        self.taker_rate: float = config.get("taker_rate", 0.0005)
+        self.taker_rate: float = taker_rate_of(config)
         self.slippage_rate: float = config.get("slippage", 0.0005)
         self.funding_rate: float = config.get("funding_rate", 0.0001)
         self.perpetual_strict = bool(config.get("perpetual_strict", False))
@@ -613,6 +632,7 @@ class CryptoEngine(BaseEngine):
             metrics.update({"funding_models": f["funding_models"], "funding_settlements": f["funding_settlements"],
                             "funding_paid": f["funding_paid"], "funding_estimate": f["funding_estimate"],
                             "funding_priced_at_close": f["funding_priced_at_close"], "fee_model": "taker_every_fill",
+                            "taker_rate": self.taker_rate,
                             "valuation": "close_now_net_of_exit_fee"})
         if self.perpetual_strict:
             summary = build_perpetual_summary(

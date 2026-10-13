@@ -592,7 +592,7 @@ def test_the_engine_charges_the_loader_settlements_once_each_for_a_cross_venue_h
     inst_id = "binance:linear:USDT:BTCUSDT"
     lock, blobs = build_pack(klines=kline_rows("BTCUSDT"), settlements=settlement_rows(inst_id))
     df = loader(FakeClient({"perp": (lock, blobs)})).fetch(["BTC-USDT-PERP"], "2023-01-01", "2023-01-01", interval="1H")["BTC-USDT-PERP"]
-    eng = CryptoEngine({"initial_cash": 100_000, "leverage": 1.0, "interval": "1H"})
+    eng = CryptoEngine({"initial_cash": 100_000, "leverage": 1.0, "interval": "1H", "taker_rate": 0.0005})
     eng.positions["BTC-USDT-PERP"] = Position("BTC-USDT-PERP", 1, 100.0, pd.Timestamp("2022-12-31"), 10.0, leverage=1.0)
     eng._funding.prepare({"BTC-USDT-PERP": df}, ["BTC-USDT-PERP"])
     before = eng.capital
@@ -841,3 +841,36 @@ def test_read_of_an_instrument_outside_the_pack_is_an_error_not_zero_rows(monkey
                               "ir_backtest freezes its own pack")
     assert cli.main(base + ["--venue", "binance", "--symbol", "BTCUSDT"]) == 0  # a held instrument still reads
     assert json.loads(capsys.readouterr().out)["rows"] == 1440
+
+
+def test_weekly_and_monthly_resampling_keep_every_settlement():
+    """R2-D-6: a 1W/1M bar built from daily bars books every settlement of the period (events concatenated, cash rate and
+    count summed, last settlement time), not only the last day's; the signal column keeps the period's last visible rate."""
+    from decimal import Decimal
+
+    from backtest.engines._market_hooks import CryptoFunding
+    from backtest.funding_settlements import attach_settlements, attach_visible_rate
+    from backtest.loaders.base import resample_bars
+
+    days = pd.date_range("2023-01-02", periods=14, freq="1D")  # two Monday-to-Sunday weeks
+    daily = pd.DataFrame({"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 1.0}, index=days)
+    t0 = int(days[0].value // 1_000_000) - 8 * 3_600_000
+    events = [(t0 + k * 8 * 3_600_000, Decimal("0.0001") * (k % 3 + 1), Decimal("100.5") if k % 2 else None) for k in range(42)]
+    daily = attach_settlements(daily, events).rename(columns={"funding_rate": "funding_cash_rate"})
+    daily = attach_visible_rate(daily, [(t + 60_000, t, r) for t, r, _ in events], 86_400_000)
+    n = sum(len(ev) for ev in daily["funding_events"])
+    assert n == 41  # the last settlement (Sunday 16:00) is after the last bar open: not attributed
+    attributed = [e for ev in daily["funding_events"] for e in ev]
+    for interval, rows in (("1W", 2), ("1M", 1)):
+        out = resample_bars(daily, interval)
+        assert len(out) == rows
+        assert [e for ev in out["funding_events"] for e in ev] == attributed
+        assert out["funding_settlements"].sum() == n
+        assert out["funding_cash_rate"].sum() == pytest.approx(daily["funding_cash_rate"].sum())
+        last = out.iloc[-1]
+        assert last["funding_settlement_time"] == daily["funding_settlement_time"].max()
+        assert last["funding_visible_rate"] == daily["funding_visible_rate"].iloc[-1]
+        booked = CryptoFunding._events("X", last, out.index[-1])
+        assert len(booked) == len(last["funding_events"]) and booked[-1][0] == attributed[-1][0]
+    week = resample_bars(daily, "1W").iloc[0]
+    assert [e[0] for e in week["funding_events"]] == [e[0] for ev in daily["funding_events"].iloc[:7] for e in ev]

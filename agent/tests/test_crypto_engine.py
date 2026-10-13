@@ -220,6 +220,16 @@ class TestRoundSize:
 
 
 class TestCommission:
+    def test_taker_rate_has_no_default(self) -> None:
+        """R2-D-4 (b): no silent 0.0005; a missing, non-numeric or out-of-range taker rate is refused."""
+        for bad in ({}, {"taker_rate": None}, {"taker_rate": True}, {"taker_rate": "x"}, {"taker_rate": -0.001},
+                    {"taker_rate": 1.0}, {"taker_rate": float("nan")}):
+            config = {"initial_cash": 100_000, "leverage": 10.0, **bad}
+            with pytest.raises(ValueError, match="taker_rate"):
+                CryptoEngine(config)
+        assert CryptoEngine({"initial_cash": 100_000, "taker_rate": "0.0004"}).taker_rate == 0.0004
+        assert CryptoEngine({"initial_cash": 100_000, "taker_rate": 0}).taker_rate == 0.0
+
     def test_open_uses_taker(self) -> None:
         engine = _make_engine(taker_rate=0.0005, maker_rate=0.0002)
         comm = engine.calc_commission(1.0, 60000.0, 1, is_open=True)

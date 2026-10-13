@@ -30,11 +30,11 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `leaf-package` | none (new files only) | local-only |
 | `loader-registry-hooks` | registry, loader_health, metrics tables, runner `_get_loader` | local-only (follows the leaf package); the runner guard is upstreamable |
 | `alpha-bench-universe` | alpha_bench_tool, factors/cli_handlers | local-only (follows the leaf package) |
-| `crypto-funding` | engines/_market_hooks, crypto, composite; ccxt_loader | upstreamable as a bug-fix PR (see below) |
+| `crypto-funding` | engines/_market_hooks, crypto, composite; ccxt_loader; loaders/base `resample_bars`; perpetual_evidence; three routing tests | upstreamable as a bug-fix PR (see below) |
 | `metrics-conventions` | metrics, validation | partly upstreamed already; rest upstreamable |
 | `run-card-data-audit` | run_card, loaders/base (exposure hook), backtest_tool (one helper, two call sites), agent/loop (tool threads keep the caller's context) | local-only as written; a generic provenance hook is upstreamable |
 | `alphakeel-handoff` | api_server (one hook), RunDetail (one import, one element), api.ts (one `export`) | local-only (follows the leaf package) |
-| `packaging-docs` | pyproject, SKILL.md, READMEs, .gitignore, .env.example, CHANGELOG (one section) | local-only |
+| `packaging-docs` | pyproject, SKILL.md, strategy-generate SKILL.md (one bullet), READMEs, .gitignore, .env.example, CHANGELOG (one section) | local-only |
 | `ci-env-gate` | alpha_routes (one line) | upstreamable: upstream's own gate e fails on it |
 | `grounding-tex-dollar` | grounding/figures (one helper, one call site) | upstreamable: a closing `$$` after a number made it a dollar amount |
 | `strategy-fidelity` | agent/context (one prompt bullet) | upstreamable: the agent ran a different strategy than the one asked for |
@@ -279,6 +279,19 @@ settlements through `funding_settlements.attach_settlements` (shared with the `a
 - `agent/backtest/funding_settlements.py`
 - `agent/tests/test_crypto_engine.py`
 - `agent/tests/test_composite_engine_fallback.py`
+- `agent/backtest/loaders/base.py`
+- `agent/backtest/perpetual_evidence.py`
+- `agent/tests/test_composite_currency_guard.py`
+- `agent/tests/test_local_source_routing.py`
+- `agent/tests/test_yfinance_crypto_routing.py`
+
+**Wave 2 (2026-10-13, R2-D-4 b / R2-D-6).** `CryptoEngine` has no default taker fee: `config.taker_rate` is required
+(`taker_rate_of`; a crypto run without it is refused, the rate used is in the metrics), and the strict path's evidence
+summary reads the same key; the three upstream routing tests that built a crypto engine without it now set it.
+`resample_bars` keeps settlement-attributed funding whole on 1W/1M bars (events concatenated, cash rate and count
+summed, last settlement time) instead of the last day's, and the composite reports the crypto leg's funding summary
+(`funding_estimate`, `funding_priced_at_close`) like `CryptoEngine`. The strict perpetual path still reads `funding_rate`
+per bar (ccxt only: `alphakeel_b2` frames carry no `mark_open`/`execution_open` and never enter it).
 
 **Commits.** `622ea894` (engines, ccxt loader, funding_settlements, tests), `41f8c94b` (composite test expectation), `fdab5523`
 (audit 2026-10-12 D2-10/D2-11: per-settlement Decimal funding at the published mark, `funding_estimate`).
@@ -332,6 +345,16 @@ would be a separate, optional PR (config switch). The PR would contain `CryptoFu
 - upstream `agent/backtest/loaders/ccxt_loader.py`: `if bracket_artifact is not None:`
 - hook `agent/backtest/loaders/ccxt_loader.py`: `result = attach_settlements(result, events)`
 - preimage `agent/backtest/loaders/ccxt_loader.py`: `_FUNDING_HOURS = {0, 8, 16}`
+- hook `agent/backtest/engines/crypto.py`: `self.taker_rate: float = taker_rate_of(config)` — no default taker fee: a crypto run without config.taker_rate is refused (R2-D-4 b)
+- preimage `agent/backtest/engines/crypto.py`: `self.taker_rate: float = config.get("taker_rate", 0.0005)`
+- hook `agent/backtest/engines/crypto.py`: `"taker_rate": self.taker_rate,`
+- upstream `agent/backtest/perpetual_evidence.py`: `def build_perpetual_summary(`
+- hook `agent/backtest/perpetual_evidence.py`: `"taker_rate": float(config["taker_rate"]),`
+- preimage `agent/backtest/perpetual_evidence.py`: `"taker_rate": float(config.get("taker_rate", 0.0005)),`
+- hook `agent/backtest/engines/composite.py`: `def _write_artifacts(self, run_dir, data_map, dates, equity_series, bench_equity, bench_ret, target_pos, metrics, codes) -> None:` — the crypto leg funding summary in the composite metrics (R2-D-6)
+- upstream `agent/backtest/loaders/base.py`: `def resample_bars(frame: pd.DataFrame, interval: str) -> pd.DataFrame:`
+- upstream `agent/backtest/loaders/base.py`: `        elif column == "funding_rate":\n            columns[column] = values.mean()` — kept for frames without funding_events
+- hook `agent/backtest/loaders/base.py`: `settled = "funding_events" in frame.columns` — 1W/1M bars keep every settlement of the period (R2-D-6)
 
 ## `metrics-conventions` — undefined ratios are `None`; Sortino definition
 
@@ -499,6 +522,7 @@ layer itself (`patches/`).
 - `patches/`
 - `agent/tests/test_alphakeel_patch_layer.py`
 - `CHANGELOG.md`
+- `agent/src/skills/strategy-generate/SKILL.md`
 
 **Commits.** `e0245ca9` `220330b0` `1f83ef6f` `83ea7c2a` `9257a920`, `7d8b0772` (T8, `patches/`), `456b918f`
 (upgrade-rehearsal record), `ff1d0f04` (T9b: `alphakeel_b2` in every README, 30 sources; cherry-picked from the
@@ -532,6 +556,10 @@ the `loaders/` tree line.
 - hook `.gitignore`: `\n.schemathesis/\n` — the schemathesis run cache of the contract tests (a test artifact)
 - upstream `CHANGELOG.md`: `## [Unreleased]`
 - hook `CHANGELOG.md`: `### AlphaKeel patch layer — 2026-10-12 (end-to-end audit)` — the patch layer's own section under Unreleased; on an upstream upgrade keep it at the top of Unreleased (upstream edits this file constantly)
+- hook `agent/SKILL.md`: `` **`CryptoEngine` has no default fee:** `` — wave 2: `taker_rate` is required (R2-D-4 b)
+- hook `agent/SKILL.md`: `` a signal reads only `funding_visible_rate` `` — wave 2: the cash funding columns are accounting only (R2-D-5)
+- upstream `agent/src/skills/strategy-generate/SKILL.md`: `` - `commission`: default 0.1% ``
+- hook `agent/src/skills/strategy-generate/SKILL.md`: `` - `taker_rate`: **required for crypto** ``
 - upstream `agent/.env.example`: `# ETORO_USER_KEY=your_user_key`
 - hook `agent/.env.example`: `# ALPHAKEEL_RESEARCH_URL=`
 - upstream `README.md`: `` regex (?m)^\| `local` \| `` — source-table row the alphakeel rows follow

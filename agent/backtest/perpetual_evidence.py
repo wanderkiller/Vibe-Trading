@@ -35,7 +35,7 @@ def build_perpetual_summary(
         "funding_mode": str(config.get("funding_mode", "fixed")),
         "interval": str(config.get("interval", "1D")),
         "leverage": float(config.get("leverage", 1.0)),
-        "taker_rate": float(config.get("taker_rate", 0.0005)),
+        "taker_rate": float(config["taker_rate"]),
         "liquidation_fee_rate": float(config.get("liquidation_fee_rate", 0.0)),
         "terminal_status": terminal_status,
         "event_count": len(events),

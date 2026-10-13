@@ -447,7 +447,12 @@
     "agent/backtest/loaders/ccxt_loader.py",
     "agent/backtest/funding_settlements.py",
     "agent/tests/test_crypto_engine.py",
-    "agent/tests/test_composite_engine_fallback.py"
+    "agent/tests/test_composite_engine_fallback.py",
+    "agent/backtest/loaders/base.py",
+    "agent/backtest/perpetual_evidence.py",
+    "agent/tests/test_composite_currency_guard.py",
+    "agent/tests/test_local_source_routing.py",
+    "agent/tests/test_yfinance_crypto_routing.py"
    ],
    "anchors": [
     {
@@ -655,6 +660,60 @@
      "file": "agent/backtest/engines/crypto.py",
      "kind": "hook",
      "literal": "\"funding_estimate\": f[\"funding_estimate\"]"
+    },
+    {
+     "file": "agent/backtest/engines/crypto.py",
+     "kind": "hook",
+     "literal": "self.taker_rate: float = taker_rate_of(config)",
+     "note": "no default taker fee: a crypto run without config.taker_rate is refused (R2-D-4 b)"
+    },
+    {
+     "file": "agent/backtest/engines/crypto.py",
+     "kind": "preimage",
+     "literal": "self.taker_rate: float = config.get(\"taker_rate\", 0.0005)"
+    },
+    {
+     "file": "agent/backtest/engines/crypto.py",
+     "kind": "hook",
+     "literal": "\"taker_rate\": self.taker_rate,"
+    },
+    {
+     "file": "agent/backtest/perpetual_evidence.py",
+     "kind": "upstream",
+     "literal": "def build_perpetual_summary("
+    },
+    {
+     "file": "agent/backtest/perpetual_evidence.py",
+     "kind": "hook",
+     "literal": "\"taker_rate\": float(config[\"taker_rate\"]),"
+    },
+    {
+     "file": "agent/backtest/perpetual_evidence.py",
+     "kind": "preimage",
+     "literal": "\"taker_rate\": float(config.get(\"taker_rate\", 0.0005)),"
+    },
+    {
+     "file": "agent/backtest/engines/composite.py",
+     "kind": "hook",
+     "literal": "def _write_artifacts(self, run_dir, data_map, dates, equity_series, bench_equity, bench_ret, target_pos, metrics, codes) -> None:",
+     "note": "the crypto leg funding summary in the composite metrics (R2-D-6)"
+    },
+    {
+     "file": "agent/backtest/loaders/base.py",
+     "kind": "upstream",
+     "literal": "def resample_bars(frame: pd.DataFrame, interval: str) -> pd.DataFrame:"
+    },
+    {
+     "file": "agent/backtest/loaders/base.py",
+     "kind": "upstream",
+     "literal": "        elif column == \"funding_rate\":\n            columns[column] = values.mean()",
+     "note": "kept for frames without funding_events"
+    },
+    {
+     "file": "agent/backtest/loaders/base.py",
+     "kind": "hook",
+     "literal": "settled = \"funding_events\" in frame.columns",
+     "note": "1W/1M bars keep every settlement of the period (R2-D-6)"
     }
    ]
   },
@@ -1009,7 +1068,8 @@
     "patches/",
     "agent/tests/test_alphakeel_patch_layer.py",
     "AGENTS.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "agent/src/skills/strategy-generate/SKILL.md"
    ],
    "anchors": [
     {
@@ -1203,6 +1263,26 @@
      "file": ".gitignore",
      "kind": "hook",
      "literal": "\n.schemathesis/\n"
+    },
+    {
+     "file": "agent/SKILL.md",
+     "kind": "hook",
+     "literal": "**`CryptoEngine` has no default fee:**"
+    },
+    {
+     "file": "agent/SKILL.md",
+     "kind": "hook",
+     "literal": "a signal reads only `funding_visible_rate`"
+    },
+    {
+     "file": "agent/src/skills/strategy-generate/SKILL.md",
+     "kind": "upstream",
+     "literal": "- `commission`: default 0.1%"
+    },
+    {
+     "file": "agent/src/skills/strategy-generate/SKILL.md",
+     "kind": "hook",
+     "literal": "- `taker_rate`: **required for crypto**"
     }
    ]
   },

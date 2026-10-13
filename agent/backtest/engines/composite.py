@@ -167,6 +167,16 @@ class CompositeEngine(BaseEngine):
         self._run_interval = str(config.get("interval", "1D"))
         return super().run_backtest(config, *args, **kwargs)
 
+    def _write_artifacts(self, run_dir, data_map, dates, equity_series, bench_equity, bench_ret, target_pos, metrics, codes) -> None:
+        """The crypto leg's funding summary in the metrics, as ``CryptoEngine`` reports it (``funding_estimate``:
+        some funding was priced at a close or an assumed rate; AlphaKeel patch layer, R2-D-6)."""
+        if self._funding is not None:
+            f = self._funding.summary()
+            metrics.update({"funding_models": f["funding_models"], "funding_settlements": f["funding_settlements"],
+                            "funding_paid": f["funding_paid"], "funding_estimate": f["funding_estimate"],
+                            "funding_priced_at_close": f["funding_priced_at_close"]})
+        super()._write_artifacts(run_dir, data_map, dates, equity_series, bench_equity, bench_ret, target_pos, metrics, codes)
+
     def _rule_for(self, symbol: str) -> BaseEngine:
         """Get the sub-engine that provides rules for this symbol."""
         market = self._symbol_market.get(symbol, "a_share")
