@@ -34,6 +34,37 @@ _MARKET_BLOCKED_NEXT = (
 )
 
 
+#: ``ir_validate`` with local problems: they are all returned at once and AlphaKeel is not called (session b9aa13a496a4).
+_IR_PROBLEMS_HINT = (
+    "All problems are listed at once: fix every one, then validate again. A complete valid template is at the start of "
+    'load_skill(name="alphakeel-handoff", section="0. Strategy logic: hand over a Strategy IR (primary path)").'
+)
+
+
+def _read_ir(path: Any) -> tuple[Any, str | None]:
+    """The IR document at ``path`` (``ir_validate`` / ``ir_backtest`` take a path), or the reason it cannot be read."""
+    try:
+        with open(str(path), encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError) as e:
+        return None, f"ir: cannot read {path}: {e.__class__.__name__}: {e}"
+    try:
+        return json.loads(text), None
+    except ValueError as e:
+        return None, f"ir: {path} is not JSON: {e}"
+
+
+def _dump(out: dict, warnings: list[str]) -> str:
+    """The envelope as JSON, cut to ``_MAX_OUT``; unit warnings ride at the top level, also on a truncated envelope."""
+    if warnings:
+        out = {**out, "warnings": warnings}
+    body = json.dumps(out, ensure_ascii=False, default=str)
+    if len(body) <= _MAX_OUT:
+        return body
+    cut = {"status": out["status"], "truncated": True, "head": body[:_MAX_OUT]}
+    return json.dumps({**cut, "warnings": warnings} if warnings else cut)
+
+
 def _csv(v: Any) -> str:
     """A list (or already comma separated string) of names as the CLI's comma list."""
     return ",".join(str(x).strip() for x in v if str(x).strip()) if isinstance(v, (list, tuple)) else str(v)
@@ -188,14 +219,15 @@ class AlphakeelResearchTool(BaseTool):
     name = "alphakeel_research"
     description = (
         "Use AlphaKeel's frozen market data and its Rust/Nautilus engine through the research service: "
-        "'freeze' a data pack for a time window (a scan pack, or with args.instruments a dataset pack of funding history and "
-        "market_tables kline_1m/bbo/depth20/instrument_meta for ANY window), 'read' point-in-time rows (quotes, settlements, klines, bbo, instrument_meta), 'review' a Python backtest's fixed intents "
+        "'freeze' a data pack for a time window (a scan pack, or with args.instruments a dataset pack: funding settlements for "
+        "any window; market_tables kline_1m (trade/mark/index) for the published history; instrument_meta, bbo and depth20 are "
+        "live captures covering only recent days, so never request them for a historical window), 'read' point-in-time rows (quotes, settlements, klines, bbo, instrument_meta), 'review' a Python backtest's fixed intents "
         "against the engine (layered L0-L4 comparison with the first difference), run a Python 'policy' under both a "
         "local simulator and the engine's real state, run the 'native' strategy, or 'compare' two runs. Strategy IR "
         "(strategy.json): 'ir_validate' with AlphaKeel, 'ir_review' (Python vs AlphaKeel's Rust evaluator on a scan pack, "
         "layered reconciliation), 'ir_backtest' (long-history research backtest on a dataset pack: 1m klines + official "
-        "settlements, synthetic touch; research evidence, not reconciliation; without args.out it creates a Vibe-Trading run "
-        "directory), 'ir_robustness' (reliability battery + grade on the run's exported pack: cost stress, parameter neighbours, "
+        "settlements, synthetic touch; research evidence, not reconciliation; it freezes its own pack (kline_1m trade + "
+        "settlements), so do not 'freeze' before it; without args.out it creates a Vibe-Trading run directory), 'ir_robustness' (reliability battery + grade on the run's exported pack: cost stress, parameter neighbours, "
         "anchored walk-forward, OOS, filter permutation test; args.run = the ir_backtest run directory), 'ir_crosscheck' (the same "
         "backtest run by AlphaKeel's engine, compared trade by trade), 'ir_export' (strategy.json with strategy_id "
         "and provenance for AlphaKeel's registry, from an ir_backtest run; carries the robustness evidence). You cannot export into "
@@ -227,7 +259,11 @@ class AlphakeelResearchTool(BaseTool):
                     },
                     "market_tables": {
                         "type": "array", "items": {"type": "string", "enum": ["kline_1m", "bbo", "depth20", "instrument_meta"]},
-                        "description": "without market_tables a dataset pack holds funding settlements only and cannot drive an ir_backtest PnL",
+                        "description": "without market_tables a dataset pack holds funding settlements only (any window) and cannot drive an "
+                                       "ir_backtest PnL. kline_1m (trade/mark/index) covers the published history; instrument_meta, "
+                                       "bbo and depth20 are live captures covering only recent days: never request them for a "
+                                       "historical window. ir_backtest freezes its own pack (kline_1m trade + settlements): do not "
+                                       "freeze before it.",
                     },
                     "pack": {"type": "string"},
                     "accept_partial": {"type": "boolean"},
@@ -246,7 +282,7 @@ class AlphakeelResearchTool(BaseTool):
         if action not in _ACTIONS or not isinstance(args, dict):
             return json.dumps({"status": "error", "error": f"action must be one of {list(_ACTIONS)} and args an object"})
         try:
-            from alphakeel_research import cli
+            from alphakeel_research import cli, ir
             from alphakeel_research.errors import ApiError
 
             argv = _argv(action, args)
@@ -254,6 +290,20 @@ class AlphakeelResearchTool(BaseTool):
             return json.dumps({"status": "error", "error": f"alphakeel_research is not installed: {e}"})
         except ValueError as e:
             return json.dumps({"status": "error", "error": str(e)})
+        # Strategy IR: unit warnings (never blocking); ir_validate first runs the local checker, which lists every
+        # problem at once, and asks AlphaKeel (authoritative) only when it finds none.
+        warnings: list[str] = []
+        if action in ("ir_validate", "ir_backtest"):
+            doc, unreadable = _read_ir(args["ir"])
+            if unreadable is None:
+                warnings = ir.unit_warnings(doc)
+            if action == "ir_validate":
+                if unreadable is not None:
+                    return json.dumps({"status": "error", "error": unreadable})
+                found = ir.problems(doc)
+                if found:
+                    return _dump({"status": "error", "result": {"valid": False, "source": "local", "problems": found,
+                                                                 "hint": _IR_PROBLEMS_HINT}}, warnings)
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
@@ -262,11 +312,12 @@ class AlphakeelResearchTool(BaseTool):
             err = {"status": "error", "error": e.message, "code": e.code, "request_id": getattr(e, "request_id", None)}
             if _market_blocked(e.code, e.message):
                 err["next"] = _MARKET_BLOCKED_NEXT
-            return json.dumps(err)
+            return json.dumps({**err, "warnings": warnings} if warnings else err)
         except SystemExit as e:  # argparse
             return json.dumps({"status": "error", "error": f"bad arguments (exit {e.code})"})
         except Exception as e:  # noqa: BLE001 - surfaced as a clean tool error, never with credentials
-            return json.dumps({"status": "error", "error": f"{e.__class__.__name__}: {str(e)[:500]}"})
+            err = {"status": "error", "error": f"{e.__class__.__name__}: {str(e)[:500]}"}
+            return json.dumps({**err, "warnings": warnings} if warnings else err)
         text = buf.getvalue()
         try:
             result: Any = json.loads(text)
@@ -276,5 +327,4 @@ class AlphakeelResearchTool(BaseTool):
         e = result.get("error") if isinstance(result, dict) else None
         if rc != 0 and isinstance(e, dict) and _market_blocked(e.get("code"), e.get("message")):
             out["next"] = _MARKET_BLOCKED_NEXT
-        body = json.dumps(out, ensure_ascii=False, default=str)
-        return body if len(body) <= _MAX_OUT else json.dumps({"status": "ok" if rc == 0 else "error", "truncated": True, "head": body[:_MAX_OUT]})
+        return _dump(out, warnings)

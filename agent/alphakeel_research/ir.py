@@ -155,15 +155,41 @@ def _shape(msg: str, path: str) -> IrError:
     return IrError(E_SHAPE, f"{path}: {msg}", field=path)
 
 
+class _Sink:
+    """Where checks report. ``collect=False`` (:func:`_check`, pinned to the Rust validator): the first problem raises.
+    ``collect=True`` (:func:`problems`): every problem is recorded and the caller goes on with the next independent check."""
+
+    def __init__(self, collect: bool):
+        self.collect = collect
+        self.items: list[IrError] = []
+
+    def ok(self, fn: Any, *args: Any) -> bool:
+        """Run one check; False (collect mode) when it found problems. An :func:`_obj` error carries all of its fields."""
+        try:
+            fn(*args)
+        except IrError as e:
+            if not self.collect:
+                raise
+            self.items.extend(getattr(e, "all", None) or [e])
+            return False
+        return True
+
+    def clean(self, fn: Any, *args: Any) -> bool:
+        """Run a section check that reports through this sink; True when it added no problem."""
+        n = len(self.items)
+        fn(*args, self)
+        return len(self.items) == n
+
+
 def _obj(v: Any, path: str, required: tuple[str, ...], optional: tuple[str, ...] = ()) -> dict:
+    """An object with exactly these fields. Raises the first unknown (else missing) field; ``.all`` lists every one."""
     if not isinstance(v, dict):
         raise _shape("must be an object", path)
-    for k in v:
-        if k not in required and k not in optional:
-            raise _shape(f"unknown field {k!r}", f"{path}.{k}" if path else k)
-    for k in required:
-        if k not in v:
-            raise _shape("missing field", f"{path}.{k}" if path else k)
+    found = [_shape(f"unknown field {k!r}", f"{path}.{k}" if path else k) for k in v if k not in required and k not in optional]
+    found += [_shape("missing field", f"{path}.{k}" if path else k) for k in required if k not in v]
+    if found:
+        found[0].all = found
+        raise found[0]
     return v
 
 
@@ -182,9 +208,49 @@ def _s_dec(v: Any, path: str) -> None:
         raise _shape(f"must be a canonical decimal string, got {v!r}", path)
 
 
+def _s_dec_or_null(v: Any, path: str) -> None:
+    if v is not None:
+        _s_dec(v, path)
+
+
+def _s_bool(v: Any, path: str) -> None:
+    if not isinstance(v, bool):
+        raise _shape("must be a boolean", path)
+
+
 def _s_enum(v: Any, allowed: tuple[str, ...], path: str) -> None:
     if not isinstance(v, str) or v not in allowed:
         raise _shape(f"unknown value {v!r}", path)
+
+
+def _s_strings(v: Any, path: str) -> None:
+    if not isinstance(v, list):
+        raise _shape("must be a list of strings", path)
+    for i, x in enumerate(v):
+        _s_str(x, f"{path}[{i}]")
+
+
+def _s_pairs(pairs: Any, path: str) -> None:
+    if pairs != "any":
+        if not isinstance(pairs, list):
+            raise _shape('must be "any" or a list of [long_venue, short_venue]', path)
+        for i, pr in enumerate(pairs):
+            if not isinstance(pr, list) or len(pr) != 2:
+                raise _shape("must be [long_venue, short_venue]", f"{path}[{i}]")
+            for j, x in enumerate(pr):
+                _s_enum(x, VENUES, f"{path}[{i}][{j}]")
+
+
+def _s_robust(r: Any, path: str) -> None:
+    if not isinstance(r, list) or len(r) != 2:
+        raise _shape("must be [lo, hi]", path)
+    for j, v in enumerate(r):
+        _s_dec(v, f"{path}[{j}]")
+
+
+def _s_object(v: Any, path: str) -> None:
+    if not isinstance(v, dict):
+        raise _shape("must be an object", path)
 
 
 def _s_conditions(v: Any, path: str) -> None:
@@ -205,66 +271,76 @@ def _s_conditions(v: Any, path: str) -> None:
             _s_dec(val, f"{p}.value")
 
 
-def _check_shape(doc: Any) -> None:
-    _obj(doc, "", ("schema", "name", "kind", "universe", "assumptions", "entry", "exit", "sizing", "parameters", "provenance"),
-         ("strategy_id",))
-    _s_str(doc["schema"], "schema")
-    if "strategy_id" in doc:
-        _s_str(doc["strategy_id"], "strategy_id")
-    _s_str(doc["name"], "name")
-    _s_str(doc["kind"], "kind")
-    u = _obj(doc["universe"], "universe", ("pairs", "shape", "excluded_bases"), ("quote_ccys", "bases"))
-    pairs = u["pairs"]
-    if pairs != "any":
-        if not isinstance(pairs, list):
-            raise _shape('must be "any" or a list of [long_venue, short_venue]', "universe.pairs")
-        for i, pr in enumerate(pairs):
-            if not isinstance(pr, list) or len(pr) != 2:
-                raise _shape("must be [long_venue, short_venue]", f"universe.pairs[{i}]")
-            for j, x in enumerate(pr):
-                _s_enum(x, VENUES, f"universe.pairs[{i}][{j}]")
-    _s_enum(u["shape"], SHAPES, "universe.shape")
-    for key in ("excluded_bases", "quote_ccys", "bases"):
-        if key in u:
-            if not isinstance(u[key], list):
-                raise _shape("must be a list of strings", f"universe.{key}")
-            for i, x in enumerate(u[key]):
-                _s_str(x, f"universe.{key}[{i}]")
-    a = _obj(doc["assumptions"], "assumptions", ("horizon_hours", "basis_stress", "funding_estimate"))
-    _s_u32(a["horizon_hours"], "assumptions.horizon_hours")
-    _s_dec(a["basis_stress"], "assumptions.basis_stress")
-    _s_enum(a["funding_estimate"], FUNDING_ESTIMATES, "assumptions.funding_estimate")
-    e = _obj(doc["entry"], "entry", ("conditions", "rank_by", "candidate_limit", "cooldown_minutes", "one_per_base"))
-    _s_conditions(e["conditions"], "entry.conditions")
-    _s_enum(e["rank_by"], FEATURES, "entry.rank_by")
-    _s_u32(e["candidate_limit"], "entry.candidate_limit")
-    _s_u32(e["cooldown_minutes"], "entry.cooldown_minutes")
-    if not isinstance(e["one_per_base"], bool):
-        raise _shape("must be a boolean", "entry.one_per_base")
-    x = _obj(doc["exit"], "exit", ("max_hold_hours", "max_loss", "take_profit", "conditions"))
-    _s_u32(x["max_hold_hours"], "exit.max_hold_hours")
-    _s_dec(x["max_loss"], "exit.max_loss")
-    if x["take_profit"] is not None:
-        _s_dec(x["take_profit"], "exit.take_profit")
-    _s_conditions(x["conditions"], "exit.conditions")
-    s = _obj(doc["sizing"], "sizing", ("notional_per_leg", "max_open", "leverage"))
-    _s_dec(s["notional_per_leg"], "sizing.notional_per_leg")
-    _s_u32(s["max_open"], "sizing.max_open")
-    if s["leverage"] is not None:
-        _s_dec(s["leverage"], "sizing.leverage")
-    ps = doc["parameters"]
-    if not isinstance(ps, dict):
-        raise _shape("must be an object", "parameters")
+# Per object: required fields, optional fields, and the check of each field in the order the first-error path runs them.
+_SECTIONS: dict[str, tuple[tuple[str, ...], tuple[str, ...], tuple[tuple[str, Any, tuple], ...]]] = {
+    "universe": (("pairs", "shape", "excluded_bases"), ("quote_ccys", "bases"), (
+        ("pairs", _s_pairs, ()), ("shape", _s_enum, (SHAPES,)), ("excluded_bases", _s_strings, ()),
+        ("quote_ccys", _s_strings, ()), ("bases", _s_strings, ()))),
+    "assumptions": (("horizon_hours", "basis_stress", "funding_estimate"), (), (
+        ("horizon_hours", _s_u32, ()), ("basis_stress", _s_dec, ()), ("funding_estimate", _s_enum, (FUNDING_ESTIMATES,)))),
+    "entry": (("conditions", "rank_by", "candidate_limit", "cooldown_minutes", "one_per_base"), (), (
+        ("conditions", _s_conditions, ()), ("rank_by", _s_enum, (FEATURES,)), ("candidate_limit", _s_u32, ()),
+        ("cooldown_minutes", _s_u32, ()), ("one_per_base", _s_bool, ()))),
+    "exit": (("max_hold_hours", "max_loss", "take_profit", "conditions"), (), (
+        ("max_hold_hours", _s_u32, ()), ("max_loss", _s_dec, ()), ("take_profit", _s_dec_or_null, ()),
+        ("conditions", _s_conditions, ()))),
+    "sizing": (("notional_per_leg", "max_open", "leverage"), (), (
+        ("notional_per_leg", _s_dec, ()), ("max_open", _s_u32, ()), ("leverage", _s_dec_or_null, ()))),
+}
+_TOP_REQUIRED = ("schema", "name", "kind", "universe", "assumptions", "entry", "exit", "sizing", "parameters", "provenance")
+
+
+def _shape_fields(v: Any, path: str, required: tuple[str, ...], optional: tuple[str, ...], checks: tuple, k: _Sink) -> None:
+    """One object: its field set, then each present field (collect mode goes on past a missing or unknown field)."""
+    if not k.ok(_obj, v, path, required, optional) and not isinstance(v, dict):
+        return
+    for key, fn, extra in checks:
+        if key in v:
+            k.ok(fn, v[key], *extra, f"{path}.{key}")
+
+
+def _shape_section(name: str, v: Any, k: _Sink) -> None:
+    required, optional, checks = _SECTIONS[name]
+    _shape_fields(v, name, required, optional, checks, k)
+
+
+def _shape_parameter(name: str, p: Any, k: _Sink) -> None:
+    pp = f"parameters.{name}"
+    if not k.ok(_obj, p, pp, ("value", "robust", "path")) and not isinstance(p, dict):
+        return
+    if "value" in p:
+        k.ok(_s_dec, p["value"], f"{pp}.value")
+    if "robust" in p:
+        k.ok(_s_robust, p["robust"], f"{pp}.robust")
+    if "path" in p:
+        k.ok(_s_str, p["path"], f"{pp}.path")
+
+
+def _shape_parameters(ps: Any, k: _Sink) -> None:
+    if not k.ok(_s_object, ps, "parameters"):
+        return
     for name, p in ps.items():
-        pp = f"parameters.{name}"
-        _obj(p, pp, ("value", "robust", "path"))
-        _s_dec(p["value"], f"{pp}.value")
-        r = p["robust"]
-        if not isinstance(r, list) or len(r) != 2:
-            raise _shape("must be [lo, hi]", f"{pp}.robust")
-        for j, v in enumerate(r):
-            _s_dec(v, f"{pp}.robust[{j}]")
-        _s_str(p["path"], f"{pp}.path")
+        _shape_parameter(name, p, k)
+
+
+def _shape_doc(doc: Any, k: _Sink) -> dict[str, bool]:
+    """§3.1 for the whole document; returns which top-level values passed (collect mode checks each independently)."""
+    passed: dict[str, bool] = {}
+    if not k.ok(_obj, doc, "", _TOP_REQUIRED, ("strategy_id",)) and not isinstance(doc, dict):
+        return passed
+    for key in ("schema", "strategy_id", "name", "kind"):
+        if key in doc:
+            passed[key] = k.ok(_s_str, doc[key], key)
+    for key in ("universe", "assumptions", "entry", "exit", "sizing"):
+        if key in doc:
+            passed[key] = k.clean(_shape_section, key, doc[key])
+    if "parameters" in doc:
+        passed["parameters"] = k.clean(_shape_parameters, doc["parameters"])
+    return passed
+
+
+def _check_shape(doc: Any) -> None:
+    _shape_doc(doc, _Sink(collect=False))
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -319,57 +395,70 @@ def _resolve(doc: dict, path: str) -> Any:
     return cur
 
 
-def _check_parameters(doc: dict) -> None:
+def _check_parameter(definition: dict, name: str, p: dict) -> None:
+    path = f"parameters.{name}"
+    if name.strip() == "":
+        raise _invalid("parameters", "a parameter name cannot be empty")
+    lo, hi = (_D(x) for x in p["robust"])
+    value = _D(p["value"])
+    if not (lo <= value <= hi):
+        raise _invalid(path, "robust must satisfy lo <= value <= hi")
+    bad = IrError(E_PARAMETER_PATH, f"parameter {name}: path {p['path']} does not point at a number in "
+                  "entry/exit/sizing/assumptions", field=f"{path}.path")
+    try:
+        target = _resolve(definition, p["path"])
+    except KeyError:
+        raise bad from None
+    if isinstance(target, str) and is_canonical_decimal(target):
+        found = _D(target)
+    elif isinstance(target, int) and not isinstance(target, bool):
+        found = Decimal(target)
+    else:
+        raise bad
+    if found != value:
+        raise IrError(E_PARAMETER_MISMATCH, f"parameter {name}: value {p['value']} differs from {json.dumps(target)} at "
+                      f"{p['path']}", field=f"{path}.value")
+
+
+def _check_parameters(doc: dict, k: _Sink) -> None:
     definition = _definition(doc)
     for name in sorted(doc["parameters"]):
-        p = doc["parameters"][name]
-        path = f"parameters.{name}"
-        if name.strip() == "":
-            raise _invalid("parameters", "a parameter name cannot be empty")
-        lo, hi = (_D(x) for x in p["robust"])
-        value = _D(p["value"])
-        if not (lo <= value <= hi):
-            raise _invalid(path, "robust must satisfy lo <= value <= hi")
-        bad = IrError(E_PARAMETER_PATH, f"parameter {name}: path {p['path']} does not point at a number in "
-                      "entry/exit/sizing/assumptions", field=f"{path}.path")
-        try:
-            target = _resolve(definition, p["path"])
-        except KeyError:
-            raise bad from None
-        if isinstance(target, str) and is_canonical_decimal(target):
-            found = _D(target)
-        elif isinstance(target, int) and not isinstance(target, bool):
-            found = Decimal(target)
-        else:
-            raise bad
-        if found != value:
-            raise IrError(E_PARAMETER_MISMATCH, f"parameter {name}: value {p['value']} differs from {json.dumps(target)} at "
-                          f"{p['path']}", field=f"{path}.value")
+        k.ok(_check_parameter, definition, name, doc["parameters"][name])
 
 
-def _check_provenance(p: Any) -> None:
-    if not isinstance(p, dict):
-        raise _invalid("provenance", "must be an object")
+def _check_provenance(p: Any, k: _Sink) -> None:
+    if not k.ok(_require, isinstance(p, dict), "provenance", "must be an object"):
+        return
     t = p.get("tool")
-    if not isinstance(t, str) or t == "":
-        raise _invalid("provenance.tool", "required non-empty string")
+    k.ok(_require, isinstance(t, str) and t != "", "provenance.tool", "required non-empty string")
     w = p.get("window")
-    if not isinstance(w, dict):
-        raise _invalid("provenance.window", "required object {start, end}")
-    for k in ("start", "end"):
-        if not isinstance(w.get(k), str):
-            raise _invalid(f"provenance.window.{k}", "required string")
+    if not k.ok(_require, isinstance(w, dict), "provenance.window", "required object {start, end}"):
+        return
+    for key in ("start", "end"):
+        k.ok(_require, isinstance(w.get(key), str), f"provenance.window.{key}", "required string")
 
 
-def _check(doc: Any) -> None:
-    _check_shape(doc)
-    if doc["schema"] != SCHEMA:
-        raise IrError(E_SCHEMA, f"schema must be {SCHEMA}, got {doc['schema']!r}", field="schema")
-    if doc["kind"] != KIND:
-        raise IrError(E_KIND, f"kind accepts only {KIND} in v1, got {doc['kind']!r}", field="kind")
-    if doc["name"].strip() == "":
+def _require(cond: bool, path: str, msg: str) -> None:
+    if not cond:
+        raise _invalid(path, msg)
+
+
+def _check_schema(v: str) -> None:
+    if v != SCHEMA:
+        raise IrError(E_SCHEMA, f"schema must be {SCHEMA}, got {v!r}", field="schema")
+
+
+def _check_kind(v: str) -> None:
+    if v != KIND:
+        raise IrError(E_KIND, f"kind accepts only {KIND} in v1, got {v!r}", field="kind")
+
+
+def _check_name(v: str) -> None:
+    if v.strip() == "":
         raise _invalid("name", "cannot be empty")
-    u = doc["universe"]
+
+
+def _check_universe(u: dict) -> None:
     if isinstance(u["pairs"], list):
         if not u["pairs"]:
             raise _invalid("universe.pairs", 'the list cannot be empty (use "any")')
@@ -401,19 +490,25 @@ def _check(doc: Any) -> None:
         if not _upper(q) or q in seen_q:
             raise _invalid(f"universe.quote_ccys[{i}]", "must be non-empty upper case and unique")
         seen_q.add(q)
-    a = doc["assumptions"]
+
+
+def _check_assumptions(a: dict) -> None:
     if a["horizon_hours"] < 1:
         raise _invalid("assumptions.horizon_hours", "must be >= 1")
     bs = _D(a["basis_stress"])
     if bs < 0 or bs >= 1:
         raise _invalid("assumptions.basis_stress", "must be in [0, 1)")
-    e = doc["entry"]
+
+
+def _check_entry(e: dict) -> None:
     _check_conditions(e["conditions"], "entry.conditions")
     if not (1 <= e["candidate_limit"] <= MAX_CANDIDATE_LIMIT):
         raise _invalid("entry.candidate_limit", f"must be in 1..={MAX_CANDIDATE_LIMIT}")
     if e["one_per_base"] is not True:
         raise _invalid("entry.one_per_base", "is fixed to true in v1")
-    x = doc["exit"]
+
+
+def _check_exit(x: dict) -> None:
     if x["max_hold_hours"] < 1:
         raise _invalid("exit.max_hold_hours", "must be >= 1")
     if _D(x["max_loss"]) <= 0:
@@ -421,20 +516,47 @@ def _check(doc: Any) -> None:
     if x["take_profit"] is not None and _D(x["take_profit"]) <= 0:
         raise _invalid("exit.take_profit", "must be > 0 or null")
     _check_conditions(x["conditions"], "exit.conditions")
-    s = doc["sizing"]
+
+
+def _check_sizing(s: dict) -> None:
     if _D(s["notional_per_leg"]) <= 0:
         raise _invalid("sizing.notional_per_leg", "must be > 0")
     if not (1 <= s["max_open"] <= MAX_OPEN_LIMIT):
         raise _invalid("sizing.max_open", f"must be in 1..={MAX_OPEN_LIMIT}")
     if s["leverage"] is not None and _D(s["leverage"]) <= 0:
         raise _invalid("sizing.leverage", "must be > 0 or null")
-    _check_parameters(doc)
-    _check_provenance(doc["provenance"])
-    if "strategy_id" in doc:
-        computed = _strategy_id(doc)
-        if doc["strategy_id"] != computed:
-            raise IrError(E_STRATEGY_ID, f"declared strategy_id {doc['strategy_id']} differs from the computed {computed}",
-                          field="strategy_id")
+
+
+def _check_strategy_id(doc: dict) -> None:
+    computed = _strategy_id(doc)
+    if doc["strategy_id"] != computed:
+        raise IrError(E_STRATEGY_ID, f"declared strategy_id {doc['strategy_id']} differs from the computed {computed}",
+                      field="strategy_id")
+
+
+# Semantic checks of one top-level value (§3.2-§3.4), in the order the first-error path runs them.
+_SEMANTIC = (("schema", _check_schema), ("kind", _check_kind), ("name", _check_name), ("universe", _check_universe),
+             ("assumptions", _check_assumptions), ("entry", _check_entry), ("exit", _check_exit), ("sizing", _check_sizing))
+
+
+def _run_checks(doc: Any, k: _Sink) -> None:
+    """Every §3 rule. A value's semantic checks run only if its shape passed; the cross-section ones (parameter paths,
+    strategy_id) only if the whole shape passed. With a raising sink this is exactly the first-error order."""
+    passed = _shape_doc(doc, k)
+    shape_ok = not k.items
+    for key, fn in _SEMANTIC:
+        if passed.get(key):
+            k.ok(fn, doc[key])
+    if shape_ok:
+        _check_parameters(doc, k)
+    if isinstance(doc, dict) and "provenance" in doc:
+        _check_provenance(doc["provenance"], k)
+    if shape_ok and "strategy_id" in doc:
+        k.ok(_check_strategy_id, doc)
+
+
+def _check(doc: Any) -> None:
+    _run_checks(doc, _Sink(collect=False))
 
 
 def validate(doc: Any) -> list[str]:
@@ -447,6 +569,35 @@ def validate(doc: Any) -> list[str]:
     except IrError as e:
         return [f"{e.code}: {e.message}"]
     return []
+
+
+def problems(doc: Any) -> list[dict]:
+    """Every problem of an IR document at once, as ``{"code", "field", "message"}`` (``[]`` = valid). Same rules and
+    messages as :func:`validate`, but independent values are checked independently and an object reports all of its
+    missing and unknown fields. AlphaKeel's validator stays authoritative; this is the agent's fast first pass."""
+    if isinstance(doc, Ir):
+        doc = doc.doc
+    k = _Sink(collect=True)
+    _run_checks(doc, k)
+    return [{"code": e.code, "field": e.field, "message": e.message} for e in k.items]
+
+
+def unit_warnings(doc: Any) -> list[str]:
+    """Non-blocking unit hints. ``exit.max_loss`` is a quote-currency amount (README §1), not a fraction of the notional;
+    a value below 0.1% of one leg is almost certainly a fraction copied from params.json."""
+    if isinstance(doc, Ir):
+        doc = doc.doc
+    try:
+        _check_shape(doc)
+    except IrError:
+        return []
+    m, n = doc["exit"]["max_loss"], doc["sizing"]["notional_per_leg"]
+    if not (Decimal(0) < Decimal(m) < Decimal(n) * Decimal("0.001")):
+        return []
+    with localcontext(Context(prec=6)):
+        pct = Decimal(m) * 100 / Decimal(n)
+    return [f"exit.max_loss is an amount in the quote currency (USDT), not a fraction: max_loss {m} on notional_per_leg {n} "
+            f"closes at a loss of {m} USDT ({fmt(pct)}% of one leg). params.json's max_loss is a fraction; the IR's is not."]
 
 
 # ---------------------------------------------------------------------------------------------------------------------

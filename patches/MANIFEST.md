@@ -38,6 +38,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `ci-env-gate` | alpha_routes (one line) | upstreamable: upstream's own gate e fails on it |
 | `grounding-tex-dollar` | grounding/figures (one helper, one call site) | upstreamable: a closing `$$` after a number made it a dollar amount |
 | `strategy-fidelity` | agent/context (one prompt bullet) | upstreamable: the agent ran a different strategy than the one asked for |
+| `ir-validate-all` | none (leaf package and its tool only) | local-only (follows the leaf package) |
 | `upstream-test-fixes` | _market_hooks (two patterns), alpha_bench_tool (one `getattr`) | upstreamable: two upstream tests are red on upstream main without them |
 
 ---
@@ -600,3 +601,31 @@ tests pin that block at six principles. The tool half (an `alphakeel_research` e
 **Anchors.**
 - upstream `agent/src/agent/context.py`: `- Ask the user if critical info is missing (assets, dates, strategy type). Never guess.` — the rule is the bullet right after this one
 - hook `agent/src/agent/context.py`: `- Backtest the strategy that was asked for, or say you did not.`
+
+## `ir-validate-all` — ir_validate lists every Strategy IR problem at once
+
+**Purpose.** In session b9aa13a496a4 the agent spent ~20 `ir_validate` calls guessing the Strategy IR shape: the call went
+straight to AlphaKeel's Rust validator, which stops at the first serde error. `ir.problems()` runs the same checks as
+`ir.validate()` but collects them: every missing and unknown field of every object, each section checked independently
+(semantic checks of a section only when its shape passed, parameter paths and `strategy_id` only when the whole shape
+passed). `validate()`/`load()` keep their first-error result (contract vectors, Rust parity); the shape and semantic rules
+are shared per-section functions, not a second rule set. The tool's `ir_validate` returns the local problems with
+`source: "local"` without calling AlphaKeel, and asks AlphaKeel (still authoritative) only when there are none.
+`ir.unit_warnings()` flags an `exit.max_loss` below 0.1% of `sizing.notional_per_leg` (the agent wrote the fraction
+`"0.01"`; the IR's `max_loss` is a USDT amount); `ir_validate` and `ir_backtest` envelopes carry it as `warnings`, never
+blocking. The tool description no longer claims dataset packs carry bbo/depth20/instrument_meta for any window (they are
+live captures of recent days) and says `ir_backtest` freezes its own pack. The code lives in `leaf-package` files; this
+group holds the regression test and the hooks.
+
+**Files.**
+- `agent/tests/test_ir_validate_all.py`
+
+**Commits.** (this commit).
+
+**Upstreamable.** No, local-only (follows the leaf package).
+
+**Anchors.**
+- hook `agent/alphakeel_research/ir.py`: `def problems(doc: Any) -> list[dict]:` — collect-all checker; validate()/load() keep the first-error result
+- hook `agent/alphakeel_research/ir.py`: `def unit_warnings(doc: Any) -> list[str]:`
+- hook `agent/src/tools/alphakeel_research_tool.py`: `found = ir.problems(doc)` — ir_validate returns local problems without calling AlphaKeel
+- hook `agent/src/tools/alphakeel_research_tool.py`: `warnings = ir.unit_warnings(doc)`

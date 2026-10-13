@@ -1274,6 +1274,37 @@
      "literal": "- Backtest the strategy that was asked for, or say you did not."
     }
    ]
+  },
+  {
+   "id": "ir-validate-all",
+   "title": "ir_validate lists every Strategy IR problem at once, locally, before AlphaKeel",
+   "files": [
+    "agent/tests/test_ir_validate_all.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/alphakeel_research/ir.py",
+     "kind": "hook",
+     "literal": "def problems(doc: Any) -> list[dict]:",
+     "note": "collect-all checker; validate()/load() keep the first-error result"
+    },
+    {
+     "file": "agent/alphakeel_research/ir.py",
+     "kind": "hook",
+     "literal": "def unit_warnings(doc: Any) -> list[str]:"
+    },
+    {
+     "file": "agent/src/tools/alphakeel_research_tool.py",
+     "kind": "hook",
+     "literal": "found = ir.problems(doc)",
+     "note": "ir_validate returns local problems without calling AlphaKeel"
+    },
+    {
+     "file": "agent/src/tools/alphakeel_research_tool.py",
+     "kind": "hook",
+     "literal": "warnings = ir.unit_warnings(doc)"
+    }
+   ]
   }
  ]
 }
