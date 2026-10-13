@@ -1222,6 +1222,31 @@
      "literal": "for column in (registry.get(aid).meta or {}).get(\"columns_required\", [])"
     }
    ]
+  },
+  {
+   "id": "grounding-tex-dollar",
+   "title": "TeX math delimiters are not a dollar mark in the figures gate",
+   "files": [
+    "agent/src/agent/grounding/figures.py",
+    "agent/tests/test_grounding_figures_contract.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/src/agent/grounding/figures.py",
+     "kind": "upstream",
+     "literal": "def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:"
+    },
+    {
+     "file": "agent/src/agent/grounding/figures.py",
+     "kind": "hook",
+     "literal": "currency_text = _blank_math_delimiters(text)"
+    },
+    {
+     "file": "agent/src/agent/grounding/figures.py",
+     "kind": "preimage",
+     "literal": "currency = _currency_before(text, token.start) or _currency_after(text, token.end)"
+    }
+   ]
   }
  ]
 }

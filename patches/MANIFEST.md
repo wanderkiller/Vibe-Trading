@@ -36,6 +36,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `alphakeel-handoff` | api_server (one hook), RunDetail (one import, one element), api.ts (one `export`) | local-only (follows the leaf package) |
 | `packaging-docs` | pyproject, SKILL.md, READMEs, .gitignore, .env.example, CHANGELOG (one section) | local-only |
 | `ci-env-gate` | alpha_routes (one line) | upstreamable: upstream's own gate e fails on it |
+| `grounding-tex-dollar` | grounding/figures (one helper, one call site) | upstreamable: a closing `$$` after a number made it a dollar amount |
 | `upstream-test-fixes` | _market_hooks (two patterns), alpha_bench_tool (one `getattr`) | upstreamable: two upstream tests are red on upstream main without them |
 
 ---
@@ -560,3 +561,16 @@ runs (audit 2026-10-12 D6-1: every production commit 10-05..10-12 was red at thi
 - upstream `agent/src/api/alpha_routes.py`: `async def alpha_readiness():`
 - hook `agent/src/api/alpha_routes.py`: `configured = bool(get_env_config().data.tushare_token)`
 - preimage `agent/src/api/alpha_routes.py`: `configured = bool(os.getenv("TUSHARE_TOKEN"))`
+
+## `grounding-tex-dollar` — TeX `$`/`$$` is not a dollar mark
+
+**Purpose.** In `scan_figures` the closing `$$` of `$$ … \times 365$$` read as a currency mark on 365, so it was flagged
+`figure_undeclared` and released as `(omitted※)`, breaking the formula (session 8125728230d5). `_blank_math_delimiters`
+blanks the delimiter `$` of display math and pandoc-rule inline math (same length, offsets stay valid) in the text the
+currency helpers see; `\$` stays a literal dollar, `$5` / `100$` in prose stay currency. Upstreamable as a bug fix.
+
+**Files.**
+- `agent/src/agent/grounding/figures.py`
+- `agent/tests/test_grounding_figures_contract.py`
+
+**Commits.** (this commit).

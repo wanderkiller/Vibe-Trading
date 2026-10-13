@@ -72,7 +72,14 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
             if required:
                 raise ValueError(f"{action} needs {key}")
             return
-        out.extend([flag, str(v)])
+        if isinstance(v, bool):
+            kind = ('funding dataset version: omit it (latest), "none", or a version id' if key == "funding"
+                    else "number, string or list, as the action's argument describes")
+            raise ValueError(f"{action}: {key} must be a {kind}, not a boolean" if key != "funding"
+                             else f"{action}: funding is the {kind}; it is not a boolean")
+        if isinstance(v, dict):
+            raise ValueError(f"{action}: {key} must be a scalar")
+        out.extend([flag, _csv(v) if isinstance(v, (list, tuple)) else str(v)])
 
     if action == "freeze":
         add("--start-ms", "start_ms", True), add("--end-ms", "end_ms", True), add("--venues", "venues"), add("--funding", "funding")
@@ -185,7 +192,33 @@ class AlphakeelResearchTool(BaseTool):
         "type": "object",
         "properties": {
             "action": {"type": "string", "enum": list(_ACTIONS)},
-            "args": {"type": "object", "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode; IR: ir, out, run, step_minutes, fees, trials, trials_evidence, capital_base, pack_dir, verbose, research_credential, robustness (export: directory with robustness.json); ir_robustness: run, ir, instruments, pack_dir, is_start_ms, is_end_ms, oos_start_ms, oos_end_ms, oos_pack_dir, filter ({kind: excluded_bases, bases: [...]} or a JSON file), permutations, seed, permutation_seed, workers, prior_trials, wf_folds, wf_test_days, wf_min_train_days; ir_crosscheck: ir, run, timeout_s."},
+            "args": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "start_ms": {"type": "integer", "description": "epoch milliseconds"},
+                    "end_ms": {"type": "integer", "description": "epoch milliseconds"},
+                    "as_of_ms": {"type": "integer", "description": "epoch milliseconds"},
+                    "funding": {"type": "string", "description": 'funding dataset version: omit for latest, "none" to drop funding'},
+                    "venues": {"type": "array", "items": {"type": "string"}},
+                    "instruments": {
+                        "anyOf": [
+                            {"type": "array", "items": {"type": "object", "properties": {
+                                "venue": {"type": "string"}, "market": {"type": "string"}, "symbol": {"type": "string"}}}},
+                            {"type": "string"},
+                        ],
+                        "description": "symbol is the venue-native contract id, e.g. okx perp BTC-USDT-SWAP, binance perp BTCUSDT; "
+                                       "a spot-style BTC-USDT on a perp finds no settlements",
+                    },
+                    "market_tables": {
+                        "type": "array", "items": {"type": "string", "enum": ["kline_1m", "bbo", "depth20", "instrument_meta"]},
+                        "description": "without market_tables a dataset pack holds funding settlements only and cannot drive an ir_backtest PnL",
+                    },
+                    "pack": {"type": "string"},
+                    "accept_partial": {"type": "boolean"},
+                },
+                "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode; IR: ir, out, run, step_minutes, fees, trials, trials_evidence, capital_base, pack_dir, verbose, research_credential, robustness (export: directory with robustness.json); ir_robustness: run, ir, instruments, pack_dir, is_start_ms, is_end_ms, oos_start_ms, oos_end_ms, oos_pack_dir, filter ({kind: excluded_bases, bases: [...]} or a JSON file), permutations, seed, permutation_seed, workers, prior_trials, wf_folds, wf_test_days, wf_min_train_days; ir_crosscheck: ir, run, timeout_s.",
+            },
         },
         "required": ["action"],
     }

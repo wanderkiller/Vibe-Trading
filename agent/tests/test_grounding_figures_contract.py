@@ -385,6 +385,21 @@ def test_a_currency_word_is_bounded_so_a_cjk_word_is_not_money() -> None:
     assert _shapes("3 元宵节后关注")["3"] == "bare"
 
 
+def _figure(text: str, digits: str):
+    return next(f for f in scan_figures(text, parse_figures_block(text)) if f.text == digits)
+
+
+def test_tex_dollar_delimiters_are_not_a_dollar_mark() -> None:
+    """A `$`/`$$` that opens or closes TeX math is not money; a `$5` or `100$` in prose still is."""
+    display = _figure("年化 $$\\text{APR} = \\Delta F \\times 3 \\times 365$$", "365")
+    assert display.shape == "bare" and not display.currency
+    assert _shapes("利差 $F_A - F_B$ 乘以 $3 \\times 365$ 天")["365"] == "bare"
+    prices = _shapes("手续费 $5 和 $10")
+    assert prices["5"] == "measured" and prices["10"] == "measured"
+    assert _figure("手续费 $5 和 $10", "5").currency and _figure("手续费 $5 和 $10", "10").currency
+    assert _figure("price 100$", "100").currency
+
+
 def _measured(text: str) -> set[str]:
     return {
         figure for figure, shape in _shapes(text).items() if shape == "measured"
