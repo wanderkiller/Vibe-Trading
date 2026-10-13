@@ -162,13 +162,14 @@ def p_ok(t):
     return "100.5" if t >= START + 40 * MIN else "100.2"
 
 
-def golden_built(*, bn_mark=None, **kw):
-    """``bn_mark``: the published mark price of Binance's START+30m settlement (none in the golden market)."""
+def golden_built(*, bn_mark=None, ok_mark=None, **kw):
+    """``bn_mark`` / ``ok_mark``: the published mark price of Binance's / OKX's START+30m settlement (none in the golden
+    market)."""
     kl = {("binance", "BTCUSDT"): bars("BTCUSDT", p_bn), ("okx", "BTC-USDT-SWAP"): bars("BTC-USDT-SWAP", p_ok)}
     st = {"binance": [settle("binance:linear:USDT:BTCUSDT", START - 8 * 3_600_000, "-0.0001"),
                       settle("binance:linear:USDT:BTCUSDT", START + 30 * MIN, "0.0001", mark=bn_mark)],
           "okx": [settle("okx:linear:USDT:BTC-USDT-SWAP", START - 8 * 3_600_000, "0.0003"),
-                  settle("okx:linear:USDT:BTC-USDT-SWAP", START + 30 * MIN, "0.0002")]}
+                  settle("okx:linear:USDT:BTC-USDT-SWAP", START + 30 * MIN, "0.0002", mark=ok_mark)]}
     return build([BN, OK], kl, st, **kw)
 
 
@@ -456,15 +457,15 @@ def test_every_trade_record_carries_its_entry_features(tmp_path):
 
 def test_dataset_sim_prices_funding_at_the_official_mark_when_published(tmp_path):
     """AlphaKeel F04 (docs/37): a settlement row's published mark wins over the last 1m close. The golden run with Binance's
-    START+30m settlement publishing mark 100.7 (its last close is 100): the long pays 10 x 100.7 x 0.0001 = 0.1007 instead of
-    0.1; OKX publishes none and stays at its close (receives 0.2004). funding = 0.0997, realized = 7 + 0.0997 - 2.0085."""
-    pack = Pack.from_directory(export_dir(tmp_path, golden_built(bn_mark="100.7")))
+    START+30m settlement publishing mark 102 (its last close is 100): the long pays 10 x 102 x 0.0001 = 0.102 instead of
+    0.1; OKX publishes none and stays at its close (receives 0.2004). funding = 0.0984, realized = 7 + 0.0984 - 2.0085."""
+    pack = Pack.from_directory(export_dir(tmp_path, golden_built(bn_mark="102")))
     out = tmp_path / "bt"
     card = ir_backtest.run(golden_ir(), pack, [BN, OK], start_ms=START, end_ms=END, out_dir=out, step_minutes=2,
                            fees=FEES)
     t = json.loads((out / "trades.jsonl").read_text().splitlines()[0])
-    assert (t["long"]["funding"], t["short"]["funding"]) == ("-0.1007", "0.2004")
-    assert card["amounts"]["funding"] == "0.0997" and card["amounts"]["realized"] == "5.0912"
+    assert (t["long"]["funding"], t["short"]["funding"]) == ("-0.102", "0.2004")
+    assert card["amounts"]["funding"] == "0.0984" and card["amounts"]["realized"] == "5.0899"
     assert card["counts"]["funding_events"] == 2 and card["counts"]["funding_unpriced"] == 0
     assert "published mark" in card["simulator"]["funding"]
     # the one rule both simulators share
@@ -472,6 +473,24 @@ def test_dataset_sim_prices_funding_at_the_official_mark_when_published(tmp_path
     assert ir_views.settlement_price(None, lambda: Decimal("100")) == Decimal("100")
     assert ir_views.settlement_price(None, lambda: None) is None
     assert ir_views.settlement_price(Decimal("100.123456"), lambda: None, 2) == Decimal("100.12")
+
+
+def test_dataset_sim_rounds_official_mark_to_seen_price_dp(tmp_path):
+    """R2-D-3 (AlphaKeel MarkRounder): an official mark is rounded half-even to the price decimals of the contract seen so
+    far in decision frames. Before START+30m Binance closes at 100 (0 decimals), OKX at 100.2 (1 decimal): Binance's mark
+    100.7 is booked at 101 (long pays 10 x 101 x 0.0001 = 0.101), OKX's 100.26 at 100.3 (short receives 10 x 100.3 x 0.0002
+    = 0.2006). funding = 0.0996, realized = 7 + 0.0996 - 2.0085 = 5.0911."""
+    pack = Pack.from_directory(export_dir(tmp_path, golden_built(bn_mark="100.7", ok_mark="100.26")))
+    out = tmp_path / "bt"
+    card = ir_backtest.run(golden_ir(), pack, [BN, OK], start_ms=START, end_ms=END, out_dir=out, step_minutes=2, fees=FEES)
+    t = json.loads((out / "trades.jsonl").read_text().splitlines()[0])
+    assert (t["long"]["funding"], t["short"]["funding"]) == ("-0.101", "0.2006")
+    assert card["amounts"]["funding"] == "0.0996" and card["amounts"]["realized"] == "5.0911"
+    assert not any("not rounded" in a for a in card["approximations"])
+    assert "MarkRounder" in card["simulator"]["funding"]
+    from alphakeel_research import ir_crosscheck as X
+
+    assert not any("NOT rounded" in n for n in X.NOTES) and any("MarkRounder" in n for n in X.NOTES)
 
 
 def test_default_fees_removed_requires_explicit_fees(tmp_path):

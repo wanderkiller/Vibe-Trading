@@ -18,7 +18,8 @@ both legs the same qty, named ``n<trade>-<L|S>-<open|close>`` / ``pair-<trade>``
 ask, short opens sell at the bid, closes the other side); a taker fee ``q8(qty * price * taker_fee)`` per fill; funding at
 each official settlement time ``t`` on every open position of that contract: ``q8(qty * mark * rate)`` paid by longs and
 received by shorts for a positive rate (``sim.py``'s sign), ``mark`` = the settlement's own published mark price (AlphaKeel
-F04), else the close of the last 1m bar closed at or before ``t`` (``ir_views.settlement_price``); ``q8`` = half-even to 1e-8. No margin, leverage, liquidation,
+F04; rounded half-even to the price decimals of the contract seen so far in decision frames, ``DatasetCursor.price_dp``,
+as AlphaKeel's ``MarkRounder`` does), else the close of the last 1m bar closed at or before ``t`` (``ir_views.settlement_price``); ``q8`` = half-even to 1e-8. No margin, leverage, liquidation,
 partial fills, latency or funding of spot legs. Equity = realized + every open pair valued close-now (§5a ``net_now``
 formula at the touch; a leg without a quote this instant at its last close). Amounts are in the legs' quote currency:
 only ``USDT`` is accepted (no FX model).
@@ -51,6 +52,7 @@ from . import ir as IR
 from .errors import ApiError, EvidenceError, Unsupported
 from . import packfile
 from .packfile import Chain, Inst, Pack, Pit
+from .sim import ENGINE_MAX_DP, dp_of
 
 RUN_CARD_SCHEMA = "vibe-trading.ir-backtest-run-card/1"
 DAY_MS = 86_400_000
@@ -60,8 +62,6 @@ WARMUP_MS = DAY_MS
 UNIT = Decimal("0.00000001")
 
 APPROXIMATIONS = [
-    "settlement_price from an official mark is used as published, not rounded to the venue price_dp (AlphaKeel rounds); "
-    "residual up to 0.5 * price_dp * qty per settlement (2026-10-12 audit R2-D-3)",
     "touch: bid = ask = close of the last 1m trade bar closed at the decision time (close_time_ms <= now); spread 0",
     "bbo = true is synthetic (no order book in the dataset); price_estimated is false by construction",
     "mark / funding_px in the decision frame = that close (no mark or index series)",
@@ -72,8 +72,10 @@ APPROXIMATIONS = [
     "or 8 h within 60 s (timestamps jitter by milliseconds) (perps with neither are left out; after an interval change the inference lags one settlement); "
     "next_funding_ms = settlement time + interval",
     "volume_quote = sum of volume_quote over the 1440 bars of the 24 h ending with the last closed bar (null unless all 1440 exist)",
-    "a funding settlement on an open leg is booked at the settlement row's published mark price (AlphaKeel F04); without one "
-    "at the close of the last 1m bar in the 5 minutes before it; with neither it is NOT booked (counts.funding_unpriced); "
+    "a funding settlement on an open leg is booked at the settlement row's published mark price (AlphaKeel F04), rounded "
+    "half-even to the contract's price decimals seen so far (the most decimals of any close in a decision frame before it, "
+    "at most 16; AlphaKeel MarkRounder; unrounded before the first frame); without a mark at the close of the last 1m bar "
+    "in the 5 minutes before it; with neither it is NOT booked (counts.funding_unpriced); "
     "a leg that stops trading is valued at its last close (stale) and cannot exit",
     f"a leg whose last closed bar is older than {ir_views.DATASET_MAX_BAR_AGE_MS // MINUTE_MS} minutes is not in the frame",
     "base / quote_ccy from the pack's instruments table, or from the declared instrument when the dataset pack leaves them null",
@@ -82,7 +84,8 @@ SIM_CONVENTIONS = {
     "fills": "complete and immediate at the frame's touch (long open buys the ask, short open sells the bid, closes the other side)",
     "fee": "q8(qty * price * taker_fee) per fill, taker_fee from the view's fee table",
     "funding": "at each official settlement time t on open positions of that contract: q8(qty * mark * rate), paid by longs and "
-               "received by shorts for a positive rate; mark = the settlement's published mark price (AlphaKeel F04), else the close "
+               "received by shorts for a positive rate; mark = the settlement's published mark price (AlphaKeel F04) rounded "
+               "half-even to the contract's price decimals seen so far in decision frames (AlphaKeel MarkRounder), else the close "
                "of the last 1m bar closed at or before t (within 5 minutes)",
     "rounding": "q8 = half-even to 1e-8; quantity half-even to 8 places (README §5a); the trade's executed quantity is that "
                 "quantity truncated toward zero to the decimals AlphaKeel's engine can hold exactly (README §5a engine precision: a "
@@ -438,6 +441,10 @@ class DatasetCursor:
         self._vis_ptr = {i: 0 for i in self._vis}
         self._vis_last: dict[Inst, _Settle | None] = {i: None for i in self._vis}
         self._vis_prev: dict[Inst, _Settle | None] = {i: None for i in self._vis}
+        #: per contract, the most price decimals of any close in a decision frame so far (capped at ``sim.ENGINE_MAX_DP``):
+        #: AlphaKeel's ``MarkRounder.observe`` over the same frames (bid = ask = mark = close here); an official mark is
+        #: rounded to it, and left as published while the contract has not been in a frame yet
+        self.price_dp: dict[Inst, int] = {}
         self.now = None
 
     def advance(self, now: int) -> None:
@@ -484,6 +491,7 @@ class DatasetCursor:
                                        close_time_ms=b.last[1], volume_quote=b.volume(), settlement=st, taker_fee=fee)
             if leg is not None:
                 out.append(leg)
+                self.price_dp[i] = max(self.price_dp.get(i, 0), min(dp_of(b.last[2]), ENGINE_MAX_DP))
         return out
 
     def settlements_until(self, end_incl: int, after: int | None) -> list[tuple[int, Inst, _Settle]]:
@@ -763,8 +771,10 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                 cursor.advance(st)
                 b = cursor.bars[inst].last
                 # F04: the settlement's published mark, else the last 1m close within DATASET_MAX_BAR_AGE_MS before it
+                # an official mark is rounded to the contract's price decimals seen so far (AlphaKeel MarkRounder, R2-D-3)
                 sim.settle(inst, s.rate, ir_views.settlement_price(
-                    s.mark, lambda: b[2] if b is not None and st - b[1] <= ir_views.DATASET_MAX_BAR_AGE_MS else None))
+                    s.mark, lambda: b[2] if b is not None and st - b[1] <= ir_views.DATASET_MAX_BAR_AGE_MS else None,
+                    cursor.price_dp.get(inst) if s.mark is not None else None))
             last_settled_t = t_incl if last_settled_t is None else max(last_settled_t, t_incl)
 
         def equity_point(t: int, touch: dict) -> None:
@@ -912,7 +922,6 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         "step_minutes": step_minutes, "view": ir_views.DATASET_VIEW, "approximations": APPROXIMATIONS, "simulator": SIM_CONVENTIONS,
         "assumptions": {"funding_estimate_of_ir": loaded.doc["assumptions"]["funding_estimate"],
                         "fees": fees, "fees_source": fees_source,
-                        "fees_note": None if fees is not None else "AlphaKeel's public lowest-tier perp taker fee 0.0005 on every venue (assumption)",
                         "capital_base": _s(capital_base), "capital_base_source": capital_source},
         "instruments": [{**d, "base": cursor.identity[Inst(d["venue"], d["market"], d["symbol"])][0],
                          "quote": cursor.identity[Inst(d["venue"], d["market"], d["symbol"])][1]} for d in insts],
