@@ -615,7 +615,9 @@ are shared per-section functions, not a second rule set. The tool's `ir_validate
 `"0.01"`; the IR's `max_loss` is a USDT amount); `ir_validate` and `ir_backtest` envelopes carry it as `warnings`, never
 blocking. The tool description no longer claims dataset packs carry bbo/depth20/instrument_meta for any window (they are
 live captures of recent days) and says `ir_backtest` freezes its own pack. The code lives in `leaf-package` files; this
-group holds the regression test and the hooks.
+group holds the regression test and the hooks. Same session: `ir export` rebuilt `provenance` from scratch and dropped
+the input's `provenance.fixed_literals`, which AlphaKeel's G1 1.19 and `precheck.py` read from the exported strategy.json;
+the export now carries it through unchanged.
 
 **Files.**
 - `agent/tests/test_ir_validate_all.py`
@@ -629,3 +631,4 @@ group holds the regression test and the hooks.
 - hook `agent/alphakeel_research/ir.py`: `def unit_warnings(doc: Any) -> list[str]:`
 - hook `agent/src/tools/alphakeel_research_tool.py`: `found = ir.problems(doc)` — ir_validate returns local problems without calling AlphaKeel
 - hook `agent/src/tools/alphakeel_research_tool.py`: `warnings = ir.unit_warnings(doc)`
+- hook `agent/alphakeel_research/ir_backtest.py`: `prov["fixed_literals"] = copy.deepcopy(fixed)` — ir export keeps the input provenance.fixed_literals (AlphaKeel G1 1.19, precheck.py)

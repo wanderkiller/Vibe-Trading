@@ -1303,6 +1303,12 @@
      "file": "agent/src/tools/alphakeel_research_tool.py",
      "kind": "hook",
      "literal": "warnings = ir.unit_warnings(doc)"
+    },
+    {
+     "file": "agent/alphakeel_research/ir_backtest.py",
+     "kind": "hook",
+     "literal": "prov[\"fixed_literals\"] = copy.deepcopy(fixed)",
+     "note": "ir export keeps the input provenance.fixed_literals (AlphaKeel G1 1.19, precheck.py)"
     }
    ]
   }

@@ -135,3 +135,18 @@ def test_max_loss_fraction_warns_and_reaches_the_envelope(monkeypatch, tmp_path)
 
     path.write_text(json.dumps(_with_loss("100", "10000")))
     assert "warnings" not in json.loads(AlphakeelResearchTool().execute(action="ir_validate", args={"ir": str(path)}))
+
+
+def test_export_keeps_the_input_provenance_fixed_literals(tmp_path) -> None:
+    """``ir export`` rebuilt provenance from scratch and dropped ``fixed_literals``, which AlphaKeel's G1 1.19 and
+    precheck.py read from the exported strategy.json."""
+    from alphakeel_research import workflow
+    from tests.test_alphakeel_ir_backtest import _run, golden_ir
+
+    run = _run(tmp_path, "--trials", "1")
+    doc = golden_ir()
+    doc["provenance"] = {**doc["provenance"], "fixed_literals": {"entry.candidate_limit": "3"}}
+    workflow.ir_export(doc, run, tmp_path / "export")
+    written = json.loads((tmp_path / "export" / "strategy.json").read_text())
+    assert written["provenance"]["fixed_literals"] == {"entry.candidate_limit": "3"}
+    assert written["provenance"]["tool"] == "vibe-trading"

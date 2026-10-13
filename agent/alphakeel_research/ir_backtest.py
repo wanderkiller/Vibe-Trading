@@ -1118,6 +1118,10 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
     }
     if research_credential is not None:
         prov["research_credential"] = research_credential.get("credential")
+    # The input's fixed_literals pass through unchanged: AlphaKeel's G1 1.19 and precheck.py read them from this file.
+    fixed = (loaded.doc.get("provenance") or {}).get("fixed_literals")
+    if isinstance(fixed, dict):
+        prov["fixed_literals"] = copy.deepcopy(fixed)
     # AlphaKeel protocol 2.5 (1.14): the latest end of every data read behind this research -- the run's data window, the
     # robustness windows and any read in this process (data_audit.record_exposure; also direct exchange pulls).
     from backtest.data_audit import data_exposure_end_ms
