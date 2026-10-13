@@ -52,6 +52,7 @@ class IrBacktestArgs(BaseModel):
     accept_partial: bool = False
     capital_base: str | int | float | None = None
     pack_dir: str | None = None
+    selection: dict | str | None = None
     verbose: bool = False
 
 
@@ -187,8 +188,8 @@ def plan(args: dict[str, Any], ir_doc: dict, who: dict) -> dict[str, Any]:
     out: dict[str, Any] = {"ir": a.ir, "start_ms": start, "end_ms": end, "instruments": insts,
                            "step_minutes": step_minutes(start, end), "fees": fee_table, "fees_source": source,
                            "accept_partial": a.accept_partial, "verbose": a.verbose}
-    for k in ("capital_base", "pack_dir"):
-        if getattr(a, k) not in (None, ""):
+    for k in ("capital_base", "pack_dir", "selection"):
+        if getattr(a, k) not in (None, "", {}):
             out[k] = getattr(a, k)
     if args.get("out") not in (None, ""):  # passed through as before (user decision 2026-10-14)
         out["out"] = args["out"]

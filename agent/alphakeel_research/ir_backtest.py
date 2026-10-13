@@ -150,15 +150,29 @@ def universe_instruments(ir_doc: dict, declared: list[dict]) -> list[dict]:
     return [out[k] for k in sorted(out)]
 
 
-def dataset_request(instruments: list[dict], start_ms: int, end_ms: int, *, accept_partial: bool = False) -> dict:
-    """Dataset-pack request: 1m trade klines + the latest funding dataset for the instruments, ``WARMUP_MS`` before start."""
+def dataset_request(instruments: list[dict], start_ms: int, end_ms: int, *, accept_partial: bool = False,
+                    selection: dict | str | None = None) -> dict:
+    """Dataset-pack request: 1m trade klines + the latest funding dataset for the instruments, ``WARMUP_MS`` before start.
+    ``selection``: how the instrument list was chosen (``Client.dataset_pack_request``; omitted = ``"declared"``)."""
     from .client import Client
 
     refs = [{"venue": d["venue"], "market": d["market"], "symbol": d["symbol"]} for d in instruments]
     has_perp = any(d["market"] == "perp" for d in instruments)
     return Client.dataset_pack_request(start_ms=start_ms - WARMUP_MS, end_ms=end_ms, instruments=refs,
                                        funding_dataset=None if has_perp else "none", market_tables=["kline_1m"],
-                                       price_kinds=["trade"], accept_partial=accept_partial)
+                                       price_kinds=["trade"], accept_partial=accept_partial, selection=selection)
+
+
+def _selection_matches(locked, wanted) -> bool:
+    """The pack's ``request.selection`` is the one asked for: ``"declared"`` (or omitted) on both sides, or the same
+    ``pit_membership.top_n`` (and ``table_sha256`` when the caller pinned one)."""
+    def norm(x):
+        return "declared" if x in (None, "declared") else x
+    locked, wanted = norm(locked), norm(wanted)
+    if wanted == "declared" or locked == "declared":
+        return locked == wanted
+    lp, wp = (locked or {}).get("pit_membership") or {}, (wanted or {}).get("pit_membership") or {}
+    return lp.get("top_n") == wp.get("top_n") and (wp.get("table_sha256") is None or lp.get("table_sha256") == wp.get("table_sha256"))
 
 
 def check_pack(pack: Pack, request: dict) -> None:
@@ -170,6 +184,9 @@ def check_pack(pack: Pack, request: dict) -> None:
     want = request["window"]
     if req.get("window") != want or req.get("instruments") != request["instruments"]:
         raise EvidenceError("evidence.reference", "the pack does not match the request (window or instruments)")
+    if not _selection_matches(req.get("selection"), request.get("selection")):
+        raise EvidenceError("evidence.reference", f"the pack's instrument selection {req.get('selection', 'declared')!r} is not the "
+                            f"one asked for ({request.get('selection', 'declared')!r})")
     if "kline_1m" not in ((req.get("dataset") or {}).get("market_tables") or []) or pack.dataset_version("market") is None:
         raise EvidenceError("evidence.reference", "the pack holds no versioned kline_1m market dataset")
     if any(i["market"] == "perp" for i in request["instruments"]) and pack.dataset_version("funding") is None:
@@ -1064,7 +1081,8 @@ def write_run_files(out: Path, ir_doc: dict, instruments: list[dict], card: dict
 
 
 def backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, end_ms: int, out_dir: str | Path,
-             cache_dir: str | Path | None = None, pack_dir: str | Path | None = None, accept_partial: bool = False, register: bool = False, **kw: Any) -> dict:
+             cache_dir: str | Path | None = None, pack_dir: str | Path | None = None, accept_partial: bool = False, register: bool = False,
+             selection: dict | str | None = None, **kw: Any) -> dict:
     """Freeze (or reuse, the request key is content-derived) the dataset pack through the research service -- or open an
     exported one (``pack_dir``) -- check it is the pack asked for, and :func:`run`; then write the Vibe-Trading run files
     (:func:`write_run_files`; ``state.json`` says ``failed`` when anything raised)."""
@@ -1076,7 +1094,7 @@ def backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, en
                 raise ApiError("request.invalid", "registering the run needs the research-service client (or --no-register)", field="register")
             client.check()  # contract pin / credential scope fail fast, before the backtest, with the client's own error
         card = _backtest(client, ir_doc, instruments, start_ms=start_ms, end_ms=end_ms, out_dir=out, cache_dir=cache_dir,
-                         pack_dir=pack_dir, accept_partial=accept_partial, **kw)
+                         pack_dir=pack_dir, accept_partial=accept_partial, selection=selection, **kw)
         # Trial ledger (audit 2 P1-1 c): every run is a trial of the research service's global ledger, registered ledger-only
         # (POST /trials: no service run); an unregistered run is refused here rather than left to look like the only one.
         if register:
@@ -1099,9 +1117,10 @@ def backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, en
 
 
 def _backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, end_ms: int, out_dir: str | Path,
-              cache_dir: str | Path | None = None, pack_dir: str | Path | None = None, accept_partial: bool = False, **kw: Any) -> dict:
+              cache_dir: str | Path | None = None, pack_dir: str | Path | None = None, accept_partial: bool = False,
+              selection: dict | str | None = None, **kw: Any) -> dict:
     insts = universe_instruments(ir_doc, instruments)
-    req = dataset_request(insts, start_ms, end_ms, accept_partial=accept_partial)
+    req = dataset_request(insts, start_ms, end_ms, accept_partial=accept_partial, selection=selection)
     service = None
     if pack_dir is not None:
         pack = Pack.from_directory(pack_dir)

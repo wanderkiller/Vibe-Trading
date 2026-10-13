@@ -2,7 +2,7 @@
 
     python -m alphakeel_research check
     python -m alphakeel_research freeze   --start-ms N --end-ms N [--venues binance,okx] [--funding none|latest] --out pack.json
-    python -m alphakeel_research freeze   --start-ms N --end-ms N --instruments inst.json [--market-tables kline_1m,bbo] [--price-kinds trade]
+    python -m alphakeel_research freeze   --start-ms N --end-ms N --instruments inst.json [--market-tables kline_1m,bbo] [--price-kinds trade] [--selection declared|JSON]
                                           (dataset pack: funding history / market data for ANY window, no scan frames; the
                                            most recent hold-out days are refused with data.holdout)
     python -m alphakeel_research read     --pack PACK_ID --venue binance --symbol BTCUSDT [--market perp] --start-ms N --end-ms N [--as-of-ms N]
@@ -18,7 +18,7 @@
                                            compared layer by layer; prints the comparison, writes DIR/reconciliation.json)
     python -m alphakeel_research ir backtest --ir strategy.json --start-ms N --end-ms N --instruments inst.json [--step-minutes 2]
                                           --fees fees.json [--fees-source LABEL] [--trials N [--trials-evidence FILE]] [--capital-base X]
-                                          [--accept-partial] [--pack-dir DIR] [--verbose] [--out DIR]
+                                          [--accept-partial] [--pack-dir DIR] [--selection declared|JSON] [--verbose] [--out DIR]
                                           (--out defaults to a new Vibe-Trading run directory RUNS_DIR/<YYYYMMDD_HHMMSS>_ir/, which
                                            also gets ir.json, instruments.json, req.json, review_report.json, state.json)
                                           (long-history research backtest on a dataset pack: 1m klines + official
@@ -89,6 +89,19 @@ def ir_report(r: dict) -> str:
         lines.append(f"{name:<14}{str(s['positions_opened']):>8}{str(s['positions_closed']):>8}{str(s['positions_open_at_end']):>13}  {s['realized']}")
     lines += ["", f"written: {Path(r['run_dir']).parent / 'reconciliation.json'}", "", IR_FOOTER]
     return "\n".join(lines) + "\n"
+
+
+def _selection(v: str | None):
+    """``--selection``: ``declared``, an inline JSON object or a JSON file (``{"pit_membership": {"top_n": N, "table_sha256": H?}}``;
+    validated against the contract by ``Client.dataset_pack_request``)."""
+    if v is None or v == "declared":
+        return v
+    if v.lstrip().startswith("{"):
+        try:
+            return json.loads(v)
+        except ValueError:
+            raise ApiError("request.invalid", "--selection is not valid JSON", field="selection") from None
+    return _load(v)
 
 
 def _run_card(run_dir: str) -> dict:
@@ -224,7 +237,7 @@ def _ir_research(a) -> int:
                                         step_minutes=a.step_minutes, fees=_load(a.fees),
                                         fees_source=a.fees_source or a.fees, trials=a.trials, trials_evidence=a.trials_evidence,
                                         capital_base=Decimal(a.capital_base) if a.capital_base else None,
-                                        accept_partial=a.accept_partial, verbose=a.verbose)
+                                        accept_partial=a.accept_partial, selection=_selection(a.selection), verbose=a.verbose)
         finally:
             if c is not None:
                 c.close()
@@ -249,6 +262,11 @@ def _ir_research(a) -> int:
     return 0
 
 
+SELECTION_HELP = ('dataset pack: how the instrument list was chosen: "declared" (default: your own list, survivorship not '
+                  'excluded) or {"pit_membership": {"top_n": N, "table_sha256": H?}} inline or as a JSON file (the list must be '
+                  "the point-in-time top-N members; the service checks it)")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="alphakeel_research", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--url")
@@ -267,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--market-tables", default="", help="dataset pack: comma list of kline_1m,bbo,depth20,instrument_meta")
     p.add_argument("--market-dataset", help="dataset pack: market dataset version (default: latest at acceptance)")
     p.add_argument("--price-kinds", default="", help="dataset pack: comma list of trade,mark,index for kline_1m (default trade)")
+    p.add_argument("--selection", help=SELECTION_HELP)
     p.add_argument("--out")
     p = sub.add_parser("read")
     p.add_argument("--pack", required=True)
@@ -329,6 +348,7 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--capital-base", help="capital base of the daily returns (default notional_per_leg x 2 x max_open)")
     q.add_argument("--accept-partial", action="store_true")
     q.add_argument("--pack-dir", help="an exported dataset pack directory instead of freezing one through the service")
+    q.add_argument("--selection", help=SELECTION_HELP)
     q.add_argument("--no-register", action="store_true", help="do not register this run in the research service's trial ledger (recorded in the run card)")
     q.add_argument("--verbose", action="store_true", help="write every rejected pair into decisions.jsonl")
     q.add_argument("--out", help="output directory (default: a new Vibe-Trading run directory RUNS_DIR/<YYYYMMDD_HHMMSS>_ir/)")
@@ -377,6 +397,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if a.cmd == "ir" and a.ir_cmd in ("backtest", "export", "robustness", "crosscheck"):
             return _ir_research(a)
+        if a.cmd == "freeze" and a.selection is not None and not a.instruments:
+            raise ApiError("request.invalid", "--selection applies to a dataset pack (give --instruments)", field="selection")
         c = Client(a.url)
         work = Path(a.work) if a.work else Path(tempfile.mkdtemp(prefix="ak-research-"))
         if a.cmd == "check":
@@ -391,7 +413,8 @@ def main(argv: list[str] | None = None) -> int:
                                              funding_dataset=None if a.funding == "latest" else a.funding,
                                              market_tables=[t for t in a.market_tables.split(",") if t],
                                              price_kinds=[t for t in a.price_kinds.split(",") if t] or None,
-                                             market_dataset=a.market_dataset, accept_partial=a.accept_partial)
+                                             market_dataset=a.market_dataset, accept_partial=a.accept_partial,
+                                             selection=_selection(a.selection))
             pack = workflow.freeze_pack(c, req, cache_dir=a.cache)
             lock = pack.lock
             if a.out:

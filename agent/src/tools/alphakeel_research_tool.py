@@ -270,6 +270,12 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
             return
         out.extend(["--fees", _instruments_file(v, "ak-fees-", "fees")])
 
+    def add_selection() -> None:
+        """``selection``: "declared" or {"pit_membership": {"top_n": N, "table_sha256": H?}} (object or JSON string)."""
+        v = a.get("selection")
+        if v not in (None, "", {}):
+            out.extend(["--selection", json.dumps(v) if isinstance(v, dict) else str(v)])
+
     if action == "freeze":
         add("--start-ms", "start_ms"), add("--end-ms", "end_ms"), add("--venues", "venues"), add("--funding", "funding")
         add("--warmup-frames", "warmup_frames")
@@ -281,8 +287,9 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
             if a.get("price_kinds"):
                 out.extend(["--price-kinds", _csv(a["price_kinds"])])
             add("--market-dataset", "market_dataset")
-        elif any(a.get(k) for k in ("market_tables", "price_kinds", "market_dataset")):
-            raise ValueError("freeze: market_tables / price_kinds / market_dataset need instruments (a dataset pack)")
+            add_selection()
+        elif any(a.get(k) for k in ("market_tables", "price_kinds", "market_dataset", "selection")):
+            raise ValueError("freeze: market_tables / price_kinds / market_dataset / selection need instruments (a dataset pack)")
         if a.get("accept_partial"):
             out.append("--accept-partial")
     elif action == "read":
@@ -314,6 +321,7 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
         for f, k in (("--step-minutes", "step_minutes"), ("--trials", "trials"), ("--trials-evidence", "trials_evidence"),
                      ("--capital-base", "capital_base"), ("--pack-dir", "pack_dir"), ("--fees-source", "fees_source")):
             add(f, k)
+        add_selection()
         out.extend(f for f, k in (("--accept-partial", "accept_partial"), ("--verbose", "verbose")) if a.get(k))
         fees(True)
     elif action == "ir_robustness":
@@ -663,10 +671,15 @@ class AlphakeelResearchTool(BaseTool):
                         "description": "{venue: {perp: rate}} with decimal-string taker rates (or a JSON file path); ir_backtest: "
                                        "optional, only when the user gives a fee tier (default: each venue's public base-tier taker)",
                     },
+                    "selection": {
+                        "anyOf": [{"type": "string"}, {"type": "object"}],
+                        "description": 'how the instrument list was chosen: "declared" (default), or {"pit_membership": {"top_n": N, '
+                                       '"table_sha256": H?}}; freeze (dataset packs) and ir_backtest',
+                    },
                     "pack": {"type": "string"},
                     "accept_partial": {"type": "boolean"},
                 },
-                "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode; IR: ir, out, run, fees, capital_base, pack_dir, verbose, research_credential; ir_backtest: ir (required), start_ms, end_ms (optional), fees (optional), accept_partial, capital_base, pack_dir, verbose -- instruments, step_minutes, trials, trials_evidence are derived and ignored if given; robustness (export: directory with robustness.json); ir_robustness: run, ir, instruments, pack_dir, is_start_ms, is_end_ms, oos_start_ms, oos_end_ms, oos_pack_dir, filter ({kind: excluded_bases, bases: [...]} or a JSON file), permutations, seed, permutation_seed, workers, step_minutes, prior_trials, wf_folds, wf_test_days, wf_min_train_days; ir_crosscheck: ir, run, timeout_s.",
+                "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, selection (declared, or {pit_membership: {top_n, table_sha256?}}: dataset packs and ir_backtest), pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode; IR: ir, out, run, fees, capital_base, pack_dir, verbose, research_credential; ir_backtest: ir (required), start_ms, end_ms (optional), fees (optional), accept_partial, selection, capital_base, pack_dir, verbose -- instruments, step_minutes, trials, trials_evidence are derived and ignored if given; robustness (export: directory with robustness.json); ir_robustness: run, ir, instruments, pack_dir, is_start_ms, is_end_ms, oos_start_ms, oos_end_ms, oos_pack_dir, filter ({kind: excluded_bases, bases: [...]} or a JSON file), permutations, seed, permutation_seed, workers, step_minutes, prior_trials, wf_folds, wf_test_days, wf_min_train_days; ir_crosscheck: ir, run, timeout_s.",
             },
         },
         "required": ["action"],

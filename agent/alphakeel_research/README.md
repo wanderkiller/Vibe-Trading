@@ -41,7 +41,11 @@ reads (`Pack.settlements/klines/bbo/instrument_meta`, `Pit.*` with point-in-time
 bbo from `ts_recv_ms`, settlements from `available_at`, instrument metadata = the last snapshot whose snapshot day is not
 after `as_of`); it cannot drive engine runs (`capability.unsupported`). Market objects are per venue *and* market
 (`market/<table>/<venue>/<market>/part-N`: spot and perp can share a symbol); quantities are base units (OKX perpetual
-contract counts are converted by the service with the snapshot's `contract_value`).
+contract counts are converted by the service with the snapshot's `contract_value`). `selection` (Python, `freeze
+--selection` and `ir backtest --selection`, the agent tool's `selection` argument) says how the instrument list was chosen:
+`declared` (default: your own list, survivorship not excluded) or `{"pit_membership": {"top_n": N, "table_sha256": H?}}`
+(the list must be the point-in-time top-N members; the service checks it); `ir backtest` refuses a pack frozen with another
+selection.
 
 The **`alphakeel_b2` loader** (`backtest/loaders/alphakeel_b2_loader.py`) wraps this for Vibe-Trading: `fetch()` builds
 OHLCV from `kline_1m` (1m...1D, complete bars only; perps also carry `funding_cash_rate`/`funding_events` by settlement
@@ -151,7 +155,7 @@ The scan archive (real top of book, predicted funding) only starts 2026-10. For 
 ```bash
 python -m alphakeel_research ir backtest --ir strategy.json --start-ms N --end-ms N --instruments inst.json \
     [--step-minutes 2] --fees fees.json [--trials N [--trials-evidence trials.csv]] [--capital-base X] \
-    [--accept-partial] [--pack-dir DIR] [--verbose] --out RUN
+    [--accept-partial] [--pack-dir DIR] [--selection declared|JSON] [--verbose] --out RUN
 python -m alphakeel_research ir export --ir strategy.json --run RUN [--research-credential] --out EXPORT
 ```
 

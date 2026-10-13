@@ -682,6 +682,47 @@ def test_ir_export_refuses_missing_trials_evidence_and_another_strategy(tmp_path
                         end_ms=END, out_dir=tmp_path / "z", trials=5, fees=FEES)
 
 
+def test_selection_reaches_the_dataset_request_cli_and_tool(tmp_path, capsys):
+    """R2-D-8: ``selection`` is not only a ``Client`` argument: ``ir backtest`` (Python, workflow, CLI) and ``freeze`` take it,
+    put it in the pack request, and a pack frozen with another selection is refused."""
+    from alphakeel_research.errors import EvidenceError
+    from src.tools.alphakeel_research_tool import _argv
+
+    pit = {"pit_membership": {"top_n": 20}}
+    assert ir_backtest.dataset_request([BN], START, END, selection=pit)["selection"] == pit
+    assert "selection" not in ir_backtest.dataset_request([BN], START, END)
+    with pytest.raises(ApiError, match="selection"):
+        ir_backtest.dataset_request([BN], START, END, selection={"top_n": 20})
+    m = ir_backtest._selection_matches
+    assert m(None, "declared") and m("declared", None) and not m(None, pit) and not m(pit, "declared")
+    assert m({"pit_membership": {"top_n": 20, "table_sha256": H}}, pit)
+    assert not m({"pit_membership": {"top_n": 50, "table_sha256": H}}, pit)
+    assert not m({"pit_membership": {"top_n": 20, "table_sha256": H}}, {"pit_membership": {"top_n": 20, "table_sha256": "cd" * 32}})
+    pd_ = export_dir(tmp_path, golden_built())  # the fixture pack is a declared one
+    with pytest.raises(EvidenceError, match="instrument selection"):
+        workflow.ir_backtest(None, golden_ir(), [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "bt", pack_dir=pd_,
+                             selection=pit, fees=FEES)
+    card = workflow.ir_backtest(None, golden_ir(), [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "ok", pack_dir=pd_,
+                                selection="declared", fees=FEES)
+    assert card["amounts"]["realized"] == "5.0919"
+    (tmp_path / "ir.json").write_text(json.dumps(golden_ir()))
+    (tmp_path / "inst.json").write_text(json.dumps([BN, OK]))
+    argv = ["ir", "backtest", "--fees", fees_file(tmp_path), "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START),
+            "--end-ms", str(END), "--instruments", str(tmp_path / "inst.json"), "--pack-dir", str(pd_), "--out", str(tmp_path / "cli")]
+    assert cli.main([*argv, "--selection", json.dumps(pit)]) == 1
+    assert "instrument selection" in capsys.readouterr().out
+    assert cli.main([*argv, "--selection", "{not json"]) == 1
+    assert "--selection is not valid JSON" in capsys.readouterr().out
+    assert cli.main(["freeze", "--start-ms", "1", "--end-ms", "2", "--selection", "declared"]) == 1  # a scan pack has no selection
+    assert "--selection applies to a dataset pack" in capsys.readouterr().out
+    t = _argv("ir_backtest", {"ir": "s.json", "start_ms": 1, "end_ms": 2, "instruments": "i.json", "selection": pit})
+    assert json.loads(t[t.index("--selection") + 1]) == pit
+    f = _argv("freeze", {"start_ms": 1, "end_ms": 2, "instruments": "i.json", "selection": "declared"})
+    assert f[f.index("--selection") + 1] == "declared"
+    with pytest.raises(ValueError, match="selection"):
+        _argv("freeze", {"start_ms": 1, "end_ms": 2, "selection": pit})
+
+
 # --- (5) the agent tool's argv ---------------------------------------------------------------------------------------------
 
 def test_agent_tool_maps_the_ir_actions_to_the_cli():

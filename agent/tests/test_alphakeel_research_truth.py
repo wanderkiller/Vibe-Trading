@@ -83,6 +83,19 @@ def test_model_supplied_derived_args_are_ignored_not_refused() -> None:
     assert p["step_minutes"] == 15 and len(p["instruments"]) == 3
 
 
+def test_selection_passes_through_the_plan_to_the_cli() -> None:
+    # R2-D-8 after the research-truth plan: selection is a model argument, not derived; plan() must not drop it
+    from src.tools import alphakeel_ir_request as req
+    from src.tools.alphakeel_research_tool import _argv
+
+    sel = {"pit_membership": {"top_n": 20}}
+    p = req.plan({"ir": "s.json", "selection": sel}, _ir_doc(), _who())
+    assert p["selection"] == sel and "selection" not in p["ignored_args"]
+    argv = _argv("ir_backtest", {k: v for k, v in p.items() if k != "ignored_args"})
+    assert argv[argv.index("--selection") + 1] == json.dumps(sel)
+    assert "selection" not in req.plan({"ir": "s.json"}, _ir_doc(), _who())
+
+
 def test_request_errors() -> None:
     from src.tools import alphakeel_ir_request as req
 
