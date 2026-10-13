@@ -1253,6 +1253,27 @@
      "literal": "currency = _currency_before(text, token.start) or _currency_after(text, token.end)"
     }
    ]
+  },
+  {
+   "id": "strategy-fidelity",
+   "title": "A blocked backtest is reported, never swapped for another strategy",
+   "files": [
+    "agent/src/agent/context.py",
+    "agent/tests/test_strategy_fidelity.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "upstream",
+     "literal": "- Ask the user if critical info is missing (assets, dates, strategy type). Never guess.",
+     "note": "the rule is the bullet right after this one"
+    },
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "hook",
+     "literal": "- Backtest the strategy that was asked for, or say you did not."
+    }
+   ]
   }
  ]
 }

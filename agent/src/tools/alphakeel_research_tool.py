@@ -21,6 +21,17 @@ from src.config.accessor import get_env_value
 _ACTIONS = ("check", "freeze", "read", "review", "policy", "native", "compare", "ir_validate", "ir_review", "ir_backtest", "ir_robustness", "ir_crosscheck", "ir_export")
 #: ``read`` tables: scan packs have quotes/observations/settlements; dataset packs have klines/bbo/instrument_meta (and settlements).
 _MAX_OUT = 20_000
+#: Added to an error that means the service has no market data at all: the strategy cannot be backtested here, and
+#: the agent must say so instead of switching to another strategy or engine (session 8125728230d5).
+_MARKET_BLOCKED_NEXT = (
+    "BLOCKED: this AlphaKeel service has no published market dataset, so no dataset pack can carry kline_1m/bbo/"
+    "instrument_meta for any window and ir_backtest cannot price the legs. This is a platform data gap, not a "
+    "symbol or argument problem; retrying other windows or symbols will not help. Tell the user exactly this. "
+    "Do NOT replace the requested strategy with a different one (for example a single-asset backtest with the "
+    "built-in engine). What still works for the same strategy: a funding-only estimate from the settlements already "
+    "in a pack (read table=settlements for each leg), labelled 'funding-only: no price, basis, spread or slippage "
+    "PnL; not an ir_backtest'. Any different strategy needs the user's confirmation by name."
+)
 
 
 def _csv(v: Any) -> str:
@@ -155,6 +166,10 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
     return out
 
 
+def _market_blocked(code: Any, message: Any) -> bool:
+    return code == "data.insufficient" and "no market dataset" in str(message or "")
+
+
 def _ir_review_summary(args: dict[str, Any]) -> dict | None:
     """``ir review`` prints a text report; the tool returns the references and the comparison from reconciliation.json."""
     path = os.path.join(str(args.get("out")), "reconciliation.json")
@@ -244,7 +259,10 @@ class AlphakeelResearchTool(BaseTool):
             with contextlib.redirect_stdout(buf):
                 rc = cli.main(argv)
         except ApiError as e:
-            return json.dumps({"status": "error", "error": e.message, "code": e.code, "request_id": getattr(e, "request_id", None)})
+            err = {"status": "error", "error": e.message, "code": e.code, "request_id": getattr(e, "request_id", None)}
+            if _market_blocked(e.code, e.message):
+                err["next"] = _MARKET_BLOCKED_NEXT
+            return json.dumps(err)
         except SystemExit as e:  # argparse
             return json.dumps({"status": "error", "error": f"bad arguments (exit {e.code})"})
         except Exception as e:  # noqa: BLE001 - surfaced as a clean tool error, never with credentials
@@ -254,5 +272,9 @@ class AlphakeelResearchTool(BaseTool):
             result: Any = json.loads(text)
         except ValueError:
             result = (_ir_review_summary(args) if action == "ir_review" and rc == 0 else None) or {"output": text[:_MAX_OUT]}
-        body = json.dumps({"status": "ok" if rc == 0 else "error", "result": result}, ensure_ascii=False, default=str)
+        out = {"status": "ok" if rc == 0 else "error", "result": result}
+        e = result.get("error") if isinstance(result, dict) else None
+        if rc != 0 and isinstance(e, dict) and _market_blocked(e.get("code"), e.get("message")):
+            out["next"] = _MARKET_BLOCKED_NEXT
+        body = json.dumps(out, ensure_ascii=False, default=str)
         return body if len(body) <= _MAX_OUT else json.dumps({"status": "ok" if rc == 0 else "error", "truncated": True, "head": body[:_MAX_OUT]})

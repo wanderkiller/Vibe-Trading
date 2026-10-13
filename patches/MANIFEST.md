@@ -37,6 +37,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `packaging-docs` | pyproject, SKILL.md, READMEs, .gitignore, .env.example, CHANGELOG (one section) | local-only |
 | `ci-env-gate` | alpha_routes (one line) | upstreamable: upstream's own gate e fails on it |
 | `grounding-tex-dollar` | grounding/figures (one helper, one call site) | upstreamable: a closing `$$` after a number made it a dollar amount |
+| `strategy-fidelity` | agent/context (one prompt bullet) | upstreamable: the agent ran a different strategy than the one asked for |
 | `upstream-test-fixes` | _market_hooks (two patterns), alpha_bench_tool (one `getattr`) | upstreamable: two upstream tests are red on upstream main without them |
 
 ---
@@ -577,3 +578,25 @@ currency helpers see; `\$` stays a literal dollar, `$5` / `100$` in prose stay c
 - `agent/tests/test_grounding_figures_contract.py`
 
 **Commits.** (this commit).
+
+## `strategy-fidelity` — a blocked backtest is reported, never swapped for another strategy
+
+**Purpose.** In session 8125728230d5 the user asked for a cross-venue funding carry backtest; AlphaKeel's service had no
+published market dataset, the agent offered "use the built-in engine now", read the reply 「立即利用」 as consent and ran a
+single-asset spot breakout on OKX instead. One bullet in the system prompt's general rules: report the exact blocker,
+offer only fallbacks that keep the same strategy, run a different strategy only after the user confirms it by name, and
+say in the first line when what ran differs from what was asked. It sits outside "Output Principles" because upstream's
+tests pin that block at six principles. The tool half (an `alphakeel_research` error meaning "no market dataset" gains a
+`next: BLOCKED …` instruction) lives in `leaf-package`.
+
+**Files.**
+- `agent/src/agent/context.py`
+- `agent/tests/test_strategy_fidelity.py`
+
+**Commits.** (this commit).
+
+**Upstreamable.** Yes, the prompt bullet (without the AlphaKeel example). Not submitted.
+
+**Anchors.**
+- upstream `agent/src/agent/context.py`: `- Ask the user if critical info is missing (assets, dates, strategy type). Never guess.` — the rule is the bullet right after this one
+- hook `agent/src/agent/context.py`: `- Backtest the strategy that was asked for, or say you did not.`
