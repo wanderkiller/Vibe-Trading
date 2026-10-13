@@ -114,9 +114,10 @@ The `langchain-core==1.6.1` anchor fails when upstream moves that pin; then the 
 - hook `tools/deploy-vt.sh`: `refuse pairing "contract/PIN differs from $AK_PIN"` — the release gate (audit 2026-10-12 D6-1): "Deploy gate" workflow success on the exact commit, commit = AlphaKeel `ci/vibe-trading.ref`, PIN = `ci/vibe-trading.pin`, backup, health + `contract_pin: matched`, rollback; log in `deploy-log.jsonl`
 - hook `tools/deploy-vt.sh`: `--workflow "Deploy gate"` — the gate waits for `.github/workflows/deploy-gate.yml`, not upstream's "CI"
 - hook `tools/deploy-vt.sh`: `docker builder prune -f --filter` — post-success prune of old `vibe-trading-rollback:*` tags (keep `VT_ROLLBACK_KEEP`=3 and the current one) and builder cache older than `VT_BUILDER_MAX_AGE`=72h; warn-only
-- hook `DEPLOYMENT.local.md`: `tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref`
+- hook `DEPLOYMENT.local.md`: `tools/deploy-vt.sh   # pair = AlphaKeel origin/main:ci/vibe-trading.{ref,pin}`
 - hook `tools/deploy-vt.sh`: `refuse checkout "the checkout has modified or untracked files` — wave 2 (R2-D-7): untracked files refuse; a refusal after the build restores the image tag; backup dir mode 700; tests agent/tests/test_deploy_vt.py
 - hook `tools/deploy-vt.sh`: `docker tag "$OLD_IMAGE_ID" "$IMAGE"`
+- hook `tools/deploy-vt.sh`: `git -C "$AK_REPO" fetch --quiet origin main` — wave 2 (R2-D-1): the pair is read from AlphaKeel origin/main, not its working tree
 
 ## `leaf-package` — AlphaKeel research client
 

@@ -79,12 +79,12 @@ def checkout(tmp_path):
     return {"repo": repo, "sha": sha, "ak_ref": ak / "vibe-trading.ref", "stubs": stubs, "home": home, "calls": tmp_path / "docker-calls"}
 
 
-def _run(c, *, ci: str = "success", ref: Path | None = None):
+def _run(c, *, ci: str = "success", ref: Path | None = None, args: list[str] | None = None):
     runs = [{"status": "completed", "conclusion": ci, "headSha": c["sha"], "databaseId": 1}]
     env = {**os.environ, "PATH": f"{c['stubs']}:{os.environ['PATH']}", "HOME": str(c["home"]), "GH_STUB_JSON": json.dumps(runs),
            "DOCKER_CALLS": str(c["calls"])}
-    p = subprocess.run(["bash", "tools/deploy-vt.sh", "--ak-ref", str(ref or c["ak_ref"])], cwd=c["repo"], env=env,
-                       capture_output=True, text=True, timeout=60)
+    argv = args if args is not None else ["--ak-ref", str(ref or c["ak_ref"])]
+    p = subprocess.run(["bash", "tools/deploy-vt.sh", *argv], cwd=c["repo"], env=env, capture_output=True, text=True, timeout=60)
     log = [json.loads(x) for x in (c["repo"] / "deploy-log.jsonl").read_text().splitlines()]
     calls = c["calls"].read_text().splitlines() if c["calls"].exists() else []
     return p, log[-1], calls
@@ -123,3 +123,40 @@ def test_deploy_vt_restores_the_image_tag_when_refused_after_the_build(checkout)
     assert not any(c.startswith("compose up") for c in calls)
     backup = Path(last["backup_dir"])
     assert backup.is_dir() and stat.S_IMODE(backup.stat().st_mode) == 0o700
+
+
+def _commit_pair(repo: Path, ref: str, pin: str) -> None:
+    (repo / "ci").mkdir(exist_ok=True)
+    (repo / "ci" / "vibe-trading.ref").write_text(f"# Full 40-hex SHA on the fork's main\n{ref}\n")
+    (repo / "ci" / "vibe-trading.pin").write_text(pin)
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "pair")
+
+
+def test_deploy_vt_defaults_to_ak_origin_main_pair(checkout, tmp_path):
+    """R2-D-1: without --ak-ref/--ak-pin the pair is AlphaKeel's PUBLISHED main (fetched), never its working tree."""
+    origin = tmp_path / "ak-origin"
+    origin.mkdir()
+    _git(origin, "init", "-q", "-b", "main")
+    _commit_pair(origin, "1" * 40, "pin-old\n")  # what the AK checkout saw when it was cloned
+    ak = tmp_path / "ak-checkout"
+    subprocess.run(["git", "clone", "-q", str(origin), str(ak)], check=True)
+    _commit_pair(origin, checkout["sha"], "pin-1\n")  # released after the clone: only a fetch sees it
+    # the checkout's working tree says something else again (an unreleased local edit): it must not be read
+    (ak / "ci" / "vibe-trading.ref").write_text("2" * 40 + "\n")
+    (ak / "ci" / "vibe-trading.pin").write_text("pin-local\n")
+    p, last, calls = _run(checkout, args=["--ak-repo", str(ak)])
+    assert (last["step"], last["status"]) == ("backup", "refused"), p.stderr  # pairing passed; the stub's stop fails later
+    assert last["pair_source"] == f"origin/main@{_git(origin, 'rev-parse', 'HEAD')}"
+    assert "compose build vibe-trading" in calls
+    # origin/main pairs another commit: refused at pairing, nothing built
+    _commit_pair(origin, "3" * 40, "pin-1\n")
+    checkout["calls"].unlink()
+    p, last, calls = _run(checkout, args=["--ak-repo", str(ak)])
+    assert (last["step"], last["status"]) == ("pairing", "refused") and "3" * 40 in last["detail"] and calls == []
+    # explicit files still override, and say so
+    p, last, _ = _run(checkout)
+    assert last["pair_source"] == f"override:ref={checkout['ak_ref']} override:pin={checkout['ak_ref'].with_name('vibe-trading.pin')}"
+    # the default repo path that does not exist: refused, not skipped
+    p, last, _ = _run(checkout, args=["--ak-repo", str(tmp_path / "missing")])
+    assert (last["step"], last["status"]) == ("pairing", "refused") and "fetch" in last["detail"]

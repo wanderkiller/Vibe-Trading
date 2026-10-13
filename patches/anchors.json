@@ -151,7 +151,7 @@
     {
      "file": "DEPLOYMENT.local.md",
      "kind": "hook",
-     "literal": "tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref"
+     "literal": "tools/deploy-vt.sh   # pair = AlphaKeel origin/main:ci/vibe-trading.{ref,pin}"
     },
     {
      "file": "tools/deploy-vt.sh",
@@ -163,6 +163,12 @@
      "file": "tools/deploy-vt.sh",
      "kind": "hook",
      "literal": "docker tag \"$OLD_IMAGE_ID\" \"$IMAGE\""
+    },
+    {
+     "file": "tools/deploy-vt.sh",
+     "kind": "hook",
+     "literal": "git -C \"$AK_REPO\" fetch --quiet origin main",
+     "note": "wave 2 (R2-D-1): the pair is read from AlphaKeel origin/main, not its working tree"
     }
    ]
   },

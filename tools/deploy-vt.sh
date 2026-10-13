@@ -8,9 +8,12 @@
 #   2. GitHub Actions workflow "Deploy gate" (.github/workflows/deploy-gate.yml: Linux, Python 3.11 + frontend, the
 #      production target; upstream's "CI" matrix no longer gates) has a completed run on exactly that commit with conclusion `success`
 #      (`gh run list --commit`); a red, cancelled, pending or missing run refuses;
-#   3. HEAD equals AlphaKeel's `ci/vibe-trading.ref` (path given by --ak-ref) and this checkout's
-#      `agent/alphakeel_research/contract/PIN` is byte-identical to AlphaKeel's `ci/vibe-trading.pin`
-#      (default: next to the ref file; --ak-pin overrides);
+#   3. HEAD equals AlphaKeel's `ci/vibe-trading.ref` and this checkout's `agent/alphakeel_research/contract/PIN` is
+#      byte-identical to AlphaKeel's `ci/vibe-trading.pin`, both read from AlphaKeel's PUBLISHED main: `git fetch origin
+#      main` in the AlphaKeel checkout (--ak-repo, default /home/ubuntu/alphakeel), then `git show origin/main:ci/...`
+#      (never its working tree, which may be ahead of or behind what is released; audit 2026-10-12 R2-D-1). --ak-ref /
+#      --ak-pin override that with files (diagnosis only; --ak-pin defaults to next to --ak-ref); the log line records
+#      `pair_source` (`origin/main@<sha>` or `override:<paths>`);
 #   4. the new image builds (`docker compose build`) while the old container still serves; a refusal after the build
 #      points the compose image tag back at the old image (a later manual `compose up` must not start an unverified one);
 #   5. backup to ~/vibe-trading-backups/<ts>/ (mode 700: the volumes may hold credentials): the old image is kept under the tag `vibe-trading-rollback:<ts>`
@@ -27,24 +30,25 @@
 # DEPLOYMENT.local.md: ts, sha, step, status, image ids, pin digest. Exit status is non-zero unless deployed.
 #
 # Usage:
-#   tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref [--ak-pin PATH] [--repo OWNER/NAME]
+#   tools/deploy-vt.sh [--ak-repo /home/ubuntu/alphakeel] [--ak-ref PATH [--ak-pin PATH]] [--repo OWNER/NAME]
 #
 # This script changes production; run it only with the user's explicit go-ahead (AGENTS.md rule 14).
 set -euo pipefail
 
-AK_REF="" AK_PIN="" GH_REPO="wanderkiller/Vibe-Trading"
+AK_REPO="/home/ubuntu/alphakeel" AK_REF="" AK_PIN="" GH_REPO="wanderkiller/Vibe-Trading"
 SERVICE="vibe-trading" HEALTH_URL="http://127.0.0.1:8899/health" HEALTH_WAIT_S=180
 while [ $# -gt 0 ]; do
     case "$1" in
+        --ak-repo) AK_REPO="$2"; shift 2 ;;
         --ak-ref) AK_REF="$2"; shift 2 ;;
         --ak-pin) AK_PIN="$2"; shift 2 ;;
         --repo) GH_REPO="$2"; shift 2 ;;
-        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
         *) echo "deploy-vt: unknown argument $1" >&2; exit 2 ;;
     esac
 done
-[ -n "$AK_REF" ] || { echo "deploy-vt: --ak-ref <AlphaKeel ci/vibe-trading.ref> is required" >&2; exit 2; }
-[ -n "$AK_PIN" ] || AK_PIN="$(dirname "$AK_REF")/vibe-trading.pin"
+[ -n "$AK_REF" ] && [ -z "$AK_PIN" ] && AK_PIN="$(dirname "$AK_REF")/vibe-trading.pin"
+PAIR_SOURCE=""
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
@@ -58,9 +62,9 @@ PIN_SHA="$(sha256sum agent/alphakeel_research/contract/PIN 2>/dev/null | cut -d'
 
 log_line() {  # step status [detail]
     python3 -I -c 'import json,sys
-k=["ts","sha","step","status","detail","old_image_id","new_image_id","rollback_tag","pin_sha256","backup_dir"]
+k=["ts","sha","step","status","detail","old_image_id","new_image_id","rollback_tag","pin_sha256","backup_dir","pair_source"]
 print(json.dumps(dict(zip(k,sys.argv[1:])),sort_keys=True))' \
-        "$TS" "$SHA" "$1" "$2" "${3:-}" "$OLD_IMAGE_ID" "$NEW_IMAGE_ID" "$ROLLBACK_TAG" "$PIN_SHA" "$BACKUP" >>"$LOG"
+        "$TS" "$SHA" "$1" "$2" "${3:-}" "$OLD_IMAGE_ID" "$NEW_IMAGE_ID" "$ROLLBACK_TAG" "$PIN_SHA" "$BACKUP" "$PAIR_SOURCE" >>"$LOG"
 }
 refuse() {  # step detail — the old container keeps (or resumes) serving the old image
     local detail="$2"
@@ -125,7 +129,24 @@ sha=sys.argv[1]; runs=[r for r in json.load(sys.stdin) if r.get("headSha")==sha 
 print("success" if runs and runs[0].get("conclusion")=="success" else (runs[0].get("conclusion") if runs else "none"))' "$SHA")"
 [ "$CI_OK" = success ] || refuse ci "latest completed Deploy gate run on $SHA: $CI_OK"
 
-# 3. pairing with AlphaKeel
+# 3. pairing with AlphaKeel: its published main, unless overridden by files
+if [ -z "$AK_REF" ] || [ -z "$AK_PIN" ]; then
+    PAIR_TMP="$(mktemp -d)"
+    trap 'rm -rf "$PAIR_TMP"' EXIT
+    git -C "$AK_REPO" fetch --quiet origin main || refuse pairing "git fetch origin main failed in $AK_REPO"
+    AK_MAIN="$(git -C "$AK_REPO" rev-parse --verify --quiet 'origin/main^{commit}')" || refuse pairing "no origin/main in $AK_REPO"
+    PAIR_SOURCE="origin/main@$AK_MAIN"
+    if [ -z "$AK_REF" ]; then
+        AK_REF="$PAIR_TMP/vibe-trading.ref"
+        git -C "$AK_REPO" show "$AK_MAIN:ci/vibe-trading.ref" >"$AK_REF" || refuse pairing "no ci/vibe-trading.ref on AlphaKeel origin/main"
+    fi
+    if [ -z "$AK_PIN" ]; then
+        AK_PIN="$PAIR_TMP/vibe-trading.pin"
+        git -C "$AK_REPO" show "$AK_MAIN:ci/vibe-trading.pin" >"$AK_PIN" || refuse pairing "no ci/vibe-trading.pin on AlphaKeel origin/main"
+    fi
+fi
+case "$AK_REF" in "${PAIR_TMP:-//}"/*) ;; *) PAIR_SOURCE="${PAIR_SOURCE:+$PAIR_SOURCE }override:ref=$AK_REF" ;; esac
+case "$AK_PIN" in "${PAIR_TMP:-//}"/*) ;; *) PAIR_SOURCE="${PAIR_SOURCE:+$PAIR_SOURCE }override:pin=$AK_PIN" ;; esac
 [ -f "$AK_REF" ] || refuse pairing "no ref file $AK_REF"
 [ -f "$AK_PIN" ] || refuse pairing "no pin file $AK_PIN"
 WANT="$(grep -Ev '^[[:space:]]*(#|$)' "$AK_REF" | head -1 | tr -d '[:space:]')"

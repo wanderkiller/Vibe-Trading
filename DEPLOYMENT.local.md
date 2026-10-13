@@ -26,13 +26,15 @@ Build and start the configured service only through `tools/deploy-vt.sh` (and on
 go-ahead), from this checkout with the commit to deploy checked out:
 
 ```bash
-tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref   # --ak-pin defaults to ci/vibe-trading.pin next to it
+tools/deploy-vt.sh   # pair = AlphaKeel origin/main:ci/vibe-trading.{ref,pin} (--ak-repo, default /home/ubuntu/alphakeel)
 ```
 
 It refuses (exit 1; a refusal after the build points the compose image tag back at the old image) unless the checkout is
 clean (no modified and no untracked files), GitHub workflow `CI` succeeded on exactly this commit,
 the commit equals AlphaKeel's `ci/vibe-trading.ref` and `agent/alphakeel_research/contract/PIN` equals AlphaKeel's
-`ci/vibe-trading.pin`. It then builds the new image while the old container serves, keeps the old image as
+`ci/vibe-trading.pin`, both read from AlphaKeel's published main (`git fetch origin main`, `git show origin/main:...`),
+not from its working tree; `--ak-ref`/`--ak-pin` files override that for diagnosis and are recorded as `override` in the
+log's `pair_source`. It then builds the new image while the old container serves, keeps the old image as
 `vibe-trading-rollback:<ts>`, copies `agent/.env` and archives every named volume (service stopped) into
 `~/vibe-trading-backups/<ts>/` (mode 700: the volumes may hold credentials), starts the new image, and requires `/health` plus `python -m alphakeel_research check`
 in the container to report `contract_pin: matched`; on failure it re-tags the rollback image and recreates the old
