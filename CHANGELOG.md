@@ -5,6 +5,26 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### AlphaKeel patch layer — wave 2 · vt (2026-10-13)
+
+Local patch layer only. Resolves the round-2 residuals of the section below except `run_assumptions.fee_source`
+(contract change, protocol 2.5).
+
+- `ir backtest`: an official settlement mark is rounded half-even to the contract's price decimals seen so far in
+  decision frames, as AlphaKeel's `MarkRounder` does (R2-D-3); the run card drops the unreachable `fees_note`.
+- `ir robustness --run` inherits the card's fee table only when it was explicit (`fees_source` not `default`/absent),
+  else `--fees` is required; `robustness.json` `inputs.fees_source` records the origin (R2-D-4 a).
+- `CryptoEngine` has no default taker fee: `config.json` must set `taker_rate` (refused otherwise; the rate used is in
+  the metrics) (R2-D-4 b). **Behaviour change:** crypto backtests (including the fallback engine for unknown symbols
+  and shadow-account runs on crypto) without `taker_rate` now fail with an explicit error.
+- 1W/1M bars keep every funding settlement of the period (`resample_bars`); the composite reports the crypto leg's
+  `funding_estimate` (R2-D-6). `agent/SKILL.md`: signals read only `funding_visible_rate` (R2-D-5).
+- `selection` on `freeze`/`ir backtest` (CLI, workflow, agent tool); a pack frozen with another selection is refused
+  (R2-D-8).
+- `tools/deploy-vt.sh`: untracked files refuse, a post-build refusal restores the image tag, backups are mode 700,
+  manual volume restore documented, script tests (R2-D-7). `AGENTS.md` rule 17: no agent ack of mainnet alerts (R2-D-11).
+- Rollback: revert the wave-2 vt commits; crypto `config.json` files may keep `taker_rate` (it was read before too).
+
 ### AlphaKeel patch layer — 2026-10-13 (validation protocol 2.5)
 
 Local patch layer only (`patches/MANIFEST.md`); paired with the AlphaKeel lane `lane/w2-protocol`.
