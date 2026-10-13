@@ -159,6 +159,38 @@ def _headline_index(
     return 0
 
 
+# ---------------- Crypto fee source ----------------
+
+def resolve_crypto_taker_rate(explicit: float | str | None, journal_path: str | Path | None) -> tuple[float, str]:
+    """``(taker_rate, source)`` for a pool that holds crypto codes: ``CryptoEngine`` has no default fee (AlphaKeel patch
+    layer, audit 2026-10-12 R2-D-4), so the rate must come from somewhere real.
+
+    1. ``explicit`` (the caller's ``crypto_taker_rate``, e.g. the user's account tier);
+    2. else the journal's own crypto fills: the highest ``fee / notional`` among crypto rows that carry a fee (the
+       conservative side: a taker fill pays at least the maker rate);
+    3. else ``ValueError`` -- no constant is filled in.
+    """
+    from backtest.engines.crypto import taker_rate_of
+
+    if explicit not in (None, ""):
+        return taker_rate_of({"taker_rate": explicit}), "argument crypto_taker_rate"
+    if journal_path and Path(journal_path).is_file():
+        _, records = parse_file(Path(journal_path))
+        rates = []
+        for r in records:
+            notional = abs(float(r.amount or 0.0)) or abs(float(r.quantity) * float(r.price))
+            if r.market == "crypto" and notional > 0 and float(r.fee or 0.0) > 0:
+                rates.append(float(r.fee) / notional)
+        if rates:
+            rate = taker_rate_of({"taker_rate": max(rates)})
+            return rate, f"journal: highest fee/notional of {len(rates)} crypto fills"
+    raise ValueError(
+        "the crypto market needs a taker fee rate and there is no default: pass crypto_taker_rate (the account's crypto "
+        "taker fee per fill, e.g. 0.0005), give a journal_path whose crypto fills carry fees, or leave 'crypto' out of "
+        "markets"
+    )
+
+
 # ---------------- Backtest execution ----------------
 
 def run_shadow_backtest(
@@ -172,6 +204,7 @@ def run_shadow_backtest(
     initial_capital: float = 1_000_000.0,
     journal_path: str | Path | None = None,
     run_backtest_fn: Any | None = None,
+    crypto_taker_rate: float | str | None = None,
 ) -> ShadowBacktestResult:
     """Drive a multi-market backtest from a ShadowProfile.
 
@@ -192,6 +225,9 @@ def run_shadow_backtest(
         journal_path: Original journal path (used to compute attribution
             against the user's realized trades). Attribution is skipped if
             None or the file is missing.
+        crypto_taker_rate: Taker fee rate of the crypto pool's ``CryptoEngine``. Optional: without it the journal's
+            crypto fills are the source (:func:`resolve_crypto_taker_rate`); with neither, a selection holding crypto codes is
+            refused before anything runs (``ValueError``).
         run_backtest_fn: Injection point for tests — callable(run_dir_str)
             returning the same JSON payload as
             ``src.tools.backtest_tool.run_backtest``. Defaults to the real
@@ -212,6 +248,11 @@ def run_shadow_backtest(
     if not groups:
         raise ValueError("No codes available for requested markets.")
 
+    crypto_fee: dict[str, Any] = {}
+    if selection.get("crypto"):
+        rate, rate_source = resolve_crypto_taker_rate(crypto_taker_rate, journal_path)
+        crypto_fee = {"taker_rate": rate, "taker_rate_source": rate_source}
+
     base_dir = runs_dir(profile.shadow_id)
     backtest_fn = run_backtest_fn or _default_run_backtest_fn()
 
@@ -231,6 +272,7 @@ def run_shadow_backtest(
             end_date=window_end,
             source=source,
             initial_capital=initial_capital,
+            extra=crypto_fee if sub_selection.get("crypto") else None,
         )
         payload = json.loads(backtest_fn(str(group_run_dir)))
         per_market, combined, curves = _summarize_artifacts(

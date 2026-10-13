@@ -15,13 +15,17 @@ Local patch layer only. Resolves the round-2 residuals of the section below exce
 - `ir robustness --run` inherits the card's fee table only when it was explicit (`fees_source` not `default`/absent),
   else `--fees` is required; `robustness.json` `inputs.fees_source` records the origin (R2-D-4 a).
 - `CryptoEngine` has no default taker fee: `config.json` must set `taker_rate` (refused otherwise; the rate used is in
-  the metrics) (R2-D-4 b). **Behaviour change:** crypto backtests (including the fallback engine for unknown symbols
-  and shadow-account runs on crypto) without `taker_rate` now fail with an explicit error.
+  the metrics) (R2-D-4 b). **Behaviour change:** crypto backtests (including the fallback engine for unknown symbols)
+  without `taker_rate` now fail with an explicit error. The shadow account's crypto pool takes `crypto_taker_rate` or
+  the journal's own crypto fills (highest fee/notional), else it is refused before running; `generate_backtest_config`
+  needs `taker_rate` for a crypto universe; the skill docs' crypto `config.json` examples set it.
 - 1W/1M bars keep every funding settlement of the period (`resample_bars`); the composite reports the crypto leg's
   `funding_estimate` (R2-D-6). `agent/SKILL.md`: signals read only `funding_visible_rate` (R2-D-5).
 - `selection` on `freeze`/`ir backtest` (CLI, workflow, agent tool); a pack frozen with another selection is refused
   (R2-D-8).
-- `tools/deploy-vt.sh`: untracked files refuse, a post-build refusal restores the image tag, backups are mode 700,
+- `tools/deploy-vt.sh` reads the AlphaKeel pair from `origin/main:ci/vibe-trading.{ref,pin}` after `git fetch`
+  (`--ak-repo`, default `/home/ubuntu/alphakeel`), not from a working tree; `--ak-ref/--ak-pin` override and are
+  logged as `pair_source` (R2-D-1, VT half). Untracked files refuse, a post-build refusal restores the image tag, backups are mode 700,
   manual volume restore documented, script tests (R2-D-7). `AGENTS.md` rule 17: no agent ack of mainnet alerts (R2-D-11).
 - Rollback: revert the wave-2 vt commits; crypto `config.json` files may keep `taker_rate` (it was read before too).
 

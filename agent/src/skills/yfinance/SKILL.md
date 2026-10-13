@@ -248,6 +248,7 @@ eurusd = yf.download("EURUSD=X", start="2025-01-01", end="2026-01-01", progress=
   "end_date": "2026-03-30",
   "initial_cash": 1000000,
   "commission": 0.001,
+  "taker_rate": 0.0005,
   "extra_fields": null
 }
 ```

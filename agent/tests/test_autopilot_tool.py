@@ -61,6 +61,21 @@ def test_generate_backtest_config_writes_safe_config(
     assert config["start_date"] == "2026-01-01"
 
 
+def test_generate_backtest_config_needs_a_taker_rate_for_crypto(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R2-D-4: a crypto universe gets the caller's taker_rate in config.json; without one nothing is written."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    hypothesis = _seed_hypothesis(tmp_path, monkeypatch, universe="BTC-USDT")
+    kw = {"hypothesis_id": hypothesis.hypothesis_id, "start_date": "2026-01-01", "end_date": "2026-01-31"}
+    payload = json.loads(GenerateBacktestConfigTool().execute(**kw))
+    assert payload["status"] == "error" and "taker_rate" in payload["error"]
+    assert not (tmp_path / ".vibe-trading" / "runs").exists()
+    payload = json.loads(GenerateBacktestConfigTool().execute(**kw, taker_rate=0.0004))
+    assert payload["status"] == "ok" and payload["config"]["taker_rate"] == 0.0004
+    assert json.loads((Path(payload["run_dir"]) / "config.json").read_text())["taker_rate"] == 0.0004
+
+
 def test_generate_backtest_config_rejects_invalid_date_before_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -192,6 +192,11 @@ class RunShadowBacktestTool(BaseTool):
                 "type": "string",
                 "description": "Original journal path (enables attribution). Optional.",
             },
+            "crypto_taker_rate": {
+                "type": "number",
+                "description": "Taker fee rate per fill for the crypto market (e.g. 0.0005). Required when markets include "
+                               "crypto and the journal has no crypto fills with fees: there is no default fee.",
+            },
         },
         "required": ["shadow_id"],
     }
@@ -222,6 +227,7 @@ class RunShadowBacktestTool(BaseTool):
                 window_end=window_end,
                 markets=markets,
                 journal_path=journal_path,
+                crypto_taker_rate=kwargs.get("crypto_taker_rate"),
             )
         except ValueError as exc:
             return _err(str(exc))
@@ -262,6 +268,7 @@ class RenderShadowReportTool(BaseTool):
             "window_start": {"type": "string"},
             "window_end": {"type": "string"},
             "journal_path": {"type": "string"},
+            "crypto_taker_rate": {"type": "number", "description": "Crypto taker fee rate (see run_shadow_backtest)."},
         },
         "required": ["shadow_id"],
     }
@@ -294,6 +301,7 @@ class RenderShadowReportTool(BaseTool):
                     window_start=window_start,
                     window_end=window_end,
                     journal_path=journal_path,
+                    crypto_taker_rate=kwargs.get("crypto_taker_rate"),
                 )
             except Exception as exc:  # pragma: no cover — defensive
                 logger.warning("backtest failed during report render: %s", exc)

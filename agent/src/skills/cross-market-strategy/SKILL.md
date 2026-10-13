@@ -88,6 +88,7 @@ def _vol_adjust(self, signals, data_map):
   "end_date": "2025-03-31",
   "interval": "1D",
   "initial_cash": 1000000,
+  "taker_rate": 0.0005,
   "engine": "daily"
 }
 ```

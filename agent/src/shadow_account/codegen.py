@@ -199,8 +199,11 @@ def write_run_dir(
     end_date: str,
     source: str = "auto",
     initial_capital: float = 1_000_000.0,
+    extra: dict[str, Any] | None = None,
 ) -> Path:
     """Materialize a full run_dir with ``code/signal_engine.py`` + ``config.json``.
+
+    ``extra`` is merged into ``config.json`` last (e.g. the crypto pool's ``taker_rate``).
 
     Raises:
         ValueError: Generated signal_engine fails static validation.
@@ -221,6 +224,7 @@ def write_run_dir(
         end_date=end_date,
         source=source,
         initial_capital=initial_capital,
+        extra=extra,
     )
     (run_dir / "config.json").write_text(
         json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8",

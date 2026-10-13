@@ -470,7 +470,13 @@
     "agent/backtest/perpetual_evidence.py",
     "agent/tests/test_composite_currency_guard.py",
     "agent/tests/test_local_source_routing.py",
-    "agent/tests/test_yfinance_crypto_routing.py"
+    "agent/tests/test_yfinance_crypto_routing.py",
+    "agent/src/shadow_account/backtester.py",
+    "agent/src/shadow_account/codegen.py",
+    "agent/src/tools/shadow_account_tool.py",
+    "agent/src/tools/autopilot_tool.py",
+    "agent/tests/test_shadow_account.py",
+    "agent/tests/test_autopilot_tool.py"
    ],
    "anchors": [
     {
@@ -732,6 +738,43 @@
      "kind": "hook",
      "literal": "settled = \"funding_events\" in frame.columns",
      "note": "1W/1M bars keep every settlement of the period (R2-D-6)"
+    },
+    {
+     "file": "agent/src/shadow_account/backtester.py",
+     "kind": "upstream",
+     "literal": "def run_shadow_backtest("
+    },
+    {
+     "file": "agent/src/shadow_account/backtester.py",
+     "kind": "hook",
+     "literal": "def resolve_crypto_taker_rate(explicit",
+     "note": "the crypto pool taker fee from the caller or the journal crypto fills, else refused (R2-D-4)"
+    },
+    {
+     "file": "agent/src/shadow_account/codegen.py",
+     "kind": "upstream",
+     "literal": "def write_run_dir("
+    },
+    {
+     "file": "agent/src/shadow_account/codegen.py",
+     "kind": "hook",
+     "literal": "        extra=extra,\n    )"
+    },
+    {
+     "file": "agent/src/tools/shadow_account_tool.py",
+     "kind": "hook",
+     "literal": "crypto_taker_rate=kwargs.get(\"crypto_taker_rate\"),"
+    },
+    {
+     "file": "agent/src/tools/autopilot_tool.py",
+     "kind": "upstream",
+     "literal": "class GenerateBacktestConfigTool(BaseTool):"
+    },
+    {
+     "file": "agent/src/tools/autopilot_tool.py",
+     "kind": "hook",
+     "literal": "config[\"taker_rate\"] = taker_rate_of({\"taker_rate\": kwargs[\"taker_rate\"]})",
+     "note": "a crypto universe needs the caller taker_rate (R2-D-4)"
     }
    ]
   },
@@ -1087,7 +1130,12 @@
     "agent/tests/test_alphakeel_patch_layer.py",
     "AGENTS.md",
     "CHANGELOG.md",
-    "agent/src/skills/strategy-generate/SKILL.md"
+    "agent/src/skills/strategy-generate/SKILL.md",
+    "agent/src/skills/strategy-generate/examples.md",
+    "agent/src/skills/minute-analysis/SKILL.md",
+    "agent/src/skills/pair-trading/SKILL.md",
+    "agent/src/skills/cross-market-strategy/SKILL.md",
+    "agent/src/skills/yfinance/SKILL.md"
    ],
    "anchors": [
     {
@@ -1301,6 +1349,36 @@
      "file": "agent/src/skills/strategy-generate/SKILL.md",
      "kind": "hook",
      "literal": "- `taker_rate`: **required for crypto**"
+    },
+    {
+     "file": "agent/src/skills/strategy-generate/examples.md",
+     "kind": "hook",
+     "literal": "\"taker_rate\": 0.0005",
+     "note": "crypto config example sets taker_rate (CryptoEngine has no default fee, R2-D-4)"
+    },
+    {
+     "file": "agent/src/skills/minute-analysis/SKILL.md",
+     "kind": "hook",
+     "literal": "\"taker_rate\": 0.0005",
+     "note": "crypto config example sets taker_rate (CryptoEngine has no default fee, R2-D-4)"
+    },
+    {
+     "file": "agent/src/skills/pair-trading/SKILL.md",
+     "kind": "hook",
+     "literal": "\"taker_rate\": 0.0005",
+     "note": "crypto config example sets taker_rate (CryptoEngine has no default fee, R2-D-4)"
+    },
+    {
+     "file": "agent/src/skills/cross-market-strategy/SKILL.md",
+     "kind": "hook",
+     "literal": "\"taker_rate\": 0.0005",
+     "note": "crypto config example sets taker_rate (CryptoEngine has no default fee, R2-D-4)"
+    },
+    {
+     "file": "agent/src/skills/yfinance/SKILL.md",
+     "kind": "hook",
+     "literal": "\"taker_rate\": 0.0005",
+     "note": "crypto config example sets taker_rate (CryptoEngine has no default fee, R2-D-4)"
     }
    ]
   },

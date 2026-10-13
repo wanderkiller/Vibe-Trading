@@ -40,7 +40,7 @@ Tool call sequence:
 1. load_skill("strategy-generate") → 获得工作流指引
 2. write_file("config.json") → 配置
    ```json
-   {"source": "okx", "codes": ["BTC-USDT"], "start_date": "2024-01-01", "end_date": "2024-12-31", "initial_cash": 1000000, "commission": 0.001, "extra_fields": null}
+   {"source": "okx", "codes": ["BTC-USDT"], "start_date": "2024-01-01", "end_date": "2024-12-31", "initial_cash": 1000000, "taker_rate": 0.0005, "extra_fields": null}
    ```
 3. write_file("code/signal_engine.py") → 趋势策略代码
 4. bash("python -c \"import ast; ast.parse(open('code/signal_engine.py').read()); print('OK')\"") → AST 检查

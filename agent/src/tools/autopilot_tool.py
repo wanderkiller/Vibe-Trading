@@ -291,6 +291,11 @@ class GenerateBacktestConfigTool(BaseTool):
                 "type": "string",
                 "description": "Current session id (host-injected)",
             },
+            "taker_rate": {
+                "type": "number",
+                "description": "Taker fee rate per fill for crypto codes (e.g. 0.0005). Required when the universe "
+                               "holds crypto: CryptoEngine has no default fee.",
+            },
         },
         "required": ["hypothesis_id", "start_date", "end_date"],
     }
@@ -339,6 +344,23 @@ class GenerateBacktestConfigTool(BaseTool):
                 "source": source,
                 "interval": "1D",
             }
+            # CryptoEngine has no default fee (AlphaKeel patch layer, R2-D-4): a crypto universe needs the caller's
+            # taker rate, refused here before a config that cannot run is written
+            from backtest.engines._market_hooks import _detect_market
+
+            if any(_detect_market(c) == "crypto" for c in codes):
+                if kwargs.get("taker_rate") in (None, ""):
+                    return json.dumps(
+                        {
+                            "status": "error",
+                            "error": "the universe holds crypto codes and CryptoEngine has no default fee: pass taker_rate "
+                                     "(the account's taker fee per fill, e.g. 0.0005)",
+                        },
+                        ensure_ascii=False,
+                    )
+                from backtest.engines.crypto import taker_rate_of
+
+                config["taker_rate"] = taker_rate_of({"taker_rate": kwargs["taker_rate"]})
 
             run_dir = _run_dir_for_hypothesis(hypothesis_id)
             run_dir.mkdir(parents=True, exist_ok=True)

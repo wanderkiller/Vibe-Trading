@@ -377,6 +377,7 @@ def test_run_shadow_backtest_with_mocked_runner(
 
     result = run_shadow_backtest(
         profile,
+        crypto_taker_rate=0.0005,  # CryptoEngine has no default fee (R2-D-4)
         window_start="2026-01-01",
         window_end="2026-06-30",
         journal_path=profitable_journal,
@@ -412,6 +413,7 @@ def test_run_shadow_backtest_handles_runner_failure(
 
     result = run_shadow_backtest(
         profile,
+        crypto_taker_rate=0.0005,  # CryptoEngine has no default fee (R2-D-4)
         window_start="2026-01-01",
         window_end="2026-06-30",
         run_backtest_fn=failing_runner,
@@ -478,6 +480,7 @@ def test_run_shadow_backtest_derives_pnl_from_final_value(
 
     result = run_shadow_backtest(
         profile,
+        crypto_taker_rate=0.0005,  # CryptoEngine has no default fee (R2-D-4)
         window_start="2026-01-01",
         window_end="2026-06-30",
         journal_path=profitable_journal,
@@ -612,6 +615,7 @@ def test_run_shadow_backtest_runs_once_per_currency(
     }
     result = run_shadow_backtest(
         profile,
+        crypto_taker_rate=0.0005,  # CryptoEngine has no default fee (R2-D-4)
         window_start="2026-01-01",
         window_end="2026-06-30",
         run_backtest_fn=_recording_stub(metrics, calls),
@@ -643,6 +647,7 @@ def test_per_market_rows_come_from_own_currency_group(
     }
     result = run_shadow_backtest(
         profile,
+        crypto_taker_rate=0.0005,  # CryptoEngine has no default fee (R2-D-4)
         window_start="2026-01-01",
         window_end="2026-06-30",
         run_backtest_fn=_recording_stub(metrics, calls),
@@ -670,6 +675,7 @@ def test_headline_pnl_uses_source_market_currency(
     }
     result = run_shadow_backtest(
         profile,
+        crypto_taker_rate=0.0005,  # CryptoEngine has no default fee (R2-D-4)
         window_start="2026-01-01",
         window_end="2026-06-30",
         run_backtest_fn=_recording_stub(metrics, calls),
@@ -691,6 +697,7 @@ def test_single_currency_group_keeps_single_run(
     metrics = {"USD": {"total_return_abs": 300.0, "sharpe": 3.0}}
     result = run_shadow_backtest(
         profile,
+        crypto_taker_rate=0.0005,  # CryptoEngine has no default fee (R2-D-4)
         window_start="2026-01-01",
         window_end="2026-06-30",
         markets=("us", "crypto"),
@@ -719,6 +726,7 @@ def test_currency_group_failure_is_isolated(
     }
     result = run_shadow_backtest(
         profile,
+        crypto_taker_rate=0.0005,  # CryptoEngine has no default fee (R2-D-4)
         window_start="2026-01-01",
         window_end="2026-06-30",
         run_backtest_fn=_recording_stub(
@@ -745,6 +753,7 @@ def test_all_currency_groups_failure(
     calls: list[dict[str, object]] = []
     result = run_shadow_backtest(
         profile,
+        crypto_taker_rate=0.0005,  # CryptoEngine has no default fee (R2-D-4)
         window_start="2026-01-01",
         window_end="2026-06-30",
         run_backtest_fn=_recording_stub(
@@ -820,6 +829,7 @@ def _dividend_scenario_run(
 
     return run_shadow_backtest(
         profile,
+        crypto_taker_rate=0.0005,  # CryptoEngine has no default fee (R2-D-4)
         window_start="2026-01-01",
         window_end="2026-06-30",
         journal_path=journal,
@@ -1230,6 +1240,7 @@ def test_attribution_is_zero_without_journal(
 
     result = run_shadow_backtest(
         profile,
+        crypto_taker_rate=0.0005,  # CryptoEngine has no default fee (R2-D-4)
         window_start="2026-01-01",
         window_end="2026-06-30",
         journal_path=None,  # disable attribution
@@ -2525,3 +2536,40 @@ def test_per_market_bar_keeps_undefined_sharpe_as_na(tmp_path, monkeypatch):
     result = types.SimpleNamespace(per_market={"us": {"final_value": 1.0}, "hk": {"sharpe": 1.234}})
     _render_per_market_bar(result, tmp_path / "bar.png")
     assert texts == ["N/A", "1.23"]
+
+
+def test_crypto_pool_fee_comes_from_a_real_source(
+    profitable_journal: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R2-D-4: the USD pool's config.json carries the crypto taker fee from the caller or the journal's crypto fills
+    (highest fee/notional); with neither the run is refused before anything runs -- no constant is filled in."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    profile = extract_shadow_profile(profitable_journal)
+    configs: dict[str, dict] = {}
+
+    def fake(run_dir: str) -> str:
+        configs[Path(run_dir).name] = json.loads((Path(run_dir) / "config.json").read_text())
+        return json.dumps({"status": "error", "error": "stub"})
+
+    kw = {"window_start": "2026-01-01", "window_end": "2026-06-30", "run_backtest_fn": fake}
+    with pytest.raises(ValueError, match="crypto_taker_rate"):
+        run_shadow_backtest(profile, **kw)
+    assert configs == {}  # refused before any pool ran
+    run_shadow_backtest(profile, crypto_taker_rate=0.0004, **kw)
+    assert configs["USD"]["taker_rate"] == 0.0004 and configs["USD"]["taker_rate_source"] == "argument crypto_taker_rate"
+    assert all("taker_rate" not in c for k, c in configs.items() if k != "USD")  # pools without crypto need none
+    journal = tmp_path / "j.csv"
+    journal.write_text("time,symbol,side,quantity,price,amount,fee\n"
+                       "2026-01-02 10:00:00,BTC-USDT,buy,0.1,50000,5000,2.5\n"
+                       "2026-01-03 10:00:00,BTC-USDT,sell,0.1,51000,5100,5.1\n"
+                       "2026-01-04 10:00:00,AAPL,buy,10,100,1000,1\n")
+    configs.clear()
+    run_shadow_backtest(profile, journal_path=journal, **kw)
+    assert configs["USD"]["taker_rate"] == pytest.approx(0.001)  # 5.1 / 5100; the AAPL fill is not crypto
+    assert configs["USD"]["taker_rate_source"].startswith("journal")
+    with pytest.raises(ValueError, match="taker_rate"):
+        run_shadow_backtest(profile, crypto_taker_rate=-1, **kw)
+    configs.clear()
+    run_shadow_backtest(profile, markets=("china_a", "us"), **kw)  # no crypto: no fee needed
+    assert configs and all("taker_rate" not in c for c in configs.values())

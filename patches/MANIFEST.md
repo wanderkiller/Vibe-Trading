@@ -288,6 +288,12 @@ settlements through `funding_settlements.attach_settlements` (shared with the `a
 - `agent/tests/test_composite_currency_guard.py`
 - `agent/tests/test_local_source_routing.py`
 - `agent/tests/test_yfinance_crypto_routing.py`
+- `agent/src/shadow_account/backtester.py`
+- `agent/src/shadow_account/codegen.py`
+- `agent/src/tools/shadow_account_tool.py`
+- `agent/src/tools/autopilot_tool.py`
+- `agent/tests/test_shadow_account.py`
+- `agent/tests/test_autopilot_tool.py`
 
 **Wave 2 (2026-10-13, R2-D-4 b / R2-D-6).** `CryptoEngine` has no default taker fee: `config.taker_rate` is required
 (`taker_rate_of`; a crypto run without it is refused, the rate used is in the metrics), and the strict path's evidence
@@ -295,7 +301,10 @@ summary reads the same key; the three upstream routing tests that built a crypto
 `resample_bars` keeps settlement-attributed funding whole on 1W/1M bars (events concatenated, cash rate and count
 summed, last settlement time) instead of the last day's, and the composite reports the crypto leg's funding summary
 (`funding_estimate`, `funding_priced_at_close`) like `CryptoEngine`. The strict perpetual path still reads `funding_rate`
-per bar (ccxt only: `alphakeel_b2` frames carry no `mark_open`/`execution_open` and never enter it).
+per bar (ccxt only: `alphakeel_b2` frames carry no `mark_open`/`execution_open` and never enter it). The two production paths that write a crypto `config.json` take the fee from a real source: the shadow
+account's crypto pool from `crypto_taker_rate` or the journal's own crypto fills (highest fee/notional), else it is
+refused before any pool runs (`resolve_crypto_taker_rate`); `generate_backtest_config` refuses a crypto universe without
+`taker_rate`.
 
 **Commits.** `622ea894` (engines, ccxt loader, funding_settlements, tests), `41f8c94b` (composite test expectation), `fdab5523`
 (audit 2026-10-12 D2-10/D2-11: per-settlement Decimal funding at the published mark, `funding_estimate`).
@@ -359,6 +368,13 @@ would be a separate, optional PR (config switch). The PR would contain `CryptoFu
 - upstream `agent/backtest/loaders/base.py`: `def resample_bars(frame: pd.DataFrame, interval: str) -> pd.DataFrame:`
 - upstream `agent/backtest/loaders/base.py`: `        elif column == "funding_rate":\n            columns[column] = values.mean()` — kept for frames without funding_events
 - hook `agent/backtest/loaders/base.py`: `settled = "funding_events" in frame.columns` — 1W/1M bars keep every settlement of the period (R2-D-6)
+- upstream `agent/src/shadow_account/backtester.py`: `def run_shadow_backtest(`
+- hook `agent/src/shadow_account/backtester.py`: `def resolve_crypto_taker_rate(explicit` — the crypto pool taker fee from the caller or the journal crypto fills, else refused (R2-D-4)
+- upstream `agent/src/shadow_account/codegen.py`: `def write_run_dir(`
+- hook `agent/src/shadow_account/codegen.py`: `        extra=extra,\n    )`
+- hook `agent/src/tools/shadow_account_tool.py`: `crypto_taker_rate=kwargs.get("crypto_taker_rate"),`
+- upstream `agent/src/tools/autopilot_tool.py`: `class GenerateBacktestConfigTool(BaseTool):`
+- hook `agent/src/tools/autopilot_tool.py`: `config["taker_rate"] = taker_rate_of({"taker_rate": kwargs["taker_rate"]})` — a crypto universe needs the caller taker_rate (R2-D-4)
 
 ## `metrics-conventions` — undefined ratios are `None`; Sortino definition
 
@@ -527,6 +543,11 @@ layer itself (`patches/`).
 - `agent/tests/test_alphakeel_patch_layer.py`
 - `CHANGELOG.md`
 - `agent/src/skills/strategy-generate/SKILL.md`
+- `agent/src/skills/strategy-generate/examples.md`
+- `agent/src/skills/minute-analysis/SKILL.md`
+- `agent/src/skills/pair-trading/SKILL.md`
+- `agent/src/skills/cross-market-strategy/SKILL.md`
+- `agent/src/skills/yfinance/SKILL.md`
 
 **Commits.** `e0245ca9` `220330b0` `1f83ef6f` `83ea7c2a` `9257a920`, `7d8b0772` (T8, `patches/`), `456b918f`
 (upgrade-rehearsal record), `ff1d0f04` (T9b: `alphakeel_b2` in every README, 30 sources; cherry-picked from the
@@ -564,6 +585,11 @@ the `loaders/` tree line.
 - hook `agent/SKILL.md`: `` a signal reads only `funding_visible_rate` `` — wave 2: the cash funding columns are accounting only (R2-D-5)
 - upstream `agent/src/skills/strategy-generate/SKILL.md`: `` - `commission`: default 0.1% ``
 - hook `agent/src/skills/strategy-generate/SKILL.md`: `` - `taker_rate`: **required for crypto** ``
+- hook `agent/src/skills/strategy-generate/examples.md`: `"taker_rate": 0.0005` — crypto config example sets taker_rate (CryptoEngine has no default fee, R2-D-4)
+- hook `agent/src/skills/minute-analysis/SKILL.md`: `"taker_rate": 0.0005` — crypto config example sets taker_rate (CryptoEngine has no default fee, R2-D-4)
+- hook `agent/src/skills/pair-trading/SKILL.md`: `"taker_rate": 0.0005` — crypto config example sets taker_rate (CryptoEngine has no default fee, R2-D-4)
+- hook `agent/src/skills/cross-market-strategy/SKILL.md`: `"taker_rate": 0.0005` — crypto config example sets taker_rate (CryptoEngine has no default fee, R2-D-4)
+- hook `agent/src/skills/yfinance/SKILL.md`: `"taker_rate": 0.0005` — crypto config example sets taker_rate (CryptoEngine has no default fee, R2-D-4)
 - upstream `agent/.env.example`: `# ETORO_USER_KEY=your_user_key`
 - hook `agent/.env.example`: `# ALPHAKEEL_RESEARCH_URL=`
 - upstream `README.md`: `` regex (?m)^\| `local` \| `` — source-table row the alphakeel rows follow

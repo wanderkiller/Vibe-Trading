@@ -22,7 +22,7 @@ For minute-level backtests, simply add the `interval` field in `config.json`:
   "end_date": "2026-03-15",
   "interval": "5m",
   "initial_cash": 1000000,
-  "commission": 0.0005
+  "taker_rate": 0.0005
 }
 ```
 

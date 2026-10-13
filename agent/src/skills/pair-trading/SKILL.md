@@ -56,7 +56,7 @@ Cryptocurrency version:
   "start_date": "2024-01-01",
   "end_date": "2024-12-31",
   "initial_cash": 1000000,
-  "commission": 0.001,
+  "taker_rate": 0.0005,
   "extra_fields": null
 }
 ```
