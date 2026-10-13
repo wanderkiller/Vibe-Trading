@@ -316,6 +316,21 @@ def test_ir_review_passes_the_irs_leverage_as_the_profile_leverage():
     assert (e.value.code, e.value.field) == ("request.invalid", "profile.leverage_perp")
 
 
+def test_ir_review_compares_intents_on_the_one_level_fill_so_conservative_voids_stay_out_of_l2():
+    """README §5a / 03 W4 (a): AlphaKeel's conservative fill voids an over-capacity or one-leg entry and reruns its decisions;
+    the local simulator models neither, so the L2 comparison by intent_id is made on the one-level full-fill profile, where
+    the voiding rule is the one both sides share (an entry the engine fills on neither leg). A request that asks for the
+    conservative fill is refused rather than compared unlike for like."""
+    from alphakeel_research import ir_crosscheck as X
+
+    doc = _carry_doc()
+    prof = X.with_reconciliation_fill(workflow.ir_profile(doc, None))
+    assert prof["fill_model"] == "top_of_book"
+    with pytest.raises(ApiError, match="contradicts"):
+        X.with_reconciliation_fill(workflow.ir_profile(doc, {"fill_model": "conservative"}))
+    assert any("voided and the decisions rerun" in n and "RECONCILIATION_FILL" in n for n in X.NOTES)
+
+
 # --- (2) the dataset view --------------------------------------------------------------------------------------------------
 
 def _view_pack():
