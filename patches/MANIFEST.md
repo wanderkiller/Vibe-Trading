@@ -32,7 +32,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `alpha-bench-universe` | alpha_bench_tool, factors/cli_handlers | local-only (follows the leaf package) |
 | `crypto-funding` | engines/_market_hooks, crypto, composite; ccxt_loader | upstreamable as a bug-fix PR (see below) |
 | `metrics-conventions` | metrics, validation | partly upstreamed already; rest upstreamable |
-| `run-card-data-audit` | run_card | local-only as written; a generic provenance hook is upstreamable |
+| `run-card-data-audit` | run_card, loaders/base (exposure hook) | local-only as written; a generic provenance hook is upstreamable |
 | `alphakeel-handoff` | api_server (one hook), RunDetail (one import, one element), api.ts (one `export`) | local-only (follows the leaf package) |
 | `packaging-docs` | pyproject, SKILL.md, READMEs, .gitignore, .env.example, CHANGELOG (one section) | local-only |
 | `ci-env-gate` | alpha_routes (one line) | upstreamable: upstream's own gate e fails on it |
@@ -373,11 +373,14 @@ the `validation.py` guards, and the tests.
 **Purpose.** The run card records a `data_audit` block: which sources are auditable (frozen, digest-verified AlphaKeel
 packs, with dataset versions per read) and which are not (live ccxt/okx/binance pulls), adds a warning for
 non-auditable data and renders a "Data Audit" section. Loaders record provenance in-process
-(`data_audit.record_provenance`).
+(`data_audit.record_provenance`). Since AlphaKeel protocol 2.5 (02 WP5) every non-empty read through the shared
+loader cache wrapper (`cached_loader_fetch`, used by the ccxt/okx/binance loaders) also records the end of the data it
+returned (`data_audit.record_exposure`); the IR export writes the latest one as `provenance.data_exposure_end_ms`.
 
 **Files.**
 - `agent/backtest/run_card.py`
 - `agent/backtest/data_audit.py`
+- `agent/backtest/loaders/base.py`
 
 **Commits.** `83ea7c2a` `5370ab12`.
 
@@ -394,6 +397,10 @@ class" field in the run card would be upstreamable.
 - hook `agent/backtest/run_card.py`: `"data_audit": audit,`
 - hook `agent/backtest/run_card.py`: `"## Data Audit"`
 - preimage `agent/backtest/run_card.py`: `"warnings": [*(warnings or []), *provenance_warnings],`
+- upstream `agent/backtest/loaders/base.py`: `def cached_loader_fetch(`
+- hook `agent/backtest/loaders/base.py`: `def _note_exposure(source: str, end_date: str, frame: pd.DataFrame | None) -> None:`
+- hook `agent/backtest/loaders/base.py`: `_note_exposure(source, end_date, cached)`
+- hook `agent/backtest/loaders/base.py`: `_note_exposure(source, end_date, frame)`
 
 ## `alphakeel-handoff` — hand-off of an IR run to AlphaKeel
 

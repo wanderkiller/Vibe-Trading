@@ -32,6 +32,9 @@ NON_AUDITABLE_SOURCES: dict[str, str] = {
 AUDITABLE_SOURCES: frozenset[str] = frozenset({"alphakeel_b2", "alphakeel_pack"})
 _MAX_ENTRIES_PER_SOURCE = 64
 _PROVENANCE: dict[str, list[dict[str, Any]]] = {}
+#: source -> latest end (ms, exclusive) of any data read from it in this process (AlphaKeel protocol 2.5, item 1.14: the
+#: research horizon includes every read, also the ones that bypass the research service).
+_EXPOSURE_END: dict[str, int] = {}
 
 
 def record_provenance(source: str, entry: dict[str, Any]) -> None:
@@ -41,8 +44,24 @@ def record_provenance(source: str, entry: dict[str, Any]) -> None:
         lst.append(entry)
 
 
+def record_exposure(source: str, end_ms: int) -> None:
+    """Remember that ``source`` returned data up to ``end_ms`` (exclusive; capped at now: a future end shows nothing yet)."""
+    import time
+
+    end = min(int(end_ms), int(time.time() * 1000))
+    if end > _EXPOSURE_END.get(source, -1):
+        _EXPOSURE_END[source] = end
+
+
+def data_exposure_end_ms() -> int | None:
+    """Latest end of any data read in this process (all sources), or None. Exported as the IR's
+    ``provenance.data_exposure_end_ms`` (AlphaKeel G1 1.14 counts it in the research horizon)."""
+    return max(_EXPOSURE_END.values(), default=None)
+
+
 def reset_provenance() -> None:
     _PROVENANCE.clear()
+    _EXPOSURE_END.clear()
 
 
 def data_audit(sources: Iterable[str]) -> dict[str, Any]:
@@ -62,6 +81,7 @@ def data_audit(sources: Iterable[str]) -> dict[str, Any]:
         "auditable": bool(names) and all(v["auditable"] is True for v in per_source.values()),
         "non_auditable_sources": non,
         "sources": per_source,
+        "data_exposure_end_ms": data_exposure_end_ms(),
     }
 
 

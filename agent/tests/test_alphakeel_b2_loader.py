@@ -804,3 +804,23 @@ def test_a_policy_strategy_gets_only_the_point_in_time_view():
     assert "ctx.pack" not in src and "ctx.pit = Pit(" in src
     pit = packfile.Pit(_StubPack(FUND), START)
     assert not hasattr(pit, "pack") and pit.pack_id == "pk-stub"
+
+
+def test_ccxt_fetch_records_data_exposure_end_in_provenance(monkeypatch):
+    # protocol 2.5 (1.14, 02 WP5): a non-service read raises the research horizon AlphaKeel sees via provenance.data_exposure_end_ms
+    from backtest.loaders import ccxt_loader
+
+    frame = pd.DataFrame(
+        {"open": [1.0, 1.0], "high": [1.0, 1.0], "low": [1.0, 1.0], "close": [1.0, 1.0], "volume": [1.0, 1.0]},
+        index=pd.DatetimeIndex(["2024-01-01", "2024-01-02"], name="trade_date"),
+    )
+    monkeypatch.setattr(ccxt_loader.DataLoader, "_get_exchange", lambda self, instrument_type="spot": object())
+    monkeypatch.setattr(ccxt_loader.DataLoader, "_fetch_one", staticmethod(lambda *a, **k: frame))
+    data_audit.reset_provenance()
+    try:
+        assert data_audit.data_exposure_end_ms() is None
+        out = ccxt_loader.DataLoader().fetch(["BTC-USDT"], "2024-01-01", "2024-01-02")
+        assert "BTC-USDT" in out
+        assert data_audit.data_exposure_end_ms() == int(pd.Timestamp("2024-01-03").timestamp() * 1000)
+    finally:
+        data_audit.reset_provenance()
