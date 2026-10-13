@@ -227,12 +227,39 @@ def narrow_ranges(rb: dict) -> list[str]:
     return out
 
 
+def missing_neighbour_sides(rb: dict) -> list[str]:
+    """1.9 (protocol 2.5, D4-10; AlphaKeel ``missing_neighbour_sides``): ``parameter:side`` pairs without a neighbour, for every
+    parameter named in ``parameters.ranges[].name`` / ``neighbours[].parameter`` / ``skipped[].parameter``, sides ``lo`` and ``hi``,
+    sorted."""
+    p = rb.get("parameters") if isinstance(rb, dict) else None
+    p = p if isinstance(p, dict) else {}
+    names: set[str] = {x["name"] for x in (p.get("ranges") if isinstance(p.get("ranges"), list) else [])
+                       if isinstance(x, dict) and isinstance(x.get("name"), str)}
+    for k in ("neighbours", "skipped"):
+        for x in p.get(k) if isinstance(p.get(k), list) else []:
+            if isinstance(x, dict) and isinstance(x.get("parameter"), str):
+                names.add(x["parameter"])
+    have = {(x.get("parameter"), x.get("side")) for x in (p.get("neighbours") if isinstance(p.get("neighbours"), list) else [])
+            if isinstance(x, dict)}
+    return [f"{n}:{side}" for n in sorted(names) for side in ("lo", "hi") if (n, side) not in have]
+
+
+def permutation_seed(strategy_id: str) -> int:
+    """1.12 (protocol 2.5, D4-5; AlphaKeel ``permutation_seed``): the permutation test's seed AlphaKeel derives from the strategy
+    id -- the first 8 bytes of SHA-256(strategy_id) as a big-endian unsigned integer."""
+    return int(hashlib.sha256(strategy_id.encode("utf-8")).hexdigest()[:16], 16)
+
+
 def _neighbours(rb: dict, t: dict):
     nb = _get(rb, "parameters", "neighbours")
     if not isinstance(nb, list):
         return "FAIL", None, "parameters.neighbours missing"
     if len(nb) < int(t["min_neighbours"]):
         return "FAIL", len(nb), f"fewer than {t['min_neighbours']} parameter neighbours"
+    if t.get("both_ends") == "required":
+        missing = missing_neighbour_sides(rb)
+        if missing:
+            return "FAIL", len(nb), f"parameter neighbour missing on one side: {', '.join(missing)}"
     raw = [x.get("net") if isinstance(x, dict) else None for x in nb]
     if any(r is not None and not isinstance(r, str) for r in raw):
         return "FAIL", None, "a parameter neighbour net has the wrong JSON type (type: must be a decimal string)"
@@ -299,6 +326,19 @@ def _filter(rb: dict, t: dict, required_by_ir: bool = False):
     p = _get(rb, "rating", "facts", "filter_p")
     if p is _MISSING or p is None:
         return "FAIL", None, "the filter is in the IR but has no permutation p-value"
+    # protocol 2.5 (D4-5): enough draws, and the seed AlphaKeel derives from the strategy id
+    perm = _get(rb, "filter", "permutation")
+    perm = perm if isinstance(perm, dict) else {}
+    why = []
+    draws = perm.get("draws")
+    if "min_permutations" in t and (isinstance(draws, bool) or not isinstance(draws, int) or draws < int(t["min_permutations"])):
+        why.append(f"filter.permutation.draws {draws} below min_permutations {t['min_permutations']}")
+    if t.get("permutation_seed") == "sha256_strategy_id":
+        sid, seed = rb.get("strategy_id"), perm.get("seed")
+        if not isinstance(sid, str) or isinstance(seed, bool) or seed != permutation_seed(sid):
+            why.append(f"filter.permutation.seed {seed} is not the seed AlphaKeel derives from the strategy id")
+    if why:
+        return "FAIL", p, "; ".join(why)
     return _le(rb, ("rating", "facts", "filter_p"), t["max_p"], "str")
 
 

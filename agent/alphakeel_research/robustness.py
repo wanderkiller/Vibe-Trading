@@ -649,17 +649,22 @@ def _service_conservative(client: Any, run_id: str, local_net: Decimal, timeout:
 
 
 def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos_window=None, oos_pack: Pack | None = None,
-            out_dir: str | Path, fees: dict | None = None, filter_spec: dict | None = None, permutations: int = 30, seed: int = 7,
+            out_dir: str | Path, fees: dict | None = None, filter_spec: dict | None = None, permutations: int = 999, seed: int = 7,
             step_minutes: int = 5, capital_base: Decimal | str | None = None, workers: int = 2, prior_trials: int = 0,
             segments: int = SEGMENTS, wf_folds: int = WF_FOLDS, wf_test_days: int = WF_TEST_DAYS,
-            wf_min_train_days: int = WF_MIN_TRAIN_DAYS, prior_trials_floor: int = 0, registry: Any = None) -> dict:
+            wf_min_train_days: int = WF_MIN_TRAIN_DAYS, prior_trials_floor: int = 0, registry: Any = None,
+            permutation_seed: int | None = None) -> dict:
     """Run the battery (module docstring) and write ``robustness.json``, ``robustness.md`` and ``trials.jsonl`` into
     ``out_dir``. Returns the robustness document.
 
     ``prior_trials_floor``: the IR run card's ``trials.count`` (docs/45 audit 2 P1-1 b): ``prior_trials`` is never below it (the larger
     is used, a smaller declared value is reported in ``notes``). ``registry``: the research-service client; every candidate run is
     registered in the service's trial ledger (``ir_crosscheck.register_trial``) and the returned ids are written to
-    ``robustness.json`` ``service_runs``. Without it ``service_runs.registered`` is false (and says so in ``notes``)."""
+    ``robustness.json`` ``service_runs``. Without it ``service_runs.registered`` is false (and says so in ``notes``).
+
+    ``permutations`` / ``permutation_seed`` (protocol 2.5, item 1.12): AlphaKeel requires at least ``min_permutations`` (999) draws
+    seeded with :func:`precheck.permutation_seed` of the strategy id; the default seed is that one (``seed`` stays the bootstrap
+    seed). Another seed is allowed for exploration but fails 1.12."""
     from backtest import alphakeel_metrics as M
 
     fees = ir_views.require_fees(fees)  # no default fee table (D2-13); every variant runs on the same explicit table
@@ -667,6 +672,10 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     base_doc = copy.deepcopy(loaded.doc)
     base_doc.pop("strategy_id", None)
     sid = loaded.strategy_id
+    from . import precheck as _pc  # local import, like narrow_ranges below
+    perm_seed = _pc.permutation_seed(sid) if permutation_seed is None else permutation_seed
+    if isinstance(perm_seed, bool) or not isinstance(perm_seed, int) or perm_seed < 0:
+        raise ApiError("request.invalid", "permutation_seed must be an integer >= 0", field="permutation_seed")
     if isinstance(permutations, bool) or not isinstance(permutations, int) or permutations < 0:
         raise ApiError("request.invalid", "permutations must be an integer >= 0", field="permutations")
     if isinstance(prior_trials, bool) or not isinstance(prior_trials, int) or prior_trials < 0:
@@ -827,7 +836,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         if implicit:  # the allow-list was a coin choice among the researched coins: the null draws from all of them
             pool = sorted(researched | set(bases_f))
         k = len(bases_f)
-        perm: dict[str, Any] = {"draws": permutations, "set_size": k, "pool": pool, "seed": seed}
+        perm: dict[str, Any] = {"draws": permutations, "set_size": k, "pool": pool, "seed": perm_seed}
         if permutations == 0:
             perm["p_value"] = None
             perm["note"] = "permutations = 0: not run"
@@ -835,7 +844,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
             perm["p_value"] = None
             perm["note"] = f"only {len(pool)} bases traded in the unfiltered run: no random set of size {k}"
         else:
-            sets, matched = _draw_sets(pool, k, off_tr, filt["blocked"]["count"], permutations, seed)
+            sets, matched = _draw_sets(pool, k, off_tr, filt["blocked"]["count"], permutations, perm_seed)
             excl_off = set(filter_doc["universe"]["excluded_bases"]) - set(bases_f)
             pjobs = [R.job(f"perm-{i + 1:04d}", "permutation", with_excluded(filter_doc, excl_off | set(s)), fees=fees) for i, s in enumerate(sets)]
             R.execute(pjobs)
@@ -986,7 +995,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         "schema": SCHEMA, "strategy_id": sid, "name": base_doc["name"],
         "inputs": {"is_window": {"start_ms": windows["is"][0], "end_ms": windows["is"][1]}, "pack_id": pack.id,
                    "oos_window": oos_doc["window"] if oos_doc else None, "oos_pack_id": packs["oos"].id if oos_doc else None,
-                   "fees": fees, "filter": filter_spec, "permutations": permutations, "seed": seed,
+                   "fees": fees, "filter": filter_spec, "permutations": permutations, "seed": seed, "permutation_seed": perm_seed,
                    "step_minutes": step_minutes, "capital_base": _s(capital), "workers": workers,
                    "execution": R.serial_reason or ("process pool (spawn)" if workers > 1 else "in process"), "segments": segments, "walk_forward": wf_cfg},
         "trials": {"count": n_trials, "distinct_candidate_variants": len(candidates), "prior_trials_declared": declared_prior, "prior_trials_used": prior_trials, "prior_trials_floor": prior_trials_floor,
