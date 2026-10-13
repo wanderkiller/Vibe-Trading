@@ -1014,3 +1014,23 @@ def test_export_binds_the_robustness_windows_to_the_run_card(tmp_path):
     _fake_robustness(tmp_path / "good3", sid, inputs={"is_window": isw, "oos_window": None, "pack_id": PID})
     with pytest.raises(ApiError, match="data horizon|research window"):
         workflow.ir_export(golden_ir(), run, tmp_path / "o-no", research_credential=cred, robustness_dir=tmp_path / "good3")
+
+
+def test_argv_rejects_boolean_funding() -> None:
+    from src.tools.alphakeel_research_tool import _argv
+
+    with pytest.raises(ValueError, match="none"):
+        _argv("freeze", {"start_ms": 1, "end_ms": 2, "funding": True})
+
+
+def test_argv_joins_venue_list() -> None:
+    from src.tools.alphakeel_research_tool import _argv
+
+    argv = _argv("freeze", {"start_ms": 1, "end_ms": 2, "venues": ["binance", "okx"]})
+    assert ["--venues", "binance,okx"] == argv[argv.index("--venues"):argv.index("--venues") + 2]
+
+
+def test_tool_schema_types_funding_as_string() -> None:
+    from src.tools.alphakeel_research_tool import AlphakeelResearchTool
+
+    assert AlphakeelResearchTool.parameters["properties"]["args"]["properties"]["funding"]["type"] == "string"

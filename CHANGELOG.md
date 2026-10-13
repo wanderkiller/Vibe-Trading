@@ -9,6 +9,9 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 Local patch layer only (`patches/MANIFEST.md`); not an upstream release note.
 
+- `alphakeel_research` tool: a boolean is no longer sent as `--funding True`, lists are comma-joined, and `args` has typed
+  properties for the keys models misuse; the figures gate no longer reads a TeX `$`/`$$` delimiter as a dollar mark
+  (session 8125728230d5).
 - CI gate e passes: the patch layer reads its environment through
   `src.config.accessor`, `/alpha/readiness` through `get_env_config()` (new
   group `ci-env-gate`), so the CI job reaches the test suite again (D6-1).

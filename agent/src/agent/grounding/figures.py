@@ -77,6 +77,11 @@ _CELL_WORD_RE = re.compile(r"[^\W\d_]{2,}")
 # backticks or tildes, and the info string.
 _FENCE_RE = re.compile(r"(?m)^ {0,3}(`{3,}|~{3,})(.*)$")
 
+# TeX math delimiters (a `$` there is not money): display `$$..$$`, and pandoc inline `$..$` (opener
+# before a non-space, closer after a non-space and not before a digit, one line); `\\$` is a literal dollar.
+_TEX_DISPLAY_RE = re.compile(r"(?<!\\)\$\$.+?(?<!\\)\$\$", re.S)
+_TEX_INLINE_RE = re.compile(r"(?<![\\$])\$(?=[^\s$])[^\n$]*?(?<=[^\s\\])\$(?![\d$])")
+
 # Currency is a symbol set, not a vocabulary: a money character or ISO code
 # touching a bare integer ("$100", "820 CNY") makes it measurement-shaped.
 _CURRENCY_CHARS = frozenset("$¥￥€£₩₹元币圆镑円원")
@@ -814,6 +819,21 @@ def _code_before(head: str) -> str:
     return ""
 
 
+def _blank_math_delimiters(text: str) -> str:
+    """``text`` with the ``$`` of TeX math spans replaced by spaces (same length, offsets stay valid)."""
+    chars = list(text)
+
+    def blank(span: re.Match[str], width: int) -> str:
+        for i in (*range(span.start(), span.start() + width), *range(span.end() - width, span.end())):
+            chars[i] = " "
+        return ""
+
+    _TEX_DISPLAY_RE.sub(lambda m: blank(m, 2), text)
+    rest = "".join(chars)
+    _TEX_INLINE_RE.sub(lambda m: blank(m, 1), rest)
+    return "".join(chars)
+
+
 def _currency_before(text: str, start: int) -> bool:
     """Whether a currency symbol or ISO code touches the number on its left."""
     head = text[:start].rstrip()
@@ -1039,6 +1059,7 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
     # sets off a plan or a quote, so its numbers are read as prose.
     hard: list[tuple[int, int]] = [(start, end) for start, end, info, _ in fences if info]
     soft: list[tuple[int, int]] = []
+    currency_text = _blank_math_delimiters(text)
     dates = list(_DATE_RE.finditer(text))
     full_dates = [match for match in dates if match.group("full")]
     for match in dates:
@@ -1070,7 +1091,7 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
         cell = next((entry for entry in cells if entry[0] <= start and end <= entry[1]), None)
         row, position = (cell[2], cell[3]) if cell else (None, None)
         structural = row is not None and position in (row.date_column, row.symbol_column)
-        currency = _currency_before(text, token.start) or _currency_after(text, token.end)
+        currency = _currency_before(currency_text, token.start) or _currency_after(currency_text, token.end)
         marked = percent or currency or "." in token.digits or token.grouped
         # A cell that also holds a word is prose set in a table: its plain
         # integer is a count or a horizon, as it would be in a sentence (#1471).
