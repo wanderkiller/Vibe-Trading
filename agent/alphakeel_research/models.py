@@ -774,6 +774,25 @@ class Venue(StrEnum):
     backpack = "backpack"
 
 
+class VerificationEndEquity(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    equity: Annotated[
+        Dec,
+        Field(
+            description="The decision ledger's equity at that mark (USDT, decimal string, not rounded)."
+        ),
+    ]
+    seq: Annotated[
+        int,
+        Field(
+            description="Archive sequence number of the input frame of the replay's last mark.",
+            ge=0,
+        ),
+    ]
+
+
 class VerificationEventKind(StrEnum):
     open = "open"
     close = "close"
@@ -1458,7 +1477,11 @@ class VerificationEvent(BaseModel):
         extra="forbid",
     )
     amount: Dec | None = None
+    fee: Dec | None = None
     kind: VerificationEventKind
+    long_entry: Dec | None = None
+    long_exit: Dec | None = None
+    net: Dec | None = None
     pair: Annotated[
         str,
         Field(
@@ -1467,6 +1490,7 @@ class VerificationEvent(BaseModel):
             min_length=1,
         ),
     ]
+    qty: Dec | None = None
     seq: Annotated[
         int,
         Field(
@@ -1474,6 +1498,8 @@ class VerificationEvent(BaseModel):
             ge=0,
         ),
     ]
+    short_entry: Dec | None = None
+    short_exit: Dec | None = None
     ts_ms: Annotated[
         int | None,
         Field(description="Funding only: the settlement time, milliseconds."),
@@ -1651,6 +1677,7 @@ class Verification(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    end_equity: VerificationEndEquity | None = None
     engine_recount: Status
     events: Annotated[
         list[VerificationEvent] | None,
@@ -1728,7 +1755,7 @@ class RunResult(BaseModel):
     approximations: Annotated[
         list[Text] | None,
         Field(
-            description="Optional (2026-10-11), `ir_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_from_top_of_book_ledger`, `top_of_book_full_fill`), each starting with its identifier and a colon.",
+            description="Optional (2026-10-11), `ir_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_with_conservative_feedback` (until 2026-10-13 `decisions_from_top_of_book_ledger`), `top_of_book_full_fill`),\neach starting with its identifier and a colon.",
             max_length=40,
         ),
     ] = None

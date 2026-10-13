@@ -1,7 +1,7 @@
 {
  "schema": "alphakeel.validation-vectors/1",
  "protocol": "validation/protocol.json",
- "rule": "each case: evaluate the research-side G1 items of the protocol on `robustness` with `other_registered_candidates` added to the DSR trial count; results must equal `expected` exactly (PASS | FAIL | N/A); an optional case field `trials_floor` (default 0) is the trial-count floor passed to the DSR item (max with dsr_inputs.trials); 1.6 also needs dsr_inputs.daily_returns (V[SR] floor recomputed with the statistics module) and 1.13 needs rating.facts.synthetic_view (protocol v2). Protocol 2.2 (research review 2026-10-11) adds: `robustness.service_runs.service_conservative_net` (the research service's conservative-fill net of the base IR; 1.3-1.5 need both the local net and the service-side net to exceed the threshold; for 1.4 / 1.5 the service-side net is adjusted by the local stress delta (stressed local net - base local net); missing = FAIL), and two optional case fields that AlphaKeel computes itself instead of reading the researcher's report: `filter_required_by_ir` (default false; the IR restricts its universe, so 1.12 fails when filter_tested is false) and `ak_synthetic` (default null; true = the IS pack data lock has no scans, i.e. a dataset pack: 1.13 caps the grade at B whatever synthetic_view says). Protocol 2.1+: each entry of `ir_cases` evaluates the AlphaKeel-side G1 items on a Strategy IR `ir` and the universe facts `pack_universe` of the robustness IS pack ({selection, top_n, survivorship}, or null = unknown): `expected` holds 1.18 and 1.19 (PASS | FAIL), `robust_width` (PASS | FAIL: the robust interval of every parameter deviates from its value by at least 20% on EACH side, (value-lo) >= 0.2|value| and (hi-value) >= 0.2|value|; value 0 needs hi-lo >= 0.2 x the allowed range width: 0.001 for funding_hourly_net, 1 for funding_apr / price_estimated, 0.01 for the other rate features / basis_stress, 1e6 for volume_min, 60000 for the millisecond features, 1440 for cooldown_minutes; unknown position = FAIL) and `grade_cap` (always null since 2.2). 1.18 (2.2): screener_live -> PASS; pit_membership with survivorship includes_delisted* -> PASS; anything with a survivors side (survivors_*, partial_from_archive) or declared -> FAIL; missing annotation -> FAIL. 1.19 (2.2): every numeric literal of the entry/exit expressions (entry/exit conditions' values, entry.candidate_limit, entry.cooldown_minutes, exit.max_hold_hours, exit.max_loss, exit.take_profit) is a declared parameter's path, a structural constant by POSITION (a condition's compare value 0; the compare value 1 of price_estimated; entry.cooldown_minutes 0), or listed in provenance.fixed_literals with an equal value; a listed path that is no literal also fails. Protocol 2.3: `ir_universe` (optional case field) replaces `filter_required_by_ir` -- the flag is DERIVED from it by `ir_filter_required` (excluded_bases non-empty, or any bases allow-list); the top-level `derivations` section lists the inputs and expected values of the two derivation functions (`ir_filter_required`, `pack_is_synthetic`) so both sides test the functions themselves, not only the flags.",
+ "rule": "each case: evaluate the research-side G1 items of the protocol on `robustness` with `other_registered_candidates` added to the DSR trial count; results must equal `expected` exactly (PASS | FAIL | N/A); an optional case field `trials_floor` (default 0) is the trial-count floor passed to the DSR item (max with dsr_inputs.trials); 1.6 also needs dsr_inputs.daily_returns (V[SR] floor recomputed with the statistics module) and 1.13 needs rating.facts.synthetic_view (protocol v2). Protocol 2.2 (research review 2026-10-11) adds: `robustness.service_runs.service_conservative_net` (the research service's conservative-fill net of the base IR; 1.3-1.5 need both the local net and the service-side net to exceed the threshold; for 1.4 / 1.5 the service-side net is adjusted by the local stress delta (stressed local net - base local net); missing = FAIL), and two optional case fields that AlphaKeel computes itself instead of reading the researcher's report: `filter_required_by_ir` (default false; the IR restricts its universe, so 1.12 fails when filter_tested is false) and `ak_synthetic` (default null; true = the IS pack data lock has no scans, i.e. a dataset pack: 1.13 caps the grade at B whatever synthetic_view says). Protocol 2.1+: each entry of `ir_cases` evaluates the AlphaKeel-side G1 items on a Strategy IR `ir` and the universe facts `pack_universe` of the robustness IS pack ({selection, top_n, survivorship}, or null = unknown): `expected` holds 1.18 and 1.19 (PASS | FAIL), `robust_width` (PASS | FAIL: the robust interval of every parameter deviates from its value by at least 20% on EACH side, (value-lo) >= 0.2|value| and (hi-value) >= 0.2|value|; value 0 needs hi-lo >= 0.2 x the allowed range width: 0.001 for funding_hourly_net, 1 for funding_apr / price_estimated, 0.01 for the other rate features / basis_stress, 1e6 for volume_min, 60000 for the millisecond features, 1440 for cooldown_minutes; unknown position = FAIL) and `grade_cap` (always null since 2.2). 1.18 (2.2): screener_live -> PASS; pit_membership with survivorship includes_delisted* -> PASS; anything with a survivors side (survivors_*, partial_from_archive) or declared -> FAIL; missing annotation -> FAIL. 1.19 (2.2): every numeric literal of the entry/exit expressions (entry/exit conditions' values, entry.candidate_limit, entry.cooldown_minutes, exit.max_hold_hours, exit.max_loss, exit.take_profit) is a declared parameter's path, a structural constant by POSITION (a condition's compare value 0; the compare value 1 of price_estimated; entry.cooldown_minutes 0), or listed in provenance.fixed_literals with an equal value; a listed path that is no literal also fails. Protocol 2.3: `ir_universe` (optional case field) replaces `filter_required_by_ir` -- the flag is DERIVED from it by `ir_filter_required` (excluded_bases non-empty, or any bases allow-list); the top-level `derivations` section lists the inputs and expected values of the two derivation functions (`ir_filter_required`, `pack_is_synthetic`) so both sides test the functions themselves, not only the flags. Protocol 2.5: 1.9 also needs a lo AND a hi neighbour for every parameter named in robustness.parameters.ranges / neighbours / skipped (a missing side = FAIL); when the filter was tested, 1.12 also needs robustness.filter.permutation.draws >= min_permutations (999) and robustness.filter.permutation.seed = the first 8 bytes (big-endian unsigned) of SHA-256(robustness.strategy_id) (else FAIL).",
  "cases": [
   {
    "name": "all_pass",
@@ -356,6 +356,12 @@
     "service_runs": {
      "registered": true,
      "service_conservative_net": "120"
+    },
+    "filter": {
+     "permutation": {
+      "draws": 999,
+      "seed": 7882519938426993251
+     }
     }
    },
    "expected": {
@@ -611,6 +617,12 @@
     "service_runs": {
      "registered": true,
      "service_conservative_net": "120"
+    },
+    "filter": {
+     "permutation": {
+      "draws": 999,
+      "seed": 7882519938426993251
+     }
     }
    },
    "expected": {
@@ -5464,6 +5476,12 @@
     "service_runs": {
      "registered": true,
      "service_conservative_net": "120"
+    },
+    "filter": {
+     "permutation": {
+      "draws": 999,
+      "seed": 7882519938426993251
+     }
     }
    },
    "expected": {
@@ -6041,6 +6059,854 @@
     "1.16": "PASS"
    },
    "ak_synthetic": true
+  },
+  {
+   "name": "neighbour_hi_missing",
+   "why": "protocol 2.5 (D4-10): parameter min_net has only its lo neighbour -> 1.9 FAIL",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": false,
+      "filter_p": null,
+      "synthetic_view": false
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7,
+      "daily_returns": [
+       -0.011387,
+       0.000899,
+       -0.000217,
+       0.00311,
+       -0.014871,
+       0.002223,
+       -0.004385,
+       -0.015977,
+       -0.013439,
+       0.020439,
+       -0.015361,
+       -0.011827,
+       -0.001974,
+       0.000703,
+       0.002905,
+       0.021133,
+       0.000628,
+       0.006878,
+       0.012868,
+       -0.009246,
+       -0.001092,
+       -0.000851,
+       -0.000188,
+       0.010691,
+       -0.009292,
+       0.013428,
+       -0.006227,
+       0.018634,
+       -0.014942,
+       -0.000563,
+       -0.001105,
+       -0.003198,
+       0.006575,
+       -0.006358,
+       -0.005516,
+       0.006887,
+       0.013111,
+       -0.012585,
+       0.001273,
+       0.005202,
+       0.002031,
+       0.014119,
+       0.00098,
+       0.020498,
+       0.008813,
+       0.018173,
+       -0.002324,
+       0.008044,
+       -0.01642,
+       -0.006325,
+       0.002417,
+       0.01016,
+       -0.008657,
+       0.010234,
+       0.004129,
+       -0.002297,
+       -0.008021,
+       -0.007493,
+       0.006233,
+       0.022825,
+       -0.008845,
+       -0.007686,
+       0.015108,
+       -0.006685,
+       -0.001116,
+       -0.007516,
+       0.013737,
+       -0.001777,
+       0.013896,
+       0.009517,
+       -0.010557,
+       -0.008297,
+       0.014794,
+       -0.008691,
+       -0.013865,
+       -0.002684,
+       0.019909,
+       0.001241,
+       0.01476,
+       0.013768,
+       0.005387,
+       -0.009402,
+       -0.018487,
+       0.020134,
+       -0.000214,
+       -0.010498,
+       -0.004181,
+       0.011451,
+       -0.016738,
+       -0.004245,
+       -0.017942,
+       0.005623,
+       -0.014358,
+       -0.008213,
+       -0.017764,
+       0.022403,
+       0.009861,
+       0.007462,
+       -0.001701,
+       -0.012955,
+       0.013209,
+       0.004277,
+       -0.000637,
+       -0.006507,
+       0.008403,
+       -0.019835,
+       -0.004133,
+       0.01386,
+       0.006975,
+       0.001528,
+       0.020711,
+       0.001675,
+       0.01619,
+       0.00333,
+       -0.003943,
+       0.00834,
+       0.009049,
+       0.003575,
+       -0.009611,
+       -0.005294,
+       0.015856,
+       -0.015249,
+       0.01193,
+       0.012834,
+       -0.012006,
+       0.011544,
+       -0.006411,
+       -0.00639,
+       -0.01606,
+       -0.024245,
+       0.009782,
+       -0.008268,
+       -0.019574,
+       -0.009968,
+       -0.005067,
+       -0.01106,
+       -0.011463,
+       0.001662,
+       0.025393,
+       0.000147,
+       -0.009344,
+       0.010955,
+       -0.008053,
+       0.002616,
+       0.009138,
+       0.005486,
+       -0.0025,
+       -0.017631,
+       0.012039,
+       -0.002531,
+       0.005452,
+       -0.004965,
+       -0.000108,
+       -0.019826,
+       0.008317,
+       -0.017263,
+       0.006968,
+       0.012547,
+       0.003916,
+       0.007148
+      ]
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "40"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "PASS",
+    "1.5": "PASS",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "FAIL",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "N/A",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   }
+  },
+  {
+   "name": "permutations_too_few",
+   "why": "protocol 2.5 (D4-5): 30 permutation draws < min_permutations 999 -> 1.12 FAIL",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": true,
+      "filter_p": "0.01",
+      "synthetic_view": false
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7,
+      "daily_returns": [
+       -0.011387,
+       0.000899,
+       -0.000217,
+       0.00311,
+       -0.014871,
+       0.002223,
+       -0.004385,
+       -0.015977,
+       -0.013439,
+       0.020439,
+       -0.015361,
+       -0.011827,
+       -0.001974,
+       0.000703,
+       0.002905,
+       0.021133,
+       0.000628,
+       0.006878,
+       0.012868,
+       -0.009246,
+       -0.001092,
+       -0.000851,
+       -0.000188,
+       0.010691,
+       -0.009292,
+       0.013428,
+       -0.006227,
+       0.018634,
+       -0.014942,
+       -0.000563,
+       -0.001105,
+       -0.003198,
+       0.006575,
+       -0.006358,
+       -0.005516,
+       0.006887,
+       0.013111,
+       -0.012585,
+       0.001273,
+       0.005202,
+       0.002031,
+       0.014119,
+       0.00098,
+       0.020498,
+       0.008813,
+       0.018173,
+       -0.002324,
+       0.008044,
+       -0.01642,
+       -0.006325,
+       0.002417,
+       0.01016,
+       -0.008657,
+       0.010234,
+       0.004129,
+       -0.002297,
+       -0.008021,
+       -0.007493,
+       0.006233,
+       0.022825,
+       -0.008845,
+       -0.007686,
+       0.015108,
+       -0.006685,
+       -0.001116,
+       -0.007516,
+       0.013737,
+       -0.001777,
+       0.013896,
+       0.009517,
+       -0.010557,
+       -0.008297,
+       0.014794,
+       -0.008691,
+       -0.013865,
+       -0.002684,
+       0.019909,
+       0.001241,
+       0.01476,
+       0.013768,
+       0.005387,
+       -0.009402,
+       -0.018487,
+       0.020134,
+       -0.000214,
+       -0.010498,
+       -0.004181,
+       0.011451,
+       -0.016738,
+       -0.004245,
+       -0.017942,
+       0.005623,
+       -0.014358,
+       -0.008213,
+       -0.017764,
+       0.022403,
+       0.009861,
+       0.007462,
+       -0.001701,
+       -0.012955,
+       0.013209,
+       0.004277,
+       -0.000637,
+       -0.006507,
+       0.008403,
+       -0.019835,
+       -0.004133,
+       0.01386,
+       0.006975,
+       0.001528,
+       0.020711,
+       0.001675,
+       0.01619,
+       0.00333,
+       -0.003943,
+       0.00834,
+       0.009049,
+       0.003575,
+       -0.009611,
+       -0.005294,
+       0.015856,
+       -0.015249,
+       0.01193,
+       0.012834,
+       -0.012006,
+       0.011544,
+       -0.006411,
+       -0.00639,
+       -0.01606,
+       -0.024245,
+       0.009782,
+       -0.008268,
+       -0.019574,
+       -0.009968,
+       -0.005067,
+       -0.01106,
+       -0.011463,
+       0.001662,
+       0.025393,
+       0.000147,
+       -0.009344,
+       0.010955,
+       -0.008053,
+       0.002616,
+       0.009138,
+       0.005486,
+       -0.0025,
+       -0.017631,
+       0.012039,
+       -0.002531,
+       0.005452,
+       -0.004965,
+       -0.000108,
+       -0.019826,
+       0.008317,
+       -0.017263,
+       0.006968,
+       0.012547,
+       0.003916,
+       0.007148
+      ]
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
+    },
+    "filter": {
+     "permutation": {
+      "draws": 30,
+      "seed": 7882519938426993251
+     }
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "PASS",
+    "1.5": "PASS",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "FAIL",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   },
+   "filter_required_by_ir": true
+  },
+  {
+   "name": "permutation_seed_foreign",
+   "why": "protocol 2.5 (D4-5): the battery used seed 7, not the seed AlphaKeel derives from the strategy id -> 1.12 FAIL",
+   "other_registered_candidates": 0,
+   "robustness": {
+    "schema": "vibe-trading.ir-robustness/2",
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "rating": {
+     "grade": "B",
+     "facts": {
+      "days": 120,
+      "trades_closed": 45,
+      "base_net": "152.3",
+      "coverage_partial": false,
+      "filter_tested": true,
+      "filter_p": "0.01",
+      "synthetic_view": false
+     }
+    },
+    "cost_stress": {
+     "1.5": {
+      "net": "98.1"
+     },
+     "2": {
+      "net": "40.2"
+     },
+     "basis_stress_x2": {
+      "net": "120.0"
+     }
+    },
+    "statistics": {
+     "alphakeel_metrics": {
+      "dsr": 0.9585088157772101
+     },
+     "dsr_inputs": {
+      "sharpe_daily": 0.3,
+      "skewness": 0.2,
+      "kurtosis_non_excess": 4.0,
+      "effective_days": 110.0,
+      "var_sr_used": 0.009243119266055044,
+      "trials": 7,
+      "daily_returns": [
+       -0.011387,
+       0.000899,
+       -0.000217,
+       0.00311,
+       -0.014871,
+       0.002223,
+       -0.004385,
+       -0.015977,
+       -0.013439,
+       0.020439,
+       -0.015361,
+       -0.011827,
+       -0.001974,
+       0.000703,
+       0.002905,
+       0.021133,
+       0.000628,
+       0.006878,
+       0.012868,
+       -0.009246,
+       -0.001092,
+       -0.000851,
+       -0.000188,
+       0.010691,
+       -0.009292,
+       0.013428,
+       -0.006227,
+       0.018634,
+       -0.014942,
+       -0.000563,
+       -0.001105,
+       -0.003198,
+       0.006575,
+       -0.006358,
+       -0.005516,
+       0.006887,
+       0.013111,
+       -0.012585,
+       0.001273,
+       0.005202,
+       0.002031,
+       0.014119,
+       0.00098,
+       0.020498,
+       0.008813,
+       0.018173,
+       -0.002324,
+       0.008044,
+       -0.01642,
+       -0.006325,
+       0.002417,
+       0.01016,
+       -0.008657,
+       0.010234,
+       0.004129,
+       -0.002297,
+       -0.008021,
+       -0.007493,
+       0.006233,
+       0.022825,
+       -0.008845,
+       -0.007686,
+       0.015108,
+       -0.006685,
+       -0.001116,
+       -0.007516,
+       0.013737,
+       -0.001777,
+       0.013896,
+       0.009517,
+       -0.010557,
+       -0.008297,
+       0.014794,
+       -0.008691,
+       -0.013865,
+       -0.002684,
+       0.019909,
+       0.001241,
+       0.01476,
+       0.013768,
+       0.005387,
+       -0.009402,
+       -0.018487,
+       0.020134,
+       -0.000214,
+       -0.010498,
+       -0.004181,
+       0.011451,
+       -0.016738,
+       -0.004245,
+       -0.017942,
+       0.005623,
+       -0.014358,
+       -0.008213,
+       -0.017764,
+       0.022403,
+       0.009861,
+       0.007462,
+       -0.001701,
+       -0.012955,
+       0.013209,
+       0.004277,
+       -0.000637,
+       -0.006507,
+       0.008403,
+       -0.019835,
+       -0.004133,
+       0.01386,
+       0.006975,
+       0.001528,
+       0.020711,
+       0.001675,
+       0.01619,
+       0.00333,
+       -0.003943,
+       0.00834,
+       0.009049,
+       0.003575,
+       -0.009611,
+       -0.005294,
+       0.015856,
+       -0.015249,
+       0.01193,
+       0.012834,
+       -0.012006,
+       0.011544,
+       -0.006411,
+       -0.00639,
+       -0.01606,
+       -0.024245,
+       0.009782,
+       -0.008268,
+       -0.019574,
+       -0.009968,
+       -0.005067,
+       -0.01106,
+       -0.011463,
+       0.001662,
+       0.025393,
+       0.000147,
+       -0.009344,
+       0.010955,
+       -0.008053,
+       0.002616,
+       0.009138,
+       0.005486,
+       -0.0025,
+       -0.017631,
+       0.012039,
+       -0.002531,
+       0.005452,
+       -0.004965,
+       -0.000108,
+       -0.019826,
+       0.008317,
+       -0.017263,
+       0.006968,
+       0.012547,
+       0.003916,
+       0.007148
+      ]
+     },
+     "pbo": {
+      "value": 0.1,
+      "variants": 9
+     },
+     "bootstrap": {
+      "ci_lower": 0.0004
+     },
+     "concentration": {
+      "top_coin_share": "0.31"
+     }
+    },
+    "parameters": {
+     "neighbours": [
+      {
+       "parameter": "min_net",
+       "side": "lo",
+       "net": "50"
+      },
+      {
+       "parameter": "min_net",
+       "side": "hi",
+       "net": "12.5"
+      }
+     ]
+    },
+    "walk_forward": {
+     "computable": true,
+     "folds": [
+      {
+       "k": 1,
+       "test": {
+        "days": 30
+       },
+       "test_net": "10"
+      },
+      {
+       "k": 2,
+       "test": {
+        "days": 30
+       },
+       "test_net": "-2"
+      },
+      {
+       "k": 3,
+       "test": {
+        "days": 30
+       },
+       "test_net": "8"
+      }
+     ],
+     "efficiency": "0.62"
+    },
+    "service_runs": {
+     "registered": true,
+     "service_conservative_net": "120"
+    },
+    "filter": {
+     "permutation": {
+      "draws": 999,
+      "seed": 7
+     }
+    }
+   },
+   "expected": {
+    "1.1": "PASS",
+    "1.2": "PASS",
+    "1.3": "PASS",
+    "1.4": "PASS",
+    "1.5": "PASS",
+    "1.6": "PASS",
+    "1.7": "PASS",
+    "1.8": "PASS",
+    "1.9": "PASS",
+    "1.10": "PASS",
+    "1.11": "PASS",
+    "1.12": "FAIL",
+    "1.13": "PASS",
+    "1.16": "PASS"
+   },
+   "filter_required_by_ir": true
   }
  ],
  "ir_cases": [
@@ -8419,6 +9285,16 @@
      "selection": "declared"
     },
     "expected": true
+   }
+  ],
+  "permutation_seed": [
+   {
+    "strategy_id": "ir-0123456789abcdef01234567",
+    "expected": 7882519938426993251
+   },
+   {
+    "strategy_id": "ir-9ad609111d5a9ec00e0156b2",
+    "expected": 17603427544725937375
    }
   ]
  }

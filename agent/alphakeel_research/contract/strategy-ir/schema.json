@@ -298,6 +298,15 @@
      "additionalProperties": {
       "$ref": "#/$defs/decimal"
      }
+    },
+    "research_credential": {
+     "type": "string",
+     "minLength": 1,
+     "description": "Optional. The research-service credential id the research used (/whoami `credential`). AlphaKeel G1 1.14 (protocol 2.5) requires it to be a research credential the service knows."
+    },
+    "data_exposure_end_ms": {
+     "type": "integer",
+     "description": "Optional. The latest end (milliseconds) of all data the research read, including direct pulls outside the research service (VT data_audit). AlphaKeel G1 1.14 (protocol 2.5) counts it in the research horizon."
     }
    }
   }
