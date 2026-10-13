@@ -611,24 +611,22 @@ straight to AlphaKeel's Rust validator, which stops at the first serde error. `i
 passed). `validate()`/`load()` keep their first-error result (contract vectors, Rust parity); the shape and semantic rules
 are shared per-section functions, not a second rule set. The tool's `ir_validate` returns the local problems with
 `source: "local"` without calling AlphaKeel, and asks AlphaKeel (still authoritative) only when there are none.
-`ir.unit_warnings()` flags an `exit.max_loss` below 0.1% of `sizing.notional_per_leg` (the agent wrote the fraction
+`ir.unit_warnings()` flags an `exit.max_loss` / `exit.take_profit` below 0.1% of `sizing.notional_per_leg` (the agent wrote the fraction
 `"0.01"`; the IR's `max_loss` is a USDT amount); `ir_validate` and `ir_backtest` envelopes carry it as `warnings`, never
 blocking. The tool description no longer claims dataset packs carry bbo/depth20/instrument_meta for any window (they are
 live captures of recent days) and says `ir_backtest` freezes its own pack. The code lives in `leaf-package` files; this
-group holds the regression test and the hooks. Same session: `ir export` rebuilt `provenance` from scratch and dropped
+group holds the regression test. Same session: `ir export` rebuilt `provenance` from scratch and dropped
 the input's `provenance.fixed_literals`, which AlphaKeel's G1 1.19 and `precheck.py` read from the exported strategy.json;
 the export now carries it through unchanged.
 
 **Files.**
 - `agent/tests/test_ir_validate_all.py`
 
-**Commits.** (this commit).
+**Commits.** `d8d6e4e3` (local checker, unit warning, tool, description), `055a488a` (export keeps
+`provenance.fixed_literals`), (this commit) (review round 1: `ir_backtest` needs `fees` (object or path), argparse
+stderr in the tool error, `take_profit` unit warning, paths relative to the agent's run directory).
 
 **Upstreamable.** No, local-only (follows the leaf package).
 
-**Anchors.**
-- hook `agent/alphakeel_research/ir.py`: `def problems(doc: Any) -> list[dict]:` — collect-all checker; validate()/load() keep the first-error result
-- hook `agent/alphakeel_research/ir.py`: `def unit_warnings(doc: Any) -> list[str]:`
-- hook `agent/src/tools/alphakeel_research_tool.py`: `found = ir.problems(doc)` — ir_validate returns local problems without calling AlphaKeel
-- hook `agent/src/tools/alphakeel_research_tool.py`: `warnings = ir.unit_warnings(doc)`
-- hook `agent/alphakeel_research/ir_backtest.py`: `prov["fixed_literals"] = copy.deepcopy(fixed)` — ir export keeps the input provenance.fixed_literals (AlphaKeel G1 1.19, precheck.py)
+**Anchors.** None: every change is in `leaf-package` files (`ir.py`, `ir_backtest.py`, the tool), which carry no hook
+anchors (same as `strategy-fidelity`'s tool half).

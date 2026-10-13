@@ -50,8 +50,26 @@ def _read_ir(path: Any) -> tuple[Any, str | None]:
         return None, f"ir: cannot read {path}: {e.__class__.__name__}: {e}"
     try:
         return json.loads(text), None
-    except ValueError as e:
-        return None, f"ir: {path} is not JSON: {e}"
+    except (ValueError, RecursionError) as e:  # RecursionError: nesting deeper than the parser's stack
+        return None, f"ir: {path} is not JSON: {e.__class__.__name__}: {str(e)[:500]}"
+
+
+#: arguments that are file or directory paths. The agent writes them relative to its run directory (write_file resolves
+#: against run_dir, which every tool call receives), while the CLI would resolve them against the process cwd.
+_RELATIVE_PATH_KEYS = ("ir", "fees", "instruments", "filter", "trials_evidence", "pack_dir", "oos_pack_dir", "run", "out",
+                       "robustness", "reconciliation", "intents", "strategy", "profile", "params", "rules", "parameters")
+
+
+def _resolve_paths(args: dict[str, Any], run_dir: Any) -> dict[str, Any]:
+    """``args`` with every relative path made absolute under ``run_dir`` (inline JSON strings and absolute paths stay)."""
+    if not isinstance(run_dir, str) or not run_dir.strip():
+        return args
+    out = dict(args)
+    for k in _RELATIVE_PATH_KEYS:
+        v = out.get(k)
+        if isinstance(v, str) and v.strip() and not os.path.isabs(v) and not v.lstrip().startswith(("{", "[")):
+            out[k] = os.path.join(run_dir, v)
+    return out
 
 
 def _dump(out: dict, warnings: list[str]) -> str:
@@ -94,6 +112,11 @@ def _instruments_file(v: Any, prefix: str = "ak-instruments-") -> str:
     return str(v)
 
 
+#: ``ir_backtest`` has no default fee table (and neither does AlphaKeel): the agent must pass one.
+_FEES_NEEDED = ("needs fees: {venue: {perp: rate}} with a decimal-string taker rate for every venue in universe.pairs (no "
+                "default; unless the user gives a fee tier use each venue's public base-tier perp taker fee and say so)")
+
+
 #: path-valued arguments a command writes under (``out``; ``run``: ``ir robustness`` writes DIR/robustness; ``robustness``: the
 #: battery directory an export copies from / a re-run writes to). None of them may point into the hand-off directory.
 _PATH_KEYS = ("out", "robustness", "run")
@@ -122,6 +145,15 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
         if isinstance(v, dict):
             raise ValueError(f"{action}: {key} must be a scalar")
         out.extend([flag, _csv(v) if isinstance(v, (list, tuple)) else str(v)])
+
+    def fees(required: bool) -> None:
+        """``fees`` is a JSON object (written to a temp file) or a path to one."""
+        v = a.get("fees")
+        if v is None or v == "" or v == {} or isinstance(v, bool):
+            if required or isinstance(v, bool):
+                raise ValueError(f"{action} {_FEES_NEEDED}")
+            return
+        out.extend(["--fees", _instruments_file(v, "ak-fees-")])
 
     if action == "freeze":
         add("--start-ms", "start_ms", True), add("--end-ms", "end_ms", True), add("--venues", "venues"), add("--funding", "funding")
@@ -164,10 +196,11 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
             raise ValueError("ir_backtest needs instruments")
         out.extend(["--instruments", _instruments_file(a["instruments"])])
         add("--out", "out")  # optional: the CLI creates a Vibe-Trading run directory
-        for f, k in (("--step-minutes", "step_minutes"), ("--fees", "fees"), ("--trials", "trials"), ("--trials-evidence", "trials_evidence"),
+        for f, k in (("--step-minutes", "step_minutes"), ("--trials", "trials"), ("--trials-evidence", "trials_evidence"),
                      ("--capital-base", "capital_base"), ("--pack-dir", "pack_dir")):
             add(f, k)
         out.extend(f for f, k in (("--accept-partial", "accept_partial"), ("--verbose", "verbose")) if a.get(k))
+        fees(True)
     elif action == "ir_robustness":
         if not a.get("run") and not a.get("ir"):
             raise ValueError("ir_robustness needs run (an ir_backtest run directory) or ir")
@@ -175,8 +208,9 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
         if a.get("instruments") not in (None, "", []):
             out.extend(["--instruments", _instruments_file(a["instruments"])])
         for f, k in (("--is-start-ms", "is_start_ms"), ("--is-end-ms", "is_end_ms"), ("--oos-start-ms", "oos_start_ms"),
-                     ("--oos-end-ms", "oos_end_ms"), ("--oos-pack-dir", "oos_pack_dir"), ("--fees", "fees")):
+                     ("--oos-end-ms", "oos_end_ms"), ("--oos-pack-dir", "oos_pack_dir")):
             add(f, k)
+        fees(False)  # optional: the --run card's fee table is the default
         if a.get("filter") not in (None, "", {}):
             out.extend(["--filter", _instruments_file(a["filter"], "ak-filter-")])
         for f, k in (("--permutations", "permutations"), ("--seed", "seed"), ("--permutation-seed", "permutation_seed"),
@@ -281,6 +315,7 @@ class AlphakeelResearchTool(BaseTool):
         args = kwargs.get("args") or {}
         if action not in _ACTIONS or not isinstance(args, dict):
             return json.dumps({"status": "error", "error": f"action must be one of {list(_ACTIONS)} and args an object"})
+        args = _resolve_paths(args, kwargs.get("run_dir"))  # before _argv: the hand-off guard checks the resolved path
         try:
             from alphakeel_research import cli, ir
             from alphakeel_research.errors import ApiError
@@ -304,17 +339,17 @@ class AlphakeelResearchTool(BaseTool):
                 if found:
                     return _dump({"status": "error", "result": {"valid": False, "source": "local", "problems": found,
                                                                  "hint": _IR_PROBLEMS_HINT}}, warnings)
-        buf = io.StringIO()
+        buf, err_buf = io.StringIO(), io.StringIO()
         try:
-            with contextlib.redirect_stdout(buf):
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err_buf):
                 rc = cli.main(argv)
         except ApiError as e:
             err = {"status": "error", "error": e.message, "code": e.code, "request_id": getattr(e, "request_id", None)}
             if _market_blocked(e.code, e.message):
                 err["next"] = _MARKET_BLOCKED_NEXT
             return json.dumps({**err, "warnings": warnings} if warnings else err)
-        except SystemExit as e:  # argparse
-            return json.dumps({"status": "error", "error": f"bad arguments (exit {e.code})"})
+        except SystemExit as e:  # argparse: its message is on stderr and echoes only argv (the token is never in argv)
+            return json.dumps({"status": "error", "error": f"bad arguments (exit {e.code}): {err_buf.getvalue()[-1000:].strip()}"})
         except Exception as e:  # noqa: BLE001 - surfaced as a clean tool error, never with credentials
             err = {"status": "error", "error": f"{e.__class__.__name__}: {str(e)[:500]}"}
             return json.dumps({**err, "warnings": warnings} if warnings else err)

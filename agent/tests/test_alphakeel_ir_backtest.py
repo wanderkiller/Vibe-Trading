@@ -648,8 +648,9 @@ def test_agent_tool_maps_the_ir_actions_to_the_cli():
     assert _argv("ir_review", {"ir": "s.json", "pack": "pk-1", "out": "d", "seed": 1}) == [
         "ir", "review", "--pack", "pk-1", "--ir", "s.json", "--out", "d", "--seed", "1"]
     argv = _argv("ir_backtest", {"ir": "s.json", "start_ms": 1, "end_ms": 2, "instruments": "i.json", "out": "d", "trials": 3,
-                                 "trials_evidence": "t.csv", "step_minutes": 5, "verbose": True})
+                                 "trials_evidence": "t.csv", "step_minutes": 5, "verbose": True, "fees": "f.json"})
     assert argv[:2] == ["ir", "backtest"] and "--verbose" in argv and argv[argv.index("--step-minutes") + 1] == "5"
+    assert argv[argv.index("--fees") + 1] == "f.json"
     assert _argv("ir_export", {"ir": "s.json", "run": "r", "out": "e", "research_credential": True}) == [
         "ir", "export", "--ir", "s.json", "--run", "r", "--out", "e", "--research-credential"]
     with pytest.raises(ValueError):

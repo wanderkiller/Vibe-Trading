@@ -583,21 +583,25 @@ def problems(doc: Any) -> list[dict]:
 
 
 def unit_warnings(doc: Any) -> list[str]:
-    """Non-blocking unit hints. ``exit.max_loss`` is a quote-currency amount (README §1), not a fraction of the notional;
-    a value below 0.1% of one leg is almost certainly a fraction copied from params.json."""
+    """Non-blocking unit hints. ``exit.max_loss`` and ``exit.take_profit`` are quote-currency amounts (README §1), not
+    fractions of the notional; a value below 0.1% of one leg is almost certainly a fraction copied from params.json."""
     if isinstance(doc, Ir):
         doc = doc.doc
     try:
         _check_shape(doc)
     except IrError:
         return []
-    m, n = doc["exit"]["max_loss"], doc["sizing"]["notional_per_leg"]
-    if not (Decimal(0) < Decimal(m) < Decimal(n) * Decimal("0.001")):
-        return []
-    with localcontext(Context(prec=6)):
-        pct = Decimal(m) * 100 / Decimal(n)
-    return [f"exit.max_loss is an amount in the quote currency (USDT), not a fraction: max_loss {m} on notional_per_leg {n} "
-            f"closes at a loss of {m} USDT ({fmt(pct)}% of one leg). params.json's max_loss is a fraction; the IR's is not."]
+    n = doc["sizing"]["notional_per_leg"]
+    out = []
+    for key, what in (("max_loss", "closes at a loss of"), ("take_profit", "takes profit at")):
+        m = doc["exit"][key]
+        if m is None or not (Decimal(0) < Decimal(m) < Decimal(n) * Decimal("0.001")):
+            continue
+        with localcontext(Context(prec=6)):
+            pct = Decimal(m) * 100 / Decimal(n)
+        out.append(f"exit.{key} is an amount in the quote currency (USDT), not a fraction: {key} {m} on notional_per_leg {n} "
+                   f"{what} {m} USDT ({fmt(pct)}% of one leg). params.json's {key} is a fraction; the IR's is not.")
+    return out
 
 
 # ---------------------------------------------------------------------------------------------------------------------

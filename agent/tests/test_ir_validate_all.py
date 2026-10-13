@@ -150,3 +150,66 @@ def test_export_keeps_the_input_provenance_fixed_literals(tmp_path) -> None:
     written = json.loads((tmp_path / "export" / "strategy.json").read_text())
     assert written["provenance"]["fixed_literals"] == {"entry.candidate_limit": "3"}
     assert written["provenance"]["tool"] == "vibe-trading"
+
+
+# --- review round 1: fees, argparse stderr, take_profit units, run_dir-relative paths ------------------------------------
+
+_INST = [{"venue": "binance", "market": "perp", "symbol": "BTCUSDT"}]
+
+
+def _tool(**kwargs) -> dict:
+    from src.tools.alphakeel_research_tool import AlphakeelResearchTool
+
+    return json.loads(AlphakeelResearchTool().execute(**kwargs))
+
+
+def test_ir_backtest_without_fees_is_refused_before_the_cli(monkeypatch, tmp_path) -> None:
+    _forbid_cli(monkeypatch)
+    path = tmp_path / "strategy.json"
+    path.write_text(_EXAMPLE.read_text())
+    out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2, "instruments": _INST})
+    assert out["status"] == "error" and out["error"].startswith("ir_backtest needs fees: {venue: {perp: rate}}")
+    assert "public base-tier perp taker fee" in out["error"]
+
+
+def test_fees_object_reaches_the_cli_as_a_file(monkeypatch, tmp_path) -> None:
+    from alphakeel_research import cli
+
+    fees = {"binance": {"perp": "0.0005"}, "okx": {"perp": "0.0005"}}
+    seen: dict = {}
+
+    def capture(argv):
+        seen["fees"] = json.loads(Path(argv[argv.index("--fees") + 1]).read_text())
+        print(json.dumps({"run_dir": "r"}))
+        return 0
+
+    monkeypatch.setattr(cli, "main", capture)
+    path = tmp_path / "strategy.json"
+    path.write_text(_EXAMPLE.read_text())
+    out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2, "instruments": _INST, "fees": fees})
+    assert out["status"] == "ok" and seen["fees"] == fees
+
+
+def test_argparse_errors_surface_their_message() -> None:
+    out = _tool(action="read", args={"pack": "p", "venue": "okx", "symbol": "S", "start_ms": 1, "end_ms": 2, "table": "depth"})
+    assert out["status"] == "error" and out["error"].startswith("bad arguments (exit 2): ")
+    assert "invalid choice: 'depth'" in out["error"]
+
+
+def test_take_profit_fraction_warns() -> None:
+    doc = _with_loss("100", "10000")
+    doc["exit"]["take_profit"] = "0.02"
+    (w,) = ir.unit_warnings(doc)
+    assert w.startswith("exit.take_profit is an amount in the quote currency (USDT), not a fraction: take_profit 0.02 on "
+                        "notional_per_leg 10000 takes profit at 0.02 USDT (0.0002% of one leg).")
+    doc["exit"]["take_profit"] = "50"
+    assert ir.unit_warnings(doc) == []
+
+
+def test_relative_paths_resolve_against_the_run_dir(monkeypatch, tmp_path) -> None:
+    _forbid_cli(monkeypatch)
+    run_dir = tmp_path / "run"
+    (run_dir / "ir").mkdir(parents=True)
+    (run_dir / "ir" / "strategy.json").write_text(json.dumps(_empty_sections()))
+    out = _tool(action="ir_validate", args={"ir": "ir/strategy.json"}, run_dir=str(run_dir))
+    assert out["status"] == "error" and out["result"]["source"] == "local"
