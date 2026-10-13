@@ -193,8 +193,8 @@ def exit_quoted(p, quoted):
 #   (``None`` unless all 1440 are present);
 # * ``quote_ms`` = the bar's ``close_time_ms``; a leg whose last closed bar is older than ``DATASET_MAX_BAR_AGE_MS`` is not in
 #   the frame (old quotes are not carried over, as §4.1a rule 1 says for scan frames);
-# * ``taker_fee`` from a ``{venue: {"perp": "0.0005", "spot": ...}}`` mapping (default: AlphaKeel's public lowest-tier perp
-#   taker 0.0005 on every venue; a spot leg without a fee is left out, §4.1a rule 3);
+# * ``taker_fee`` from the ``{venue: {"perp": rate, "spot": rate}}`` table the caller must give (``require_fees``: there is
+#   no default rate, D2-13); a leg whose market has no fee in it is left out (§4.1a rule 3);
 # * ``base`` / ``quote_ccy`` from the pack's instruments table, or -- dataset packs leave them null -- from the declared
 #   instrument (``{"venue", "market", "symbol", "base", "quote"}``).
 #

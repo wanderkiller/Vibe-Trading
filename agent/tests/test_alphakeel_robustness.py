@@ -507,6 +507,7 @@ def test_robustness_run_defaults_come_from_the_run_and_export_carries_the_eviden
     assert printed["json"] == str(run / "robustness" / "robustness.json")
     doc = json.loads((run / "robustness" / "robustness.json").read_text())
     assert doc["inputs"]["is_window"] == {"start_ms": START, "end_ms": START + H6} and doc["inputs"]["pack_id"] == Pack.from_directory(pd).id
+    assert doc["inputs"]["fees_source"] == f"run_card:{run / 'run_card.json'}"  # R2-D-4 (a): where the inherited table came from
     # export with no flags finds RUN/robustness
     exp = tmp_path / "exp"
     r = workflow.ir_export(_ir(), run, exp)
@@ -515,3 +516,12 @@ def test_robustness_run_defaults_come_from_the_run_and_export_carries_the_eviden
     assert (exp / "evidence" / "robustness.json").read_bytes() == (run / "robustness" / "robustness.json").read_bytes()
     assert (exp / "evidence" / "robustness-trials.jsonl").read_bytes() == (run / "robustness" / "trials.jsonl").read_bytes()
     assert not any(w.startswith("no robustness") for w in r["warnings"])
+    # R2-D-4 (a): a card written on the old implicit default fee (fees_source "default" or none) is not inherited
+    card_path = run / "run_card.json"
+    card = json.loads(card_path.read_text())
+    for src in ("default", None):
+        card["assumptions"]["fees_source"] = src
+        card_path.write_text(json.dumps(card))
+        assert cli.main([*base, "--out", str(tmp_path / "rb-old")]) == 1
+        assert "give --fees" in capsys.readouterr().out
+        assert not (tmp_path / "rb-old" / "robustness.json").exists()

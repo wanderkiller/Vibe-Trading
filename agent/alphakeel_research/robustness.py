@@ -656,7 +656,7 @@ def _service_conservative(client: Any, run_id: str, local_net: Decimal, timeout:
 
 
 def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos_window=None, oos_pack: Pack | None = None,
-            out_dir: str | Path, fees: dict | None = None, filter_spec: dict | None = None, permutations: int = 999, seed: int = 7,
+            out_dir: str | Path, fees: dict | None = None, fees_source: str | None = None, filter_spec: dict | None = None, permutations: int = 999, seed: int = 7,
             step_minutes: int = 5, capital_base: Decimal | str | None = None, workers: int = 2, prior_trials: int = 0,
             segments: int = SEGMENTS, wf_folds: int = WF_FOLDS, wf_test_days: int = WF_TEST_DAYS,
             wf_min_train_days: int = WF_MIN_TRAIN_DAYS, prior_trials_floor: int = 0, registry: Any = None,
@@ -664,6 +664,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     """Run the battery (module docstring) and write ``robustness.json``, ``robustness.md`` and ``trials.jsonl`` into
     ``out_dir``. Returns the robustness document.
 
+    ``fees_source``: where the fee table came from (a file, ``run_card:<path>``), recorded in ``inputs.fees_source``.
     ``prior_trials_floor``: the IR run card's ``trials.count`` (docs/45 audit 2 P1-1 b): ``prior_trials`` is never below it (the larger
     is used, a smaller declared value is reported in ``notes``). ``registry``: the research-service client; every candidate run is
     registered in the service's trial ledger (``ir_crosscheck.register_trial``) and the returned ids are written to
@@ -1020,7 +1021,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         "schema": SCHEMA, "strategy_id": sid, "name": base_doc["name"],
         "inputs": {"is_window": {"start_ms": windows["is"][0], "end_ms": windows["is"][1]}, "pack_id": pack.id,
                    "oos_window": oos_doc["window"] if oos_doc else None, "oos_pack_id": packs["oos"].id if oos_doc else None,
-                   "fees": fees, "filter": filter_spec, "permutations": permutations, "seed": seed, "permutation_seed": perm_seed,
+                   "fees": fees, "fees_source": fees_source or "request", "filter": filter_spec, "permutations": permutations, "seed": seed, "permutation_seed": perm_seed,
                    "step_minutes": step_minutes, "capital_base": _s(capital), "workers": workers,
                    "execution": R.serial_reason or ("process pool (spawn)" if workers > 1 else "in process"), "segments": segments, "walk_forward": wf_cfg},
         "trials": {"count": n_trials, "distinct_candidate_variants": len(candidates), "prior_trials_declared": declared_prior, "prior_trials_used": prior_trials, "prior_trials_floor": prior_trials_floor,

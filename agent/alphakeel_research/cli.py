@@ -137,12 +137,29 @@ def _robustness_inputs(a) -> tuple[str, str, str, tuple[int, int], str]:
     return ir_path, inst, pack_dir, window, a.out or str(run / "robustness")
 
 
+def _robustness_fees(a) -> tuple[dict | None, str | None]:
+    """``(fee table, its source)`` of ``ir robustness``: ``--fees FILE``, else the ``--run`` card's table -- refused when that
+    card ran on the old implicit default (``fees_source`` ``"default"`` or absent: cards written before the fee table was
+    required carry ``0.0005`` on every venue; audit 2026-10-12 R2-D-4 a)."""
+    if a.fees:
+        return _load(a.fees), a.fees
+    if not a.run:
+        return None, None
+    assumptions = _run_card(a.run).get("assumptions") or {}
+    src = assumptions.get("fees_source")
+    if not assumptions.get("fees") or src in (None, "", "default"):
+        raise ApiError("request.invalid", f"the run card in {a.run} has no explicit fee table (fees_source {src!r}: the old implicit "
+                       "0.0005 default); give --fees", field="fees")
+    return assumptions["fees"], f"run_card:{Path(a.run) / 'run_card.json'}"
+
+
 def _battery(robustness, registry, ir_path, pack, inst_path, window, oos, a, trials_floor) -> dict:
     from decimal import Decimal
 
+    fees, fees_source = _robustness_fees(a)
     return robustness.battery(_load(ir_path), pack, _load(inst_path), is_window=window, oos_window=oos,
                               oos_pack=Pack.from_directory(a.oos_pack_dir) if a.oos_pack_dir else None, out_dir=a.out,
-                              fees=_load(a.fees) if a.fees else (_run_card(a.run)["assumptions"]["fees"] if a.run else None),
+                              fees=fees, fees_source=fees_source,
                               filter_spec=_load(a.filter), permutations=a.permutations, seed=a.seed,
                               permutation_seed=a.permutation_seed,
                               step_minutes=a.step_minutes, capital_base=Decimal(a.capital_base) if a.capital_base else None,
@@ -325,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--oos-start-ms", type=int)
     q.add_argument("--oos-end-ms", type=int)
     q.add_argument("--oos-pack-dir", help="exported pack for the OOS window (default: --pack-dir)")
-    q.add_argument("--fees", help="JSON {venue: {perp: rate, spot: rate}} (default: the --run card's fee table; otherwise required)")
+    q.add_argument("--fees", help="JSON {venue: {perp: rate, spot: rate}} (default: the --run card's explicit fee table; otherwise required)")
     q.add_argument("--filter", help='JSON {"kind": "excluded_bases", "bases": ["XYZ", ...]}: the filter under test')
     q.add_argument("--permutations", type=int, default=999, help="protocol 2.5 (1.12): AlphaKeel requires >= 999")
     q.add_argument("--seed", type=int, default=7, help="bootstrap seed")
