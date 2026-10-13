@@ -293,6 +293,8 @@ dev = [
 # Codegen output depends on both generator and formatter version: keep them equal to gen_models.sh.
 alphakeel-dev = [
     "datamodel-code-generator==0.83.0",
+    # AlphaKeel's cross job runs the agent/tests/test_alphakeel_* suite with -n (the differential property is sharded).
+    "pytest-xdist>=3.6,<4",
     "ruff==0.16.10",
     "schemathesis>=4.29,<5",
 ]

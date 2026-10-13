@@ -13,7 +13,7 @@ import json
 from decimal import Decimal
 
 import pytest
-from hypothesis import HealthCheck, assume, event, given, settings, strategies as st
+from hypothesis import HealthCheck, assume, event, given, seed, settings, strategies as st
 
 from alphakeel_research import workflow
 from alphakeel_research.client import Client
@@ -113,12 +113,21 @@ def intent_lists(start_ms: int):
     return st.lists(one, min_size=1, max_size=5).map(build)
 
 
-@pytest.mark.parametrize("seed", [0])
-def test_simulator_and_engine_agree_on_random_intent_sequences(server, client, pack, tmp_path, seed):
+#: The property runs as SHARDS seeded Hypothesis runs so pytest-xdist can spread them over the CI cores (one serial run of
+#: 320 examples took ~5.5 min of the cross job). Same total (SHARDS x EXAMPLES_PER_SHARD = 320); each shard replays from
+#: its seed. MIN_AGREED_PER_SHARD is the old ">= 200 of 320 compared" floor, scaled per shard.
+SHARDS = 8
+EXAMPLES_PER_SHARD = 40
+MIN_AGREED_PER_SHARD = 25
+
+
+@pytest.mark.parametrize("shard", range(SHARDS))
+def test_simulator_and_engine_agree_on_random_intent_sequences(server, client, pack, tmp_path, shard, record_property):
     tally: dict[str, int] = {"generated": 0, "agreed": 0}
     excluded: dict[str, int] = {}
 
-    @settings(max_examples=320, deadline=None, derandomize=True, suppress_health_check=list(HealthCheck))
+    @seed(shard)
+    @settings(max_examples=EXAMPLES_PER_SHARD, deadline=None, database=None, suppress_health_check=list(HealthCheck))
     @given(intent_lists(server.start_ms))
     def prop(intents):
         tally["generated"] += 1
@@ -139,10 +148,11 @@ def test_simulator_and_engine_agree_on_random_intent_sequences(server, client, p
         event("agreed")
 
     prop()
-    summary = {**tally, "excluded": excluded}
+    summary = {"shard": shard, **tally, "excluded": excluded}
     print("differential summary:", json.dumps(summary, sort_keys=True))
+    record_property("differential_summary", json.dumps(summary, sort_keys=True))  # xdist workers' stdout is not shown
     # The property means something only if most generated sequences are actually compared (review F-P2-3: 60 of 504).
-    assert tally["agreed"] >= 200, f"too few sequences were accepted by both sides for the property to mean anything: {summary}"
+    assert tally["agreed"] >= MIN_AGREED_PER_SHARD, f"too few sequences were accepted by both sides for the property to mean anything: {summary}"
 
 
 def test_simulator_unit_golds(server, client, pack):
