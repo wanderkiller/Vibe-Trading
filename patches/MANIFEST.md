@@ -88,6 +88,7 @@ documents the build, backup and upgrade rules.
 - `DEPLOYMENT.local.md`
 - `tools/deploy-vt.sh`
 - `.github/workflows/deploy-gate.yml`
+- `agent/tests/test_deploy_vt.py`
 
 **Commits.** `8cfc14f0` (Dockerfile.local, compose override, DEPLOYMENT.local.md), `e0245ca9` (AlphaKeel paragraph in
 DEPLOYMENT.local.md), merge `98e8248e` (`requirements-local-providers-lock.txt` exists only in that merge), and
@@ -114,6 +115,8 @@ The `langchain-core==1.6.1` anchor fails when upstream moves that pin; then the 
 - hook `tools/deploy-vt.sh`: `--workflow "Deploy gate"` — the gate waits for `.github/workflows/deploy-gate.yml`, not upstream's "CI"
 - hook `tools/deploy-vt.sh`: `docker builder prune -f --filter` — post-success prune of old `vibe-trading-rollback:*` tags (keep `VT_ROLLBACK_KEEP`=3 and the current one) and builder cache older than `VT_BUILDER_MAX_AGE`=72h; warn-only
 - hook `DEPLOYMENT.local.md`: `tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref`
+- hook `tools/deploy-vt.sh`: `refuse checkout "the checkout has modified or untracked files` — wave 2 (R2-D-7): untracked files refuse; a refusal after the build restores the image tag; backup dir mode 700; tests agent/tests/test_deploy_vt.py
+- hook `tools/deploy-vt.sh`: `docker tag "$OLD_IMAGE_ID" "$IMAGE"`
 
 ## `leaf-package` — AlphaKeel research client
 

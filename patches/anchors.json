@@ -67,7 +67,8 @@
     "requirements-local-providers-lock.txt",
     "DEPLOYMENT.local.md",
     "tools/deploy-vt.sh",
-    ".github/workflows/deploy-gate.yml"
+    ".github/workflows/deploy-gate.yml",
+    "agent/tests/test_deploy_vt.py"
    ],
    "anchors": [
     {
@@ -151,6 +152,17 @@
      "file": "DEPLOYMENT.local.md",
      "kind": "hook",
      "literal": "tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref"
+    },
+    {
+     "file": "tools/deploy-vt.sh",
+     "kind": "hook",
+     "literal": "refuse checkout \"the checkout has modified or untracked files",
+     "note": "wave 2 (R2-D-7): untracked files refuse; a refusal after the build restores the image tag; backup dir mode 700; tests agent/tests/test_deploy_vt.py"
+    },
+    {
+     "file": "tools/deploy-vt.sh",
+     "kind": "hook",
+     "literal": "docker tag \"$OLD_IMAGE_ID\" \"$IMAGE\""
     }
    ]
   },

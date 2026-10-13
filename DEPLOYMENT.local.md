@@ -29,11 +29,12 @@ go-ahead), from this checkout with the commit to deploy checked out:
 tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref   # --ak-pin defaults to ci/vibe-trading.pin next to it
 ```
 
-It refuses (exit 1, nothing touched) unless the checkout is clean, GitHub workflow `CI` succeeded on exactly this commit,
+It refuses (exit 1; a refusal after the build points the compose image tag back at the old image) unless the checkout is
+clean (no modified and no untracked files), GitHub workflow `CI` succeeded on exactly this commit,
 the commit equals AlphaKeel's `ci/vibe-trading.ref` and `agent/alphakeel_research/contract/PIN` equals AlphaKeel's
 `ci/vibe-trading.pin`. It then builds the new image while the old container serves, keeps the old image as
 `vibe-trading-rollback:<ts>`, copies `agent/.env` and archives every named volume (service stopped) into
-`~/vibe-trading-backups/<ts>/`, starts the new image, and requires `/health` plus `python -m alphakeel_research check`
+`~/vibe-trading-backups/<ts>/` (mode 700: the volumes may hold credentials), starts the new image, and requires `/health` plus `python -m alphakeel_research check`
 in the container to report `contract_pin: matched`; on failure it re-tags the rollback image and recreates the old
 container. Every attempt appends one JSON line (sha, step, status, old/new image id, PIN digest, backup dir) to
 `deploy-log.jsonl` next to this file (git-ignored). When the contract PIN changed, deploy AlphaKeel first: the
@@ -41,6 +42,17 @@ in-container check talks to the running research service. Manual rollback to an 
 `docker tag vibe-trading-rollback:<ts> "$(docker compose config --images vibe-trading)"` then
 `docker compose up -d --no-build --no-deps vibe-trading`.
 After a successful deploy only the most recent `VT_ROLLBACK_KEEP` (default 3) rollback images are kept, including this one; the volume backups under `~/vibe-trading-backups/<ts>` are all kept, so the image for an older backup may no longer exist - then restore from the current image plus the volume backup. Builds go through BuildKit via the `docker-buildx` package (installed on the host 2026-10-16; without it `docker builder prune` falls back to the legacy path and ignores `--keep-storage`); the post-deploy prune drops builder cache older than `VT_BUILDER_MAX_AGE` (default 72h).
+
+The automatic rollback swaps the image only, not the volumes. When the new image migrated a volume (session database,
+user home) the old image may not read it: restore that volume from the same backup, with the service stopped, after
+saving anything newer you want to keep (`<vol>` = the volume name, `<ts>` = the backup directory):
+
+```bash
+docker compose stop vibe-trading
+docker run --rm --user 0 --entrypoint sh -v <vol>:/data -v ~/vibe-trading-backups/<ts>:/backup:ro vibe-trading-rollback:<ts> \
+    -c 'find /data -mindepth 1 -delete && tar xzf /backup/<vol>.tgz -C /data'
+docker compose up -d --no-build --no-deps vibe-trading
+```
 
 Back up the existing image, environment files, and named volumes before
 upgrading. Stop the service while archiving its volumes to preserve a consistent
