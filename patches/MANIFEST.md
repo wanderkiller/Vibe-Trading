@@ -83,10 +83,12 @@ documents the build, backup and upgrade rules.
 - `requirements-local-providers-lock.txt`
 - `DEPLOYMENT.local.md`
 - `tools/deploy-vt.sh`
+- `.github/workflows/deploy-gate.yml`
 
 **Commits.** `8cfc14f0` (Dockerfile.local, compose override, DEPLOYMENT.local.md), `e0245ca9` (AlphaKeel paragraph in
 DEPLOYMENT.local.md), merge `98e8248e` (`requirements-local-providers-lock.txt` exists only in that merge), and
-`7d8b0772` (T8, pointer to `patches/`), `2925c004` (`tools/deploy-vt.sh`, audit 2026-10-12 D6-1).
+`7d8b0772` (T8, pointer to `patches/`), `2925c004` (`tools/deploy-vt.sh`, audit 2026-10-12 D6-1); `.github/workflows/deploy-gate.yml` (2026-10-13: the release
+gate runs what production runs — Linux, Python 3.11, frontend — instead of upstream's whole "CI" matrix).
 
 **Upstreamable.** No, local-only (host networking, local listener, extra providers).
 
@@ -103,7 +105,8 @@ The `langchain-core==1.6.1` anchor fails when upstream moves that pin; then the 
 - hook `docker-compose.override.yml`: `ALPHAKEEL_HANDOFF_DIR: /home/vibe/handoff` — the hand-off bind mount and its two variables
 - upstream `requirements-lock.txt`: `langchain-core==1.6.1 \` — the overlay's langchain-core 1.6.3 pin replaces exactly this base pin; a change means regenerating the overlay
 - hook `requirements-local-providers-lock.txt`: `langchain-anthropic==1.7.2`
-- hook `tools/deploy-vt.sh`: `refuse pairing "contract/PIN differs from $AK_PIN"` — the release gate (audit 2026-10-12 D6-1): CI success on the exact commit, commit = AlphaKeel `ci/vibe-trading.ref`, PIN = `ci/vibe-trading.pin`, backup, health + `contract_pin: matched`, rollback; log in `deploy-log.jsonl`
+- hook `tools/deploy-vt.sh`: `refuse pairing "contract/PIN differs from $AK_PIN"` — the release gate (audit 2026-10-12 D6-1): "Deploy gate" workflow success on the exact commit, commit = AlphaKeel `ci/vibe-trading.ref`, PIN = `ci/vibe-trading.pin`, backup, health + `contract_pin: matched`, rollback; log in `deploy-log.jsonl`
+- hook `tools/deploy-vt.sh`: `--workflow "Deploy gate"` — the gate waits for `.github/workflows/deploy-gate.yml`, not upstream's "CI"
 - hook `DEPLOYMENT.local.md`: `tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref`
 
 ## `leaf-package` — AlphaKeel research client

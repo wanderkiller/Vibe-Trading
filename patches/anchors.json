@@ -66,7 +66,8 @@
     "docker-compose.override.yml",
     "requirements-local-providers-lock.txt",
     "DEPLOYMENT.local.md",
-    "tools/deploy-vt.sh"
+    "tools/deploy-vt.sh",
+    ".github/workflows/deploy-gate.yml"
    ],
    "anchors": [
     {
@@ -129,6 +130,11 @@
      "file": "tools/deploy-vt.sh",
      "kind": "hook",
      "literal": "refuse pairing \"contract/PIN differs from $AK_PIN\""
+    },
+    {
+     "file": "tools/deploy-vt.sh",
+     "kind": "hook",
+     "literal": "--workflow \"Deploy gate\""
     },
     {
      "file": "DEPLOYMENT.local.md",
