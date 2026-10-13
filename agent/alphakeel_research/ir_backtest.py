@@ -1118,6 +1118,13 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
     }
     if research_credential is not None:
         prov["research_credential"] = research_credential.get("credential")
+    # AlphaKeel protocol 2.5 (1.14): the latest end of every data read behind this research -- the run's data window, the
+    # robustness windows and any read in this process (data_audit.record_exposure; also direct exchange pulls).
+    from backtest.data_audit import data_exposure_end_ms
+
+    ends = [card["data_window"]["end_ms"], research_end_ms, data_exposure_end_ms(),
+            (card.get("data_audit") or {}).get("data_exposure_end_ms")]
+    prov["data_exposure_end_ms"] = max(x for x in ends if isinstance(x, int) and not isinstance(x, bool))
     warnings = []
     prov["robustness"] = None
     if rob is not None:

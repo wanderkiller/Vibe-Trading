@@ -60,7 +60,7 @@
 | `sizing.max_open` | 整数 1–50 | 同时持仓上限。 |
 | `sizing.leverage` | 十进制串 > 0 或 `null` | 必填（可为 null = 运行环境的值）。 |
 | `parameters` | 对象 | 参数名 → `{value, robust: [lo, hi], path}`，供人审阅；见 §3。可为 `{}`。 |
-| `provenance` | 对象 | 自由内容（工具、run_id、研究窗口、试验数、数据审计、研究凭证……）；只检查形状：`tool`（非空字符串）与 `window.start`、`window.end`（字符串）必填。不进 id。可选 `fixed_literals`：路径（写法同 `parameters.*.path`）→ 十进制串，列出入场/出场里**刻意固定**、没有声明成参数的数值字面量；AlphaKeel 判决 G1 1.19 要求每个入场/出场数值字面量要么是声明参数的位置、要么列在这里且值与 IR 一致（0、1、24、60、1000、3600 豁免），值不一致或路径不指向字面量即 FAIL。 |
+| `provenance` | 对象 | 自由内容（工具、run_id、研究窗口、试验数、数据审计、研究凭证……）；只检查形状：`tool`（非空字符串）与 `window.start`、`window.end`（字符串）必填。不进 id。可选 `fixed_literals`：路径（写法同 `parameters.*.path`）→ 十进制串，列出入场/出场里**刻意固定**、没有声明成参数的数值字面量；AlphaKeel 判决 G1 1.19 要求每个入场/出场数值字面量要么是声明参数的位置、要么列在这里且值与 IR 一致（0、1、24、60、1000、3600 豁免），值不一致或路径不指向字面量即 FAIL。可选 `research_credential`（研究方的研究服务凭证 id，`/whoami` 的 `credential`）：协议 2.5 起 G1 1.14 要求它是研究服务认识的研究凭证。可选 `data_exposure_end_ms`（整数毫秒）：研究读过的全部数据（含不经研究服务的直接拉取，VT 的 `data_audit` 记录）的最晚终点；协议 2.5 起计入 1.14 的研究视界。 |
 
 条件：`{"feature": <特征名>, "op": ">=" | "<=" | ">" | "<" | "between", "value": <十进制串> | [<lo>, <hi>]}`。
 `between` 是闭区间 `lo ≤ x ≤ hi`，要求 `lo ≤ hi`，且只有 `between` 的 value 是区间。所有比较值都是十进制串
@@ -259,6 +259,15 @@ Decision { exits: [{position_id, reason}],
   交易作废、整段重跑，直到没有新的（上限 64 轮，超出记为问题）。作废的进场不是问题、不影响 `ledger_ok`。**只成交一条腿**的进场
   不在本规则内：两侧都不对单腿仓位做后续对齐，Rust 运行把它记为问题（决策账本与引擎不一致），结果不可作为对账依据。
   原生规则运行（`native_strategy`）不做作废，引擎拒单仍记为问题。
+- **作废按执行剖面判定（2026-10-13，协议 2.5，审计 03 W4 方案 (a)）**：上一条是**一档全额成交**剖面（`fill_model = top_of_book`，
+  对账、金标、`optimistic`）的规则。`ir_strategy` 缺省的**保守成交**剖面（`conservative`）用保守执行自己的成交回灌：两条腿都没成交、
+  **或只成交一条腿**（超过容量 `max_participation × 24h 成交额` 的 `over_capacity` 拒单、合约规则拒单、注入的单腿失败）的进场作废，
+  决策整段重跑（同一不动点、同一 64 轮上限、`trade` 号同样保留不复用）。单腿进场作废时，它的开仓意图仍在原决策时刻，引擎照样只成交
+  那条腿并在下一帧回滚：**单腿回滚的价格风险与两腿费用计入结果，不丢弃**。保守结果的计数（开 / 平 / 胜 / 负）、事件日志与意图都来自
+  这份重跑后的决策；一档全额成交的报告口径不变——`optimistic`、`verification.ir_ledger` 与 3.9 的决策账本事件仍取一档剖面的决策
+  （在线 paper 是一档成交）。Python `ir_policy`（逐步 policy 只能跑一档剖面）与 VT 的本地模拟器不建模保守成交：L2 按 `intent_id`
+  的对账（`ir review`、`ir backtest --alphakeel-check`）固定在一档剖面上比较（VT `RECONCILIATION_FILL`），两侧的作废规则一致。
+  结果的 `approximations` 以 `decisions_with_conservative_feedback` 写明作废的进场数（此前是 `decisions_from_top_of_book_ledger`）。
 - **缺可成交报价时不退出**：持仓的任一腿在本帧没有**可成交报价**时，本帧**不提交该组合的退出意图**（即使 `max_hold` 已到），等下一帧
   再退出；不得用旧帧报价定价退出。可成交报价 = 本帧有该合约的报价行、`bbo = true`、数值合法（同上：买一 > 0、卖一 ≥ 买一、标记价 > 0、
   永续资金费价格 > 0、永续 |费率| ≤ 1）、含 USDC 腿有汇率，且**足够新**：报价时间（`quote_ts`；为空时用该平台本帧的抓取时刻，即数据包帧表里该平台的

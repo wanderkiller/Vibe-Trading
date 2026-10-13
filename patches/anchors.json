@@ -66,7 +66,8 @@
     "docker-compose.override.yml",
     "requirements-local-providers-lock.txt",
     "DEPLOYMENT.local.md",
-    "tools/deploy-vt.sh"
+    "tools/deploy-vt.sh",
+    ".github/workflows/deploy-gate.yml"
    ],
    "anchors": [
     {
@@ -129,6 +130,11 @@
      "file": "tools/deploy-vt.sh",
      "kind": "hook",
      "literal": "refuse pairing \"contract/PIN differs from $AK_PIN\""
+    },
+    {
+     "file": "tools/deploy-vt.sh",
+     "kind": "hook",
+     "literal": "--workflow \"Deploy gate\""
     },
     {
      "file": "DEPLOYMENT.local.md",
@@ -752,7 +758,8 @@
    "title": "Run card data audit (auditable vs non-auditable sources)",
    "files": [
     "agent/backtest/run_card.py",
-    "agent/backtest/data_audit.py"
+    "agent/backtest/data_audit.py",
+    "agent/backtest/loaders/base.py"
    ],
    "anchors": [
     {
@@ -799,6 +806,26 @@
      "file": "agent/backtest/run_card.py",
      "kind": "preimage",
      "literal": "\"warnings\": [*(warnings or []), *provenance_warnings],"
+    },
+    {
+     "file": "agent/backtest/loaders/base.py",
+     "kind": "upstream",
+     "literal": "def cached_loader_fetch("
+    },
+    {
+     "file": "agent/backtest/loaders/base.py",
+     "kind": "hook",
+     "literal": "def _note_exposure(source: str, end_date: str, frame: pd.DataFrame | None) -> None:"
+    },
+    {
+     "file": "agent/backtest/loaders/base.py",
+     "kind": "hook",
+     "literal": "_note_exposure(source, end_date, cached)"
+    },
+    {
+     "file": "agent/backtest/loaders/base.py",
+     "kind": "hook",
+     "literal": "_note_exposure(source, end_date, frame)"
     }
    ]
   },

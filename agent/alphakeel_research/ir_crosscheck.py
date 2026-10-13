@@ -43,6 +43,10 @@ NOTES = [
     "the engine checks same-instant cumulative initial margin (profile leverage) and may refuse an entry the simulator, "
     "which models no margin, makes: AlphaKeel then voids that entry (no position, no cooldown, its number skipped; "
     "Strategy IR README §5a) and the trade appears on the simulator's side only",
+    "AlphaKeel's default conservative fill feeds its own fills back (Strategy IR README §5a, protocol 2.5): an entry it "
+    "refuses or fills on one leg only (over capacity, injected leg failure) is voided and the decisions rerun, the one-leg "
+    "unwind cost kept. This check, like ir review, runs AlphaKeel on the one-level full-fill model (RECONCILIATION_FILL), "
+    "where only margin refusals void an entry, so the intent ids compared here are those of the one-level decisions",
     "trade-by-trade here, not the service's /comparisons: that endpoint compares two service runs by their event logs "
     "under one execution profile; the simulator is a local run that models neither margin nor the profile and writes no "
     "event log. L0 uses the same definition as /comparisons for dataset-view runs (run-manifest.inputs chains)",

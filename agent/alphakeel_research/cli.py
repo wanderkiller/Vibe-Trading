@@ -32,7 +32,7 @@
                                           (strategy.json with strategy_id + provenance for AlphaKeel's registry)
     python -m alphakeel_research ir robustness --ir strategy.json --pack-dir DIR --instruments inst.json --is-start-ms N --is-end-ms N
                                           [--oos-start-ms N --oos-end-ms N [--oos-pack-dir DIR]] [--fees fees.json] [--filter filter.json]
-                                          [--permutations 30] [--seed 7] [--workers 2] [--step-minutes 5] [--capital-base X]
+                                          [--permutations 999] [--seed 7] [--permutation-seed N] [--workers 2] [--step-minutes 5] [--capital-base X]
                                           [--prior-trials N] [--wf-folds 3] [--wf-test-days 30] [--wf-min-train-days 30] --out DIR
     python -m alphakeel_research ir robustness --run DIR [--oos-start-ms N --oos-end-ms N ...]
                                           (DIR = an `ir backtest` run: --out DIR/robustness, --ir DIR/ir.json, --instruments
@@ -144,6 +144,7 @@ def _battery(robustness, registry, ir_path, pack, inst_path, window, oos, a, tri
                               oos_pack=Pack.from_directory(a.oos_pack_dir) if a.oos_pack_dir else None, out_dir=a.out,
                               fees=_load(a.fees) if a.fees else (_run_card(a.run)["assumptions"]["fees"] if a.run else None),
                               filter_spec=_load(a.filter), permutations=a.permutations, seed=a.seed,
+                              permutation_seed=a.permutation_seed,
                               step_minutes=a.step_minutes, capital_base=Decimal(a.capital_base) if a.capital_base else None,
                               workers=a.workers, prior_trials=a.prior_trials, wf_folds=a.wf_folds, wf_test_days=a.wf_test_days,
                               wf_min_train_days=a.wf_min_train_days, prior_trials_floor=trials_floor, registry=registry)
@@ -324,8 +325,10 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--oos-pack-dir", help="exported pack for the OOS window (default: --pack-dir)")
     q.add_argument("--fees", help="JSON {venue: {perp: rate, spot: rate}} (default: the --run card's fee table; otherwise required)")
     q.add_argument("--filter", help='JSON {"kind": "excluded_bases", "bases": ["XYZ", ...]}: the filter under test')
-    q.add_argument("--permutations", type=int, default=30)
-    q.add_argument("--seed", type=int, default=7)
+    q.add_argument("--permutations", type=int, default=999, help="protocol 2.5 (1.12): AlphaKeel requires >= 999")
+    q.add_argument("--seed", type=int, default=7, help="bootstrap seed")
+    q.add_argument("--permutation-seed", type=int, default=None,
+                   help="default (and required by AlphaKeel 1.12): derived from the strategy id")
     q.add_argument("--workers", type=int, default=2)
     q.add_argument("--step-minutes", type=int, default=5)
     q.add_argument("--capital-base", help="capital base shared by every variant (default notional_per_leg x 2 x max_open of the IR)")

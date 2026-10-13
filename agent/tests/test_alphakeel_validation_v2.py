@@ -29,7 +29,7 @@ def test_the_contract_pin_is_the_v2_protocol_and_vectors():
     for rel in ("validation/protocol.json", "validation/vectors/g1-precheck.json"):
         assert PIN[rel] == hashlib.sha256((Path(contract.__file__).parent / "contract" / rel).read_bytes()).hexdigest()
     p = precheck.load_protocol()
-    assert p["version"] == "2.4"
+    assert p["version"] == "2.5"
     # an optional informational item (3.11, not research-side) never reaches the research-side list
     assert "3.11" not in {i["id"] for i in precheck.research_items(p)}
     stripped = copy.deepcopy(p)
@@ -250,7 +250,8 @@ def test_robust_width_floor(tmp_path):
     def one(value, lo, hi):
         rb = copy.deepcopy(case["robustness"])
         rb["parameters"] = {**rb.get("parameters", {}), "ranges": [{"name": "hold", "path": "exit.max_hold_hours", "value": value, "lo": lo, "hi": hi}]}
-        rb["parameters"].setdefault("neighbours", [{"net": "1.0"}, {"net": "2.0"}])
+        # protocol 2.5 (1.9 both_ends): the ranged parameter needs its lo and hi neighbours
+        rb["parameters"]["neighbours"] = [{"parameter": "hold", "side": "lo", "net": "1.0"}, {"parameter": "hold", "side": "hi", "net": "2.0"}]
         return {g["id"]: g for g in precheck.evaluate(rb, p)}["1.9"]
 
     assert one("10", "8", "12")["result"] == "PASS"  # exactly +-20% passes

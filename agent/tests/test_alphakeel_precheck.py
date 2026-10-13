@@ -116,6 +116,8 @@ def _mutate(path, value, *, filter_on=False):
     f = rb["rating"]["facts"]
     if filter_on:
         f["filter_tested"], f["filter_p"] = True, "0.01"
+        # protocol 2.5 (1.12): a tested filter carries its permutation draws and the seed derived from the strategy id
+        rb["filter"] = {"permutation": {"draws": 999, "seed": precheck.permutation_seed(rb["strategy_id"])}}
     cur = rb
     for k in path[:-1]:
         cur = cur[k]
@@ -185,3 +187,9 @@ def test_evaluate_without_an_ir_is_unchanged_and_with_one_appends_1_18_and_1_19(
                              ir=ir_case["ir"], pack_universe=ir_case["pack_universe"])
     assert [g["id"] for g in full][-2:] == ["1.18", "1.19"]
     assert [g["id"] for g in full][:-2] == [g["id"] for g in plain]
+
+
+@pytest.mark.parametrize("c", VECTOR["derivations"]["permutation_seed"], ids=lambda c: c["strategy_id"])
+def test_permutation_seed_matches_the_shared_derivation_vectors(c):
+    # protocol 2.5 (1.12, D4-5): the seed is derived from the strategy id exactly as AlphaKeel derives it
+    assert precheck.permutation_seed(c["strategy_id"]) == c["expected"]

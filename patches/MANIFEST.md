@@ -32,7 +32,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `alpha-bench-universe` | alpha_bench_tool, factors/cli_handlers | local-only (follows the leaf package) |
 | `crypto-funding` | engines/_market_hooks, crypto, composite; ccxt_loader | upstreamable as a bug-fix PR (see below) |
 | `metrics-conventions` | metrics, validation | partly upstreamed already; rest upstreamable |
-| `run-card-data-audit` | run_card | local-only as written; a generic provenance hook is upstreamable |
+| `run-card-data-audit` | run_card, loaders/base (exposure hook) | local-only as written; a generic provenance hook is upstreamable |
 | `alphakeel-handoff` | api_server (one hook), RunDetail (one import, one element), api.ts (one `export`) | local-only (follows the leaf package) |
 | `packaging-docs` | pyproject, SKILL.md, READMEs, .gitignore, .env.example, CHANGELOG (one section) | local-only |
 | `ci-env-gate` | alpha_routes (one line) | upstreamable: upstream's own gate e fails on it |
@@ -83,10 +83,12 @@ documents the build, backup and upgrade rules.
 - `requirements-local-providers-lock.txt`
 - `DEPLOYMENT.local.md`
 - `tools/deploy-vt.sh`
+- `.github/workflows/deploy-gate.yml`
 
 **Commits.** `8cfc14f0` (Dockerfile.local, compose override, DEPLOYMENT.local.md), `e0245ca9` (AlphaKeel paragraph in
 DEPLOYMENT.local.md), merge `98e8248e` (`requirements-local-providers-lock.txt` exists only in that merge), and
-`7d8b0772` (T8, pointer to `patches/`), `2925c004` (`tools/deploy-vt.sh`, audit 2026-10-12 D6-1).
+`7d8b0772` (T8, pointer to `patches/`), `2925c004` (`tools/deploy-vt.sh`, audit 2026-10-12 D6-1); `.github/workflows/deploy-gate.yml` (2026-10-13: the release
+gate runs what production runs — Linux, Python 3.11, frontend — instead of upstream's whole "CI" matrix).
 
 **Upstreamable.** No, local-only (host networking, local listener, extra providers).
 
@@ -103,7 +105,8 @@ The `langchain-core==1.6.1` anchor fails when upstream moves that pin; then the 
 - hook `docker-compose.override.yml`: `ALPHAKEEL_HANDOFF_DIR: /home/vibe/handoff` — the hand-off bind mount and its two variables
 - upstream `requirements-lock.txt`: `langchain-core==1.6.1 \` — the overlay's langchain-core 1.6.3 pin replaces exactly this base pin; a change means regenerating the overlay
 - hook `requirements-local-providers-lock.txt`: `langchain-anthropic==1.7.2`
-- hook `tools/deploy-vt.sh`: `refuse pairing "contract/PIN differs from $AK_PIN"` — the release gate (audit 2026-10-12 D6-1): CI success on the exact commit, commit = AlphaKeel `ci/vibe-trading.ref`, PIN = `ci/vibe-trading.pin`, backup, health + `contract_pin: matched`, rollback; log in `deploy-log.jsonl`
+- hook `tools/deploy-vt.sh`: `refuse pairing "contract/PIN differs from $AK_PIN"` — the release gate (audit 2026-10-12 D6-1): "Deploy gate" workflow success on the exact commit, commit = AlphaKeel `ci/vibe-trading.ref`, PIN = `ci/vibe-trading.pin`, backup, health + `contract_pin: matched`, rollback; log in `deploy-log.jsonl`
+- hook `tools/deploy-vt.sh`: `--workflow "Deploy gate"` — the gate waits for `.github/workflows/deploy-gate.yml`, not upstream's "CI"
 - hook `DEPLOYMENT.local.md`: `tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref`
 
 ## `leaf-package` — AlphaKeel research client
@@ -374,11 +377,14 @@ the `validation.py` guards, and the tests.
 **Purpose.** The run card records a `data_audit` block: which sources are auditable (frozen, digest-verified AlphaKeel
 packs, with dataset versions per read) and which are not (live ccxt/okx/binance pulls), adds a warning for
 non-auditable data and renders a "Data Audit" section. Loaders record provenance in-process
-(`data_audit.record_provenance`).
+(`data_audit.record_provenance`). Since AlphaKeel protocol 2.5 (02 WP5) every non-empty read through the shared
+loader cache wrapper (`cached_loader_fetch`, used by the ccxt/okx/binance loaders) also records the end of the data it
+returned (`data_audit.record_exposure`); the IR export writes the latest one as `provenance.data_exposure_end_ms`.
 
 **Files.**
 - `agent/backtest/run_card.py`
 - `agent/backtest/data_audit.py`
+- `agent/backtest/loaders/base.py`
 
 **Commits.** `83ea7c2a` `5370ab12`.
 
@@ -395,6 +401,10 @@ class" field in the run card would be upstreamable.
 - hook `agent/backtest/run_card.py`: `"data_audit": audit,`
 - hook `agent/backtest/run_card.py`: `"## Data Audit"`
 - preimage `agent/backtest/run_card.py`: `"warnings": [*(warnings or []), *provenance_warnings],`
+- upstream `agent/backtest/loaders/base.py`: `def cached_loader_fetch(`
+- hook `agent/backtest/loaders/base.py`: `def _note_exposure(source: str, end_date: str, frame: pd.DataFrame | None) -> None:`
+- hook `agent/backtest/loaders/base.py`: `_note_exposure(source, end_date, cached)`
+- hook `agent/backtest/loaders/base.py`: `_note_exposure(source, end_date, frame)`
 
 ## `alphakeel-handoff` — hand-off of an IR run to AlphaKeel
 

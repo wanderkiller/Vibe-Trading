@@ -5,6 +5,25 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### AlphaKeel patch layer — 2026-10-13 (validation protocol 2.5)
+
+Local patch layer only (`patches/MANIFEST.md`); paired with the AlphaKeel lane `lane/w2-protocol`.
+
+- Contract copy and `models.py` follow AlphaKeel protocol 2.5 (`validation/protocol.json`, shared G1 vectors, Strategy IR
+  README §5a per-profile voiding, `verification.events` economics and `verification.end_equity`, provenance
+  `research_credential` / `data_exposure_end_ms`). The old container refuses the new PIN (`contract.pin_mismatch`):
+  AlphaKeel and this container switch together.
+- Robustness battery (1.12, D4-5): 999 permutation draws by default, seeded with the first 8 bytes of
+  SHA-256(strategy_id) (`precheck.permutation_seed`, `--permutation-seed` to override for experiments only; AlphaKeel
+  fails a foreign seed). Precheck (1.9, D4-10): every parameter needs both its lo and hi neighbour.
+- Data exposure (1.14, 02 WP5): every non-empty read through `cached_loader_fetch` records the end of the data it
+  returned (`data_audit.record_exposure`, capped at now); `ir export` writes the latest end as
+  `provenance.data_exposure_end_ms` (AlphaKeel raises the research horizon to it).
+- `ir_crosscheck.NOTES`: AlphaKeel's conservative fill voids over-capacity / one-leg entries and reruns; the L2
+  comparison by intent_id stays on the one-level fill (`RECONCILIATION_FILL`).
+- Rollback: revert these commits and restore the previous contract copy (`contract/`, `models.py`) together with the
+  AlphaKeel rollback.
+
 ### AlphaKeel patch layer — 2026-10-12 (end-to-end audit)
 
 Local patch layer only (`patches/MANIFEST.md`); not an upstream release note.

@@ -3847,7 +3847,7 @@
             ]
           },
           "approximations": {
-            "description": "Optional (2026-10-11), `ir_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_from_top_of_book_ledger`, `top_of_book_full_fill`), each starting with its identifier and a colon.",
+            "description": "Optional (2026-10-11), `ir_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_with_conservative_feedback` (until 2026-10-13 `decisions_from_top_of_book_ledger`), `top_of_book_full_fill`),\neach starting with its identifier and a colon.",
             "items": {
               "$ref": "#/components/schemas/Text"
             },
@@ -4347,6 +4347,17 @@
       "Verification": {
         "additionalProperties": false,
         "properties": {
+          "end_equity": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/VerificationEndEquity",
+                "description": "Optional (protocol 2.5), scan-frame `ir_strategy` runs only: the IR decision ledger's last mark of the replay (input\nframe sequence number and equity; the replay starts flat at zero equity). AlphaKeel's G3 item 3.9 compares it with the\npaper journal's equity change over the same segment."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "engine_recount": {
             "$ref": "#/components/schemas/Status"
           },
@@ -4400,6 +4411,26 @@
         ],
         "type": "object"
       },
+      "VerificationEndEquity": {
+        "additionalProperties": false,
+        "properties": {
+          "equity": {
+            "$ref": "#/components/schemas/Dec",
+            "description": "The decision ledger's equity at that mark (USDT, decimal string, not rounded)."
+          },
+          "seq": {
+            "description": "Archive sequence number of the input frame of the replay's last mark.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "equity"
+        ],
+        "type": "object"
+      },
       "VerificationEvent": {
         "additionalProperties": false,
         "properties": {
@@ -4414,8 +4445,52 @@
               }
             ]
           },
+          "fee": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Dec",
+                "description": "Open and close only (protocol 2.5): the fees (open = entry fees, close = the trade's total fees; USDT, decimal string)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "kind": {
             "$ref": "#/components/schemas/VerificationEventKind"
+          },
+          "long_entry": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Dec",
+                "description": "Close only (protocol 2.5): the long leg's entry fill price (decimal string)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "long_exit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Dec",
+                "description": "Close only (protocol 2.5): the long leg's exit fill price (decimal string)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "net": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Dec",
+                "description": "Close only (protocol 2.5): the trade's net (USDT, decimal string, not rounded)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "pair": {
             "description": "The paper position id (`cross:<base>:<long leg>><short leg>`).",
@@ -4423,11 +4498,44 @@
             "minLength": 1,
             "type": "string"
           },
+          "qty": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Dec",
+                "description": "Open and close only (protocol 2.5): the position quantity (decimal string, not rounded)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "seq": {
             "description": "Archive sequence number of the input frame the event happened at.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
+          },
+          "short_entry": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Dec",
+                "description": "Close only (protocol 2.5): the short leg's entry fill price (decimal string)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "short_exit": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Dec",
+                "description": "Close only (protocol 2.5): the short leg's exit fill price (decimal string)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "ts_ms": {
             "description": "Funding only: the settlement time, milliseconds.",

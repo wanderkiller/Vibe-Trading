@@ -4,7 +4,8 @@
 # Run it from the production checkout (the directory holding docker-compose.yml) after checking out the commit to
 # deploy. It refuses unless every gate holds, in this order:
 #   1. the checkout is clean and HEAD is a full commit;
-#   2. GitHub Actions workflow "CI" has a completed run on exactly that commit with conclusion `success`
+#   2. GitHub Actions workflow "Deploy gate" (.github/workflows/deploy-gate.yml: Linux, Python 3.11 + frontend, the
+#      production target; upstream's "CI" matrix no longer gates) has a completed run on exactly that commit with conclusion `success`
 #      (`gh run list --commit`); a red, cancelled, pending or missing run refuses;
 #   3. HEAD equals AlphaKeel's `ci/vibe-trading.ref` (path given by --ak-ref) and this checkout's
 #      `agent/alphakeel_research/contract/PIN` is byte-identical to AlphaKeel's `ci/vibe-trading.pin`
@@ -75,12 +76,12 @@ rollback() {  # step detail — the new container is up but failed its checks
 [ -z "$(git status --porcelain --untracked-files=no)" ] || refuse checkout "tracked files are modified"
 
 # 2. CI on this exact commit
-CI_JSON="$(gh run list --repo "$GH_REPO" --workflow CI --commit "$SHA" --json status,conclusion,headSha,databaseId --limit 20)" \
+CI_JSON="$(gh run list --repo "$GH_REPO" --workflow "Deploy gate" --commit "$SHA" --json status,conclusion,headSha,databaseId --limit 20)" \
     || refuse ci "gh run list failed"
 CI_OK="$(printf '%s' "$CI_JSON" | python3 -I -c 'import json,sys
 sha=sys.argv[1]; runs=[r for r in json.load(sys.stdin) if r.get("headSha")==sha and r.get("status")=="completed"]
 print("success" if runs and runs[0].get("conclusion")=="success" else (runs[0].get("conclusion") if runs else "none"))' "$SHA")"
-[ "$CI_OK" = success ] || refuse ci "latest completed CI run on $SHA: $CI_OK"
+[ "$CI_OK" = success ] || refuse ci "latest completed Deploy gate run on $SHA: $CI_OK"
 
 # 3. pairing with AlphaKeel
 [ -f "$AK_REF" ] || refuse pairing "no ref file $AK_REF"
