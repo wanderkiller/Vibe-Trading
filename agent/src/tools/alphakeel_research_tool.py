@@ -61,14 +61,17 @@ _RELATIVE_PATH_KEYS = ("ir", "fees", "instruments", "filter", "trials_evidence",
 
 
 def _resolve_paths(args: dict[str, Any], run_dir: Any) -> dict[str, Any]:
-    """``args`` with every relative path made absolute under ``run_dir`` (inline JSON strings and absolute paths stay)."""
+    """``args`` with ``~`` expanded and every relative path made absolute under ``run_dir`` (inline JSON strings and
+    absolute paths stay)."""
     if not isinstance(run_dir, str) or not run_dir.strip():
         return args
     out = dict(args)
     for k in _RELATIVE_PATH_KEYS:
         v = out.get(k)
-        if isinstance(v, str) and v.strip() and not os.path.isabs(v) and not v.lstrip().startswith(("{", "[")):
-            out[k] = os.path.join(run_dir, v)
+        if not isinstance(v, str) or not v.strip() or v.lstrip().startswith(("{", "[")):
+            continue  # not a path, or inline JSON
+        v = os.path.expanduser(v)
+        out[k] = v if os.path.isabs(v) else os.path.join(run_dir, v)
     return out
 
 
@@ -102,8 +105,14 @@ def _under_handoff(path: str) -> bool:
     return p == root or p.startswith(root.rstrip(os.sep) + os.sep)
 
 
-def _instruments_file(v: Any, prefix: str = "ak-instruments-") -> str:
-    """``instruments`` (or ``filter``) is a path to a JSON file, or the JSON itself, which is written to a temp file."""
+def _instruments_file(v: Any, prefix: str = "ak-instruments-", key: str = "instruments") -> str:
+    """``instruments`` (or ``filter``, ``fees``) is a path to a JSON file, or the JSON itself, which is written to a temp
+    file. A string that starts with ``{`` or ``[`` is that JSON serialized (models often send objects as strings)."""
+    if isinstance(v, str) and v.strip().startswith(("{", "[")):
+        try:
+            v = json.loads(v)
+        except ValueError as e:
+            raise ValueError(f"{key}: not valid JSON: {e}") from None
     if isinstance(v, (list, dict)):
         fd, path = tempfile.mkstemp(prefix=prefix, suffix=".json")
         with os.fdopen(fd, "w") as f:
@@ -113,8 +122,9 @@ def _instruments_file(v: Any, prefix: str = "ak-instruments-") -> str:
 
 
 #: ``ir_backtest`` has no default fee table (and neither does AlphaKeel): the agent must pass one.
-_FEES_NEEDED = ("needs fees: {venue: {perp: rate}} with a decimal-string taker rate for every venue in universe.pairs (no "
-                "default; unless the user gives a fee tier use each venue's public base-tier perp taker fee and say so)")
+_FEES_NEEDED = ("needs fees: {venue: {perp: rate}} with a decimal-string taker rate for every venue in universe.pairs (or in "
+                "instruments when pairs is \"any\"; no default; unless the user gives a fee tier use each venue's public "
+                "base-tier perp taker fee and say so)")
 
 
 #: path-valued arguments a command writes under (``out``; ``run``: ``ir robustness`` writes DIR/robustness; ``robustness``: the
@@ -153,7 +163,7 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
             if required or isinstance(v, bool):
                 raise ValueError(f"{action} {_FEES_NEEDED}")
             return
-        out.extend(["--fees", _instruments_file(v, "ak-fees-")])
+        out.extend(["--fees", _instruments_file(v, "ak-fees-", "fees")])
 
     if action == "freeze":
         add("--start-ms", "start_ms", True), add("--end-ms", "end_ms", True), add("--venues", "venues"), add("--funding", "funding")
@@ -212,7 +222,7 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
             add(f, k)
         fees(False)  # optional: the --run card's fee table is the default
         if a.get("filter") not in (None, "", {}):
-            out.extend(["--filter", _instruments_file(a["filter"], "ak-filter-")])
+            out.extend(["--filter", _instruments_file(a["filter"], "ak-filter-", "filter")])
         for f, k in (("--permutations", "permutations"), ("--seed", "seed"), ("--permutation-seed", "permutation_seed"),
                      ("--workers", "workers"), ("--step-minutes", "step_minutes"),
                      ("--capital-base", "capital_base"), ("--prior-trials", "prior_trials"), ("--wf-folds", "wf_folds"),
@@ -267,7 +277,7 @@ class AlphakeelResearchTool(BaseTool):
         "and provenance for AlphaKeel's registry, from an ir_backtest run; carries the robustness evidence). You cannot export into "
         "AlphaKeel's hand-off directory: hand-off is the user's button on the run page. Files for "
         "intents/strategy/profile are paths on disk. Returns ids, digests and summaries only; a pass never certifies "
-        "strategy logic. Needs ALPHAKEEL_RESEARCH_URL and a service token in the environment."
+        "strategy logic. Relative file paths in args resolve against the run directory. Needs ALPHAKEEL_RESEARCH_URL and a service token in the environment."
     )
     parameters = {
         "type": "object",
@@ -298,6 +308,11 @@ class AlphakeelResearchTool(BaseTool):
                                        "bbo and depth20 are live captures covering only recent days: never request them for a "
                                        "historical window. ir_backtest freezes its own pack (kline_1m trade + settlements): do not "
                                        "freeze before it.",
+                    },
+                    "fees": {
+                        "anyOf": [{"type": "object"}, {"type": "string"}],
+                        "description": "{venue: {perp: rate}} with decimal-string taker rates for every venue the run trades (or a "
+                                       "JSON file path); required for ir_backtest",
                     },
                     "pack": {"type": "string"},
                     "accept_partial": {"type": "boolean"},

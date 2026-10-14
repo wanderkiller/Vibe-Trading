@@ -623,8 +623,9 @@ the export now carries it through unchanged.
 - `agent/tests/test_ir_validate_all.py`
 
 **Commits.** `d8d6e4e3` (local checker, unit warning, tool, description), `055a488a` (export keeps
-`provenance.fixed_literals`), (this commit) (review round 1: `ir_backtest` needs `fees` (object or path), argparse
-stderr in the tool error, `take_profit` unit warning, paths relative to the agent's run directory).
+`provenance.fixed_literals`), `ed0aaaec` (review round 1: `ir_backtest` needs `fees` (object or path), argparse
+stderr in the tool error, `take_profit` unit warning, paths relative to the agent's run directory), (this commit)
+(review round 2: `fees`/`instruments`/`filter` sent as a JSON string, `~` in paths, `fees` in the tool schema).
 
 **Upstreamable.** No, local-only (follows the leaf package).
 

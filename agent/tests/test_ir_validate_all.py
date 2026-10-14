@@ -213,3 +213,36 @@ def test_relative_paths_resolve_against_the_run_dir(monkeypatch, tmp_path) -> No
     (run_dir / "ir" / "strategy.json").write_text(json.dumps(_empty_sections()))
     out = _tool(action="ir_validate", args={"ir": "ir/strategy.json"}, run_dir=str(run_dir))
     assert out["status"] == "error" and out["result"]["source"] == "local"
+
+
+# --- review round 2: objects serialized as strings, ~ in paths -----------------------------------------------------------
+
+def test_fees_as_a_json_string_reaches_the_cli_as_a_file(monkeypatch, tmp_path) -> None:
+    from alphakeel_research import cli
+
+    fees = {"binance": {"perp": "0.0005"}, "okx": {"perp": "0.0005"}}
+    seen: dict = {}
+
+    def capture(argv):
+        seen["fees"] = json.loads(Path(argv[argv.index("--fees") + 1]).read_text())
+        print(json.dumps({"run_dir": "r"}))
+        return 0
+
+    monkeypatch.setattr(cli, "main", capture)
+    path = tmp_path / "strategy.json"
+    path.write_text(_EXAMPLE.read_text())
+    out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2, "instruments": json.dumps(_INST),
+                                             "fees": " " + json.dumps(fees)}, run_dir=str(tmp_path))
+    assert out["status"] == "ok" and seen["fees"] == fees
+    out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2, "instruments": _INST, "fees": "{nope"})
+    assert out["status"] == "error" and out["error"].startswith("fees: not valid JSON")
+
+
+def test_home_relative_paths_are_expanded(monkeypatch, tmp_path) -> None:
+    _forbid_cli(monkeypatch)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "s.json").write_text(json.dumps(_empty_sections()))
+    monkeypatch.setenv("HOME", str(home))
+    out = _tool(action="ir_validate", args={"ir": "~/s.json"}, run_dir=str(tmp_path / "run"))
+    assert out["status"] == "error" and out["result"]["source"] == "local"
