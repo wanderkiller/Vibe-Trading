@@ -671,7 +671,8 @@ tool's import in `build_registry` is guarded (a failure logs a warning and skips
 Replay fixes (2026-10-14): the tool ran `cli.main` under `contextlib.redirect_stdout`, which is process-wide, so two
 conversations at once read each other's output (replay 4cada46ec0b4: `{"output": ""}`, one run in both ledgers). Every
 action now runs `python -m alphakeel_research` in a child process (as upstream's backtest tool / `src/core/runner.py`;
-timeout `VIBE_TRADING_TOOL_TIMEOUT_SECONDS`, cwd the turn's run dir); planning stays in-process. Tests drive the child
+timeout `VIBE_TRADING_TOOL_TIMEOUT_SECONDS`; `cwd=None` and `python -P`, so a module the model wrote into its run dir is
+never imported by the child, which holds the service credential); planning stays in-process. Tests drive the child
 through `agent/tests/fixtures/alphakeel_tool_cli.py`. The routing block declares fee rates `count` and fee, funding
 and PnL amounts `observed` single values; the card gains fee and funding columns. `scripts/alphakeel_replay_check.py` is the read-only acceptance check of a replayed session.
 The upstream test `test_context_attribution_layers.py` formats `_SYSTEM_PROMPT` with every placeholder and gains the new one.

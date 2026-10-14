@@ -24,11 +24,11 @@ def patch_run(monkeypatch, run: Callable) -> None:
 
 def patch_cli(monkeypatch, main: Callable[[list[str]], int]) -> None:
     def run(cmd, **kwargs):
-        assert cmd[1:3] == ["-m", "alphakeel_research"], cmd
+        assert cmd[1:4] == ["-P", "-m", "alphakeel_research"], cmd
         out, err = io.StringIO(), io.StringIO()
         try:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                rc = main(list(cmd[3:]))
+                rc = main(list(cmd[4:]))
         except SystemExit as e:
             rc = e.code if isinstance(e.code, int) else 1
         return subprocess.CompletedProcess(cmd, rc, out.getvalue(), err.getvalue())

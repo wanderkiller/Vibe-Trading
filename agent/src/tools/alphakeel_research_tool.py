@@ -537,10 +537,12 @@ class AlphakeelResearchTool(BaseTool):
         # A child process per call, as upstream's backtest tool (src/core/runner.py): redirect_stdout is process-wide, so
         # two conversations running at once read each other's output (research-truth, replay session 4cada46ec0b4).
         timeout = _tool_timeout_seconds()
-        cwd = session_run_dir if isinstance(session_run_dir, str) and os.path.isdir(session_run_dir) else None
+        # cwd None (the process's own, as the in-process call had; relative paths are already absolute: _resolve_paths)
+        # and -P (Python >= 3.11: no cwd / script dir on sys.path), so a module the model wrote into its run directory
+        # (json.py, decimal.py ...) is never imported by the child, which holds the service credential.
         try:
-            proc = subprocess.run([sys.executable, "-m", "alphakeel_research", *argv], capture_output=True, text=True,
-                                  timeout=timeout, env=os.environ.copy(), cwd=cwd)
+            proc = subprocess.run([sys.executable, "-P", "-m", "alphakeel_research", *argv], capture_output=True, text=True,
+                                  timeout=timeout, env=os.environ.copy(), cwd=None)
         except subprocess.TimeoutExpired:
             err = {"status": "error", "error": f"alphakeel_research timed out after {timeout} s"}
             return json.dumps({**err, "warnings": warnings} if warnings else err)

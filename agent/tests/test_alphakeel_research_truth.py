@@ -547,3 +547,32 @@ def test_card_has_fee_and_funding_columns(session) -> None:
     assert "| 版本 | 窗口 | 成交 | 净收益 USDT | 手续费 USDT | 资金费 USDT | 最大回撤 | 判定 |" in zh
     assert "| Version | Window | Trades | Net USDT | Fees USDT | Funding USDT | Max drawdown | Status |" in en
     assert "| va (ir-aaaaa) | 2026-01-01→06-29 | 40 | −5.00 | 300.43 | 190.11 | 0.27% | 未通过初筛（1.3） |" in zh
+
+
+def test_the_child_never_imports_modules_from_the_run_dir(tmp_path, monkeypatch) -> None:
+    """The child holds the service credential: a ``json.py`` the model wrote into its run directory must not be imported.
+    Real child process (``check`` against a closed local port ends without network)."""
+    import os
+    import subprocess
+
+    from src.tools.alphakeel_research_tool import AlphakeelResearchTool
+    from tests.fixtures.alphakeel_tool_cli import patch_run
+
+    agent = str(Path(__file__).resolve().parents[1])
+    monkeypatch.setenv("PYTHONPATH", agent + (os.pathsep + os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else ""))
+    monkeypatch.setenv("ALPHAKEEL_RESEARCH_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("ALPHAKEEL_RESEARCH_TOKEN", "ak_rs_test-token")
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "json.py").write_text("raise SystemExit(99)\n")
+    seen = {}
+    real = subprocess.run
+
+    def spy(cmd, **kwargs):
+        seen.update(cmd=cmd, cwd=kwargs.get("cwd"))
+        return real(cmd, **kwargs)
+
+    patch_run(monkeypatch, spy)
+    out = json.loads(AlphakeelResearchTool().execute(action="check", run_dir=str(run_dir)))
+    assert seen["cwd"] is None and seen["cmd"][1:4] == ["-P", "-m", "alphakeel_research"]
+    assert out["status"] == "error" and isinstance(out.get("result"), dict) and "error" in out["result"], out
