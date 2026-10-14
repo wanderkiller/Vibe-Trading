@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from src.agent.tools import BaseTool
-from src.config.accessor import get_env_config, get_env_value
+from src.config.accessor import get_env_value
 from src.tools.alphakeel_ir_request import IGNORED_NOTE
 from src.tools.alphakeel_research_ledger import NO_SESSION_WARNING
 
@@ -255,10 +256,59 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
 
 
 def _tool_timeout_seconds() -> float | None:
-    """The child process bound: ``VIBE_TRADING_TOOL_TIMEOUT_SECONDS`` as upstream's backtest tool reads it; a
-    non-positive value disables it."""
-    configured = float(get_env_config().agent_tuning.vibe_trading_tool_timeout_seconds)
+    """The child process bound: the agent loop's tool timeout (its module-level override, else
+    ``VIBE_TRADING_TOOL_TIMEOUT_SECONDS``); a non-positive value disables it."""
+    from src.agent.loop import _tool_timeout_seconds as loop_tool_timeout
+
+    configured = float(loop_tool_timeout())
     return configured if configured > 0 else None
+
+
+def _child_cmd(argv: list[str]) -> list[str]:
+    """``python -P -m alphakeel_research ARGV``: ``-P`` (Python >= 3.11) keeps the cwd and script dir off ``sys.path``,
+    so a module the model wrote (json.py, decimal.py ...) is never imported by the child, which holds the credential."""
+    return [sys.executable, "-P", "-m", "alphakeel_research", *argv]
+
+
+def _run_child(cmd: list[str], timeout: float | None) -> subprocess.CompletedProcess:
+    """Run the CLI in its own process group (cwd None: relative paths are already absolute, ``_resolve_paths``); on
+    timeout the whole group is killed (grandchildren included) and ``TimeoutExpired`` is raised."""
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ.copy(), cwd=None,
+                            start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if hasattr(os, "killpg"):
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        else:  # pragma: no cover - Windows
+            proc.kill()
+        proc.communicate()
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def _redact(text: str) -> str:
+    """``text`` with the research-service credential (``ALPHAKEEL_RESEARCH_TOKEN``, the content of
+    ``ALPHAKEEL_RESEARCH_TOKEN_FILE``) replaced by ``<redacted>``."""
+    secrets = []
+    tok = os.environ.get("ALPHAKEEL_RESEARCH_TOKEN")
+    if tok:
+        secrets.append(tok)
+    path = os.environ.get("ALPHAKEEL_RESEARCH_TOKEN_FILE")
+    if path:
+        try:
+            with open(path, encoding="utf-8") as f:
+                content = f.read().strip()
+            if content:
+                secrets.append(content)
+        except (OSError, UnicodeDecodeError):
+            pass
+    for secret in secrets:
+        text = text.replace(secret, "<redacted>")
+    return text
 
 
 def _json_or_none(text: str) -> Any:
@@ -537,21 +587,26 @@ class AlphakeelResearchTool(BaseTool):
         # A child process per call, as upstream's backtest tool (src/core/runner.py): redirect_stdout is process-wide, so
         # two conversations running at once read each other's output (research-truth, replay session 4cada46ec0b4).
         timeout = _tool_timeout_seconds()
-        # cwd None (the process's own, as the in-process call had; relative paths are already absolute: _resolve_paths)
-        # and -P (Python >= 3.11: no cwd / script dir on sys.path), so a module the model wrote into its run directory
-        # (json.py, decimal.py ...) is never imported by the child, which holds the service credential.
         try:
-            proc = subprocess.run([sys.executable, "-P", "-m", "alphakeel_research", *argv], capture_output=True, text=True,
-                                  timeout=timeout, env=os.environ.copy(), cwd=None)
+            proc = _run_child(_child_cmd(argv), timeout)
         except subprocess.TimeoutExpired:
             err = {"status": "error", "error": f"alphakeel_research timed out after {timeout} s"}
             return json.dumps({**err, "warnings": warnings} if warnings else err)
         except Exception as e:  # noqa: BLE001 - surfaced as a clean tool error, never with credentials
-            err = {"status": "error", "error": f"{e.__class__.__name__}: {str(e)[:500]}"}
+            err = {"status": "error", "error": _redact(f"{e.__class__.__name__}: {str(e)[:500]}")}
             return json.dumps({**err, "warnings": warnings} if warnings else err)
         text, rc = proc.stdout or "", proc.returncode
-        if rc == 2 and _json_or_none(text) is None:  # argparse: its message is on stderr and echoes only argv (no token)
-            return json.dumps({"status": "error", "error": f"bad arguments (exit 2): {(proc.stderr or '')[-1000:].strip()}"})
+        if rc != 0 and _json_or_none(text) is None:
+            stderr = _redact(proc.stderr or "")
+            if rc == 2:  # argparse: its message is on stderr and echoes only argv
+                msg = f"bad arguments (exit 2): {stderr[-1000:].strip()}"
+            elif rc < 0:
+                msg = f"alphakeel_research was killed by signal {-rc}"
+            else:
+                last = next((ln.strip() for ln in reversed(stderr.splitlines()) if ln.strip()), "")
+                msg = f"alphakeel_research failed (exit {rc}): {last[:500]}"
+            err = {"status": "error", "error": msg}
+            return _redact(json.dumps({**err, "warnings": warnings} if warnings else err))
         try:
             result: Any = json.loads(text)
         except ValueError:
@@ -562,4 +617,4 @@ class AlphakeelResearchTool(BaseTool):
             out["next"] = _MARKET_BLOCKED_NEXT
         if planned is not None:
             _finish_ir_backtest(out, planned, session_run_dir, _session_id(self), warnings)
-        return _dump(out, warnings)
+        return _redact(_dump(out, warnings))

@@ -549,30 +549,101 @@ def test_card_has_fee_and_funding_columns(session) -> None:
     assert "| va (ir-aaaaa) | 2026-01-01→06-29 | 40 | −5.00 | 300.43 | 190.11 | 0.27% | 未通过初筛（1.3） |" in zh
 
 
-def test_the_child_never_imports_modules_from_the_run_dir(tmp_path, monkeypatch) -> None:
-    """The child holds the service credential: a ``json.py`` the model wrote into its run directory must not be imported.
-    Real child process (``check`` against a closed local port ends without network)."""
+def _real_child_env(monkeypatch) -> None:
     import os
-    import subprocess
-
-    from src.tools.alphakeel_research_tool import AlphakeelResearchTool
-    from tests.fixtures.alphakeel_tool_cli import patch_run
 
     agent = str(Path(__file__).resolve().parents[1])
     monkeypatch.setenv("PYTHONPATH", agent + (os.pathsep + os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else ""))
     monkeypatch.setenv("ALPHAKEEL_RESEARCH_URL", "http://127.0.0.1:9")
     monkeypatch.setenv("ALPHAKEEL_RESEARCH_TOKEN", "ak_rs_test-token")
+
+
+def test_the_child_never_imports_modules_from_the_parent_cwd(tmp_path, monkeypatch) -> None:
+    """The child holds the service credential: a ``json.py`` in the parent's cwd must not be imported (``-P``).
+    Real child process (``check`` against a closed local port ends without network)."""
+    from src.tools import alphakeel_research_tool as tool
+
+    _real_child_env(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "json.py").write_text("raise SystemExit(99)\n")
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    (run_dir / "json.py").write_text("raise SystemExit(99)\n")
-    seen = {}
-    real = subprocess.run
+    seen, real = {}, tool._run_child
 
-    def spy(cmd, **kwargs):
-        seen.update(cmd=cmd, cwd=kwargs.get("cwd"))
-        return real(cmd, **kwargs)
+    def spy(cmd, timeout):
+        seen["cmd"] = cmd
+        proc = real(cmd, timeout)
+        seen["rc"] = proc.returncode
+        return proc
 
-    patch_run(monkeypatch, spy)
-    out = json.loads(AlphakeelResearchTool().execute(action="check", run_dir=str(run_dir)))
-    assert seen["cwd"] is None and seen["cmd"][1:4] == ["-P", "-m", "alphakeel_research"]
+    monkeypatch.setattr(tool, "_run_child", spy)
+    out = json.loads(tool.AlphakeelResearchTool().execute(action="check", run_dir=str(run_dir)))
+    assert seen["cmd"][1:4] == ["-P", "-m", "alphakeel_research"] and seen["rc"] != 99, seen
     assert out["status"] == "error" and isinstance(out.get("result"), dict) and "error" in out["result"], out
+
+
+def test_an_uncaught_child_exception_reaches_the_model(tmp_path, monkeypatch) -> None:
+    from src.tools.alphakeel_research_tool import AlphakeelResearchTool
+
+    def main(argv):
+        raise ValueError("bad fee 0.05%")
+
+    patch_cli(monkeypatch, main)
+    out = json.loads(AlphakeelResearchTool().execute(action="check", run_dir=str(tmp_path)))
+    assert out["status"] == "error" and out["error"] == "alphakeel_research failed (exit 1): ValueError: bad fee 0.05%", out
+
+
+def test_the_child_stderr_never_carries_the_credential(tmp_path, monkeypatch) -> None:
+    import sys
+
+    from src.tools.alphakeel_research_tool import AlphakeelResearchTool
+
+    monkeypatch.setenv("ALPHAKEEL_RESEARCH_TOKEN", "ak_rs_env-secret")
+    (tmp_path / "token").write_text("ak_rs_file-secret\n")
+    monkeypatch.setenv("ALPHAKEEL_RESEARCH_TOKEN_FILE", str(tmp_path / "token"))
+
+    def main(argv):
+        print("Authorization: Bearer ak_rs_env-secret / ak_rs_file-secret", file=sys.stderr)
+        return 1
+
+    patch_cli(monkeypatch, main)
+    text = AlphakeelResearchTool().execute(action="check", run_dir=str(tmp_path))
+    assert "ak_rs_env-secret" not in text and "ak_rs_file-secret" not in text, text
+    assert json.loads(text)["error"] == "alphakeel_research failed (exit 1): Authorization: Bearer <redacted> / <redacted>"
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "killpg"), reason="process groups are POSIX")
+def test_a_timeout_kills_the_child_process_group(tmp_path, monkeypatch) -> None:
+    """On timeout the child's whole process group goes, grandchildren included (real processes)."""
+    import os
+    import sys
+    import time
+
+    from src.agent import loop
+    from src.tools import alphakeel_research_tool as tool
+
+    pid_file = tmp_path / "grandchild.pid"
+    script = ("import subprocess, sys, time\n"
+              "p = subprocess.Popen(['sleep', '30'])\n"
+              f"open({str(pid_file)!r}, 'w').write(str(p.pid))\n"
+              "time.sleep(30)\n")
+    monkeypatch.setattr(tool, "_child_cmd", lambda argv: [sys.executable, "-c", script])
+    monkeypatch.setattr(loop, "TOOL_TIMEOUT_SECONDS", 2.0, raising=False)
+    out = json.loads(tool.AlphakeelResearchTool().execute(action="check", run_dir=str(tmp_path)))
+    assert out == {"status": "error", "error": "alphakeel_research timed out after 2.0 s"}, out
+    pid = int(pid_file.read_text())
+
+    def alive() -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        try:  # a killed, not yet reaped child of init is a zombie: gone for our purpose
+            return Path(f"/proc/{pid}/stat").read_text().split(")")[-1].split()[0] != "Z"
+        except OSError:
+            return True
+
+    deadline = time.monotonic() + 5
+    while alive() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not alive(), f"grandchild {pid} still running"

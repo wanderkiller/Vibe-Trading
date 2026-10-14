@@ -1301,6 +1301,8 @@
     "agent/alphakeel_research/cli.py",
     "agent/tests/test_alphakeel_research_truth.py",
     "agent/tests/fixtures/alphakeel_tool_cli.py",
+    "agent/tests/test_ir_validate_all.py",
+    "agent/tests/test_strategy_fidelity.py",
     "agent/tests/test_context_attribution_layers.py",
     "scripts/alphakeel_replay_check.py"
    ],
