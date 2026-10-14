@@ -663,7 +663,7 @@ ts); its distinct `strategy_id` are the run's `--trials`, listed in `<turn run d
 read-modify-write. No session id: nothing is registered, no `--trials`, no card (a warning says so).
 §5: the loop appends a result card of the conversation after the (grounded) answer, at both answer sites; a failure
 only logs a warning. The card reads only the private ledger and re-reads every run card, checking its sha256 (a changed
-or missing one is not shown, and counted); one row per backtest, `name (strategy_id[:8])`; header "N versions / M
+or missing one keeps a marked row, see round 2 below); one row per backtest, `name (strategy_id[:8])`; header "N versions / M
 backtests" over every private ledger row (= `trials.count`); it never prints the hypothesis id. Review round 2: a row whose
 run card changed or is missing keeps its line (ledger name, `—` figures, "run card modified or missing"), sorts last,
 is always shown and adds ", modified t" to the header; `out` may not be a directory that already holds a run card; the
