@@ -133,6 +133,7 @@ def build_registry(
     from src.tools.remember_tool import RememberTool
     from src.tools.swarm_tool import SwarmTool
     from src.tools.scheduled_research_tool import ScheduledResearchTool
+    from src.tools.alphakeel_research_tool import AlphakeelResearchTool
 
     goal_tool_classes = {
         StartResearchGoalTool,
@@ -145,6 +146,7 @@ def build_registry(
     session_injected_classes = goal_tool_classes | {
         RunResearchAutopilotTool,
         ScheduledResearchTool,
+        AlphakeelResearchTool,  # research-truth: the IR trial ledger and result card are per conversation
     }
     classes = _discover_subclasses()
     registry = ToolRegistry()

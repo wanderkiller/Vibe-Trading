@@ -804,10 +804,6 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         # the exported pack directory the run used (`ir robustness --run` reopens it); None when the pack came from the service
         "pack_dir": str(Path((research_service or {})["pack_dir"]).resolve()) if (research_service or {}).get("pack_dir") else None,
     }
-    # G1 1.1 / 1.2 / 1.3 / 1.16 judged by code (research-truth B3): the label the agent reports verbatim
-    from .screen import screen
-
-    card["screen"] = screen(card)
     (out / "run_card.json").write_text(json.dumps(card, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
     return card
 
@@ -976,7 +972,14 @@ def _backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, e
         service = {"used": True, "credential": who.get("credential"), "data_horizon": who.get("data_horizon"),
                    "holdout_days": who.get("holdout_days")}
     check_pack(pack, req)
-    return run(ir_doc, pack, insts, start_ms=start_ms, end_ms=end_ms, out_dir=out_dir, research_service=service, **kw)
+    card = run(ir_doc, pack, insts, start_ms=start_ms, end_ms=end_ms, out_dir=out_dir, research_service=service, **kw)
+    # G1 1.1 / 1.2 / 1.3 / 1.16 judged by code (research-truth B3): the label the agent reports verbatim. Only the
+    # `ir backtest` run gets it (not the robustness battery's sub-runs, which call run() directly).
+    from .screen import screen
+
+    card["screen"] = screen(card)
+    (Path(out_dir) / "run_card.json").write_text(json.dumps(card, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+    return card
 
 
 # ---------------------------------------------------------------------------------------------------------------------

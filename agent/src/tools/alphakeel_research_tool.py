@@ -12,6 +12,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -20,6 +21,7 @@ from typing import Any
 from src.agent.tools import BaseTool
 from src.config.accessor import get_env_value
 from src.tools.alphakeel_ir_request import IGNORED_NOTE
+from src.tools.alphakeel_research_ledger import NO_SESSION_WARNING
 
 _ACTIONS = ("check", "freeze", "read", "review", "policy", "native", "compare", "ir_validate", "ir_review", "ir_backtest", "ir_robustness", "ir_crosscheck", "ir_export")
 #: ``read`` tables: scan packs have quotes/observations/settlements; dataset packs have klines/bbo/instrument_meta (and settlements).
@@ -136,13 +138,18 @@ _FEES_NEEDED = ("needs fees: {venue: {perp: rate}} with a decimal-string taker r
 _PATH_KEYS = ("out", "robustness", "run")
 
 
-def _argv(action: str, a: dict[str, Any]) -> list[str]:
+def _handoff_guard(action: str, a: dict[str, Any]) -> None:
+    """No path-valued argument may point into AlphaKeel's hand-off directory."""
     for k in _PATH_KEYS:
         v = a.get(k)
         if isinstance(v, (str, os.PathLike)) and str(v) != "" and _under_handoff(str(v)):
             raise ValueError(f"{action}: {k} points into AlphaKeel's hand-off directory, which is not an agent action. Hand-off is the "
                              "user's decision: the user presses 'Hand off to AlphaKeel' on the run page (docs/45 section 7). Use another "
                              "directory, or tell the user the run is ready for review.")
+
+
+def _argv(action: str, a: dict[str, Any]) -> list[str]:
+    _handoff_guard(action, a)
     out: list[str] = action.split("_", 1) if action.startswith("ir_") else [action]
 
     def add(flag: str, key: str, required: bool = False) -> None:
@@ -267,14 +274,38 @@ def _ir_review_summary(args: dict[str, Any]) -> dict | None:
 # ir_backtest: request planned by code, evidence copy, trial ledger, code-made label (research-truth B1-B4)
 # ---------------------------------------------------------------------------------------------------------------------
 
-def _plan_ir_backtest(args: dict[str, Any], session_run_dir: Any, warnings: list[str]) -> dict[str, Any]:
-    """The CLI request of an ``ir_backtest``: ``alphakeel_ir_request.plan`` (one ``check()``) plus the trial ledger's
-    ``trials`` / ``trials_evidence``. Raises ``ValueError`` (bad request) or the service's ``ApiError``."""
+def _check_out(out: Any, run_dir: Any) -> None:
+    """``ir_backtest`` ``out`` (already resolved): never inside ``<run_dir>/ir_runs/`` (the evidence copies), never a
+    path whose last segment is empty, ``.`` or ``..``."""
+    if out in (None, ""):
+        return
+    text = str(out)
+    last = re.split(r"[\\/]", text)[-1]
+    inside = False
+    if isinstance(run_dir, str) and run_dir.strip():
+        root = os.path.realpath(os.path.join(run_dir, "ir_runs"))
+        p = os.path.realpath(text)
+        inside = p == root or p.startswith(root.rstrip(os.sep) + os.sep)
+    if last in ("", ".", "..") or inside:
+        raise ValueError("out must not be inside ir_runs/ or end in . or ..")
+
+
+def _session_id(tool: Any) -> str | None:
+    v = str(getattr(tool, "_default_session_id", None) or "").strip()
+    return v or None
+
+
+def _plan_ir_backtest(args: dict[str, Any], run_dir: Any, session_id: str | None, warnings: list[str]) -> dict[str, Any]:
+    """The CLI request of an ``ir_backtest``, in this order: arguments parsed, hand-off guard and ``out`` check, one
+    ``check()`` + ``alphakeel_ir_request.plan``, then the conversation's trial ledger (``trials`` / ``trials_evidence``).
+    Nothing is registered or written when an earlier step fails. Raises ``ValueError`` or the service's ``ApiError``."""
     from alphakeel_research import ir
 
     from src.tools import alphakeel_ir_request as req
 
     a = req.parse_args(args)  # every argument problem at once, before anything is read or asked
+    _handoff_guard("ir_backtest", args)
+    _check_out(args.get("out"), run_dir)
     doc, unreadable = _read_ir(a.ir)
     if unreadable is not None:
         raise ValueError(unreadable)
@@ -283,11 +314,15 @@ def _plan_ir_backtest(args: dict[str, Any], session_run_dir: Any, warnings: list
     except Exception as e:  # noqa: BLE001 - IrError: the IR does not validate
         raise ValueError(f"ir: {getattr(e, 'message', None) or e} (run ir_validate first)") from None
     planned = req.plan(args, loaded.doc, req.service_check())
-    if isinstance(session_run_dir, str) and session_run_dir.strip():
+    if session_id is None:
+        warnings.append(NO_SESSION_WARNING)
+    elif not (isinstance(run_dir, str) and run_dir.strip()):
+        warnings.append("no run directory: trial ledger skipped")
+    else:
         try:
             from src.tools import alphakeel_research_ledger as ledger
 
-            count, evidence = ledger.trials_for(session_run_dir, loaded.strategy_id, ir_doc=loaded.doc,
+            count, evidence = ledger.trials_for(session_id, run_dir, loaded.strategy_id, ir_doc=loaded.doc,
                                                 window={"start_ms": planned["start_ms"], "end_ms": planned["end_ms"]},
                                                 ir_name=loaded.doc.get("name") or "")
             planned["trials"], planned["trials_evidence"] = count, evidence
@@ -296,19 +331,25 @@ def _plan_ir_backtest(args: dict[str, Any], session_run_dir: Any, warnings: list
     return planned
 
 
-def _copy_evidence(result: dict, session_run_dir: Any) -> str | None:
-    """Copy the run's ``run_card.json`` and ``artifacts/metrics.csv`` to ``<session>/ir_runs/<run dir name>/``; returns
-    that directory relative to the session (``evidence_dir``), or None without a session run directory."""
-    if not (isinstance(session_run_dir, str) and session_run_dir.strip()):
+def _copy_evidence(result: dict, run_dir: Any) -> str | None:
+    """Copy the run's ``run_card.json`` and ``artifacts/metrics.csv`` to ``<run_dir>/ir_runs/<run dir name>[-N]/`` (a
+    new directory: ``-2``, ``-3``... when the name is taken); returns it relative to ``run_dir`` (``evidence_dir``), or
+    None without a run directory."""
+    if not (isinstance(run_dir, str) and run_dir.strip()):
         return None
-    src = Path(str(result["run_dir"]))
-    rel = f"ir_runs/{src.name}"
-    dst = Path(session_run_dir) / rel
-    for name in ("run_card.json", "artifacts/metrics.csv"):
-        if (src / name).is_file():
-            (dst / name).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src / name, dst / name)
-    return rel
+    src = Path(str(result["run_dir"])).resolve()
+    base = Path(run_dir) / "ir_runs"
+    name, n = src.name, 1
+    while (base / name).exists():
+        n += 1
+        name = f"{src.name}-{n}"
+    dst = base / name
+    dst.mkdir(parents=True)
+    for f in ("run_card.json", "artifacts/metrics.csv"):
+        if (src / f).is_file():
+            (dst / f).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src / f, dst / f)
+    return f"ir_runs/{name}"
 
 
 _SCREEN_FAIL_TEXT = {"1.1": "1.1 window {o} d < {t}", "1.2": "1.2 {o} closed trades < {t}", "1.3": "1.3 net {o} USDT <= {t}",
@@ -331,9 +372,9 @@ def _summary(result: dict) -> str:
     return f"{result.get('evidence_status')}: " + "; ".join(parts)
 
 
-def _finish_ir_backtest(out: dict, planned: dict, session_run_dir: Any, warnings: list[str]) -> None:
+def _finish_ir_backtest(out: dict, planned: dict, run_dir: Any, session_id: str | None, warnings: list[str]) -> None:
     """A finished ``ir_backtest`` envelope: ``evidence_status`` first and a ``summary`` in ``result``, ``evidence_dir``
-    and ``ignored_args`` on the envelope, the run linked into the session's trial ledger."""
+    and ``ignored_args`` on the envelope, the run appended to the conversation's private ledger."""
     result = out.get("result")
     if planned.get("ignored_args"):
         out["ignored_args"] = planned["ignored_args"]
@@ -343,17 +384,18 @@ def _finish_ir_backtest(out: dict, planned: dict, session_run_dir: Any, warnings
     if "evidence_status" in result:
         out["result"] = {"evidence_status": result["evidence_status"], "summary": _summary(result),
                          **{k: v for k, v in result.items() if k != "evidence_status"}}
+    rel = None
     try:
-        rel = _copy_evidence(result, session_run_dir)
+        rel = _copy_evidence(result, run_dir)
         if rel is not None:
             out["evidence_dir"] = rel
     except OSError as e:
         warnings.append(f"evidence copy: {e.__class__.__name__}: {str(e)[:300]}")
-    if isinstance(session_run_dir, str) and session_run_dir.strip():
+    if session_id is not None and isinstance(run_dir, str) and run_dir.strip():
         try:
             from src.tools import alphakeel_research_ledger as ledger
 
-            ledger.link(session_run_dir, result)
+            ledger.record(session_id, run_dir, result, rel)
         except Exception as e:  # noqa: BLE001 - the ledger never fails the backtest
             warnings.append(f"trial ledger: {e.__class__.__name__}: {str(e)[:300]}")
 
@@ -430,6 +472,12 @@ class AlphakeelResearchTool(BaseTool):
     repeatable = True
     is_readonly = False
 
+    def __init__(self, default_session_id: str | None = None, event_callback: Any = None) -> None:
+        """``default_session_id``: the conversation, injected by the host (``build_registry``); the IR trial ledger and
+        result card are per conversation. The model never chooses it."""
+        self._default_session_id = default_session_id
+        self._event_callback = event_callback
+
     def execute(self, **kwargs: Any) -> str:
         action = str(kwargs.get("action", "")).strip()
         args = kwargs.get("args") or {}
@@ -445,7 +493,7 @@ class AlphakeelResearchTool(BaseTool):
 
             if action == "ir_backtest":
                 try:
-                    planned = _plan_ir_backtest(args, session_run_dir, warnings)
+                    planned = _plan_ir_backtest(args, session_run_dir, _session_id(self), warnings)
                 except ApiError as e:
                     return json.dumps({"status": "error", "error": e.message, "code": e.code,
                                        "request_id": getattr(e, "request_id", None)})
@@ -493,5 +541,5 @@ class AlphakeelResearchTool(BaseTool):
         if rc != 0 and isinstance(e, dict) and _market_blocked(e.get("code"), e.get("message")):
             out["next"] = _MARKET_BLOCKED_NEXT
         if planned is not None:
-            _finish_ir_backtest(out, planned, session_run_dir, warnings)
+            _finish_ir_backtest(out, planned, session_run_dir, _session_id(self), warnings)
         return _dump(out, warnings)

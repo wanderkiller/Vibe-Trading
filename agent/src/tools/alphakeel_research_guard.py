@@ -13,7 +13,7 @@ from typing import Any
 TOOL = "alphakeel_research"
 
 ROUTING_BLOCK: str = """**AlphaKeel IR backtest** — after `alphakeel_research(action="ir_backtest")`:
-1. Report every variant tried this session in one pipe table: name, window, trade_count, net_usdt, max_drawdown, evidence_status. Its figures are `observed` with that variant's `evidence_dir` as ref.
+1. Report every variant backtested in this turn in one pipe table: name, window, trade_count, net_usdt, max_drawdown, evidence_status. Its figures are `observed` with that variant's `evidence_dir` as ref. Variants from earlier turns are listed in the system result card; do not restate their figures.
 2. The first line states the fee basis (`assumptions.fees_source` and the rates).
 3. Report `evidence_status` verbatim. NEVER present an `insufficient` or `failed_screen` variant as a recommendation, and never describe a losing variant's drawdown as controlled: a loss is reported as a loss.
 4. A figure for a setting you did not backtest (another fee tier, size or window) is `proposed` and named untested.

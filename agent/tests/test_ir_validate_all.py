@@ -195,7 +195,9 @@ def test_ir_backtest_without_fees_uses_the_public_default(monkeypatch, tmp_path)
     monkeypatch.setattr(cli, "main", capture)
     path = _bt_ir(tmp_path, monkeypatch)
     out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2})
-    assert out["status"] == "ok" and seen == {"fees": DEFAULT_PUBLIC_TAKER, "source": DEFAULT_FEES_SOURCE}
+    # the default table cut to the IR's venues (binance, okx)
+    assert out["status"] == "ok" and seen == {"fees": {v: DEFAULT_PUBLIC_TAKER[v] for v in ("binance", "okx")},
+                                              "source": DEFAULT_FEES_SOURCE}
 
 
 def test_fees_object_reaches_the_cli_as_a_file(monkeypatch, tmp_path) -> None:

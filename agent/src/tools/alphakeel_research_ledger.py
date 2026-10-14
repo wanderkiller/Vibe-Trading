@@ -1,19 +1,26 @@
-"""IR backtest trials in upstream's hypothesis registry, and the result card built from it (research-truth B4, §5).
+"""IR backtest trials of one conversation, and the result card built from them (research-truth B4, §5).
 
-One hypothesis per agent session (``<session run dir>/ir_hypothesis.json`` names it); every successful ``ir_backtest``
-is linked to it with ``HypothesisRegistry.link_backtest``. The number of distinct versions (``strategy_id``) linked so
-far, this one included, is the run's ``--trials``; ``<session run dir>/ir_trials_evidence.jsonl`` lists them (one line
-per version) and is its ``--trials-evidence``. AlphaKeel counts trials in its own research-service ledger anyway (G1 1.6,
-every ``ir_backtest`` registers a trial): this ledger is what Vibe-Trading's own ``trials`` / DSR and the result card read.
+Scope is the conversation (``session_id``), not a turn: every turn gets a new run directory. The tool's private ledger
+is ``<sessions dir>/<session_id>/ir_ledger.jsonl`` -- outside the agent's write roots, so the model cannot write it --
+with one line per successful ``ir_backtest`` (``strategy_id``, ``name``, the absolute ``run_card_path`` and its
+``run_card_sha256``, ``evidence_dir``, the turn's ``run_dir``, ``ts``). The run's ``--trials`` is the number of distinct
+``strategy_id`` in it (this one included); ``<turn run dir>/ir_trials_evidence.jsonl`` lists them (one line per version)
+and is its ``--trials-evidence``. AlphaKeel counts trials in its own research-service ledger anyway (G1 1.6).
 
-``HypothesisRegistry._save`` is an unlocked read-modify-write of one global file: create and link run under an
-``fcntl.flock`` on ``<hypotheses.json>.lock`` (no lock where there is no ``fcntl``, as ``alphakeel_handoff_routes``).
+Every run is also linked to one upstream ``HypothesisRegistry`` hypothesis per conversation (spec B4; the id is kept
+in ``<sessions dir>/<session_id>/ir_hypothesis.json``); the registry is not a source of counts or of the card.
+
+The card reads only the private ledger and re-reads every run card, checking its sha256: a run card that was changed
+or is missing is not shown (and counted in one line). Read-modify-writes run under ``fcntl.flock`` on
+``<file>.lock`` (no lock where there is no ``fcntl``, as ``alphakeel_handoff_routes``).
 """
 
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
+import time
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterator
@@ -23,9 +30,17 @@ try:  # POSIX advisory lock; the Windows desktop build has no fcntl
 except ImportError:  # pragma: no cover - Windows
     fcntl = None  # type: ignore[assignment]
 
+LEDGER_FILE = "ir_ledger.jsonl"
 HYPOTHESIS_FILE = "ir_hypothesis.json"
 TRIALS_EVIDENCE_FILE = "ir_trials_evidence.jsonl"
 CARD_MAX_ROWS = 10
+NO_SESSION_WARNING = "no session id: trial ledger and result card skipped"
+
+
+def _sessions_dir() -> Path:
+    from src.config.paths import get_sessions_dir
+
+    return Path(get_sessions_dir())
 
 
 def _registry():
@@ -35,13 +50,14 @@ def _registry():
 
 
 @contextlib.contextmanager
-def _locked(registry) -> Iterator[None]:
+def _flock(path: Path) -> Iterator[None]:
+    """Exclusive advisory lock on ``<path>.lock`` (none without fcntl)."""
     if fcntl is None:
         yield
         return
-    path = Path(f"{registry.path}.lock")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a+") as f:
+    lock = Path(f"{path}.lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock, "a+") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         try:
             yield
@@ -49,38 +65,62 @@ def _locked(registry) -> Iterator[None]:
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
-def _hypothesis_id(session_run_dir: str | Path) -> str | None:
+def _session_dir(session_id: str) -> Path:
+    return _sessions_dir() / session_id
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def ledger_rows(session_id: str) -> list[dict]:
+    """The private ledger of ``session_id`` in append order."""
+    path = _session_dir(session_id) / LEDGER_FILE
+    rows = []
     try:
-        doc = json.loads((Path(session_run_dir) / HYPOTHESIS_FILE).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(row, dict) and isinstance(row.get("strategy_id"), str):
+                        rows.append(row)
+    except OSError:
+        return []
+    return rows
+
+
+def verified_card(row: dict) -> dict | None:
+    """The run card a ledger row names, re-read; None when it is missing or its sha256 differs from the row's."""
+    try:
+        path = Path(str(row["run_card_path"]))
+        if _sha256(path) != row.get("run_card_sha256"):
+            return None
+        card = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, KeyError, TypeError):
         return None
-    hid = doc.get("hypothesis_id") if isinstance(doc, dict) else None
-    return hid if isinstance(hid, str) and hid else None
+    return card if isinstance(card, dict) else None
 
 
-def session_hypothesis(session_run_dir: str | Path, ir_name: str = "") -> str:
-    """The session's hypothesis id; created (status ``testing``) and recorded in ``ir_hypothesis.json`` the first time."""
-    hid = _hypothesis_id(session_run_dir)
-    if hid is not None:
-        return hid
-    reg = _registry()
-    d = Path(session_run_dir)
-    with _locked(reg):
-        hyp = reg.create(title=f"IR research {d.name}", thesis=ir_name or d.name, status="testing",
-                         skills=["alphakeel-handoff"], data_sources=["alphakeel_b2"])
-    d.mkdir(parents=True, exist_ok=True)
-    (d / HYPOTHESIS_FILE).write_text(json.dumps({"hypothesis_id": hyp.hypothesis_id}) + "\n", encoding="utf-8")
-    return hyp.hypothesis_id
-
-
-def _run_cards(session_run_dir: str | Path) -> tuple[str | None, list[dict]]:
-    hid = _hypothesis_id(session_run_dir)
-    if hid is None:
-        return None, []
-    for h in _registry().list():
-        if h.hypothesis_id == hid:
-            return hid, [rc for rc in h.run_cards if isinstance(rc, dict)]
-    return hid, []
+def session_hypothesis(session_id: str, ir_name: str = "") -> str:
+    """The conversation's hypothesis id; created (status ``testing``) the first time."""
+    path = _session_dir(session_id) / HYPOTHESIS_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _flock(path):
+        try:
+            hid = json.loads(path.read_text(encoding="utf-8")).get("hypothesis_id")
+        except (OSError, ValueError, AttributeError):
+            hid = None
+        if isinstance(hid, str) and hid:
+            return hid
+        reg = _registry()
+        with _flock(Path(reg.path)):
+            hyp = reg.create(title=f"IR research {session_id}", thesis=ir_name or session_id, status="testing",
+                             skills=["alphakeel-handoff"], data_sources=["alphakeel_b2"])
+        path.write_text(json.dumps({"hypothesis_id": hyp.hypothesis_id}) + "\n", encoding="utf-8")
+        return hyp.hypothesis_id
 
 
 def _parameters(ir_doc: Any) -> dict:
@@ -88,74 +128,79 @@ def _parameters(ir_doc: Any) -> dict:
     return {k: v.get("value") for k, v in params.items() if isinstance(v, dict)} if isinstance(params, dict) else {}
 
 
-def _ir_of(run_dir: Any) -> dict | None:
+def _json_file(path: Path) -> Any:
     try:
-        return json.loads((Path(str(run_dir)) / "ir.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return None
 
 
-def trials_for(session_run_dir: str | Path, strategy_id: str, *, ir_doc: dict | None = None,
+def trials_for(session_id: str, run_dir: str | Path, strategy_id: str, *, ir_doc: dict | None = None,
                window: dict | None = None, ir_name: str = "") -> tuple[int, str]:
-    """``(count, evidence_path)``: the distinct ``strategy_id`` of the session hypothesis' linked runs plus this one, and
-    ``<session>/ir_trials_evidence.jsonl`` with one line per version (strategy_id, parameter values, window, run_dir)."""
-    session_hypothesis(session_run_dir, ir_name)
-    _, cards = _run_cards(session_run_dir)
+    """``(count, evidence_path)``: the distinct ``strategy_id`` in the conversation's private ledger plus this one, and
+    ``<run_dir>/ir_trials_evidence.jsonl`` with one line per version (strategy_id, parameter values, window, run_dir)."""
+    session_hypothesis(session_id, ir_name)
     versions: dict[str, dict] = {}
-    for rc in cards:  # in link order: the latest run of a version wins
-        m = rc.get("metrics") or {}
-        sid = m.get("strategy_id")
-        if not isinstance(sid, str) or not sid:
-            continue
-        run_dir = rc.get("backtest_run_dir") or None
-        versions[sid] = {"strategy_id": sid, "parameters": _parameters(_ir_of(run_dir)), "window": m.get("window"),
-                         "run_dir": run_dir}
+    for row in ledger_rows(session_id):  # in append order: the latest run of a version wins
+        card_path = Path(str(row.get("run_card_path")))
+        card = _json_file(card_path) or {}
+        versions[row["strategy_id"]] = {"strategy_id": row["strategy_id"], "parameters": _parameters(_json_file(card_path.parent / "ir.json")),
+                                        "window": card.get("window"), "run_dir": str(card_path.parent)}
     if strategy_id not in versions:
         versions[strategy_id] = {"strategy_id": strategy_id, "parameters": _parameters(ir_doc), "window": window, "run_dir": None}
-    path = Path(session_run_dir) / TRIALS_EVIDENCE_FILE
+    path = Path(run_dir) / TRIALS_EVIDENCE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(v, sort_keys=True, ensure_ascii=False) + "\n" for v in versions.values()), encoding="utf-8")
     return len(versions), str(path)
 
 
-def link(session_run_dir: str | Path, payload: dict) -> str:
-    """Link a successful ``ir backtest`` (its CLI result: ``run_dir``, ``run_card``) to the session hypothesis."""
-    card_path = Path(str(payload["run_card"]))
+def record(session_id: str, run_dir: str | Path, result: dict, evidence_dir: str | None) -> None:
+    """After a successful ``ir backtest`` (its CLI result: ``run_dir``, ``run_card``): append the private ledger row, then
+    link the run to the conversation's hypothesis (``HypothesisRegistry.link_backtest``)."""
+    card_path = Path(str(result["run_card"])).resolve()
     card = json.loads(card_path.read_text(encoding="utf-8"))
-    hid = session_hypothesis(session_run_dir, card.get("name") or "")
+    row = {"strategy_id": card["strategy_id"], "name": card.get("name"), "run_card_path": str(card_path),
+           "run_card_sha256": _sha256(card_path), "evidence_dir": evidence_dir, "run_dir": str(run_dir),
+           "ts": int(time.time() * 1000)}
+    ledger = _session_dir(session_id) / LEDGER_FILE
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    with _flock(ledger):
+        with open(ledger, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n")
+    hid = session_hypothesis(session_id, card.get("name") or "")
     scr = card.get("screen") or {}
     metrics = {"strategy_id": card["strategy_id"], "name": card.get("name"), "window": card.get("window"),
                "trade_count": card["counts"]["closed"], "net_usdt": card["amounts"]["equity_end"],
                "fees_usdt": card["amounts"]["fees"], "max_drawdown": card["max_drawdown"]["fraction_of_capital"],
                "evidence_status": scr.get("evidence_status"), "fees_source": card["assumptions"].get("fees_source")}
     reg = _registry()
-    with _locked(reg):
-        reg.link_backtest(hid, run_card_path=str(card_path), backtest_run_dir=str(payload.get("run_dir") or card_path.parent),
+    with _flock(Path(reg.path)):
+        reg.link_backtest(hid, run_card_path=str(card_path), backtest_run_dir=str(result.get("run_dir") or card_path.parent),
                           metrics=metrics, validation={"screen": scr.get("items") or []})
-    return hid
 
 
 # ---------------------------------------------------------------------------------------------------------------------
-# result card (system text appended after the answer; numbers verbatim from the registered metrics)
+# result card (system text appended after the answer; every figure re-read from the verified run cards)
 # ---------------------------------------------------------------------------------------------------------------------
 
 _TEXT = {
-    True: {"title": "**研究结果（系统根据试验账本生成，非模型撰写）**", "fees": "费率口径", "per_fill": "每笔",
+    True: {"title": "**研究结果（系统根据试验账本生成，非模型撰写）**", "fees": "费率口径：", "per_fill": "每笔",
            "default": "公开基础档 taker（工具默认）", "request": "请求给定费率",
            "summary": "本会话 {n} 个版本 / {m} 次回测：通过初筛 {p}，未通过 {f}，证据不足 {i}",
            "head": "| 版本 | 窗口 | 成交 | 净收益 USDT | 最大回撤 | 判定 |",
            "passed": "通过初筛，1.4–1.13 未评估", "failed": "未通过初筛（{ids}）", "insufficient": "证据不足（{ids}）",
-           "more": "另有 {n} 次回测见账本",
+           "more": "另有 {n} 次回测见账本", "tampered": "{n} 条登记的 run card 已被改动或缺失，未显示",
            "not_evaluated": "1.4–1.13（成本压力、DSR、PBO、邻域、走步等）未评估：需要 ir_robustness。",
-           "ledger": "账本：{file}；假设 {hid}"},
+           "ledger": "账本：{file}"},
     False: {"title": "**Research result (generated by the system from the trial ledger, not written by the model)**",
-            "fees": "Fee basis", "per_fill": "per fill", "default": "public base-tier taker (tool default)",
+            "fees": "Fee basis: ", "per_fill": "per fill", "default": "public base-tier taker (tool default)",
             "request": "fees given in the request",
             "summary": "This session: {n} versions / {m} backtests: passed screen {p}, failed screen {f}, insufficient {i}",
             "head": "| Version | Window | Trades | Net USDT | Max drawdown | Status |",
             "passed": "passed screen; 1.4–1.13 not evaluated", "failed": "failed screen ({ids})", "insufficient": "insufficient ({ids})",
-            "more": "{n} more backtests in the ledger",
+            "more": "{n} more backtests in the ledger", "tampered": "{n} registered run cards were modified or missing and are not shown",
             "not_evaluated": "1.4–1.13 (cost stress, DSR, PBO, neighbours, walk-forward, ...) not evaluated: needs ir_robustness.",
-            "ledger": "Ledger: {file}; hypothesis {hid}"},
+            "ledger": "Ledger: {file}"},
 }
 _SCREEN_GROUPS = {"insufficient": ("1.1", "1.2"), "failed_screen": ("1.3", "1.16")}
 
@@ -176,13 +221,13 @@ def _two(d: Decimal) -> str:
 
 
 def fmt_amount(v: Any) -> str:
-    """A registered decimal string at 2 decimals (U+2212 minus); ``—`` when missing."""
+    """A decimal at 2 decimals (U+2212 minus); ``—`` when missing."""
     d = _dec(v)
     return "—" if d is None else _two(d)
 
 
 def fmt_fraction(v: Any) -> str:
-    """A registered fraction as a percent at 2 decimals."""
+    """A fraction as a percent at 2 decimals."""
     d = _dec(v)
     return "—" if d is None else _two(d * 100) + "%"
 
@@ -200,65 +245,84 @@ def _window(w: Any) -> str:
     return f"{a}→{b[5:]}" if a[:4] == b[:4] else f"{a}→{b}"
 
 
-def _verdict(rc: dict, t: dict) -> str:
-    status = (rc.get("metrics") or {}).get("evidence_status")
+def _status(card: dict) -> Any:
+    return (card.get("screen") or {}).get("evidence_status")
+
+
+def _verdict(card: dict, t: dict) -> str:
+    status = _status(card)
     if status == "passed_screen":
         return t["passed"]
     if status in _SCREEN_GROUPS:
-        items = (rc.get("validation") or {}).get("screen") or []
+        items = (card.get("screen") or {}).get("items") or []
         ids = [i.get("id") for i in items if isinstance(i, dict) and i.get("result") == "FAIL" and i.get("id") in _SCREEN_GROUPS[status]]
         return t["failed" if status == "failed_screen" else "insufficient"].format(ids=", ".join(ids) or "?")
     return str(status or "—")
 
 
 def _fee_lines(cards: list[dict], t: dict) -> list[str]:
-    """One line per distinct fee basis: its source and every venue's rate, read from the registered run card."""
+    """One line per distinct fee basis: its source and every venue's rate, from the run cards."""
     seen: list[tuple[str, str]] = []
-    for rc in cards:
-        src = (rc.get("metrics") or {}).get("fees_source") or ""
-        fees = None
-        try:
-            fees = json.loads(Path(str(rc.get("run_card_path"))).read_text(encoding="utf-8"))["assumptions"]["fees"]
-        except (OSError, ValueError, KeyError, TypeError):
-            pass
-        rates = " / ".join(f"{v} {_pct(m['perp'])}"
-                           for v, m in sorted(fees.items()) if isinstance(m, dict) and _dec(m.get("perp")) is not None) \
-            if isinstance(fees, dict) else ""
+    for card in cards:
+        a = card.get("assumptions") or {}
+        src, fees = str(a.get("fees_source") or ""), a.get("fees")
+        rates = " / ".join(f"{v} {_pct(m['perp'])}" for v, m in sorted(fees.items())
+                           if isinstance(m, dict) and _dec(m.get("perp")) is not None) if isinstance(fees, dict) else ""
         label = t["default"] if src.startswith("public base-tier taker") else (t["request"] if src == "request" else src)
-        key = (label, rates)
-        if key not in seen:
-            seen.append(key)
-    return [f"{t['fees']}：{label} — {rates} {t['per_fill']}" if rates else f"{t['fees']}：{label}" for label, rates in seen]
+        if (label, rates) not in seen:
+            seen.append((label, rates))
+    return [f"{t['fees']}{label} — {rates} {t['per_fill']}" if rates else f"{t['fees']}{label}" for label, rates in seen]
 
 
-def render_card(session_run_dir: str | Path, zh: bool) -> str | None:
-    """The result card of the session's IR backtests, or None (no hypothesis, or nothing linked)."""
-    hid, cards = _run_cards(session_run_dir)
-    if hid is None or not cards:
+def card_entries(session_id: str) -> tuple[list[tuple[dict, dict]], int]:
+    """``([(ledger row, verified run card)], number of rows whose run card was changed or is missing)``."""
+    shown, bad = [], 0
+    for row in ledger_rows(session_id):
+        card = verified_card(row)
+        if card is None:
+            bad += 1
+        else:
+            shown.append((row, card))
+    return shown, bad
+
+
+def render_card(session_id: str | None, zh: bool) -> str | None:
+    """The result card of the conversation's IR backtests, or None (no session id, or nothing in the private ledger)."""
+    if not session_id:
+        return None
+    entries, bad = card_entries(session_id)
+    if not entries and not bad:
         return None
     t = _TEXT[bool(zh)]
-    # versions = distinct strategy_id (= trials.count); rows and the status counts are per linked backtest
-    versions = {(rc.get("metrics") or {}).get("strategy_id") for rc in cards} - {None}
+    cards = [c for _, c in entries]
     counts = {"passed_screen": 0, "failed_screen": 0, "insufficient": 0}
-    for rc in cards:
-        s = (rc.get("metrics") or {}).get("evidence_status")
-        if s in counts:
-            counts[s] += 1
-    order = sorted(range(len(cards)), key=lambda i: -(_dec((cards[i].get("metrics") or {}).get("net_usdt")) or Decimal("-Infinity")))
-    shown = set(order[:CARD_MAX_ROWS]) | {i for i, rc in enumerate(cards) if (rc.get("metrics") or {}).get("evidence_status") == "passed_screen"}
+    for c in cards:
+        if _status(c) in counts:
+            counts[_status(c)] += 1
+    versions = {c.get("strategy_id") for c in cards} - {None}
+
+    def net_key(i: int):
+        d = _dec((cards[i].get("amounts") or {}).get("equity_end"))
+        return -(Decimal("-Infinity") if d is None else d)
+
+    order = sorted(range(len(cards)), key=net_key)
+    shown = set(order[:CARD_MAX_ROWS]) | {i for i, c in enumerate(cards) if _status(c) == "passed_screen"}
     rows = []
     for i in order:
         if i not in shown:
             continue
-        m = cards[i].get("metrics") or {}
-        rows.append(f"| {m.get('name') or m.get('strategy_id') or '—'} | {_window(m.get('window'))} | {m.get('trade_count', '—')} | "
-                    f"{fmt_amount(m.get('net_usdt'))} | {fmt_fraction(m.get('max_drawdown'))} | {_verdict(cards[i], t)} |")
-    sep = "：" if zh else ": "
-    fee_lines = [ln.replace("：", sep) for ln in _fee_lines(cards, t)]
-    lines = ["---", t["title"], *fee_lines,
-             t["summary"].format(n=len(versions), m=len(cards), p=counts["passed_screen"], f=counts["failed_screen"], i=counts["insufficient"]),
+        c = cards[i]
+        name = f"{c.get('name') or '—'} ({str(c.get('strategy_id') or '')[:8]})"
+        rows.append(f"| {name} | {_window(c.get('window'))} | {(c.get('counts') or {}).get('closed', '—')} | "
+                    f"{fmt_amount((c.get('amounts') or {}).get('equity_end'))} | "
+                    f"{fmt_fraction((c.get('max_drawdown') or {}).get('fraction_of_capital'))} | {_verdict(c, t)} |")
+    lines = ["---", t["title"], *_fee_lines(cards, t),
+             t["summary"].format(n=len(versions), m=len(cards), p=counts["passed_screen"], f=counts["failed_screen"],
+                                 i=counts["insufficient"]),
              t["head"], "|---|---|---|---|---|---|", *rows]
     if len(cards) > len(rows):
         lines.append(t["more"].format(n=len(cards) - len(rows)))
-    lines += [t["not_evaluated"], t["ledger"].format(file=TRIALS_EVIDENCE_FILE, hid=hid)]
+    if bad:
+        lines.append(t["tampered"].format(n=bad))
+    lines += [t["not_evaluated"], t["ledger"].format(file=TRIALS_EVIDENCE_FILE)]
     return "\n".join(lines)

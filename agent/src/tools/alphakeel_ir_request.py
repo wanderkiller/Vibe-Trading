@@ -8,7 +8,9 @@ model: ``instruments`` / ``step_minutes`` / ``trials`` / ``trials_evidence`` it 
 
 from __future__ import annotations
 
+import json
 import math
+import os
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -118,21 +120,55 @@ def step_minutes(start_ms: int, end_ms: int) -> int:
     raise ValueError(f"ir_backtest: the window is too long: at {STEP_CHOICES[-1]}-minute steps it may span at most {longest} days")
 
 
+def row_estimate(n_instruments: int, window_minutes: int) -> int:
+    """Pack rows: per instrument one 1m kline per window minute plus the warm-up day, and settlements at most hourly."""
+    return n_instruments * (window_minutes + 1440 + math.ceil(window_minutes / 60))
+
+
 def check_rows(n_instruments: int, start_ms: int, end_ms: int, max_rows: Any) -> None:
-    """Refuse before freezing a pack the service would refuse: ~instruments x (window minutes + one warm-up day) rows."""
+    """Refuse before freezing a pack the service would refuse (:func:`row_estimate` over ``max_rows``)."""
     if isinstance(max_rows, bool) or not isinstance(max_rows, int):
         return
-    estimate = n_instruments * ((end_ms - start_ms) // MINUTE_MS + 1440)
+    estimate = row_estimate(n_instruments, (end_ms - start_ms) // MINUTE_MS)
     if estimate > max_rows:
-        days = max(max_rows // (n_instruments * 1440) - 1, 0)
+        # the longest whole-day window with row_estimate <= max_rows: n * (1464 * D + 1440) <= max_rows
+        days = max((max_rows // n_instruments - 1440) // 1464, 0)
         raise ValueError(f"the pack would hold ~{estimate} rows (limit {max_rows}): with {n_instruments} instruments the window "
                          f"can be at most {days} days")
 
 
-def fees(a: IrBacktestArgs) -> tuple[Any, str]:
-    """The fee table (the request's, else :data:`DEFAULT_PUBLIC_TAKER`) and its source label."""
+def _fee_table(v: Any) -> dict | None:
+    """The fee table a request gives (object, JSON string or readable JSON file), or None when it cannot be read here
+    (the CLI reports that)."""
+    if isinstance(v, dict):
+        return v
+    if isinstance(v, str):
+        text = v.strip()
+        if not text.startswith(("{", "[")):
+            try:
+                with open(os.path.expanduser(text), encoding="utf-8") as f:
+                    text = f.read()
+            except OSError:
+                return None
+        try:
+            doc = json.loads(text)
+        except ValueError:
+            return None
+        return doc if isinstance(doc, dict) else None
+    return None
+
+
+def fees(a: IrBacktestArgs, venues: list[str]) -> tuple[Any, str]:
+    """The fee table and its source label: the request's (every derived venue needs a perp rate), else
+    :data:`DEFAULT_PUBLIC_TAKER` cut to the derived venues."""
     if a.fees in (None, "", {}):
-        return DEFAULT_PUBLIC_TAKER, DEFAULT_FEES_SOURCE
+        return {v: dict(DEFAULT_PUBLIC_TAKER[v]) for v in venues if v in DEFAULT_PUBLIC_TAKER}, DEFAULT_FEES_SOURCE
+    table = _fee_table(a.fees)
+    if table is not None:
+        missing = [v for v in venues if not (isinstance(table.get(v), dict) and table[v].get("perp") not in (None, ""))]
+        if missing:
+            raise ValueError(f"fees has no perp rate for {', '.join(missing)}: give a rate for every venue in universe.pairs, "
+                             "or omit fees to use the public base-tier default")
     return a.fees, REQUEST_FEES_SOURCE
 
 
@@ -146,7 +182,8 @@ def plan(args: dict[str, Any], ir_doc: dict, who: dict) -> dict[str, Any]:
     start, end = window(a, (who or {}).get("holdout_cutoff_ms"))
     insts = instruments(ir_doc)
     check_rows(len(insts), start, end, ((who or {}).get("datasets") or {}).get("max_rows"))
-    fee_table, source = fees(a)
+    venues = list(dict.fromkeys(d["venue"] for d in insts))
+    fee_table, source = fees(a, venues)
     out: dict[str, Any] = {"ir": a.ir, "start_ms": start, "end_ms": end, "instruments": insts,
                            "step_minutes": step_minutes(start, end), "fees": fee_table, "fees_source": source,
                            "accept_partial": a.accept_partial, "verbose": a.verbose}

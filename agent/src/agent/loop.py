@@ -226,8 +226,8 @@ logger = logging.getLogger(__name__)
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 
 
-def _ir_result_card(run_dir: Any, user_message: str) -> str | None:
-    """The AlphaKeel IR result card of this session (research-truth §5), or None.
+def _ir_result_card(session_id: str, user_message: str) -> str | None:
+    """The AlphaKeel IR result card of this conversation (research-truth §5), or None (no session id: no card).
 
     System text built from the trial ledger, appended after grounding has checked
     the answer; it never blocks the answer: any failure is logged and skipped.
@@ -235,7 +235,7 @@ def _ir_result_card(run_dir: Any, user_message: str) -> str | None:
     try:
         from src.tools.alphakeel_research_ledger import render_card
 
-        return render_card(run_dir, bool(_CJK_RE.search(user_message or "")))
+        return render_card(session_id, bool(_CJK_RE.search(user_message or "")))
     except Exception as exc:  # noqa: BLE001
         logger.warning("AlphaKeel IR result card skipped: %s", exc)
         return None
@@ -2010,7 +2010,7 @@ class AgentLoop:
                             goal_continuations += 1
                             continue
 
-                    card = _ir_result_card(run_dir, user_message)
+                    card = _ir_result_card(session_id, user_message)  # research-truth: card at the answer
                     if card:
                         final_content += "\n\n" + card
                         self._emit("text_delta", {"delta": "\n\n" + card, "iter": current_iter})
@@ -2073,7 +2073,7 @@ class AgentLoop:
                             "iterations_without_progress": self._tool_progress.stalled_iterations,
                         }
                     )
-                    card = _ir_result_card(run_dir, user_message)
+                    card = _ir_result_card(session_id, user_message)  # research-truth: card at the no-progress answer
                     if card:
                         # the text_delta below streams final_content, card included
                         final_content += "\n\n" + card

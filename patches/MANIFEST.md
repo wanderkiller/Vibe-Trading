@@ -39,7 +39,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `grounding-tex-dollar` | grounding/figures (one helper, one call site) | upstreamable: a closing `$$` after a number made it a dollar amount |
 | `strategy-fidelity` | agent/context (one prompt bullet) | upstreamable: the agent ran a different strategy than the one asked for |
 | `ir-validate-all` | none (leaf package and its tool only) | local-only (follows the leaf package) |
-| `research-truth` | grounding/ledger (one tool name), grounding/evidence (one branch, five amount fields), agent/context (one placeholder, one lookup), agent/loop (one helper, two call sites), test_context_attribution_layers (one placeholder) | local-only (follows the leaf package) |
+| `research-truth` | tools/__init__ (one session-injected class), grounding/ledger (one tool name), grounding/evidence (one branch, five amount fields), agent/context (one placeholder, one lookup), agent/loop (one helper, two call sites), test_context_attribution_layers (one placeholder) | local-only (follows the leaf package) |
 | `upstream-test-fixes` | _market_hooks (two patterns), alpha_bench_tool (one `getattr`) | upstreamable: two upstream tests are red on upstream main without them |
 
 ---
@@ -653,18 +653,30 @@ model are ignored and listed in `ignored_args`.
 B3: `alphakeel_research/screen.py` labels every run card `insufficient` / `failed_screen` / `passed_screen` from G1 1.1,
 1.2, 1.3, 1.16 (protocol thresholds, precheck comparisons); `src/tools/alphakeel_research_guard.py` adds a routing block
 (as upstream's `strategy_discovery/guard.py`) when `alphakeel_research` is registered.
-B4: `src/tools/alphakeel_research_ledger.py` keeps one upstream `HypothesisRegistry` hypothesis per session (flock
-around create/link); the distinct versions linked so far are the run's `--trials` / `--trials-evidence`.
-§5: the loop appends a result card built from that ledger after the (grounded) answer, at both answer sites; a failure
-only logs a warning. The card has one row per linked backtest and a header "N versions / M backtests" (N = distinct
-`strategy_id` = `trials.count`). `scripts/alphakeel_replay_check.py` is the read-only acceptance check of a replayed session.
+B4: scope is the conversation (`session_id`; every turn has a new run dir): `build_registry` injects
+`default_session_id` into `AlphakeelResearchTool` (`src/tools/__init__.py`, as the goal tools).
+`src/tools/alphakeel_research_ledger.py` keeps the tool's private ledger `<sessions dir>/<sid>/ir_ledger.jsonl` (outside
+the write roots; one row per successful run: strategy_id, name, run_card_path, run_card_sha256, evidence_dir, run_dir,
+ts); its distinct `strategy_id` are the run's `--trials`, listed in `<turn run dir>/ir_trials_evidence.jsonl`
+(`--trials-evidence`). Every run is also linked to one upstream `HypothesisRegistry` hypothesis per conversation (id in
+`<sessions dir>/<sid>/ir_hypothesis.json`), which is not a source of counts or of the card. flock on every
+read-modify-write. No session id: nothing is registered, no `--trials`, no card (a warning says so).
+§5: the loop appends a result card of the conversation after the (grounded) answer, at both answer sites; a failure
+only logs a warning. The card reads only the private ledger and re-reads every run card, checking its sha256 (a changed
+or missing one is not shown, and counted); one row per backtest, `name (strategy_id[:8])`; header "N versions / M
+backtests" over the shown rows; it never prints the hypothesis id. `scripts/alphakeel_replay_check.py` is the read-only acceptance check of a replayed session.
 The upstream test `test_context_attribution_layers.py` formats `_SYSTEM_PROMPT` with every placeholder and gains the new one.
+Review round 1 (2026-10-14): conversation scope and private ledger (above); `fees` must name every derived venue and the
+default table is cut to them; evidence copies never overwrite (`-2`, `-3`…) and `out` may not point into `ir_runs/`;
+the row estimate counts hourly settlements; `screen` is computed for the `ir backtest` run only (`_backtest`), not the
+robustness sub-runs.
 
 **Files.**
 - `agent/src/agent/grounding/ledger.py`
 - `agent/src/agent/grounding/evidence.py`
 - `agent/src/agent/context.py`
 - `agent/src/agent/loop.py`
+- `agent/src/tools/__init__.py`
 - `agent/src/tools/alphakeel_ir_request.py`
 - `agent/src/tools/alphakeel_research_guard.py`
 - `agent/src/tools/alphakeel_research_ledger.py`
@@ -681,6 +693,9 @@ The upstream test `test_context_attribution_layers.py` formats `_SYSTEM_PROMPT` 
 **Upstreamable.** No, local-only (follows the leaf package).
 
 **Anchors.**
+- upstream `agent/src/tools/__init__.py`: `session_injected_classes = goal_tool_classes | {` — tools that get default_session_id / event_callback
+- hook `agent/src/tools/__init__.py`: `from src.tools.alphakeel_research_tool import AlphakeelResearchTool`
+- hook `agent/src/tools/__init__.py`: `AlphakeelResearchTool,  # research-truth: the IR trial ledger and result card are per conversation`
 - upstream `agent/src/agent/grounding/ledger.py`: `_ANALYSIS_TOOLS = frozenset(`
 - hook `agent/src/agent/grounding/ledger.py`: `     "alphakeel_research"}`
 - preimage `agent/src/agent/grounding/ledger.py`: `{"backtest", "factor_analysis", "run_shadow_backtest", "quantlib_call"}`
@@ -691,8 +706,10 @@ The upstream test `test_context_attribution_layers.py` formats `_SYSTEM_PROMPT` 
 - hook `agent/src/agent/grounding/evidence.py`: `# research-truth: IR backtest metrics.csv USDT amount columns` — net_usdt, fees_usdt, funding_usdt, price_pnl_usdt, max_drawdown_usdt join _AMOUNT_FIELDS, so a USDT-marked figure can be answered from them
 - upstream `agent/src/agent/context.py`: `{strategy_discovery_routing}` — the IR routing placeholder is the next line
 - hook `agent/src/agent/context.py`: `{alphakeel_ir_routing}`
+- hook `agent/src/agent/context.py`: `from src.tools.alphakeel_research_guard import routing_block as alphakeel_ir_routing_block`
 - hook `agent/src/agent/context.py`: `alphakeel_ir_routing=alphakeel_ir_routing,`
 - upstream `agent/src/agent/loop.py`: `{"type": "answer", "iter": current_iter},` — the card is appended right before both answer records
-- hook `agent/src/agent/loop.py`: `def _ir_result_card(run_dir: Any, user_message: str) -> str | None:`
-- hook `agent/src/agent/loop.py`: `card = _ir_result_card(run_dir, user_message)`
+- hook `agent/src/agent/loop.py`: `def _ir_result_card(session_id: str, user_message: str) -> str | None:`
+- hook `agent/src/agent/loop.py`: `card = _ir_result_card(session_id, user_message)  # research-truth: card at the answer`
+- hook `agent/src/agent/loop.py`: `card = _ir_result_card(session_id, user_message)  # research-truth: card at the no-progress answer`
 - hook `agent/tests/test_context_attribution_layers.py`: `alphakeel_ir_routing="[test alphakeel routing]",`

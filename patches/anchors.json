@@ -1291,6 +1291,7 @@
     "agent/src/agent/grounding/evidence.py",
     "agent/src/agent/context.py",
     "agent/src/agent/loop.py",
+    "agent/src/tools/__init__.py",
     "agent/src/tools/alphakeel_ir_request.py",
     "agent/src/tools/alphakeel_research_guard.py",
     "agent/src/tools/alphakeel_research_ledger.py",
@@ -1303,6 +1304,22 @@
     "scripts/alphakeel_replay_check.py"
    ],
    "anchors": [
+    {
+     "file": "agent/src/tools/__init__.py",
+     "kind": "upstream",
+     "literal": "session_injected_classes = goal_tool_classes | {",
+     "note": "tools that get default_session_id / event_callback"
+    },
+    {
+     "file": "agent/src/tools/__init__.py",
+     "kind": "hook",
+     "literal": "from src.tools.alphakeel_research_tool import AlphakeelResearchTool"
+    },
+    {
+     "file": "agent/src/tools/__init__.py",
+     "kind": "hook",
+     "literal": "AlphakeelResearchTool,  # research-truth: the IR trial ledger and result card are per conversation"
+    },
     {
      "file": "agent/src/agent/grounding/ledger.py",
      "kind": "upstream",
@@ -1359,6 +1376,11 @@
     {
      "file": "agent/src/agent/context.py",
      "kind": "hook",
+     "literal": "from src.tools.alphakeel_research_guard import routing_block as alphakeel_ir_routing_block"
+    },
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "hook",
      "literal": "alphakeel_ir_routing=alphakeel_ir_routing,"
     },
     {
@@ -1370,12 +1392,17 @@
     {
      "file": "agent/src/agent/loop.py",
      "kind": "hook",
-     "literal": "def _ir_result_card(run_dir: Any, user_message: str) -> str | None:"
+     "literal": "def _ir_result_card(session_id: str, user_message: str) -> str | None:"
     },
     {
      "file": "agent/src/agent/loop.py",
      "kind": "hook",
-     "literal": "card = _ir_result_card(run_dir, user_message)"
+     "literal": "card = _ir_result_card(session_id, user_message)  # research-truth: card at the answer"
+    },
+    {
+     "file": "agent/src/agent/loop.py",
+     "kind": "hook",
+     "literal": "card = _ir_result_card(session_id, user_message)  # research-truth: card at the no-progress answer"
     },
     {
      "file": "agent/tests/test_context_attribution_layers.py",

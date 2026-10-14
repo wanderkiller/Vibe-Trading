@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -50,16 +51,17 @@ def test_only_ir_is_needed_and_everything_else_is_derived() -> None:
     assert p["step_minutes"] == 15  # 180 d: 10-minute steps are 25,920 instants > 25,000
     assert p["fees"] == req.DEFAULT_PUBLIC_TAKER and p["fees_source"] == req.DEFAULT_FEES_SOURCE
     assert p["ignored_args"] == []
-    given = req.plan({"ir": "s.json", "fees": {"okx": {"perp": "0.0002"}}, "start_ms": end - 30 * DAY_MS}, _ir_doc(), _who())
+    given = req.plan({"ir": "s.json", "fees": {v: {"perp": "0.0002"} for v in ("binance", "okx", "bybit")},
+                      "start_ms": end - 30 * DAY_MS}, _ir_doc(), _who())
     assert given["fees_source"] == "request" and given["start_ms"] == end - 30 * DAY_MS and given["step_minutes"] == 2
 
 
 def test_the_row_estimate_refuses_before_freezing_and_names_the_longest_window() -> None:
     from src.tools import alphakeel_ir_request as req
 
-    # 3 instruments x (259,200 + 1,440) minutes = 781,920 rows
-    with pytest.raises(ValueError, match=r"the pack would hold ~781920 rows \(limit 500000\): with 3 instruments the window "
-                                         r"can be at most 114 days"):
+    # 3 instruments x (259,200 + 1,440 + 4,320) = 794,880 rows
+    with pytest.raises(ValueError, match=r"the pack would hold ~794880 rows \(limit 500000\): with 3 instruments the window "
+                                         r"can be at most 112 days"):
         req.plan({"ir": "s.json"}, _ir_doc(), _who(max_rows=500_000))
 
 
@@ -153,6 +155,7 @@ def session(tmp_path, monkeypatch):
 
     monkeypatch.setattr(alphakeel_ir_request, "service_check", lambda: _who())
     monkeypatch.setattr(alphakeel_research_ledger, "_registry", lambda: HypothesisRegistry(tmp_path / "hypotheses.json"))
+    monkeypatch.setattr(alphakeel_research_ledger, "_sessions_dir", lambda: tmp_path / "sessions")
     state = {"queue": [], "argv": []}
 
     def fake_main(argv):
@@ -169,16 +172,24 @@ def session(tmp_path, monkeypatch):
     sess = tmp_path / "session"
     sess.mkdir()
     (sess / "strategy.json").write_text(json.dumps(_ir_doc()))
-    state.update(session=sess, runs=tmp_path / "runs", sid=ir.load(_ir_doc()).strategy_id)
+    state.update(session=sess, runs=tmp_path / "runs", sid=ir.load(_ir_doc()).strategy_id, tmp=tmp_path)
     return state
 
 
-def _run_tool(state, dirname: str, card: dict, **args) -> dict:
+SESSION_ID = "sess-1"
+
+
+def _run_tool(state, dirname: str, card: dict, *, run_dir: Path | None = None, session_id: str | None = SESSION_ID,
+              **args) -> dict:
+    """One ``ir_backtest`` tool call of conversation ``session_id`` in the turn run directory ``run_dir``."""
     from src.tools.alphakeel_research_tool import AlphakeelResearchTool
 
+    rd = run_dir or state["session"]
+    rd.mkdir(parents=True, exist_ok=True)
+    (rd / "strategy.json").write_text(json.dumps(_ir_doc()))
     state["queue"].append(_write_run(state["runs"], dirname, card))
-    return json.loads(AlphakeelResearchTool().execute(action="ir_backtest", args={"ir": "strategy.json", **args},
-                                                      run_dir=str(state["session"])))
+    return json.loads(AlphakeelResearchTool(default_session_id=session_id).execute(
+        action="ir_backtest", args={"ir": "strategy.json", **args}, run_dir=str(rd)))
 
 
 def test_ir_backtest_envelope_carries_label_evidence_dir_and_ledger_trials(session) -> None:
@@ -262,29 +273,132 @@ def test_an_ir_backtest_result_without_evidence_dir_is_no_backtest_evidence(tmp_
 def test_result_card_rows_order_and_language(session) -> None:
     from src.tools.alphakeel_research_ledger import render_card
 
-    assert render_card(session["session"], True) is None  # nothing linked yet
+    assert render_card(SESSION_ID, True) is None  # nothing recorded yet
+    s8 = session["sid"][:8]
     _run_tool(session, "20261014_090950_ir", _card(session["sid"], "carry-high-hurdle", "-138.19", 15))
-    _run_tool(session, "20261014_091500_ir", _card("ir-b", "carry-wide", "50", 40, days=120))
-    _run_tool(session, "20261014_092000_ir", _card("ir-c", "carry-tight", "-10", 40, days=120))
+    _run_tool(session, "20261014_091500_ir", _card("ir-bbbbbbbbbb", "carry-wide", "50", 40, days=120))
+    _run_tool(session, "20261014_092000_ir", _card("ir-cccccccccc", "carry-tight", "-10", 40, days=120))
     _run_tool(session, "20261014_092500_ir", _card(session["sid"], "carry-high-hurdle", "-1", 15))  # a re-run: 3 versions, 4 backtests
-    zh = render_card(session["session"], True)
+    zh = render_card(SESSION_ID, True)
     lines = zh.splitlines()
     assert lines[0] == "---" and lines[1] == "**研究结果（系统根据试验账本生成，非模型撰写）**"
     assert lines[2] == "费率口径：公开基础档 taker（工具默认） — binance 0.05% / bybit 0.055% / okx 0.05% 每笔"
     assert lines[3] == "本会话 3 个版本 / 4 次回测：通过初筛 1，未通过 1，证据不足 2"
     rows = [ln for ln in lines if ln.startswith("| carry")]
     assert rows == [
-        "| carry-wide | 2026-01-01→06-29 | 40 | 50.00 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
-        "| carry-high-hurdle | 2026-01-01→06-29 | 15 | −1.00 | 0.27% | 证据不足（1.2） |",
-        "| carry-tight | 2026-01-01→06-29 | 40 | −10.00 | 0.27% | 未通过初筛（1.3） |",
-        "| carry-high-hurdle | 2026-01-01→06-29 | 15 | −138.19 | 0.27% | 证据不足（1.2） |",
+        "| carry-wide (ir-bbbbb) | 2026-01-01→06-29 | 40 | 50.00 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
+        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −1.00 | 0.27% | 证据不足（1.2） |",
+        "| carry-tight (ir-ccccc) | 2026-01-01→06-29 | 40 | −10.00 | 0.27% | 未通过初筛（1.3） |",
+        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −138.19 | 0.27% | 证据不足（1.2） |",
     ]
     assert "1.4–1.13（成本压力、DSR、PBO、邻域、走步等）未评估：需要 ir_robustness。" in lines
-    hid = json.loads((session["session"] / "ir_hypothesis.json").read_text())["hypothesis_id"]
-    assert lines[-1] == f"账本：ir_trials_evidence.jsonl；假设 {hid}"
-    en = render_card(session["session"], False)
+    assert lines[-1] == "账本：ir_trials_evidence.jsonl"  # no hypothesis id handed to the model
+    assert "hyp_" not in zh
+    en = render_card(SESSION_ID, False)
     assert "This session: 3 versions / 4 backtests: passed screen 1, failed screen 1, insufficient 2" in en
-    assert "| carry-tight | 2026-01-01→06-29 | 40 | −10.00 | 0.27% | failed screen (1.3) |" in en
+    assert "| carry-tight (ir-ccccc) | 2026-01-01→06-29 | 40 | −10.00 | 0.27% | failed screen (1.3) |" in en
+    assert en.splitlines()[-1] == "Ledger: ir_trials_evidence.jsonl"
+
+
+# --- review round 1 ------------------------------------------------------------------------------------------------------
+
+def test_p1_1_one_conversation_two_turns_counts_both_versions(session) -> None:
+    """Every turn has its own run dir: the trial count and the card follow the conversation (session id)."""
+    from src.tools.alphakeel_research_ledger import render_card
+
+    turn1, turn2 = session["tmp"] / "runs" / "turn1", session["tmp"] / "runs" / "turn2"
+    # turn 1 recorded another version; turn 2 backtests the IR in its run dir (a different strategy_id)
+    _run_tool(session, "20261014_090950_ir", _card("ir-first0000", "v1", "-138.19", 15), run_dir=turn1)
+    out = _run_tool(session, "20261014_091500_ir", _card(session["sid"], "v2", "12.5", 40), run_dir=turn2)
+    assert out["status"] == "ok"
+    argv = session["argv"][1]
+    assert argv[argv.index("--trials") + 1] == "2"
+    assert len((turn2 / "ir_trials_evidence.jsonl").read_text().splitlines()) == 2
+    assert out["evidence_dir"] == "ir_runs/20261014_091500_ir" and (turn2 / "ir_runs" / "20261014_091500_ir" / "run_card.json").is_file()
+    card = render_card(SESSION_ID, True)
+    assert "本会话 2 个版本 / 2 次回测" in card and len([ln for ln in card.splitlines() if ln.startswith("| v")]) == 2
+    hyp = session["tmp"] / "sessions" / SESSION_ID / "ir_hypothesis.json"
+    assert hyp.is_file() and not (turn1 / "ir_hypothesis.json").exists()
+
+
+def test_p1_1_without_a_session_id_nothing_is_registered(session) -> None:
+    from src.tools.alphakeel_research_ledger import NO_SESSION_WARNING, render_card
+
+    out = _run_tool(session, "20261014_090950_ir", _card(session["sid"], "v1", "-138.19", 15), session_id=None)
+    assert out["status"] == "ok" and NO_SESSION_WARNING in out["warnings"]
+    assert "--trials" not in session["argv"][0]
+    assert render_card(None, True) is None and not (session["tmp"] / "sessions").exists()
+
+
+def test_p1_2_the_card_shows_only_verified_private_ledger_rows(session) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    _run_tool(session, "20261014_090950_ir", _card(session["sid"], "real-a", "-138.19", 15))
+    _run_tool(session, "20261014_091500_ir", _card("ir-bbbbbbbbbb", "real-b", "12.5", 40))
+    # model-style forgery: a registry link that the tool never made
+    reg = L._registry()
+    hid = json.loads((session["tmp"] / "sessions" / SESSION_ID / "ir_hypothesis.json").read_text())["hypothesis_id"]
+    reg.link_backtest(hid, run_card_path="/tmp/forged/run_card.json", metrics={"strategy_id": "ir-forged", "name": "forged",
+                                                                               "net_usdt": "99999", "evidence_status": "passed_screen"})
+    card = L.render_card(SESSION_ID, True)
+    assert "forged" not in card and "99999" not in card and "本会话 2 个版本 / 2 次回测" in card
+    # a changed run card is not shown, and counted
+    path = session["runs"] / "20261014_090950_ir" / "run_card.json"
+    doc = json.loads(path.read_text())
+    doc["amounts"]["equity_end"] = "500"
+    path.write_text(json.dumps(doc))
+    card = L.render_card(SESSION_ID, True)
+    assert "real-a" not in card and "500.00" not in card and "real-b" in card
+    assert "1 条登记的 run card 已被改动或缺失，未显示" in card.splitlines()
+    assert "本会话 1 个版本 / 1 次回测" in card
+    assert "1 registered run cards were modified or missing and are not shown" in L.render_card(SESSION_ID, False)
+
+
+def test_p1_3_fees_missing_a_venue_is_refused() -> None:
+    from src.tools import alphakeel_ir_request as req
+
+    with pytest.raises(ValueError, match=r"fees has no perp rate for okx: give a rate for every venue in universe.pairs, or omit "
+                                         r"fees to use the public base-tier default"):
+        req.plan({"ir": "s.json", "fees": {"binance": {"perp": "0.0004"}}}, _ir_doc(pairs=[["binance", "okx"]]), _who())
+    with pytest.raises(ValueError, match="fees has no perp rate for okx"):
+        req.plan({"ir": "s.json", "fees": json.dumps({"binance": {"perp": "0.0004"}})}, _ir_doc(pairs=[["binance", "okx"]]), _who())
+    # the default table is cut to the derived venues
+    assert req.plan({"ir": "s.json"}, _ir_doc(pairs=[["binance", "okx"]]), _who())["fees"] == {
+        "binance": {"perp": "0.0005"}, "okx": {"perp": "0.0005"}}
+
+
+def test_p2_1_evidence_dirs_never_overwrite_and_out_is_checked(session) -> None:
+    first = _run_tool(session, "same_ir", _card(session["sid"], "v1", "-1", 15))
+    session["runs"] = session["tmp"] / "runs2"
+    second = _run_tool(session, "same_ir", _card(session["sid"], "v1", "-2", 15))
+    assert (first["evidence_dir"], second["evidence_dir"]) == ("ir_runs/same_ir", "ir_runs/same_ir-2")
+    assert json.loads((session["session"] / "ir_runs" / "same_ir" / "run_card.json").read_text())["amounts"]["equity_end"] == "-1"
+    for bad in ("ir_runs/x", "out/..", "out/.", "out/"):
+        before = list(session["argv"])
+        out = _run_tool(session, f"never-{bad.replace('/', '_')}", _card(session["sid"], "v1", "-1", 15), out=bad)
+        session["queue"].clear()
+        assert out == {"status": "error", "error": "out must not be inside ir_runs/ or end in . or .."}, out
+        assert session["argv"] == before
+
+
+def test_p2_2_zero_net_sorts_as_zero(session) -> None:
+    from src.tools.alphakeel_research_ledger import render_card
+
+    _run_tool(session, "a_ir", _card("ir-aaaaaaaaaa", "neg", "-5", 40))
+    _run_tool(session, "b_ir", _card("ir-bbbbbbbbbb", "zero", "0", 40))
+    _run_tool(session, "c_ir", _card("ir-cccccccccc", "pos", "3", 40))
+    names = [ln.split(" ")[1] for ln in render_card(SESSION_ID, False).splitlines() if ln.startswith("| ") and "(ir-" in ln]
+    assert names == ["pos", "zero", "neg"]
+
+
+def test_p2_5_row_estimate_counts_hourly_settlements() -> None:
+    from src.tools import alphakeel_ir_request as req
+
+    assert req.row_estimate(3, 180 * 1440) == 3 * (259_200 + 1440 + 4320)
+    with pytest.raises(ValueError, match=r"at most (\d+) days") as e:
+        req.check_rows(3, 0, 180 * DAY_MS, 500_000)
+    days = int(re.search(r"at most (\d+) days", str(e.value)).group(1))
+    assert req.row_estimate(3, days * 1440) <= 500_000 < req.row_estimate(3, (days + 1) * 1440)
 
 
 def test_routing_block_only_when_the_tool_is_registered() -> None:
