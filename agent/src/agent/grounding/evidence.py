@@ -174,6 +174,12 @@ _AMOUNT_FIELDS = frozenset(
         "total_pnl",
         "avg_pnl",
         "notional",
+        # research-truth: IR backtest metrics.csv USDT amount columns
+        "net_usdt",
+        "fees_usdt",
+        "funding_usdt",
+        "price_pnl_usdt",
+        "max_drawdown_usdt",
     }
 )
 
@@ -665,6 +671,16 @@ class _EvidenceMixin:
             recorded = self._record_leaf_metrics(
                 payload.get("result"), call_id, tool_name, function
             )
+        elif tool_name == "alphakeel_research":
+            # research-truth B1: an IR backtest's evidence copy in the session run dir.
+            evidence_dir = payload.get("evidence_dir")
+            if (
+                arguments.get("action") != "ir_backtest"
+                or payload.get("status") != "ok"
+                or not isinstance(evidence_dir, str)
+            ):
+                return
+            recorded = self._record_backtest_metrics({"run_dir": evidence_dir}, payload, call_id)
         else:
             return
         if recorded:

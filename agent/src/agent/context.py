@@ -83,6 +83,7 @@ skill document, not recalled memory. They are not defaults to be tuned.
 
 Decide which workflow to use based on the request:
 {strategy_discovery_routing}
+{alphakeel_ir_routing}
 **Backtest** — user wants to create, test, or optimize a trading strategy:
 1. `load_skill("strategy-generate")` — read the SignalEngine contract
 2. `write_file("config.json", ...)` — source, codes, dates, parameters. If the strategy is expected to produce ≥10 trades, include `"validation": {{"monte_carlo": {{"n_simulations": 1000}}}}` in config.json for Monte Carlo testing
@@ -335,6 +336,12 @@ class ContextBuilder:
             routing = routing_block(self.registry)
         except Exception:  # noqa: BLE001
             routing = ""
+        try:
+            from src.tools.alphakeel_research_guard import routing_block as alphakeel_ir_routing_block
+
+            alphakeel_ir_routing = alphakeel_ir_routing_block(self.registry)
+        except Exception:  # noqa: BLE001
+            alphakeel_ir_routing = ""
 
         return _SYSTEM_PROMPT.format(
             tool_count=len(self.registry._tools),
@@ -344,6 +351,7 @@ class ContextBuilder:
             skill_descriptions=self.skills_loader.get_descriptions(),
             memory_section=memory_section,
             strategy_discovery_routing=routing,
+            alphakeel_ir_routing=alphakeel_ir_routing,
             current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
         )
 

@@ -12,11 +12,14 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from src.agent.tools import BaseTool
 from src.config.accessor import get_env_value
+from src.tools.alphakeel_ir_request import IGNORED_NOTE
 
 _ACTIONS = ("check", "freeze", "read", "review", "policy", "native", "compare", "ir_validate", "ir_review", "ir_backtest", "ir_robustness", "ir_crosscheck", "ir_export")
 #: ``read`` tables: scan packs have quotes/observations/settlements; dataset packs have klines/bbo/instrument_meta (and settlements).
@@ -121,7 +124,8 @@ def _instruments_file(v: Any, prefix: str = "ak-instruments-", key: str = "instr
     return str(v)
 
 
-#: ``ir_backtest`` has no default fee table (and neither does AlphaKeel): the agent must pass one.
+#: the planned ``ir_backtest`` request always carries fees (the request's or the tool default,
+#: ``alphakeel_ir_request.DEFAULT_PUBLIC_TAKER``); ``_argv`` refuses one without.
 _FEES_NEEDED = ("needs fees: {venue: {perp: rate}} with a decimal-string taker rate for every venue in universe.pairs (or in "
                 "instruments when pairs is \"any\"; no default; unless the user gives a fee tier use each venue's public "
                 "base-tier perp taker fee and say so)")
@@ -201,13 +205,15 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
     elif action == "ir_review":
         add("--pack", "pack", True), add("--ir", "ir", True), add("--out", "out", True), add("--seed", "seed"), add("--profile", "profile")
     elif action == "ir_backtest":
+        # ``a`` is the request planned by ``alphakeel_ir_request.plan`` (research-truth B2): window, instruments, step,
+        # fees and their source derived by code; trials from the session's trial ledger.
         add("--ir", "ir", True), add("--start-ms", "start_ms", True), add("--end-ms", "end_ms", True)
         if a.get("instruments") in (None, "", []):
             raise ValueError("ir_backtest needs instruments")
         out.extend(["--instruments", _instruments_file(a["instruments"])])
         add("--out", "out")  # optional: the CLI creates a Vibe-Trading run directory
         for f, k in (("--step-minutes", "step_minutes"), ("--trials", "trials"), ("--trials-evidence", "trials_evidence"),
-                     ("--capital-base", "capital_base"), ("--pack-dir", "pack_dir")):
+                     ("--capital-base", "capital_base"), ("--pack-dir", "pack_dir"), ("--fees-source", "fees_source")):
             add(f, k)
         out.extend(f for f, k in (("--accept-partial", "accept_partial"), ("--verbose", "verbose")) if a.get(k))
         fees(True)
@@ -257,6 +263,101 @@ def _ir_review_summary(args: dict[str, Any]) -> dict | None:
     return {**{k: r.get(k) for k in keep}, "reconciliation": path}
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# ir_backtest: request planned by code, evidence copy, trial ledger, code-made label (research-truth B1-B4)
+# ---------------------------------------------------------------------------------------------------------------------
+
+def _plan_ir_backtest(args: dict[str, Any], session_run_dir: Any, warnings: list[str]) -> dict[str, Any]:
+    """The CLI request of an ``ir_backtest``: ``alphakeel_ir_request.plan`` (one ``check()``) plus the trial ledger's
+    ``trials`` / ``trials_evidence``. Raises ``ValueError`` (bad request) or the service's ``ApiError``."""
+    from alphakeel_research import ir
+
+    from src.tools import alphakeel_ir_request as req
+
+    a = req.parse_args(args)  # every argument problem at once, before anything is read or asked
+    doc, unreadable = _read_ir(a.ir)
+    if unreadable is not None:
+        raise ValueError(unreadable)
+    try:
+        loaded = ir.load(doc)
+    except Exception as e:  # noqa: BLE001 - IrError: the IR does not validate
+        raise ValueError(f"ir: {getattr(e, 'message', None) or e} (run ir_validate first)") from None
+    planned = req.plan(args, loaded.doc, req.service_check())
+    if isinstance(session_run_dir, str) and session_run_dir.strip():
+        try:
+            from src.tools import alphakeel_research_ledger as ledger
+
+            count, evidence = ledger.trials_for(session_run_dir, loaded.strategy_id, ir_doc=loaded.doc,
+                                                window={"start_ms": planned["start_ms"], "end_ms": planned["end_ms"]},
+                                                ir_name=loaded.doc.get("name") or "")
+            planned["trials"], planned["trials_evidence"] = count, evidence
+        except Exception as e:  # noqa: BLE001 - the ledger never fails the backtest
+            warnings.append(f"trial ledger: {e.__class__.__name__}: {str(e)[:300]}")
+    return planned
+
+
+def _copy_evidence(result: dict, session_run_dir: Any) -> str | None:
+    """Copy the run's ``run_card.json`` and ``artifacts/metrics.csv`` to ``<session>/ir_runs/<run dir name>/``; returns
+    that directory relative to the session (``evidence_dir``), or None without a session run directory."""
+    if not (isinstance(session_run_dir, str) and session_run_dir.strip()):
+        return None
+    src = Path(str(result["run_dir"]))
+    rel = f"ir_runs/{src.name}"
+    dst = Path(session_run_dir) / rel
+    for name in ("run_card.json", "artifacts/metrics.csv"):
+        if (src / name).is_file():
+            (dst / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src / name, dst / name)
+    return rel
+
+
+_SCREEN_FAIL_TEXT = {"1.1": "1.1 window {o} d < {t}", "1.2": "1.2 {o} closed trades < {t}", "1.3": "1.3 net {o} USDT <= {t}",
+                     "1.16": "1.16 coverage partial"}
+
+
+def _summary(result: dict) -> str:
+    """One code-made line: the label, every failed screen item, closed trades, window, fee basis."""
+    scr = result.get("screen") or {}
+    items = {i.get("id"): i for i in scr.get("items") or [] if isinstance(i, dict)}
+    parts = []
+    for i in items.values():
+        if i.get("result") == "FAIL":
+            thr = next(iter((i.get("threshold") or {}).values()), "?")
+            parts.append(_SCREEN_FAIL_TEXT.get(i["id"], i["id"] + " FAIL").format(o="missing" if i.get("observed") is None else i["observed"], t=thr))
+    closed = (result.get("counts") or {}).get("closed")
+    days = (items.get("1.1") or {}).get("observed")
+    fees_source = (result.get("assumptions") or {}).get("fees_source")
+    parts += [f"{closed} closed trades", f"window {days} d", f"fees {fees_source}"]
+    return f"{result.get('evidence_status')}: " + "; ".join(parts)
+
+
+def _finish_ir_backtest(out: dict, planned: dict, session_run_dir: Any, warnings: list[str]) -> None:
+    """A finished ``ir_backtest`` envelope: ``evidence_status`` first and a ``summary`` in ``result``, ``evidence_dir``
+    and ``ignored_args`` on the envelope, the run linked into the session's trial ledger."""
+    result = out.get("result")
+    if planned.get("ignored_args"):
+        out["ignored_args"] = planned["ignored_args"]
+        out["ignored_args_note"] = IGNORED_NOTE
+    if out["status"] != "ok" or not isinstance(result, dict) or not result.get("run_dir"):
+        return
+    if "evidence_status" in result:
+        out["result"] = {"evidence_status": result["evidence_status"], "summary": _summary(result),
+                         **{k: v for k, v in result.items() if k != "evidence_status"}}
+    try:
+        rel = _copy_evidence(result, session_run_dir)
+        if rel is not None:
+            out["evidence_dir"] = rel
+    except OSError as e:
+        warnings.append(f"evidence copy: {e.__class__.__name__}: {str(e)[:300]}")
+    if isinstance(session_run_dir, str) and session_run_dir.strip():
+        try:
+            from src.tools import alphakeel_research_ledger as ledger
+
+            ledger.link(session_run_dir, result)
+        except Exception as e:  # noqa: BLE001 - the ledger never fails the backtest
+            warnings.append(f"trial ledger: {e.__class__.__name__}: {str(e)[:300]}")
+
+
 class AlphakeelResearchTool(BaseTool):
     """Freeze AlphaKeel data, review a Python backtest, run a policy or the native strategy, compare results."""
 
@@ -271,7 +372,10 @@ class AlphakeelResearchTool(BaseTool):
         "(strategy.json): 'ir_validate' with AlphaKeel, 'ir_review' (Python vs AlphaKeel's Rust evaluator on a scan pack, "
         "layered reconciliation), 'ir_backtest' (long-history research backtest on a dataset pack: 1m klines + official "
         "settlements, synthetic touch; research evidence, not reconciliation; it freezes its own pack (kline_1m trade + "
-        "settlements), so do not 'freeze' before it; without args.out it creates a Vibe-Trading run directory), 'ir_robustness' (reliability battery + grade on the run's exported pack: cost stress, parameter neighbours, "
+        "settlements), so do not 'freeze' before it. It needs only args.ir; start_ms/end_ms are optional (default: the 180 "
+        "days before the hold-out cutoff); instruments, step, fees (public base-tier taker unless args.fees is given) and "
+        "the trial count are derived from the IR and the session's trial ledger. It returns evidence_status "
+        "(insufficient / failed_screen / passed_screen) and evidence_dir (the ref of its observed figures)), 'ir_robustness' (reliability battery + grade on the run's exported pack: cost stress, parameter neighbours, "
         "anchored walk-forward, OOS, filter permutation test; args.run = the ir_backtest run directory), 'ir_crosscheck' (the same "
         "backtest run by AlphaKeel's engine, compared trade by trade), 'ir_export' (strategy.json with strategy_id "
         "and provenance for AlphaKeel's registry, from an ir_backtest run; carries the robustness evidence). You cannot export into "
@@ -298,8 +402,9 @@ class AlphakeelResearchTool(BaseTool):
                                 "venue": {"type": "string"}, "market": {"type": "string"}, "symbol": {"type": "string"}}}},
                             {"type": "string"},
                         ],
-                        "description": "symbol is the venue-native contract id, e.g. okx perp BTC-USDT-SWAP, binance perp BTCUSDT; "
-                                       "a spot-style BTC-USDT on a perp finds no settlements",
+                        "description": "freeze/read/review/policy/ir_robustness: symbol is the venue-native contract id, e.g. okx perp "
+                                       "BTC-USDT-SWAP, binance perp BTCUSDT; a spot-style BTC-USDT on a perp finds no settlements. "
+                                       "Not for ir_backtest (derived from the IR).",
                     },
                     "market_tables": {
                         "type": "array", "items": {"type": "string", "enum": ["kline_1m", "bbo", "depth20", "instrument_meta"]},
@@ -311,13 +416,13 @@ class AlphakeelResearchTool(BaseTool):
                     },
                     "fees": {
                         "anyOf": [{"type": "object"}, {"type": "string"}],
-                        "description": "{venue: {perp: rate}} with decimal-string taker rates for every venue the run trades (or a "
-                                       "JSON file path); required for ir_backtest",
+                        "description": "{venue: {perp: rate}} with decimal-string taker rates (or a JSON file path); ir_backtest: "
+                                       "optional, only when the user gives a fee tier (default: each venue's public base-tier taker)",
                     },
                     "pack": {"type": "string"},
                     "accept_partial": {"type": "boolean"},
                 },
-                "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode; IR: ir, out, run, step_minutes, fees, trials, trials_evidence, capital_base, pack_dir, verbose, research_credential, robustness (export: directory with robustness.json); ir_robustness: run, ir, instruments, pack_dir, is_start_ms, is_end_ms, oos_start_ms, oos_end_ms, oos_pack_dir, filter ({kind: excluded_bases, bases: [...]} or a JSON file), permutations, seed, permutation_seed, workers, prior_trials, wf_folds, wf_test_days, wf_min_train_days; ir_crosscheck: ir, run, timeout_s.",
+                "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode; IR: ir, out, run, fees, capital_base, pack_dir, verbose, research_credential; ir_backtest: ir (required), start_ms, end_ms (optional), fees (optional), accept_partial, capital_base, pack_dir, verbose -- instruments, step_minutes, trials, trials_evidence are derived and ignored if given; robustness (export: directory with robustness.json); ir_robustness: run, ir, instruments, pack_dir, is_start_ms, is_end_ms, oos_start_ms, oos_end_ms, oos_pack_dir, filter ({kind: excluded_bases, bases: [...]} or a JSON file), permutations, seed, permutation_seed, workers, step_minutes, prior_trials, wf_folds, wf_test_days, wf_min_train_days; ir_crosscheck: ir, run, timeout_s.",
             },
         },
         "required": ["action"],
@@ -330,23 +435,33 @@ class AlphakeelResearchTool(BaseTool):
         args = kwargs.get("args") or {}
         if action not in _ACTIONS or not isinstance(args, dict):
             return json.dumps({"status": "error", "error": f"action must be one of {list(_ACTIONS)} and args an object"})
-        args = _resolve_paths(args, kwargs.get("run_dir"))  # before _argv: the hand-off guard checks the resolved path
+        session_run_dir = kwargs.get("run_dir")
+        args = _resolve_paths(args, session_run_dir)  # before _argv: the hand-off guard checks the resolved path
+        warnings: list[str] = []
+        planned: dict[str, Any] | None = None
         try:
             from alphakeel_research import cli, ir
             from alphakeel_research.errors import ApiError
 
-            argv = _argv(action, args)
+            if action == "ir_backtest":
+                try:
+                    planned = _plan_ir_backtest(args, session_run_dir, warnings)
+                except ApiError as e:
+                    return json.dumps({"status": "error", "error": e.message, "code": e.code,
+                                       "request_id": getattr(e, "request_id", None)})
+                argv = _argv(action, planned)
+            else:
+                argv = _argv(action, args)
         except ImportError as e:
             return json.dumps({"status": "error", "error": f"alphakeel_research is not installed: {e}"})
         except ValueError as e:
             return json.dumps({"status": "error", "error": str(e)})
         # Strategy IR: unit warnings (never blocking); ir_validate first runs the local checker, which lists every
         # problem at once, and asks AlphaKeel (authoritative) only when it finds none.
-        warnings: list[str] = []
         if action in ("ir_validate", "ir_backtest"):
             doc, unreadable = _read_ir(args["ir"])
             if unreadable is None:
-                warnings = ir.unit_warnings(doc)
+                warnings = ir.unit_warnings(doc) + warnings
             if action == "ir_validate":
                 if unreadable is not None:
                     return json.dumps({"status": "error", "error": unreadable})
@@ -377,4 +492,6 @@ class AlphakeelResearchTool(BaseTool):
         e = result.get("error") if isinstance(result, dict) else None
         if rc != 0 and isinstance(e, dict) and _market_blocked(e.get("code"), e.get("message")):
             out["next"] = _MARKET_BLOCKED_NEXT
+        if planned is not None:
+            _finish_ir_backtest(out, planned, session_run_dir, warnings)
         return _dump(out, warnings)

@@ -163,13 +163,39 @@ def _tool(**kwargs) -> dict:
     return json.loads(AlphakeelResearchTool().execute(**kwargs))
 
 
-def test_ir_backtest_without_fees_is_refused_before_the_cli(monkeypatch, tmp_path) -> None:
-    _forbid_cli(monkeypatch)
+def _bt_ir(tmp_path, monkeypatch) -> Path:
+    """The example IR with an explicit ``universe.bases`` (ir_backtest derives its instruments from it), and a stub of the
+    research service's ``check()`` (research-truth B2: the window and row limit come from it)."""
+    from src.tools import alphakeel_ir_request, alphakeel_research_ledger
+    from src.hypotheses.registry import HypothesisRegistry
+
+    monkeypatch.setattr(alphakeel_ir_request, "service_check",
+                        lambda: {"holdout_cutoff_ms": 1_780_000_000_000, "datasets": {"max_rows": 3_000_000}})
+    monkeypatch.setattr(alphakeel_research_ledger, "_registry", lambda: HypothesisRegistry(tmp_path / "hypotheses.json"))
+    doc = json.loads(_EXAMPLE.read_text())
+    doc["universe"]["bases"] = ["BTC"]
     path = tmp_path / "strategy.json"
-    path.write_text(_EXAMPLE.read_text())
-    out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2, "instruments": _INST})
-    assert out["status"] == "error" and out["error"].startswith("ir_backtest needs fees: {venue: {perp: rate}}")
-    assert "public base-tier perp taker fee" in out["error"]
+    path.write_text(json.dumps(doc))
+    return path
+
+
+def test_ir_backtest_without_fees_uses_the_public_default(monkeypatch, tmp_path) -> None:
+    """research-truth B2 (user decision 2026-10-14): no fees = each venue's public base-tier taker, labelled as such."""
+    from alphakeel_research import cli
+    from src.tools.alphakeel_ir_request import DEFAULT_FEES_SOURCE, DEFAULT_PUBLIC_TAKER
+
+    seen: dict = {}
+
+    def capture(argv):
+        seen["fees"] = json.loads(Path(argv[argv.index("--fees") + 1]).read_text())
+        seen["source"] = argv[argv.index("--fees-source") + 1]
+        print(json.dumps({"run_dir": "r"}))
+        return 0
+
+    monkeypatch.setattr(cli, "main", capture)
+    path = _bt_ir(tmp_path, monkeypatch)
+    out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2})
+    assert out["status"] == "ok" and seen == {"fees": DEFAULT_PUBLIC_TAKER, "source": DEFAULT_FEES_SOURCE}
 
 
 def test_fees_object_reaches_the_cli_as_a_file(monkeypatch, tmp_path) -> None:
@@ -180,14 +206,14 @@ def test_fees_object_reaches_the_cli_as_a_file(monkeypatch, tmp_path) -> None:
 
     def capture(argv):
         seen["fees"] = json.loads(Path(argv[argv.index("--fees") + 1]).read_text())
+        seen["source"] = argv[argv.index("--fees-source") + 1]
         print(json.dumps({"run_dir": "r"}))
         return 0
 
     monkeypatch.setattr(cli, "main", capture)
-    path = tmp_path / "strategy.json"
-    path.write_text(_EXAMPLE.read_text())
-    out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2, "instruments": _INST, "fees": fees})
-    assert out["status"] == "ok" and seen["fees"] == fees
+    path = _bt_ir(tmp_path, monkeypatch)
+    out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2, "fees": fees})
+    assert out["status"] == "ok" and seen == {"fees": fees, "source": "request"}
 
 
 def test_argparse_errors_surface_their_message() -> None:
@@ -229,12 +255,11 @@ def test_fees_as_a_json_string_reaches_the_cli_as_a_file(monkeypatch, tmp_path) 
         return 0
 
     monkeypatch.setattr(cli, "main", capture)
-    path = tmp_path / "strategy.json"
-    path.write_text(_EXAMPLE.read_text())
-    out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2, "instruments": json.dumps(_INST),
-                                             "fees": " " + json.dumps(fees)}, run_dir=str(tmp_path))
+    path = _bt_ir(tmp_path, monkeypatch)
+    out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2, "fees": " " + json.dumps(fees)},
+                run_dir=str(tmp_path))
     assert out["status"] == "ok" and seen["fees"] == fees
-    out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2, "instruments": _INST, "fees": "{nope"})
+    out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2, "fees": "{nope"})
     assert out["status"] == "error" and out["error"].startswith("fees: not valid JSON")
 
 

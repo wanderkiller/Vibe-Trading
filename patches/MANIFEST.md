@@ -39,6 +39,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `grounding-tex-dollar` | grounding/figures (one helper, one call site) | upstreamable: a closing `$$` after a number made it a dollar amount |
 | `strategy-fidelity` | agent/context (one prompt bullet) | upstreamable: the agent ran a different strategy than the one asked for |
 | `ir-validate-all` | none (leaf package and its tool only) | local-only (follows the leaf package) |
+| `research-truth` | grounding/ledger (one tool name), grounding/evidence (one branch, five amount fields), agent/context (one placeholder, one lookup), agent/loop (one helper, two call sites), test_context_attribution_layers (one placeholder) | local-only (follows the leaf package) |
 | `upstream-test-fixes` | _market_hooks (two patterns), alpha_bench_tool (one `getattr`) | upstreamable: two upstream tests are red on upstream main without them |
 
 ---
@@ -631,3 +632,67 @@ stderr in the tool error, `take_profit` unit warning, paths relative to the agen
 
 **Anchors.** None: every change is in `leaf-package` files (`ir.py`, `ir_backtest.py`, the tool), which carry no hook
 anchors (same as `strategy-fidelity`'s tool half).
+
+## `research-truth` — IR backtests report what the code measured
+
+**Purpose.** In session b9aa13a496a4 and its replays 3d53fa72a8e9 / a061ea4c35f2 the agent looped on `ir_backtest`
+arguments, under-counted its trials and presented losing variants as recommendations; its real figures were refused by
+grounding as "no evidence". The model now writes only the IR and the explanation; code produces the rest, on upstream's
+own mechanisms:
+B1: the leaf writes `artifacts/metrics.csv` with upstream's column names (`final_value` … `trade_count`, plus
+`net_usdt` `fees_usdt` `funding_usdt` `price_pnl_usdt` `max_drawdown_usdt` `days`); the tool copies `run_card.json` and
+`metrics.csv` of every run to `<session run dir>/ir_runs/<run dir name>/` and returns `evidence_dir`; grounding records
+that copy with upstream's unchanged `_record_backtest_metrics` (`alphakeel_research` joins `_ANALYSIS_TOOLS`; the five
+`*_usdt` columns join `_AMOUNT_FIELDS`, because a currency-marked figure such as "-138.19 USDT" is answered only from
+money fields).
+B2: `src/tools/alphakeel_ir_request.py` (`IrBacktestArgs`, as upstream's `BacktestConfigSchema`): only `ir` is
+required; the window defaults to the 180 days before the hold-out cutoff; instruments, step and the row-limit precheck
+are derived from the IR and `check()`; fees default to each venue's public base-tier taker with the source label
+(`--fees-source`; the leaf keeps "no default fee"); `instruments`/`step_minutes`/`trials`/`trials_evidence` from the
+model are ignored and listed in `ignored_args`.
+B3: `alphakeel_research/screen.py` labels every run card `insufficient` / `failed_screen` / `passed_screen` from G1 1.1,
+1.2, 1.3, 1.16 (protocol thresholds, precheck comparisons); `src/tools/alphakeel_research_guard.py` adds a routing block
+(as upstream's `strategy_discovery/guard.py`) when `alphakeel_research` is registered.
+B4: `src/tools/alphakeel_research_ledger.py` keeps one upstream `HypothesisRegistry` hypothesis per session (flock
+around create/link); the distinct versions linked so far are the run's `--trials` / `--trials-evidence`.
+§5: the loop appends a result card built from that ledger after the (grounded) answer, at both answer sites; a failure
+only logs a warning. The card has one row per linked backtest and a header "N versions / M backtests" (N = distinct
+`strategy_id` = `trials.count`). `scripts/alphakeel_replay_check.py` is the read-only acceptance check of a replayed session.
+The upstream test `test_context_attribution_layers.py` formats `_SYSTEM_PROMPT` with every placeholder and gains the new one.
+
+**Files.**
+- `agent/src/agent/grounding/ledger.py`
+- `agent/src/agent/grounding/evidence.py`
+- `agent/src/agent/context.py`
+- `agent/src/agent/loop.py`
+- `agent/src/tools/alphakeel_ir_request.py`
+- `agent/src/tools/alphakeel_research_guard.py`
+- `agent/src/tools/alphakeel_research_ledger.py`
+- `agent/src/tools/alphakeel_research_tool.py`
+- `agent/alphakeel_research/screen.py`
+- `agent/alphakeel_research/ir_backtest.py`
+- `agent/alphakeel_research/cli.py`
+- `agent/tests/test_alphakeel_research_truth.py`
+- `agent/tests/test_context_attribution_layers.py`
+- `scripts/alphakeel_replay_check.py`
+
+**Commits.** (this commit).
+
+**Upstreamable.** No, local-only (follows the leaf package).
+
+**Anchors.**
+- upstream `agent/src/agent/grounding/ledger.py`: `_ANALYSIS_TOOLS = frozenset(`
+- hook `agent/src/agent/grounding/ledger.py`: `     "alphakeel_research"}`
+- preimage `agent/src/agent/grounding/ledger.py`: `{"backtest", "factor_analysis", "run_shadow_backtest", "quantlib_call"}`
+- upstream `agent/src/agent/grounding/evidence.py`: `elif tool_name == "quantlib_call":`
+- upstream `agent/src/agent/grounding/evidence.py`: `def _record_backtest_metrics(` — called unchanged for the IR backtest's evidence copy
+- hook `agent/src/agent/grounding/evidence.py`: `elif tool_name == "alphakeel_research":`
+- hook `agent/src/agent/grounding/evidence.py`: `recorded = self._record_backtest_metrics({"run_dir": evidence_dir}, payload, call_id)`
+- hook `agent/src/agent/grounding/evidence.py`: `# research-truth: IR backtest metrics.csv USDT amount columns` — net_usdt, fees_usdt, funding_usdt, price_pnl_usdt, max_drawdown_usdt join _AMOUNT_FIELDS, so a USDT-marked figure can be answered from them
+- upstream `agent/src/agent/context.py`: `{strategy_discovery_routing}` — the IR routing placeholder is the next line
+- hook `agent/src/agent/context.py`: `{alphakeel_ir_routing}`
+- hook `agent/src/agent/context.py`: `alphakeel_ir_routing=alphakeel_ir_routing,`
+- upstream `agent/src/agent/loop.py`: `{"type": "answer", "iter": current_iter},` — the card is appended right before both answer records
+- hook `agent/src/agent/loop.py`: `def _ir_result_card(run_dir: Any, user_message: str) -> str | None:`
+- hook `agent/src/agent/loop.py`: `card = _ir_result_card(run_dir, user_message)`
+- hook `agent/tests/test_context_attribution_layers.py`: `alphakeel_ir_routing="[test alphakeel routing]",`

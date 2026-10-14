@@ -1282,6 +1282,107 @@
     "agent/tests/test_ir_validate_all.py"
    ],
    "anchors": []
+  },
+  {
+   "id": "research-truth",
+   "title": "IR backtests report what the code measured: defaults, label, ledger trials, observed evidence, result card",
+   "files": [
+    "agent/src/agent/grounding/ledger.py",
+    "agent/src/agent/grounding/evidence.py",
+    "agent/src/agent/context.py",
+    "agent/src/agent/loop.py",
+    "agent/src/tools/alphakeel_ir_request.py",
+    "agent/src/tools/alphakeel_research_guard.py",
+    "agent/src/tools/alphakeel_research_ledger.py",
+    "agent/src/tools/alphakeel_research_tool.py",
+    "agent/alphakeel_research/screen.py",
+    "agent/alphakeel_research/ir_backtest.py",
+    "agent/alphakeel_research/cli.py",
+    "agent/tests/test_alphakeel_research_truth.py",
+    "agent/tests/test_context_attribution_layers.py",
+    "scripts/alphakeel_replay_check.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/src/agent/grounding/ledger.py",
+     "kind": "upstream",
+     "literal": "_ANALYSIS_TOOLS = frozenset("
+    },
+    {
+     "file": "agent/src/agent/grounding/ledger.py",
+     "kind": "hook",
+     "literal": "     \"alphakeel_research\"}"
+    },
+    {
+     "file": "agent/src/agent/grounding/ledger.py",
+     "kind": "preimage",
+     "literal": "{\"backtest\", \"factor_analysis\", \"run_shadow_backtest\", \"quantlib_call\"}"
+    },
+    {
+     "file": "agent/src/agent/grounding/evidence.py",
+     "kind": "upstream",
+     "literal": "elif tool_name == \"quantlib_call\":"
+    },
+    {
+     "file": "agent/src/agent/grounding/evidence.py",
+     "kind": "upstream",
+     "literal": "def _record_backtest_metrics(",
+     "note": "called unchanged for the IR backtest's evidence copy"
+    },
+    {
+     "file": "agent/src/agent/grounding/evidence.py",
+     "kind": "hook",
+     "literal": "elif tool_name == \"alphakeel_research\":"
+    },
+    {
+     "file": "agent/src/agent/grounding/evidence.py",
+     "kind": "hook",
+     "literal": "recorded = self._record_backtest_metrics({\"run_dir\": evidence_dir}, payload, call_id)"
+    },
+    {
+     "file": "agent/src/agent/grounding/evidence.py",
+     "kind": "hook",
+     "literal": "# research-truth: IR backtest metrics.csv USDT amount columns",
+     "note": "net_usdt, fees_usdt, funding_usdt, price_pnl_usdt, max_drawdown_usdt join _AMOUNT_FIELDS, so a USDT-marked figure can be answered from them"
+    },
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "upstream",
+     "literal": "{strategy_discovery_routing}",
+     "note": "the IR routing placeholder is the next line"
+    },
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "hook",
+     "literal": "{alphakeel_ir_routing}"
+    },
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "hook",
+     "literal": "alphakeel_ir_routing=alphakeel_ir_routing,"
+    },
+    {
+     "file": "agent/src/agent/loop.py",
+     "kind": "upstream",
+     "literal": "{\"type\": \"answer\", \"iter\": current_iter},",
+     "note": "the card is appended right before both answer records"
+    },
+    {
+     "file": "agent/src/agent/loop.py",
+     "kind": "hook",
+     "literal": "def _ir_result_card(run_dir: Any, user_message: str) -> str | None:"
+    },
+    {
+     "file": "agent/src/agent/loop.py",
+     "kind": "hook",
+     "literal": "card = _ir_result_card(run_dir, user_message)"
+    },
+    {
+     "file": "agent/tests/test_context_attribution_layers.py",
+     "kind": "hook",
+     "literal": "alphakeel_ir_routing=\"[test alphakeel routing]\","
+    }
+   ]
   }
  ]
 }

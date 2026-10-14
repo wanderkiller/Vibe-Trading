@@ -78,6 +78,7 @@ class TestAttributionPromptIntegrity:
             skill_descriptions="[test skills]",
             memory_section="[test section]",
             strategy_discovery_routing="[test routing]",
+            alphakeel_ir_routing="[test alphakeel routing]",
             current_datetime="2025-01-01 12:00:00",
         )
         assert len(result) > 1000

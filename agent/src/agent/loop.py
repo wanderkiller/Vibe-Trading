@@ -19,6 +19,7 @@ import copy
 import json
 import logging
 import queue
+import re
 import sys
 import threading
 import time as _time
@@ -220,6 +221,24 @@ def _stall_timeout_seconds() -> float:
     return get_env_config().agent_tuning.vibe_trading_run_stall_timeout_seconds
 
 logger = logging.getLogger(__name__)
+
+
+_CJK_RE = re.compile(r"[\u3400-\u9fff]")
+
+
+def _ir_result_card(run_dir: Any, user_message: str) -> str | None:
+    """The AlphaKeel IR result card of this session (research-truth §5), or None.
+
+    System text built from the trial ledger, appended after grounding has checked
+    the answer; it never blocks the answer: any failure is logged and skipped.
+    """
+    try:
+        from src.tools.alphakeel_research_ledger import render_card
+
+        return render_card(run_dir, bool(_CJK_RE.search(user_message or "")))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("AlphaKeel IR result card skipped: %s", exc)
+        return None
 
 
 def _coerce_usage_int(value: Any) -> int:
@@ -1991,6 +2010,10 @@ class AgentLoop:
                             goal_continuations += 1
                             continue
 
+                    card = _ir_result_card(run_dir, user_message)
+                    if card:
+                        final_content += "\n\n" + card
+                        self._emit("text_delta", {"delta": "\n\n" + card, "iter": current_iter})
                     trace.write_text_entry(
                         {"type": "answer", "iter": current_iter},
                         field="content",
@@ -2050,6 +2073,10 @@ class AgentLoop:
                             "iterations_without_progress": self._tool_progress.stalled_iterations,
                         }
                     )
+                    card = _ir_result_card(run_dir, user_message)
+                    if card:
+                        # the text_delta below streams final_content, card included
+                        final_content += "\n\n" + card
                     trace.write_text_entry(
                         {"type": "answer", "iter": current_iter},
                         field="content",

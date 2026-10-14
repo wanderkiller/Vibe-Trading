@@ -804,6 +804,10 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         # the exported pack directory the run used (`ir robustness --run` reopens it); None when the pack came from the service
         "pack_dir": str(Path((research_service or {})["pack_dir"]).resolve()) if (research_service or {}).get("pack_dir") else None,
     }
+    # G1 1.1 / 1.2 / 1.3 / 1.16 judged by code (research-truth B3): the label the agent reports verbatim
+    from .screen import screen
+
+    card["screen"] = screen(card)
     (out / "run_card.json").write_text(json.dumps(card, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
     return card
 
@@ -847,11 +851,60 @@ def _write_json(path: Path, doc: Any) -> None:
     path.write_text(json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
 
 
+def _win_rate(out: Path, closed: int) -> Decimal:
+    """Share of closed trades in ``trades.jsonl`` with ``realized > 0``; 0 without closed trades."""
+    if not closed:
+        return Decimal(0)
+    wins = 0
+    path = out / "trades.jsonl"
+    if path.is_file():
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                tr = json.loads(line)
+                if tr.get("status") == "closed" and tr.get("realized") is not None and Decimal(tr["realized"]) > 0:
+                    wins += 1
+    return q8(Decimal(wins) / Decimal(closed))
+
+
+#: ``artifacts/metrics.csv`` columns: upstream's seven (the run page needs them all to show the metrics), then the run's
+#: USDT amounts. Every cell is decimal text, which grounding reads as a number (research-truth B1).
+METRICS_COLUMNS = ("final_value", "total_return", "annual_return", "max_drawdown", "sharpe", "win_rate", "trade_count",
+                   "net_usdt", "fees_usdt", "funding_usdt", "price_pnl_usdt", "max_drawdown_usdt", "days")
+
+
+def metrics_row(out: Path, card: dict) -> dict[str, str]:
+    """The ``metrics.csv`` row of a run card, upstream column names (``runs_routes`` / grounding), decimal text."""
+    capital = Decimal(card["assumptions"]["capital_base"])
+    amounts = card["amounts"]
+    eq = Decimal(amounts["equity_end"])
+    days = int(card["metrics"]["days"])
+    total = q8(eq / capital)
+    sharpe = (card.get("alphakeel_metrics") or {}).get("sharpe_annualised")
+    closed = int(card["counts"]["closed"])
+    return {
+        "final_value": _s(capital + eq),
+        "total_return": _s(total),
+        "annual_return": _s(q8(total * 365 / days)) if days else "0",
+        "max_drawdown": _s(-Decimal(card["max_drawdown"]["fraction_of_capital"])),
+        "sharpe": "" if sharpe is None else repr(sharpe),
+        "win_rate": _s(_win_rate(out, closed)),
+        "trade_count": str(closed),
+        "net_usdt": _s(eq),
+        "fees_usdt": _s(Decimal(amounts["fees"])),
+        "funding_usdt": _s(Decimal(amounts["funding"])),
+        "price_pnl_usdt": _s(Decimal(amounts["price_pnl_closed"])),
+        "max_drawdown_usdt": _s(Decimal(card["max_drawdown"]["amount"])),
+        "days": str(days),
+    }
+
+
 def write_run_files(out: Path, ir_doc: dict, instruments: list[dict], card: dict) -> None:
     """The files that make an ``ir backtest`` directory a Vibe-Trading run: ``ir.json`` (the IR as run, with
-    ``strategy_id``), ``instruments.json``, ``req.json``, ``review_report.json`` (``total_return`` and ``sharpe`` only, from
-    the run card) and ``artifacts/metrics.csv`` (the two columns the run list and detail pages read), and LAST
-    ``state.json`` ``{"status": "success"}``."""
+    ``strategy_id``), ``instruments.json``, ``req.json``, ``review_report.json`` (``total_return``, ``sharpe``,
+    ``max_drawdown``, ``trade_count`` from the run card), ``artifacts/metrics.csv`` (:data:`METRICS_COLUMNS`, the
+    upstream column names the run pages and grounding read), and LAST ``state.json`` ``{"status": "success"}``."""
     loaded = IR.load(ir_doc)
     doc = copy.deepcopy(loaded.doc)
     doc["strategy_id"] = loaded.strategy_id
@@ -859,11 +912,13 @@ def write_run_files(out: Path, ir_doc: dict, instruments: list[dict], card: dict
     _write_json(out / "instruments.json", instruments)
     w = card["window"]
     _write_json(out / "req.json", {"prompt": f"IR {card['name']} {w['start_day']}..{w['end_day']}", "kind": "alphakeel_ir"})
-    total = float(Decimal(card["amounts"]["equity_end"]) / Decimal(card["assumptions"]["capital_base"]))
+    row = metrics_row(out, card)
     sharpe = (card.get("alphakeel_metrics") or {}).get("sharpe_annualised")
-    _write_json(out / "review_report.json", {"total_return": total, "sharpe": sharpe})
+    _write_json(out / "review_report.json", {"total_return": float(row["total_return"]), "sharpe": sharpe,
+                                             "max_drawdown": float(row["max_drawdown"]), "trade_count": int(row["trade_count"])})
     (out / "artifacts").mkdir(exist_ok=True)
-    (out / "artifacts" / "metrics.csv").write_text("total_return,sharpe\n" + f"{total!r},{'' if sharpe is None else repr(sharpe)}\n", encoding="utf-8")
+    (out / "artifacts" / "metrics.csv").write_text(",".join(METRICS_COLUMNS) + "\n" + ",".join(row[c] for c in METRICS_COLUMNS) + "\n",
+                                                    encoding="utf-8")
     _write_json(out / "state.json", {"status": "success"})
 
 

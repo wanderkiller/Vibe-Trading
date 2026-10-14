@@ -38,7 +38,8 @@ GROUNDING_ARTIFACT = "grounding_evidence.json"
 # ``analysis_claim_unavailable``. A deduplicated ("skipped") call is never a
 # completion.
 _ANALYSIS_TOOLS = frozenset(
-    {"backtest", "factor_analysis", "run_shadow_backtest", "quantlib_call"}
+    {"backtest", "factor_analysis", "run_shadow_backtest", "quantlib_call",
+     "alphakeel_research"}
 )
 
 
