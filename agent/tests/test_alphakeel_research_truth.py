@@ -612,6 +612,22 @@ def test_the_child_stderr_never_carries_the_credential(tmp_path, monkeypatch) ->
     assert json.loads(text)["error"] == "alphakeel_research failed (exit 1): Authorization: Bearer <redacted> / <redacted>"
 
 
+def test_a_successful_child_stdout_never_carries_the_credential(tmp_path, monkeypatch) -> None:
+    from src.tools.alphakeel_research_tool import AlphakeelResearchTool
+
+    monkeypatch.setenv("ALPHAKEEL_RESEARCH_TOKEN", "ak_rs_env-secret")
+
+    def main(argv):
+        print(json.dumps({"ok": True, "echo": "token=ak_rs_env-secret"}))
+        return 0
+
+    patch_cli(monkeypatch, main)
+    text = AlphakeelResearchTool().execute(action="check", run_dir=str(tmp_path))
+    assert "ak_rs_env-secret" not in text, text
+    out = json.loads(text)
+    assert out["status"] == "ok" and out["result"]["echo"] == "token=<redacted>", out
+
+
 @pytest.mark.skipif(not hasattr(__import__("os"), "killpg"), reason="process groups are POSIX")
 def test_a_timeout_kills_the_child_process_group(tmp_path, monkeypatch) -> None:
     """On timeout the child's whole process group goes, grandchildren included (real processes)."""

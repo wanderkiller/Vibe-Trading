@@ -275,18 +275,23 @@ def _run_child(cmd: list[str], timeout: float | None) -> subprocess.CompletedPro
     timeout the whole group is killed (grandchildren included) and ``TimeoutExpired`` is raised."""
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ.copy(), cwd=None,
                             start_new_session=True)
+    done = False
     try:
         out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        if hasattr(os, "killpg"):
+        done = True
+    finally:
+        if not done:  # timeout or any other exception: the group goes, the original exception propagates
+            if hasattr(os, "killpg"):
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:  # pragma: no cover - Windows
+                proc.kill()
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
+                proc.communicate(timeout=5)
+            except Exception:  # noqa: BLE001 - give up reading rather than block
                 pass
-        else:  # pragma: no cover - Windows
-            proc.kill()
-        proc.communicate()
-        raise
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
@@ -546,6 +551,10 @@ class AlphakeelResearchTool(BaseTool):
         self._event_callback = event_callback
 
     def execute(self, **kwargs: Any) -> str:
+        """Every exit of ``_execute`` is redacted (the research-service credential never reaches the model)."""
+        return _redact(self._execute(**kwargs))
+
+    def _execute(self, **kwargs: Any) -> str:
         action = str(kwargs.get("action", "")).strip()
         args = kwargs.get("args") or {}
         if action not in _ACTIONS or not isinstance(args, dict):
@@ -606,7 +615,7 @@ class AlphakeelResearchTool(BaseTool):
                 last = next((ln.strip() for ln in reversed(stderr.splitlines()) if ln.strip()), "")
                 msg = f"alphakeel_research failed (exit {rc}): {last[:500]}"
             err = {"status": "error", "error": msg}
-            return _redact(json.dumps({**err, "warnings": warnings} if warnings else err))
+            return json.dumps({**err, "warnings": warnings} if warnings else err)
         try:
             result: Any = json.loads(text)
         except ValueError:
@@ -617,4 +626,4 @@ class AlphakeelResearchTool(BaseTool):
             out["next"] = _MARKET_BLOCKED_NEXT
         if planned is not None:
             _finish_ir_backtest(out, planned, session_run_dir, _session_id(self), warnings)
-        return _redact(_dump(out, warnings))
+        return _dump(out, warnings)
