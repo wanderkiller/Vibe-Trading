@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.alphakeel_tool_cli import patch_cli
+
 from alphakeel_research import ir
 
 pytestmark = pytest.mark.unit
@@ -83,7 +85,7 @@ def _forbid_cli(monkeypatch) -> None:
     def called(argv):
         raise AssertionError(f"AlphaKeel was called: {argv}")
 
-    monkeypatch.setattr(cli, "main", called)
+    patch_cli(monkeypatch, called)
 
 
 def test_tool_returns_all_local_problems_without_calling_alphakeel(monkeypatch, tmp_path) -> None:
@@ -126,7 +128,7 @@ def test_max_loss_fraction_warns_and_reaches_the_envelope(monkeypatch, tmp_path)
         print(json.dumps({"valid": True, "problems": [], "strategy_id": "ir-000000000000000000000000"}))
         return 0
 
-    monkeypatch.setattr(cli, "main", valid)
+    patch_cli(monkeypatch, valid)
     path = tmp_path / "strategy.json"
     path.write_text(json.dumps(_with_loss("0.01", "10000")))
     out = json.loads(AlphakeelResearchTool().execute(action="ir_validate", args={"ir": str(path)}))
@@ -192,7 +194,7 @@ def test_ir_backtest_without_fees_uses_the_public_default(monkeypatch, tmp_path)
         print(json.dumps({"run_dir": "r"}))
         return 0
 
-    monkeypatch.setattr(cli, "main", capture)
+    patch_cli(monkeypatch, capture)
     path = _bt_ir(tmp_path, monkeypatch)
     out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2})
     # the default table cut to the IR's venues (binance, okx)
@@ -212,13 +214,18 @@ def test_fees_object_reaches_the_cli_as_a_file(monkeypatch, tmp_path) -> None:
         print(json.dumps({"run_dir": "r"}))
         return 0
 
-    monkeypatch.setattr(cli, "main", capture)
+    patch_cli(monkeypatch, capture)
     path = _bt_ir(tmp_path, monkeypatch)
     out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2, "fees": fees})
     assert out["status"] == "ok" and seen == {"fees": fees, "source": "request"}
 
 
-def test_argparse_errors_surface_their_message() -> None:
+def test_argparse_errors_surface_their_message(monkeypatch) -> None:
+    # the CLI runs in a child process (research-truth): make the leaf package importable there without an install
+    import os
+
+    agent = str(Path(__file__).resolve().parents[1])
+    monkeypatch.setenv("PYTHONPATH", agent + (os.pathsep + os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else ""))
     out = _tool(action="read", args={"pack": "p", "venue": "okx", "symbol": "S", "start_ms": 1, "end_ms": 2, "table": "depth"})
     assert out["status"] == "error" and out["error"].startswith("bad arguments (exit 2): ")
     assert "invalid choice: 'depth'" in out["error"]
@@ -256,7 +263,7 @@ def test_fees_as_a_json_string_reaches_the_cli_as_a_file(monkeypatch, tmp_path) 
         print(json.dumps({"run_dir": "r"}))
         return 0
 
-    monkeypatch.setattr(cli, "main", capture)
+    patch_cli(monkeypatch, capture)
     path = _bt_ir(tmp_path, monkeypatch)
     out = _tool(action="ir_backtest", args={"ir": str(path), "start_ms": 1, "end_ms": 2, "fees": " " + json.dumps(fees)},
                 run_dir=str(tmp_path))

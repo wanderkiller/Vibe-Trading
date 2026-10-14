@@ -667,7 +667,13 @@ or missing one keeps a marked row, see round 2 below); one row per backtest, `na
 backtests" over every private ledger row (= `trials.count`); it never prints the hypothesis id. Review round 2: a row whose
 run card changed or is missing keeps its line (ledger name, `—` figures, "run card modified or missing"), sorts last,
 is always shown and adds ", modified t" to the header; `out` may not be a directory that already holds a run card; the
-tool's import in `build_registry` is guarded (a failure logs a warning and skips the session injection). `scripts/alphakeel_replay_check.py` is the read-only acceptance check of a replayed session.
+tool's import in `build_registry` is guarded (a failure logs a warning and skips the session injection).
+Replay fixes (2026-10-14): the tool ran `cli.main` under `contextlib.redirect_stdout`, which is process-wide, so two
+conversations at once read each other's output (replay 4cada46ec0b4: `{"output": ""}`, one run in both ledgers). Every
+action now runs `python -m alphakeel_research` in a child process (as upstream's backtest tool / `src/core/runner.py`;
+timeout `VIBE_TRADING_TOOL_TIMEOUT_SECONDS`, cwd the turn's run dir); planning stays in-process. Tests drive the child
+through `agent/tests/fixtures/alphakeel_tool_cli.py`. The routing block declares fee rates `count` and fee, funding
+and PnL amounts `observed` single values; the card gains fee and funding columns. `scripts/alphakeel_replay_check.py` is the read-only acceptance check of a replayed session.
 The upstream test `test_context_attribution_layers.py` formats `_SYSTEM_PROMPT` with every placeholder and gains the new one.
 Review round 1 (2026-10-14): conversation scope and private ledger (above); `fees` must name every derived venue and the
 default table is cut to them; evidence copies never overwrite (`-2`, `-3`…) and `out` may not point into `ir_runs/`;
@@ -688,6 +694,7 @@ robustness sub-runs.
 - `agent/alphakeel_research/ir_backtest.py`
 - `agent/alphakeel_research/cli.py`
 - `agent/tests/test_alphakeel_research_truth.py`
+- `agent/tests/fixtures/alphakeel_tool_cli.py`
 - `agent/tests/test_context_attribution_layers.py`
 - `scripts/alphakeel_replay_check.py`
 

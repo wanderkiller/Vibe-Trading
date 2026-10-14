@@ -187,7 +187,7 @@ _TEXT = {
     True: {"title": "**研究结果（系统根据试验账本生成，非模型撰写）**", "fees": "费率口径：", "per_fill": "每笔",
            "default": "公开基础档 taker（工具默认）", "request": "请求给定费率",
            "summary": "本会话 {n} 个版本 / {m} 次回测：通过初筛 {p}，未通过 {f}，证据不足 {i}",
-           "head": "| 版本 | 窗口 | 成交 | 净收益 USDT | 最大回撤 | 判定 |",
+           "head": "| 版本 | 窗口 | 成交 | 净收益 USDT | 手续费 USDT | 资金费 USDT | 最大回撤 | 判定 |",
            "passed": "通过初筛，1.4–1.13 未评估", "failed": "未通过初筛（{ids}）", "insufficient": "证据不足（{ids}）",
            "more": "另有 {n} 次回测见账本", "tampered": "，已改动 {n}", "tampered_row": "run card 已改动或缺失",
            "not_evaluated": "1.4–1.13（成本压力、DSR、PBO、邻域、走步等）未评估：需要 ir_robustness。",
@@ -196,7 +196,7 @@ _TEXT = {
             "fees": "Fee basis: ", "per_fill": "per fill", "default": "public base-tier taker (tool default)",
             "request": "fees given in the request",
             "summary": "This session: {n} versions / {m} backtests: passed screen {p}, failed screen {f}, insufficient {i}",
-            "head": "| Version | Window | Trades | Net USDT | Max drawdown | Status |",
+            "head": "| Version | Window | Trades | Net USDT | Fees USDT | Funding USDT | Max drawdown | Status |",
             "passed": "passed screen; 1.4–1.13 not evaluated", "failed": "failed screen ({ids})", "insufficient": "insufficient ({ids})",
             "more": "{n} more backtests in the ledger", "tampered": ", modified {n}", "tampered_row": "run card modified or missing",
             "not_evaluated": "1.4–1.13 (cost stress, DSR, PBO, neighbours, walk-forward, ...) not evaluated: needs ir_robustness.",
@@ -312,15 +312,16 @@ def render_card(session_id: str | None, zh: bool) -> str | None:
         row, c = entries[i]
         if c is None:
             name = f"{row.get('name') or '—'} ({str(row.get('strategy_id') or '')[:8]})"
-            rows.append(f"| {name} | — | — | — | — | {t['tampered_row']} |")
+            rows.append(f"| {name} | — | — | — | — | — | — | {t['tampered_row']} |")
             continue
         name = f"{c.get('name') or '—'} ({str(c.get('strategy_id') or '')[:8]})"
         rows.append(f"| {name} | {_window(c.get('window'))} | {(c.get('counts') or {}).get('closed', '—')} | "
                     f"{fmt_amount((c.get('amounts') or {}).get('equity_end'))} | "
+                    f"{fmt_amount((c.get('amounts') or {}).get('fees'))} | {fmt_amount((c.get('amounts') or {}).get('funding'))} | "
                     f"{fmt_fraction((c.get('max_drawdown') or {}).get('fraction_of_capital'))} | {_verdict(c, t)} |")
     summary = t["summary"].format(n=len(versions), m=len(entries), p=counts["passed_screen"], f=counts["failed_screen"],
                                   i=counts["insufficient"]) + (t["tampered"].format(n=bad) if bad else "")
-    lines = ["---", t["title"], *_fee_lines(cards, t), summary, t["head"], "|---|---|---|---|---|---|", *rows]
+    lines = ["---", t["title"], *_fee_lines(cards, t), summary, t["head"], "|---|---|---|---|---|---|---|---|", *rows]
     if len(entries) > len(rows):
         lines.append(t["more"].format(n=len(entries) - len(rows)))
     lines += [t["not_evaluated"], t["ledger"].format(file=TRIALS_EVIDENCE_FILE)]

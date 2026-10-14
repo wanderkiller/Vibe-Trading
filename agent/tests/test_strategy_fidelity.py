@@ -10,6 +10,8 @@ import json
 
 import pytest
 
+from tests.fixtures.alphakeel_tool_cli import patch_cli
+
 from src.agent.context import ContextBuilder
 from src.agent.memory import WorkspaceMemory
 from src.agent.tools import ToolRegistry
@@ -29,7 +31,7 @@ def _run(monkeypatch, main) -> dict:
     from alphakeel_research import cli
     from src.tools.alphakeel_research_tool import AlphakeelResearchTool
 
-    monkeypatch.setattr(cli, "main", main)
+    patch_cli(monkeypatch, main)
     return json.loads(AlphakeelResearchTool().execute(action="freeze", args={
         "start_ms": 1, "end_ms": 2, "market_tables": ["kline_1m"],
         "instruments": [{"venue": "okx", "market": "perp", "symbol": "BTC-USDT-SWAP"}]}))
@@ -46,11 +48,15 @@ def test_no_market_dataset_error_carries_the_blocked_instruction(monkeypatch) ->
 
     from alphakeel_research.errors import ApiError
 
-    def raised(argv):
-        raise ApiError("data.insufficient", _NO_MARKET)
+    def raised(argv):  # the child process: cli.main turns an ApiError into its JSON error and exit 1 (cli.py)
+        try:
+            raise ApiError("data.insufficient", _NO_MARKET)
+        except ApiError as e:
+            print(json.dumps({"error": {"code": e.code, "message": e.message}}))
+            return 1
 
     out = _run(monkeypatch, raised)
-    assert out["code"] == "data.insufficient" and out["next"].startswith("BLOCKED")
+    assert out["result"]["error"]["code"] == "data.insufficient" and out["next"].startswith("BLOCKED")
 
 
 def test_other_errors_carry_no_blocked_instruction(monkeypatch) -> None:

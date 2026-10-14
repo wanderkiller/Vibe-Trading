@@ -8,18 +8,18 @@ under the returned ``run_dir``. No orders are placed anywhere; the service crede
 
 from __future__ import annotations
 
-import contextlib
-import io
 import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from src.agent.tools import BaseTool
-from src.config.accessor import get_env_value
+from src.config.accessor import get_env_config, get_env_value
 from src.tools.alphakeel_ir_request import IGNORED_NOTE
 from src.tools.alphakeel_research_ledger import NO_SESSION_WARNING
 
@@ -252,6 +252,20 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
         if a.get("research_credential"):
             out.append("--research-credential")
     return out
+
+
+def _tool_timeout_seconds() -> float | None:
+    """The child process bound: ``VIBE_TRADING_TOOL_TIMEOUT_SECONDS`` as upstream's backtest tool reads it; a
+    non-positive value disables it."""
+    configured = float(get_env_config().agent_tuning.vibe_trading_tool_timeout_seconds)
+    return configured if configured > 0 else None
+
+
+def _json_or_none(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        return None
 
 
 def _market_blocked(code: Any, message: Any) -> bool:
@@ -491,7 +505,7 @@ class AlphakeelResearchTool(BaseTool):
         warnings: list[str] = []
         planned: dict[str, Any] | None = None
         try:
-            from alphakeel_research import cli, ir
+            from alphakeel_research import ir
             from alphakeel_research.errors import ApiError
 
             if action == "ir_backtest":
@@ -520,21 +534,22 @@ class AlphakeelResearchTool(BaseTool):
                 if found:
                     return _dump({"status": "error", "result": {"valid": False, "source": "local", "problems": found,
                                                                  "hint": _IR_PROBLEMS_HINT}}, warnings)
-        buf, err_buf = io.StringIO(), io.StringIO()
+        # A child process per call, as upstream's backtest tool (src/core/runner.py): redirect_stdout is process-wide, so
+        # two conversations running at once read each other's output (research-truth, replay session 4cada46ec0b4).
+        timeout = _tool_timeout_seconds()
+        cwd = session_run_dir if isinstance(session_run_dir, str) and os.path.isdir(session_run_dir) else None
         try:
-            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err_buf):
-                rc = cli.main(argv)
-        except ApiError as e:
-            err = {"status": "error", "error": e.message, "code": e.code, "request_id": getattr(e, "request_id", None)}
-            if _market_blocked(e.code, e.message):
-                err["next"] = _MARKET_BLOCKED_NEXT
+            proc = subprocess.run([sys.executable, "-m", "alphakeel_research", *argv], capture_output=True, text=True,
+                                  timeout=timeout, env=os.environ.copy(), cwd=cwd)
+        except subprocess.TimeoutExpired:
+            err = {"status": "error", "error": f"alphakeel_research timed out after {timeout} s"}
             return json.dumps({**err, "warnings": warnings} if warnings else err)
-        except SystemExit as e:  # argparse: its message is on stderr and echoes only argv (the token is never in argv)
-            return json.dumps({"status": "error", "error": f"bad arguments (exit {e.code}): {err_buf.getvalue()[-1000:].strip()}"})
         except Exception as e:  # noqa: BLE001 - surfaced as a clean tool error, never with credentials
             err = {"status": "error", "error": f"{e.__class__.__name__}: {str(e)[:500]}"}
             return json.dumps({**err, "warnings": warnings} if warnings else err)
-        text = buf.getvalue()
+        text, rc = proc.stdout or "", proc.returncode
+        if rc == 2 and _json_or_none(text) is None:  # argparse: its message is on stderr and echoes only argv (no token)
+            return json.dumps({"status": "error", "error": f"bad arguments (exit 2): {(proc.stderr or '')[-1000:].strip()}"})
         try:
             result: Any = json.loads(text)
         except ValueError:

@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.alphakeel_tool_cli import patch_cli
+
 from alphakeel_research import ir_backtest, precheck
 from alphakeel_research.screen import screen
 
@@ -168,7 +170,7 @@ def session(tmp_path, monkeypatch):
                           "run_dir": str(rd), "run_card": str(rd / "run_card.json")}))
         return 0
 
-    monkeypatch.setattr(cli, "main", fake_main)
+    patch_cli(monkeypatch, fake_main)
     sess = tmp_path / "session"
     sess.mkdir()
     (sess / "strategy.json").write_text(json.dumps(_ir_doc()))
@@ -286,17 +288,17 @@ def test_result_card_rows_order_and_language(session) -> None:
     assert lines[3] == "本会话 3 个版本 / 4 次回测：通过初筛 1，未通过 1，证据不足 2"
     rows = [ln for ln in lines if ln.startswith("| carry")]
     assert rows == [
-        "| carry-wide (ir-bbbbb) | 2026-01-01→06-29 | 40 | 50.00 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
-        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −1.00 | 0.27% | 证据不足（1.2） |",
-        "| carry-tight (ir-ccccc) | 2026-01-01→06-29 | 40 | −10.00 | 0.27% | 未通过初筛（1.3） |",
-        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −138.19 | 0.27% | 证据不足（1.2） |",
+        "| carry-wide (ir-bbbbb) | 2026-01-01→06-29 | 40 | 50.00 | 300.43 | 190.11 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
+        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −1.00 | 300.43 | 190.11 | 0.27% | 证据不足（1.2） |",
+        "| carry-tight (ir-ccccc) | 2026-01-01→06-29 | 40 | −10.00 | 300.43 | 190.11 | 0.27% | 未通过初筛（1.3） |",
+        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −138.19 | 300.43 | 190.11 | 0.27% | 证据不足（1.2） |",
     ]
     assert "1.4–1.13（成本压力、DSR、PBO、邻域、走步等）未评估：需要 ir_robustness。" in lines
     assert lines[-1] == "账本：ir_trials_evidence.jsonl"  # no hypothesis id handed to the model
     assert "hyp_" not in zh
     en = render_card(SESSION_ID, False)
     assert "This session: 3 versions / 4 backtests: passed screen 1, failed screen 1, insufficient 2" in en
-    assert "| carry-tight (ir-ccccc) | 2026-01-01→06-29 | 40 | −10.00 | 0.27% | failed screen (1.3) |" in en
+    assert "| carry-tight (ir-ccccc) | 2026-01-01→06-29 | 40 | −10.00 | 300.43 | 190.11 | 0.27% | failed screen (1.3) |" in en
     assert en.splitlines()[-1] == "Ledger: ir_trials_evidence.jsonl"
 
 
@@ -352,14 +354,14 @@ def test_p1_2_the_card_shows_only_verified_private_ledger_rows(session) -> None:
     s8 = session["sid"][:8]
     assert "500.00" not in card and "−138.19" not in card
     table = [ln for ln in lines if ln.startswith("| real-")]
-    assert table == ["| real-b (ir-bbbbb) | 2026-01-01→06-29 | 40 | 12.50 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
-                     f"| real-a ({s8}) | — | — | — | — | run card 已改动或缺失 |"]
+    assert table == ["| real-b (ir-bbbbb) | 2026-01-01→06-29 | 40 | 12.50 | 300.43 | 190.11 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
+                     f"| real-a ({s8}) | — | — | — | — | — | — | run card 已改动或缺失 |"]
     # N / M count every private ledger row (= trials.count); the changed row is in no screen class
     assert "本会话 2 个版本 / 2 次回测：通过初筛 1，未通过 0，证据不足 0，已改动 1" in lines
     assert not any("未显示" in ln for ln in lines)
     en = L.render_card(SESSION_ID, False)
     assert "This session: 2 versions / 2 backtests: passed screen 1, failed screen 0, insufficient 0, modified 1" in en
-    assert f"| real-a ({s8}) | — | — | — | — | run card modified or missing |" in en
+    assert f"| real-a ({s8}) | — | — | — | — | — | — | run card modified or missing |" in en
 
 
 def test_p1_3_fees_missing_a_venue_is_refused() -> None:
@@ -456,7 +458,7 @@ def test_r2_untouched_header_counts_with_a_changed_card(session) -> None:
     lines = L.render_card(SESSION_ID, True).splitlines()
     assert lines[3] == "本会话 2 个版本 / 2 次回测：通过初筛 0，未通过 1，证据不足 0，已改动 1"
     table = [ln for ln in lines if ln.startswith("| v")]
-    assert table[-1] == "| vb (ir-bbbbb) | — | — | — | — | run card 已改动或缺失 |"
+    assert table[-1] == "| vb (ir-bbbbb) | — | — | — | — | — | — | run card 已改动或缺失 |"
 
 
 def test_r2_build_registry_survives_a_failing_alphakeel_import(monkeypatch, caplog) -> None:
@@ -469,3 +471,79 @@ def test_r2_build_registry_survives_a_failing_alphakeel_import(monkeypatch, capl
         registry = build_registry()
     assert registry is not None
     assert any("alphakeel_research is not session-injected" in r.getMessage() for r in caplog.records)
+
+
+# --- replay fixes: one child process per call, fee roles, card columns ------------------------------------------------
+
+def test_two_conversations_at_once_each_get_their_own_cli_output(session, monkeypatch) -> None:
+    """Replay session 4cada46ec0b4: with contextlib.redirect_stdout (process-wide) a concurrent conversation's CLI output
+    landed in the other's buffer, so one got ``{"output": ""}`` and both ledgers recorded the same run. Each call now runs
+    its own child process and reads only that process's stdout."""
+    import subprocess
+    import threading
+
+    from src.tools import alphakeel_research_ledger as L
+    from src.tools.alphakeel_research_tool import AlphakeelResearchTool
+    from tests.fixtures.alphakeel_tool_cli import patch_run
+
+    runs = {}
+    for who in ("A", "B"):
+        rd = session["tmp"] / f"turn-{who}"
+        rd.mkdir()
+        (rd / "strategy.json").write_text(json.dumps(_ir_doc()))
+        runs[who] = (rd, _write_run(session["tmp"] / f"runs-{who}", f"run_{who}_ir", _card(session["sid"], f"conv-{who}", "-1", 15)))
+    barrier = threading.Barrier(2)
+
+    def fake_run(cmd, **kwargs):
+        ir_path = cmd[cmd.index("--ir") + 1]
+        who = "A" if "turn-A" in ir_path else "B"
+        barrier.wait(timeout=10)  # both children "run" at the same time
+        rd = runs[who][1]
+        card = json.loads((rd / "run_card.json").read_text())
+        stdout = json.dumps({"evidence_status": card["screen"]["evidence_status"], "screen": card["screen"],
+                             "strategy_id": card["strategy_id"], "counts": card["counts"], "assumptions": card["assumptions"],
+                             "run_dir": str(rd), "run_card": str(rd / "run_card.json")})
+        return subprocess.CompletedProcess(cmd, 0, stdout, "")
+
+    patch_run(monkeypatch, fake_run)
+    results = {}
+
+    def call(who):
+        tool = AlphakeelResearchTool(default_session_id=f"sess-{who}")
+        results[who] = json.loads(tool.execute(action="ir_backtest", args={"ir": "strategy.json"}, run_dir=str(runs[who][0])))
+
+    threads = [threading.Thread(target=call, args=(w,)) for w in ("A", "B")]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join(timeout=30)
+    for who in ("A", "B"):
+        assert results[who]["status"] == "ok", results[who]
+        assert results[who]["result"]["run_dir"] == str(runs[who][1])
+        rows = L.ledger_rows(f"sess-{who}")
+        assert [r["run_card_path"] for r in rows] == [str((runs[who][1] / "run_card.json").resolve())]
+
+
+def test_fee_rate_is_count_and_fee_amount_is_observed(session) -> None:
+    from src.agent.grounding import GroundingLedger
+
+    card = _card(session["sid"], "carry", "-138.19", 15)
+    card["amounts"]["fees"] = "930.61"
+    raw = _run_tool(session, "20261014_090950_ir", card)
+    ledger = GroundingLedger(run_dir=session["session"], user_message="回测这个跨所资金费率策略")
+    ledger.ingest_tool_result(tool_name="alphakeel_research", arguments={"action": "ir_backtest", "args": {"ir": "strategy.json"}},
+                              result=json.dumps(raw), call_id="bt-1", success=True)
+    r = ledger.validate_final_answer(
+        "费率口径：公开基础档 taker，费率 0.0005；手续费 930.61 USDT。\n\n```figures\n0.0005 | count | 费率（工具默认）\n"
+        "930.61 | observed | 手续费 | ir_runs/20261014_090950_ir\n```")
+    assert r.valid, json.dumps(r.issues, ensure_ascii=False)
+
+
+def test_card_has_fee_and_funding_columns(session) -> None:
+    from src.tools.alphakeel_research_ledger import render_card
+
+    _run_tool(session, "a_ir", _card("ir-aaaaaaaaaa", "va", "-5", 40))
+    zh, en = render_card(SESSION_ID, True).splitlines(), render_card(SESSION_ID, False).splitlines()
+    assert "| 版本 | 窗口 | 成交 | 净收益 USDT | 手续费 USDT | 资金费 USDT | 最大回撤 | 判定 |" in zh
+    assert "| Version | Window | Trades | Net USDT | Fees USDT | Funding USDT | Max drawdown | Status |" in en
+    assert "| va (ir-aaaaa) | 2026-01-01→06-29 | 40 | −5.00 | 300.43 | 190.11 | 0.27% | 未通过初筛（1.3） |" in zh
