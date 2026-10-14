@@ -77,7 +77,8 @@ uses `overscroll-contain`, and the assistant avatar is hidden on mobile (it inde
 **Purpose.** The files the production Docker deployment on this host is built from: `Dockerfile.local` is the upstream
 `Dockerfile` plus one block that installs the hash-pinned Anthropic/DeepSeek adapters from
 `requirements-local-providers-lock.txt` (`--require-hashes --no-deps`, then `pip check`);
-`docker-compose.override.yml` selects it, host networking and a 127.0.0.1:8899 listener; `DEPLOYMENT.local.md`
+`docker-compose.override.yml` selects it, host networking, a 127.0.0.1:8899 listener and `init: true` (grandchildren
+of an `alphakeel_research` child killed by process group on timeout are reaped by init); `DEPLOYMENT.local.md`
 documents the build, backup and upgrade rules.
 
 **Files.**
@@ -106,6 +107,7 @@ The `langchain-core==1.6.1` anchor fails when upstream moves that pin; then the 
 - upstream `docker-compose.yml`: `  vibe-home:` — DEPLOYMENT.local.md relies on the vibe-home volume
 - hook `docker-compose.override.yml`: `dockerfile: Dockerfile.local`
 - hook `docker-compose.override.yml`: `ALPHAKEEL_HANDOFF_DIR: /home/vibe/handoff` — the hand-off bind mount and its two variables
+- hook `docker-compose.override.yml`: `init: true` — grandchildren of a timed-out alphakeel_research child (killpg) are reaped by init
 - upstream `requirements-lock.txt`: `langchain-core==1.6.1 \` — the overlay's langchain-core 1.6.3 pin replaces exactly this base pin; a change means regenerating the overlay
 - hook `requirements-local-providers-lock.txt`: `langchain-anthropic==1.7.2`
 - hook `tools/deploy-vt.sh`: `refuse pairing "contract/PIN differs from $AK_PIN"` — the release gate (audit 2026-10-12 D6-1): "Deploy gate" workflow success on the exact commit, commit = AlphaKeel `ci/vibe-trading.ref`, PIN = `ci/vibe-trading.pin`, backup, health + `contract_pin: matched`, rollback; log in `deploy-log.jsonl`

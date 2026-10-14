@@ -14,6 +14,9 @@ services:
     # instead of 127.0.0.1, which falls outside uvicorn's default
     # trusted-proxy IP list and breaks X-Forwarded-Proto handling for
     # non-GET requests.
+    # Run an init as PID 1: a grandchild of the alphakeel_research tool whose process group was killed on timeout
+    # (killpg) is reparented to it and reaped instead of lingering as a zombie.
+    init: true
     network_mode: host
     ports: !reset []
     command: ["vibe-trading", "serve", "--host", "127.0.0.1", "--port", "8899"]

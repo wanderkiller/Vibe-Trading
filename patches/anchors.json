@@ -127,6 +127,12 @@
      "literal": "ALPHAKEEL_HANDOFF_DIR: /home/vibe/handoff"
     },
     {
+     "file": "docker-compose.override.yml",
+     "kind": "hook",
+     "literal": "init: true",
+     "note": "grandchildren of a timed-out alphakeel_research child (killpg) are reaped by init"
+    },
+    {
      "file": "tools/deploy-vt.sh",
      "kind": "hook",
      "literal": "refuse pairing \"contract/PIN differs from $AK_PIN\""
