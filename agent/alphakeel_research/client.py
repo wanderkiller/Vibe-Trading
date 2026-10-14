@@ -30,6 +30,25 @@ def key_for(kind: str, payload: Any) -> str:
     return hashlib.sha256((kind + "|" + contract.canonical_bytes(payload).decode("utf-8")).encode("utf-8")).hexdigest()[:40]
 
 
+def credential_secrets() -> list[str]:
+    """The service credential values present in the environment (``ALPHAKEEL_RESEARCH_TOKEN``, the stripped content of
+    ``ALPHAKEEL_RESEARCH_TOKEN_FILE``), non-empty ones only, so a caller can redact them; never logged."""
+    out = []
+    tok = os.environ.get("ALPHAKEEL_RESEARCH_TOKEN")
+    if tok:
+        out.append(tok)
+    tok_file = os.environ.get("ALPHAKEEL_RESEARCH_TOKEN_FILE")
+    if tok_file:
+        try:
+            with open(tok_file, encoding="utf-8") as f:
+                content = f.read().strip()
+        except (OSError, UnicodeDecodeError):
+            content = ""
+        if content:
+            out.append(content)
+    return out
+
+
 class Client:
     def __init__(self, base_url: str | None = None, token: str | None = None, *, timeout: float = 60.0,
                  retries: int = 3, backoff: float = 0.4, transport: httpx.BaseTransport | None = None,

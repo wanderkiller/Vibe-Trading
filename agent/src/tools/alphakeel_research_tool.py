@@ -298,19 +298,9 @@ def _run_child(cmd: list[str], timeout: float | None) -> subprocess.CompletedPro
 def _redact(text: str) -> str:
     """``text`` with the research-service credential (``ALPHAKEEL_RESEARCH_TOKEN``, the content of
     ``ALPHAKEEL_RESEARCH_TOKEN_FILE``) replaced by ``<redacted>``."""
-    secrets = []
-    tok = os.environ.get("ALPHAKEEL_RESEARCH_TOKEN")
-    if tok:
-        secrets.append(tok)
-    path = os.environ.get("ALPHAKEEL_RESEARCH_TOKEN_FILE")
-    if path:
-        try:
-            with open(path, encoding="utf-8") as f:
-                content = f.read().strip()
-            if content:
-                secrets.append(content)
-        except (OSError, UnicodeDecodeError):
-            pass
+    from alphakeel_research.client import credential_secrets  # the leaf owns the credential's environment
+
+    secrets = credential_secrets()
     for secret in secrets:
         text = text.replace(secret, "<redacted>")
     return text
