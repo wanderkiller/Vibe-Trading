@@ -276,7 +276,8 @@ def _ir_review_summary(args: dict[str, Any]) -> dict | None:
 
 def _check_out(out: Any, run_dir: Any) -> None:
     """``ir_backtest`` ``out`` (already resolved): never inside ``<run_dir>/ir_runs/`` (the evidence copies), never a
-    path whose last segment is empty, ``.`` or ``..``."""
+    path whose last segment is empty, ``.`` or ``..``, never a directory that already holds a run card (the ledger's
+    sha256 of the earlier run would break)."""
     if out in (None, ""):
         return
     text = str(out)
@@ -288,6 +289,8 @@ def _check_out(out: Any, run_dir: Any) -> None:
         inside = p == root or p.startswith(root.rstrip(os.sep) + os.sep)
     if last in ("", ".", "..") or inside:
         raise ValueError("out must not be inside ir_runs/ or end in . or ..")
+    if os.path.isfile(os.path.join(text, "run_card.json")):
+        raise ValueError("out already holds a run card: use a new out directory or omit out")
 
 
 def _session_id(tool: Any) -> str | None:

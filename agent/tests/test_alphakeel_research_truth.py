@@ -348,10 +348,18 @@ def test_p1_2_the_card_shows_only_verified_private_ledger_rows(session) -> None:
     doc["amounts"]["equity_end"] = "500"
     path.write_text(json.dumps(doc))
     card = L.render_card(SESSION_ID, True)
-    assert "real-a" not in card and "500.00" not in card and "real-b" in card
-    assert "1 条登记的 run card 已被改动或缺失，未显示" in card.splitlines()
-    assert "本会话 1 个版本 / 1 次回测" in card
-    assert "1 registered run cards were modified or missing and are not shown" in L.render_card(SESSION_ID, False)
+    lines = card.splitlines()
+    s8 = session["sid"][:8]
+    assert "500.00" not in card and "−138.19" not in card
+    table = [ln for ln in lines if ln.startswith("| real-")]
+    assert table == ["| real-b (ir-bbbbb) | 2026-01-01→06-29 | 40 | 12.50 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
+                     f"| real-a ({s8}) | — | — | — | — | run card 已改动或缺失 |"]
+    # N / M count every private ledger row (= trials.count); the changed row is in no screen class
+    assert "本会话 2 个版本 / 2 次回测：通过初筛 1，未通过 0，证据不足 0，已改动 1" in lines
+    assert not any("未显示" in ln for ln in lines)
+    en = L.render_card(SESSION_ID, False)
+    assert "This session: 2 versions / 2 backtests: passed screen 1, failed screen 0, insufficient 0, modified 1" in en
+    assert f"| real-a ({s8}) | — | — | — | — | run card modified or missing |" in en
 
 
 def test_p1_3_fees_missing_a_venue_is_refused() -> None:
@@ -420,3 +428,44 @@ def test_metrics_csv_uses_upstream_columns_as_decimal_text(tmp_path) -> None:
     assert row["max_drawdown"] == "-0.00271" and row["trade_count"] == "15" and row["win_rate"] == "0"
     assert row["annual_return"] == ir_backtest._s(ir_backtest.q8(Decimal("-0.0069095") * 365 / 180))
     assert row["net_usdt"] == "-138.19" and row["fees_usdt"] == "300.43" and row["sharpe"] == "-1.25"
+
+
+# --- review round 2 ------------------------------------------------------------------------------------------------------
+
+def test_r2_out_holding_a_run_card_is_refused_before_anything_is_registered(session) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    _run_tool(session, "20261014_090950_ir", _card(session["sid"], "v1", "-1", 15))
+    rows, hyp = L.ledger_rows(SESSION_ID), (session["tmp"] / "sessions" / SESSION_ID / "ir_hypothesis.json").read_text()
+    before = list(session["argv"])
+    out = _run_tool(session, "unused_ir", _card(session["sid"], "v1", "-1", 15), out=str(session["runs"] / "20261014_090950_ir"))
+    session["queue"].clear()
+    assert out == {"status": "error", "error": "out already holds a run card: use a new out directory or omit out"}
+    assert session["argv"] == before and L.ledger_rows(SESSION_ID) == rows
+    assert (session["tmp"] / "sessions" / SESSION_ID / "ir_hypothesis.json").read_text() == hyp
+
+
+def test_r2_untouched_header_counts_with_a_changed_card(session) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    _run_tool(session, "a_ir", _card("ir-aaaaaaaaaa", "va", "-5", 40))
+    _run_tool(session, "b_ir", _card("ir-bbbbbbbbbb", "vb", "3", 40))
+    before = L.render_card(SESSION_ID, True).splitlines()[3]
+    assert before == "本会话 2 个版本 / 2 次回测：通过初筛 1，未通过 1，证据不足 0"
+    (session["runs"] / "b_ir" / "run_card.json").unlink()  # missing counts as changed
+    lines = L.render_card(SESSION_ID, True).splitlines()
+    assert lines[3] == "本会话 2 个版本 / 2 次回测：通过初筛 0，未通过 1，证据不足 0，已改动 1"
+    table = [ln for ln in lines if ln.startswith("| v")]
+    assert table[-1] == "| vb (ir-bbbbb) | — | — | — | — | run card 已改动或缺失 |"
+
+
+def test_r2_build_registry_survives_a_failing_alphakeel_import(monkeypatch, caplog) -> None:
+    import sys
+
+    from src.tools import build_registry
+
+    monkeypatch.setitem(sys.modules, "src.tools.alphakeel_research_tool", None)  # the import raises ImportError
+    with caplog.at_level("WARNING"):
+        registry = build_registry()
+    assert registry is not None
+    assert any("alphakeel_research is not session-injected" in r.getMessage() for r in caplog.records)

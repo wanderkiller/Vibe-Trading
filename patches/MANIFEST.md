@@ -664,7 +664,10 @@ read-modify-write. No session id: nothing is registered, no `--trials`, no card 
 §5: the loop appends a result card of the conversation after the (grounded) answer, at both answer sites; a failure
 only logs a warning. The card reads only the private ledger and re-reads every run card, checking its sha256 (a changed
 or missing one is not shown, and counted); one row per backtest, `name (strategy_id[:8])`; header "N versions / M
-backtests" over the shown rows; it never prints the hypothesis id. `scripts/alphakeel_replay_check.py` is the read-only acceptance check of a replayed session.
+backtests" over every private ledger row (= `trials.count`); it never prints the hypothesis id. Review round 2: a row whose
+run card changed or is missing keeps its line (ledger name, `—` figures, "run card modified or missing"), sorts last,
+is always shown and adds ", modified t" to the header; `out` may not be a directory that already holds a run card; the
+tool's import in `build_registry` is guarded (a failure logs a warning and skips the session injection). `scripts/alphakeel_replay_check.py` is the read-only acceptance check of a replayed session.
 The upstream test `test_context_attribution_layers.py` formats `_SYSTEM_PROMPT` with every placeholder and gains the new one.
 Review round 1 (2026-10-14): conversation scope and private ledger (above); `fees` must name every derived venue and the
 default table is cut to them; evidence copies never overwrite (`-2`, `-3`…) and `out` may not point into `ir_runs/`;
@@ -694,8 +697,8 @@ robustness sub-runs.
 
 **Anchors.**
 - upstream `agent/src/tools/__init__.py`: `session_injected_classes = goal_tool_classes | {` — tools that get default_session_id / event_callback
-- hook `agent/src/tools/__init__.py`: `from src.tools.alphakeel_research_tool import AlphakeelResearchTool`
-- hook `agent/src/tools/__init__.py`: `AlphakeelResearchTool,  # research-truth: the IR trial ledger and result card are per conversation`
+- hook `agent/src/tools/__init__.py`: `from src.tools.alphakeel_research_tool import AlphakeelResearchTool` — inside try/except: an import failure logs a warning and the tool is not session-injected
+- hook `agent/src/tools/__init__.py`: `session_injected_classes = session_injected_classes | {AlphakeelResearchTool}`
 - upstream `agent/src/agent/grounding/ledger.py`: `_ANALYSIS_TOOLS = frozenset(`
 - hook `agent/src/agent/grounding/ledger.py`: `     "alphakeel_research"}`
 - preimage `agent/src/agent/grounding/ledger.py`: `{"backtest", "factor_analysis", "run_shadow_backtest", "quantlib_call"}`

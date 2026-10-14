@@ -1313,12 +1313,13 @@
     {
      "file": "agent/src/tools/__init__.py",
      "kind": "hook",
-     "literal": "from src.tools.alphakeel_research_tool import AlphakeelResearchTool"
+     "literal": "from src.tools.alphakeel_research_tool import AlphakeelResearchTool",
+     "note": "inside try/except: an import failure logs a warning and the tool is not session-injected"
     },
     {
      "file": "agent/src/tools/__init__.py",
      "kind": "hook",
-     "literal": "AlphakeelResearchTool,  # research-truth: the IR trial ledger and result card are per conversation"
+     "literal": "session_injected_classes = session_injected_classes | {AlphakeelResearchTool}"
     },
     {
      "file": "agent/src/agent/grounding/ledger.py",

@@ -133,7 +133,11 @@ def build_registry(
     from src.tools.remember_tool import RememberTool
     from src.tools.swarm_tool import SwarmTool
     from src.tools.scheduled_research_tool import ScheduledResearchTool
-    from src.tools.alphakeel_research_tool import AlphakeelResearchTool
+    try:  # research-truth: optional (leaf package); discovery records its own import failure
+        from src.tools.alphakeel_research_tool import AlphakeelResearchTool
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("alphakeel_research is not session-injected: %s", exc)
+        AlphakeelResearchTool = None
 
     goal_tool_classes = {
         StartResearchGoalTool,
@@ -146,8 +150,9 @@ def build_registry(
     session_injected_classes = goal_tool_classes | {
         RunResearchAutopilotTool,
         ScheduledResearchTool,
-        AlphakeelResearchTool,  # research-truth: the IR trial ledger and result card are per conversation
     }
+    if AlphakeelResearchTool is not None:  # research-truth: the IR trial ledger and result card are per conversation
+        session_injected_classes = session_injected_classes | {AlphakeelResearchTool}
     classes = _discover_subclasses()
     registry = ToolRegistry()
     for module_name, reason in _DISCOVERY_FAILURES.items():
