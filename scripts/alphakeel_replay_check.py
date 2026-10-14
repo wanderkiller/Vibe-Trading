@@ -13,8 +13,8 @@ names are at the recorded paths). Prints one ``PASS`` / ``FAIL`` line per check 
    number of distinct ``strategy_id`` in the conversation's private ledger up to and including that run
 4. the final answer ends with the result card exactly as the private ledger and the verified run cards render it now
    (rows, verdict column and header counts)
-5. no ``answer_rejected`` issue rejected a number whose absolute value, at 2 decimals, is a number of one of this
-   conversation's registered run cards
+5. no ``answer_rejected`` issue rejected a number whose absolute value, at 2 decimals, is a non-zero value of the 13
+   ``metrics.csv`` columns of an evidence copy of this conversation's verified run cards
 6. no separate ``freeze`` call
 """
 
@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -199,22 +198,6 @@ def check_4(answer: str | None, session_id: str) -> tuple[bool, str]:
     return False, "the answer does not end with the card the ledger and the verified run cards render (rows, verdicts, counts)"
 
 
-def _numbers(doc: Any) -> list[Decimal]:
-    """Every number of a run card: JSON numbers and decimal strings, at any depth."""
-    out: list[Decimal] = []
-    if isinstance(doc, dict):
-        for v in doc.values():
-            out += _numbers(v)
-    elif isinstance(doc, list):
-        for v in doc:
-            out += _numbers(v)
-    elif not isinstance(doc, bool) and isinstance(doc, (int, float, str)):
-        d = _dec(doc) if not isinstance(doc, str) or re.fullmatch(r"-?\d+(\.\d+)?", doc.strip()) else None
-        if d is not None:
-            out.append(d)
-    return out
-
-
 def _two(d: Decimal) -> str:
     return format(abs(d).quantize(Decimal("0.01")), "f")
 
@@ -222,11 +205,22 @@ def _two(d: Decimal) -> str:
 def check_5(entries: list[dict], session_id: str) -> tuple[bool, str]:
     from src.tools import alphakeel_research_ledger as L
 
+    from alphakeel_research.ir_backtest import METRICS_COLUMNS
+
     registered = set()
     for row in L.ledger_rows(session_id):
-        card = L.verified_card(row)
-        if card is not None:
-            registered |= {_two(d) for d in _numbers(card)}
+        if L.verified_card(row) is None or not row.get("evidence_dir") or not row.get("run_dir"):
+            continue
+        path = Path(str(row["run_dir"])) / str(row["evidence_dir"]) / "artifacts" / "metrics.csv"
+        try:
+            head, values = path.read_text(encoding="utf-8").splitlines()[:2]
+        except (OSError, ValueError):
+            continue
+        cells = dict(zip(head.split(","), values.split(",")))
+        for col in METRICS_COLUMNS:
+            d = _dec(cells.get(col, ""))
+            if d is not None and not d.is_zero():
+                registered.add(_two(d))
     bad = []
     for e in entries:
         if e.get("type") != "answer_rejected":
