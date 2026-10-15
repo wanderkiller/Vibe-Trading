@@ -400,3 +400,15 @@ def test_register_trial_key_includes_assumptions_version(tmp_path, monkeypatch):
     # the reconciliation (cross-check) key stays body-only
     body, plain = ir_crosscheck.mirror_request(golden_ir(), card)
     assert plain == ir_crosscheck.mirror_request(golden_ir(), card, key_salt="")[1] != ir_crosscheck.mirror_request(golden_ir(), card, key_salt="x")[1]
+
+
+def test_mirror_request_ignores_a_top_level_strategy_id_in_the_ir(tmp_path):
+    card = {"pack": {"pack_id": "pk-x"}, "window": {"start_ms": 1, "end_ms": 2}, "view": "kline_close_synthetic_bbo", "step_minutes": 5,
+            "assumptions": {"fees": {"okx": {"perp": "0.0005"}}},
+            "instruments": [{"venue": "okx", "market": "perp", "symbol": "BTC-USDT-SWAP", "base": "BTC", "quote": "USDT"}]}
+    plain = golden_ir()
+    plain.pop("strategy_id", None)
+    with_id = {**plain, "strategy_id": "st-whatever"}
+    for salt in ("", "salt"):
+        assert ir_crosscheck.mirror_request(plain, card, key_salt=salt) == ir_crosscheck.mirror_request(with_id, card, key_salt=salt)
+    assert "strategy_id" not in ir_crosscheck.mirror_request(with_id, card)[0]["ir"] and "strategy_id" in with_id

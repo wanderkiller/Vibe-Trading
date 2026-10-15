@@ -1074,7 +1074,34 @@ def test_floatfree_row_digest_equals_row_digest_and_refuses_floats(tmp_path):
         pack._read_rows_floatfree(name)
 
 
-def test_spill_is_cached_per_pack_and_the_second_run_matches_the_first(tmp_path, monkeypatch):
+def test_spill_is_cached_per_pack_with_a_client_and_never_for_an_exported_directory(tmp_path, monkeypatch):
+    pd = export_dir(tmp_path, golden_built())
+    insts = [Inst("okx", "perp", "BTC-USDT-SWAP"), Inst("binance", "perp", "BTCUSDT")]
+    pack = Pack.from_directory(pd)
+    ir_backtest.spill_klines(pack, insts, START, END, tmp_path / "w0")
+    assert not (pd / "spill").exists()  # exported directory: nothing is written
+    pack.client = object()  # sentinel: content is already verified in the cache, the client is never called
+    p1, c1 = ir_backtest.spill_klines(pack, insts, START, END, tmp_path / "w1")
+    entries = [d for d in (pd / "spill").iterdir() if d.is_dir()]
+    assert len(entries) == 1 and (entries[0] / "manifest.json").is_file()
+
+    def boom(self, name):
+        raise AssertionError("a cache hit must not re-read the pack klines")
+
+    monkeypatch.setattr(Pack, "_read_rows_floatfree", boom)
+    p2, c2 = ir_backtest.spill_klines(pack, insts, START, END, tmp_path / "w2")
+    for i in insts:
+        assert p1[i].read_bytes() == p2[i].read_bytes() and p2[i].parent == tmp_path / "w2"
+        assert (c1[i].rows, c1[i].first_ms, c1[i].last_ms, c1[i].hexdigest()) == (c2[i].rows, c2[i].first_ms, c2[i].last_ms, c2[i].hexdigest())
+    monkeypatch.undo()
+    # a corrupted entry is a miss: removed and re-spilled
+    k = next(entries[0].glob("*.klines"))
+    k.write_text("garbage\n")
+    p3, _ = ir_backtest.spill_klines(pack, insts, START, END, tmp_path / "w3")
+    assert (entries[0] / "manifest.json").is_file() and k.read_text() != "garbage\n" and p3[insts[0]].read_bytes() == p1[insts[0]].read_bytes()
+
+
+def test_two_cli_runs_on_an_exported_pack_match_and_leave_no_spill_dir(tmp_path):
     pd = export_dir(tmp_path, golden_built())
     (tmp_path / "ir.json").write_text(json.dumps(golden_ir()))
     (tmp_path / "inst.json").write_text(json.dumps([OK, BN]))
@@ -1088,26 +1115,12 @@ def test_spill_is_cached_per_pack_and_the_second_run_matches_the_first(tmp_path,
         assert rc == 0
         return out
 
-    o1 = go("r1")
-    entries = [d for d in (pd / "spill").iterdir() if d.is_dir()]
-    assert len(entries) == 1 and (entries[0] / "manifest.json").is_file()
-
-    def boom(self, name):
-        raise AssertionError("second run must not re-read the pack klines")
-
-    monkeypatch.setattr(Pack, "_read_rows_floatfree", boom)
-    o2 = go("r2")
+    o1, o2 = go("r1"), go("r2")
+    assert not (pd / "spill").exists()
     c1, c2 = (json.loads((o / "run_card.json").read_text()) for o in (o1, o2))
     for c in (c1, c2):
-        c.pop("elapsed_s", None)
-        c.pop("created_ms", None)
-    c1.pop("out_dir", None), c2.pop("out_dir", None)
+        for k in ("elapsed_s", "created_ms", "out_dir"):
+            c.pop(k, None)
     assert c1 == c2
     for f in ("trades.jsonl", "equity.jsonl"):
         assert (o1 / f).read_bytes() == (o2 / f).read_bytes()
-    # a corrupted entry is a miss: removed and re-spilled (the decoder is back)
-    monkeypatch.undo()
-    k = next(entries[0].glob("*.klines"))
-    k.write_text("garbage\n")
-    go("r3")
-    assert (entries[0] / "manifest.json").is_file() and k.read_text() != "garbage\n"

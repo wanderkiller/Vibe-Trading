@@ -200,7 +200,11 @@ def trial_key_salt() -> str:
 def mirror_request(ir_doc: dict, card: dict, *, profile: dict | None = None, key_salt: str = "") -> tuple[dict, str]:
     """(body, idempotency key) of the AlphaKeel ``ir_strategy`` + ``dataset_view`` run that mirrors a VT run card: the
     cross-check passes ``profile`` = :data:`RECONCILIATION_FILL`, trial registration none (the server's conservative default).
-    ``key_salt`` is mixed into the key (trial registration passes :func:`trial_key_salt`; the reconciliation key stays body-only)."""
+    ``key_salt`` is mixed into the key (trial registration passes :func:`trial_key_salt`; the reconciliation key stays body-only).
+
+    The body's ``ir`` never carries a top-level ``strategy_id``: ``write_run_files`` writes an ``ir.json`` with one, the in-flow
+    IR has none, and AlphaKeel computes the id itself, so the same strategy would otherwise get two request digests / trial keys."""
+    ir_doc = {k: v for k, v in ir_doc.items() if k != "strategy_id"}
     body = {"mode": "ir_strategy", "pack_id": card["pack"]["pack_id"], "ir": ir_doc, "dataset_view": view_of(card)}
     if profile is not None:
         body["profile"] = profile

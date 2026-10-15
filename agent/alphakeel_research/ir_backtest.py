@@ -261,7 +261,7 @@ def spill_klines(pack: Pack, insts: list[Inst], start_ms: int, end_ms: int, work
     at most ``_SPILL_KEEP`` entries). The same pack, instruments and window re-use the verified files instead of re-reading
     the pack. A cache problem never fails the run."""
     root = None
-    if pack.cache is not None:
+    if pack.cache is not None and pack.client is not None:  # an exported directory (no client) is read-only: nothing is written
         try:
             root = pack.cache.root / "spill"
             key = _spill_key(pack, insts, start_ms, end_ms)
