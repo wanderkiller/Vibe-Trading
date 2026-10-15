@@ -374,11 +374,17 @@ class Pack:
 
     def _read_rows_floatfree(self, name: str) -> list[list]:
         """Like ``_read`` (uncached) but every line is decoded refusing floats, so the rows are float-free by construction."""
+        line = 0
+
         def refuse(_s: str):
-            raise EvidenceError("evidence.reference", f"pack object {name} contains a floating-point number")
+            raise contract.ContractError([contract.Violation("schema.float", f"{name}#{line}", "floating-point numbers are not allowed")])
 
         raw = self._path(self._objs[name]).read_bytes()
-        return [json.loads(ln, parse_float=refuse, parse_constant=refuse) for ln in raw.split(b"\n")[1:] if ln]
+        rows = []
+        for line, ln in enumerate(raw.split(b"\n")):
+            if line and ln:  # line 0 is the header
+                rows.append(json.loads(ln, parse_float=refuse, parse_constant=refuse))
+        return rows
 
     def _json_object(self, name: str) -> dict:
         return json.loads(self._path(self._objs[name]).read_bytes())

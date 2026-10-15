@@ -33,10 +33,12 @@ import bisect
 import copy
 import datetime as dt
 import hashlib
+import inspect
 import json
 import os
 import shutil
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_EVEN, Decimal
@@ -46,6 +48,7 @@ from typing import Any
 from . import canon, ir_views
 from . import ir as IR
 from .errors import ApiError, EvidenceError, Unsupported
+from . import packfile
 from .packfile import Chain, Inst, Pack, Pit
 
 RUN_CARD_SCHEMA = "vibe-trading.ir-backtest-run-card/1"
@@ -194,6 +197,7 @@ class _FrozenChain:
 
 
 _SPILL_KEEP = 8
+_STALE_TMP_S = 3600
 
 
 def _file_sha256(p: Path) -> str:
@@ -205,7 +209,7 @@ def _file_sha256(p: Path) -> str:
 
 
 def _spill_key(pack: Pack, insts: list[Inst], start_ms: int, end_ms: int) -> str:
-    return canon.canonical_sha256({"v": 1, "pack_sha256": pack.lock["pack_sha256"], "insts": sorted(i.leg() for i in insts),
+    return canon.canonical_sha256({"format": SPILL_FORMAT, "pack_sha256": pack.lock["pack_sha256"], "insts": sorted(i.leg() for i in insts),
                                    "start_ms": start_ms, "end_ms": end_ms})
 
 
@@ -213,8 +217,8 @@ def _spill_cache_load(sdir: Path, insts: list[Inst], paths: dict[Inst, Path]):
     """Copy a verified cache entry into ``paths``; None on any mismatch (the entry is then removed)."""
     try:
         man = json.loads((sdir / "manifest.json").read_text(encoding="utf-8"))
-        if man.get("v") != 1:
-            raise ValueError("version")
+        if man.get("format") != SPILL_FORMAT:
+            raise ValueError("format")
         chains: dict[Inst, _FrozenChain] = {}
         for i in insts:
             f, c = man["files"][i.leg()], man["chains"][i.leg()]
@@ -232,7 +236,7 @@ def _spill_cache_load(sdir: Path, insts: list[Inst], paths: dict[Inst, Path]):
 
 
 def _spill_cache_store(root: Path, key: str, insts: list[Inst], paths: dict[Inst, Path], chains: dict[Inst, Chain]) -> None:
-    tmp = root / f".tmp-{key}-{os.getpid()}"
+    tmp = root / f".tmp-{key}-{os.getpid()}-{uuid.uuid4().hex}"
     try:
         shutil.rmtree(tmp, ignore_errors=True)
         tmp.mkdir(parents=True)
@@ -243,7 +247,7 @@ def _spill_cache_store(root: Path, key: str, insts: list[Inst], paths: dict[Inst
             files[i.leg()] = {"name": name, "sha256": _file_sha256(tmp / name), "bytes": (tmp / name).stat().st_size}
             c = chains[i]
             ch[i.leg()] = {"rows": c.rows, "first_ms": c.first_ms, "last_ms": c.last_ms, "sha256": c.hexdigest()}
-        (tmp / "manifest.json").write_text(json.dumps({"v": 1, "files": files, "chains": ch}, sort_keys=True), encoding="utf-8")
+        (tmp / "manifest.json").write_text(json.dumps({"format": SPILL_FORMAT, "files": files, "chains": ch}, sort_keys=True), encoding="utf-8")
         target = root / key
         if target.exists():
             shutil.rmtree(tmp, ignore_errors=True)
@@ -252,8 +256,25 @@ def _spill_cache_store(root: Path, key: str, insts: list[Inst], paths: dict[Inst
         entries = sorted((d for d in root.iterdir() if d.is_dir() and not d.name.startswith(".tmp-")), key=lambda d: d.stat().st_mtime)
         for d in entries[:-_SPILL_KEEP] if len(entries) > _SPILL_KEEP else []:
             shutil.rmtree(d, ignore_errors=True)
+        now = time.time()
+        for d in root.iterdir():
+            if d.is_dir() and d.name.startswith(".tmp-") and d != tmp and now - d.stat().st_mtime > _STALE_TMP_S:
+                shutil.rmtree(d, ignore_errors=True)
     except OSError:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _spill_format() -> str | None:
+    """Hash of the code that defines the spilled files and chains; None (no cache) when the source is unavailable."""
+    try:
+        src = "\n".join(inspect.getsource(o) for o in (_spill_klines_uncached, packfile.Chain, packfile.row_digest_floatfree,
+                                                       packfile.Pack._read_rows_floatfree))
+    except (OSError, TypeError):
+        return None
+    return hashlib.sha256(src.encode("utf-8")).hexdigest()[:16]
+
+
+SPILL_FORMAT: str | None = None  # set below, once ``_spill_klines_uncached`` exists
 
 
 def spill_klines(pack: Pack, insts: list[Inst], start_ms: int, end_ms: int, work: Path) -> tuple[dict[Inst, Path], dict[Inst, Chain]]:
@@ -261,7 +282,7 @@ def spill_klines(pack: Pack, insts: list[Inst], start_ms: int, end_ms: int, work
     at most ``_SPILL_KEEP`` entries). The same pack, instruments and window re-use the verified files instead of re-reading
     the pack. A cache problem never fails the run."""
     root = None
-    if pack.cache is not None and pack.client is not None:  # an exported directory (no client) is read-only: nothing is written
+    if SPILL_FORMAT is not None and pack.cache is not None and pack.client is not None:  # an exported directory (no client) is read-only: nothing is written
         try:
             root = pack.cache.root / "spill"
             key = _spill_key(pack, insts, start_ms, end_ms)
@@ -329,6 +350,9 @@ def _spill_klines_uncached(pack: Pack, insts: list[Inst], start_ms: int, end_ms:
         for f in files.values():
             f.close()
     return paths, chains
+
+
+SPILL_FORMAT = _spill_format()
 
 
 class _Bars:

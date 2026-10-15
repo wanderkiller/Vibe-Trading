@@ -1068,10 +1068,13 @@ def test_floatfree_row_digest_equals_row_digest_and_refuses_floats(tmp_path):
     pack = Pack.from_directory(pd)
     name = next(o["name"] for o in pack.lock["objects"] if o["name"].startswith("market/kline_1m/"))
     assert pack._read_rows_floatfree(name) == pack._read(name)
-    p = pack._path(pack._objs[name])
-    p.write_bytes(p.read_bytes() + b'\n["x", 1.5]\n')
-    with pytest.raises(packfile.EvidenceError):
+    bad = tmp_path / "bad.jsonl"
+    bad.write_bytes(b'{"header": 1}\n[1, "x"]\n["x", 1.5]\n')
+    pack._path = lambda obj: bad  # the content store is hash-addressed: serve a float-bearing object directly
+    with pytest.raises(contract.ContractError) as ei:
         pack._read_rows_floatfree(name)
+    assert ei.value.violations[0].path == f"{name}#2"
+    assert ei.value.code == "schema.float"
 
 
 def test_spill_is_cached_per_pack_with_a_client_and_never_for_an_exported_directory(tmp_path, monkeypatch):
@@ -1124,3 +1127,35 @@ def test_two_cli_runs_on_an_exported_pack_match_and_leave_no_spill_dir(tmp_path)
     assert c1 == c2
     for f in ("trades.jsonl", "equity.jsonl"):
         assert (o1 / f).read_bytes() == (o2 / f).read_bytes()
+
+
+def test_spill_cache_is_keyed_by_code_format_and_cleans_stale_tmp_dirs(tmp_path, monkeypatch):
+    import os
+    import time
+
+    pd = export_dir(tmp_path, golden_built())
+    insts = [Inst("okx", "perp", "BTC-USDT-SWAP")]
+    pack = Pack.from_directory(pd)
+    pack.client = object()
+    ir_backtest.spill_klines(pack, insts, START, END, tmp_path / "w1")
+    first = {d.name for d in (pd / "spill").iterdir()}
+    assert len(first) == 1
+    # stale and fresh tmp dirs
+    old, new = pd / "spill" / ".tmp-x", pd / "spill" / ".tmp-y"
+    old.mkdir()
+    new.mkdir()
+    t = time.time() - 7200
+    os.utime(old, (t, t))
+    # another format: the old entry is not a hit (different key), a new entry is published, stale tmp removed
+    monkeypatch.setattr(ir_backtest, "SPILL_FORMAT", "other")
+    ir_backtest.spill_klines(pack, insts, START, END, tmp_path / "w2")
+    names = {d.name for d in (pd / "spill").iterdir()}
+    assert len(names - first - {".tmp-y"}) == 1 and first <= names
+    assert not old.exists() and new.exists()
+    # no format, no cache
+    import shutil
+
+    shutil.rmtree(pd / "spill")
+    monkeypatch.setattr(ir_backtest, "SPILL_FORMAT", None)
+    ir_backtest.spill_klines(pack, insts, START, END, tmp_path / "w3")
+    assert not (pd / "spill").exists()
