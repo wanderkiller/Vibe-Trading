@@ -165,3 +165,59 @@ def test_timeout_logs_are_written_only_under_an_allowed_run_root(tmp_path, monke
     outside = tmp_path / "handoff" / "sid"
     out = json.loads(tool.AlphakeelResearchTool().execute(action="check", run_dir=str(outside)))
     assert out["stderr"].strip() == "partial" and "logs" not in out and not outside.exists(), out
+
+
+def test_a_blank_path_argument_is_refused(run_dir, monkeypatch) -> None:
+    from src.tools.alphakeel_research_tool import AlphakeelResearchTool
+
+    calls = []
+    patch_cli(monkeypatch, lambda argv: calls.append(argv) or 0)
+    res = json.loads(AlphakeelResearchTool().execute(action="ir_export", args={"ir": "s.json", "run": "r", "out": "   "},
+                                                     run_dir=str(run_dir)))
+    assert res["status"] == "error" and "must not be blank" in res["error"] and calls == [], res
+
+
+def test_escaped_control_characters_still_fit_the_budget() -> None:
+    from src.config.limits import TOOL_RESULT_LIMIT
+    from src.tools.alphakeel_research_tool import _dump
+
+    junk = "\x1b" * 5000
+    text = _dump({"status": "error", "error": junk, "evidence_dir": junk,
+                  "result": {"evidence_status": junk, "run_dir": junk, "summary": {"k": junk}}}, [])
+    assert len(text) <= TOOL_RESULT_LIMIT and json.loads(text)["status"] == "error", len(text)
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "killpg"), reason="process groups are POSIX")
+def test_drain_keeps_output_when_a_detached_descendant_holds_the_pipes() -> None:
+    import subprocess
+
+    from src.tools.alphakeel_research_tool import _drain, _kill_group
+
+    script = ("import subprocess, sys\n"
+              "print('AAAA', flush=True)\n"
+              "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)\n")
+    proc = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
+    with pytest.raises(subprocess.TimeoutExpired):
+        proc.communicate(timeout=1)
+    _kill_group(proc)
+    out, err = _drain(proc)
+    assert out.strip() == "AAAA" and err == ""
+
+
+def test_pack_cache_drops_only_stale_temporary_files(tmp_path) -> None:
+    import os
+    import time
+
+    from alphakeel_research import packfile
+
+    content = tmp_path / "cache" / "content"
+    content.mkdir(parents=True)
+    old, new, sha = content / "x.1.a.part", content / "y.1.b.part", content / ("0" * 64)
+    for f in (old, new, sha):
+        f.write_bytes(b"z")
+    hours_ago = time.time() - 7200
+    for f in (old, sha):
+        os.utime(f, (hours_ago, hours_ago))
+    packfile.PackCache(tmp_path / "cache")
+    assert sorted(p.name for p in content.iterdir()) == sorted([new.name, sha.name])

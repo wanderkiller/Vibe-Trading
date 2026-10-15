@@ -149,6 +149,9 @@ def _dump(out: dict, warnings: list[str]) -> str:
                                                                             ("evidence_dir", env.get("evidence_dir")),
                                                                             ("run_dir", result.get("run_dir"))) if v is not None},
                "omitted": "everything else", "omitted_note": _OMITTED_NOTE}
+        while len(_enc(env)) > TOOL_RESULT_LIMIT:  # escaping (control characters: \u00XX) can still overflow
+            k = max((k for k in env if k != "status"), key=lambda k: len(_enc(env[k])))
+            env[k] = str(env[k])[: len(str(env[k])) // 2]
     return _enc(env)
 
 
@@ -206,6 +209,8 @@ def _handoff_guard(action: str, a: dict[str, Any]) -> None:
         v = a.get(k)
         if v not in (None, "") and not isinstance(v, (str, os.PathLike)):
             raise ValueError(f"{action}: {k} must be a path string, not {type(v).__name__}")
+        if isinstance(v, str) and v != "" and not v.strip():  # skips every path check, reaches the CLI as a cwd path
+            raise ValueError(f"{action}: {k} must not be blank")
         if isinstance(v, (str, os.PathLike)) and str(v) != "" and _under_handoff(str(v)):
             raise ValueError(f"{action}: {k} points into AlphaKeel's hand-off directory, which is not an agent action. Hand-off is the "
                              "user's decision: the user presses 'Hand off to AlphaKeel' on the run page (docs/45 section 7). Use another "
