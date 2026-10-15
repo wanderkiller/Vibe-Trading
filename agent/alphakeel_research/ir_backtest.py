@@ -926,17 +926,19 @@ def backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, en
     out = Path(out_dir)
     try:
         ir_views.require_fees(kw.get("fees"))  # before a pack is frozen
+        if register:
+            if client is None:
+                raise ApiError("request.invalid", "registering the run needs the research-service client (or --no-register)", field="register")
+            client.check()  # contract pin / credential scope fail fast, before the backtest, with the client's own error
         card = _backtest(client, ir_doc, instruments, start_ms=start_ms, end_ms=end_ms, out_dir=out, cache_dir=cache_dir,
                          pack_dir=pack_dir, accept_partial=accept_partial, **kw)
         # Trial ledger (audit 2 P1-1 c): every run is a trial of the research service's global ledger, registered ledger-only
         # (POST /trials: no service run); an unregistered run is refused here rather than left to look like the only one.
         if register:
-            if client is None:
-                raise ApiError("request.invalid", "registering the run needs the research-service client (or --no-register)", field="register")
             from .ir_crosscheck import record_trial_only
 
             r = record_trial_only(client, IR.load(ir_doc).doc, card)
-            card["service_registration"] = {"registered": True, "trial_id": r["trial_id"], "trial_key": r["trial_key"], "recorded": r["recorded"],
+            card["service_registration"] = {"registered": True, "trial_id": r["trial_id"], "trial_key": r["trial_key"],
                                             "ledger": "research-service trial ledger (POST /trials, ledger only, not executed)"}
         else:
             card["service_registration"] = {"registered": False, "reason": "not requested (--no-register / no client)"}

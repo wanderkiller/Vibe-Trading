@@ -138,13 +138,22 @@ def test_a_real_battery_ledger_has_one_counted_row_per_variant(tmp_path):
 # --- 5: runs are registered with the research service ----------------------------------------------------------------------
 
 class FakeService:
-    def __init__(self, fail_first_with_queue_full: int = 0, fail_with: ApiError | None = None):
+    def __init__(self, fail_first_with_queue_full: int = 0, fail_with: ApiError | None = None,
+                 check_fails_with: ApiError | None = None):
+        self.checks: list[str] = []
+        self.check_fails_with = check_fails_with
         self.bodies: list[dict] = []
         self.keys: list[str] = []
         self.queue_full = fail_first_with_queue_full
         self.fail_with = fail_with
         self.trial_bodies: list[dict] = []
         self.trial_keys: list[str] = []
+
+    def check(self):
+        self.checks.append("check")
+        if self.check_fails_with is not None:
+            raise self.check_fails_with
+        return {"contract_pin": "matched"}
 
     def record_trial(self, body, *, key=None):
         if self.fail_with is not None:
@@ -214,9 +223,15 @@ def test_ir_backtest_registers_its_trial_ledger_only(tmp_path):
     assert tb["mode"] == "ir_strategy" and "profile" not in tb and tb["dataset_view"]["view"] == "kline_close_synthetic_bbo"
     _, want_key = ir_crosscheck.mirror_request(tb["ir"], card, key_salt=ir_crosscheck.trial_key_salt())
     assert svc.trial_keys == [want_key]
-    expect = {"registered": True, "trial_id": "trial-0001", "trial_key": "research:x", "recorded": True,
+    expect = {"registered": True, "trial_id": "trial-0001", "trial_key": "research:x",
               "ledger": "research-service trial ledger (POST /trials, ledger only, not executed)"}
     assert card["service_registration"] == expect
+    assert svc.checks == ["check"]
+    badsvc = FakeService(check_fails_with=ApiError("contract.pin_mismatch", "x"))
+    with pytest.raises(ApiError, match="x"):
+        ir_backtest.backtest(badsvc, golden_ir(), [BN, OK], start_ms=S0, end_ms=END, out_dir=tmp_path / "r4", pack_dir=pd, register=True, trials=1, fees=FEES)
+    assert badsvc.trial_bodies == []
+    assert json.loads((tmp_path / "r4" / "state.json").read_text())["status"] == "failed"
     assert json.loads((tmp_path / "r1" / "run_card.json").read_text())["service_registration"] == expect
     off = ir_backtest.backtest(None, golden_ir(), [BN, OK], start_ms=S0, end_ms=END, out_dir=tmp_path / "r2", pack_dir=pd, trials=1, fees=FEES)
     assert off["service_registration"]["registered"] is False
