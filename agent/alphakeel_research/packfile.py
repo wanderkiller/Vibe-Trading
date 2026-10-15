@@ -77,6 +77,11 @@ def row_digest(row: list) -> bytes:
     return hashlib.sha256(contract.canonical_bytes(row)).digest()
 
 
+def row_digest_floatfree(row: list) -> bytes:
+    """``row_digest`` for a row decoded by ``Pack._read_rows_floatfree`` (float-free by construction): skips the recursive check."""
+    return hashlib.sha256(json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")).digest()
+
+
 class Chain:
     """Ordered row-digest chain: sha256(d1 || d2 || ...), the same definition the service uses."""
 
@@ -88,6 +93,12 @@ class Chain:
 
     def push(self, t_ms: int, row: list) -> None:
         self._h.update(row_digest(row))
+        self.rows += 1
+        self.first_ms = t_ms if self.first_ms is None else min(self.first_ms, t_ms)
+        self.last_ms = t_ms if self.last_ms is None else max(self.last_ms, t_ms)
+
+    def push_floatfree(self, t_ms: int, row: list) -> None:
+        self._h.update(row_digest_floatfree(row))
         self.rows += 1
         self.first_ms = t_ms if self.first_ms is None else min(self.first_ms, t_ms)
         self.last_ms = t_ms if self.last_ms is None else max(self.last_ms, t_ms)
@@ -360,6 +371,14 @@ class Pack:
             self._mem.pop(next(iter(self._mem)))
         self._mem[name] = rows
         return rows
+
+    def _read_rows_floatfree(self, name: str) -> list[list]:
+        """Like ``_read`` (uncached) but every line is decoded refusing floats, so the rows are float-free by construction."""
+        def refuse(_s: str):
+            raise EvidenceError("evidence.reference", f"pack object {name} contains a floating-point number")
+
+        raw = self._path(self._objs[name]).read_bytes()
+        return [json.loads(ln, parse_float=refuse, parse_constant=refuse) for ln in raw.split(b"\n")[1:] if ln]
 
     def _json_object(self, name: str) -> dict:
         return json.loads(self._path(self._objs[name]).read_bytes())

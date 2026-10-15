@@ -1052,3 +1052,62 @@ def test_tool_schema_types_funding_as_string() -> None:
     from src.tools.alphakeel_research_tool import AlphakeelResearchTool
 
     assert AlphakeelResearchTool.parameters["properties"]["args"]["properties"]["funding"]["type"] == "string"
+
+
+def test_floatfree_row_digest_equals_row_digest_and_refuses_floats(tmp_path):
+    rows = [[1672531200000, "BTC-USDT", 1672531259999, "16500.1", None, 0, 5, "7", "1000", True, "trade"],
+            [1672531260000, "币-USDT", 1672531319999, "1e3", "", -3, 0, "0.00000001", "12.50", False, "gap"]]
+    for r in rows:
+        assert packfile.row_digest_floatfree(r) == packfile.row_digest(r)
+    a, b = packfile.Chain(), packfile.Chain()
+    for r in rows:
+        a.push(r[0], r)
+        b.push_floatfree(r[0], r)
+    assert a.hexdigest() == b.hexdigest() and (a.rows, a.first_ms, a.last_ms) == (b.rows, b.first_ms, b.last_ms)
+    pd = export_dir(tmp_path, golden_built())
+    pack = Pack.from_directory(pd)
+    name = next(o["name"] for o in pack.lock["objects"] if o["name"].startswith("market/kline_1m/"))
+    assert pack._read_rows_floatfree(name) == pack._read(name)
+    p = pack._path(pack._objs[name])
+    p.write_bytes(p.read_bytes() + b'\n["x", 1.5]\n')
+    with pytest.raises(packfile.EvidenceError):
+        pack._read_rows_floatfree(name)
+
+
+def test_spill_is_cached_per_pack_and_the_second_run_matches_the_first(tmp_path, monkeypatch):
+    pd = export_dir(tmp_path, golden_built())
+    (tmp_path / "ir.json").write_text(json.dumps(golden_ir()))
+    (tmp_path / "inst.json").write_text(json.dumps([OK, BN]))
+    (tmp_path / "trials.csv").write_text("trial,min_net\n1,0\n2,0.0001\n3,0.0002\n")
+
+    def go(name):
+        out = tmp_path / name
+        rc = cli.main(["ir", "backtest", "--fees", fees_file(tmp_path), "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START),
+                       "--end-ms", str(END), "--instruments", str(tmp_path / "inst.json"), "--pack-dir", str(pd), "--trials", "3",
+                       "--trials-evidence", str(tmp_path / "trials.csv"), "--out", str(out)])
+        assert rc == 0
+        return out
+
+    o1 = go("r1")
+    entries = [d for d in (pd / "spill").iterdir() if d.is_dir()]
+    assert len(entries) == 1 and (entries[0] / "manifest.json").is_file()
+
+    def boom(self, name):
+        raise AssertionError("second run must not re-read the pack klines")
+
+    monkeypatch.setattr(Pack, "_read_rows_floatfree", boom)
+    o2 = go("r2")
+    c1, c2 = (json.loads((o / "run_card.json").read_text()) for o in (o1, o2))
+    for c in (c1, c2):
+        c.pop("elapsed_s", None)
+        c.pop("created_ms", None)
+    c1.pop("out_dir", None), c2.pop("out_dir", None)
+    assert c1 == c2
+    for f in ("trades.jsonl", "equity.jsonl"):
+        assert (o1 / f).read_bytes() == (o2 / f).read_bytes()
+    # a corrupted entry is a miss: removed and re-spilled (the decoder is back)
+    monkeypatch.undo()
+    k = next(entries[0].glob("*.klines"))
+    k.write_text("garbage\n")
+    go("r3")
+    assert (entries[0] / "manifest.json").is_file() and k.read_text() != "garbage\n"

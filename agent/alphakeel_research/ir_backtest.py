@@ -29,10 +29,12 @@ streamed back in time order; frames, decisions and equity points are written as 
 
 from __future__ import annotations
 
+import bisect
 import copy
 import datetime as dt
 import hashlib
 import json
+import os
 import shutil
 import time
 from collections import deque
@@ -181,7 +183,109 @@ def pack_summary(pack: Pack) -> dict:
 # streaming dataset frames
 # ---------------------------------------------------------------------------------------------------------------------
 
+class _FrozenChain:
+    """A cached chain: the ``Chain`` surface the run reads (``rows``, ``first_ms``, ``last_ms``, ``hexdigest()``)."""
+
+    def __init__(self, rows: int, first_ms: int | None, last_ms: int | None, sha256: str):
+        self.rows, self.first_ms, self.last_ms, self._sha = rows, first_ms, last_ms, sha256
+
+    def hexdigest(self) -> str:
+        return self._sha
+
+
+_SPILL_KEEP = 8
+
+
+def _file_sha256(p: Path) -> str:
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for blk in iter(lambda: f.read(1 << 20), b""):
+            h.update(blk)
+    return h.hexdigest()
+
+
+def _spill_key(pack: Pack, insts: list[Inst], start_ms: int, end_ms: int) -> str:
+    return canon.canonical_sha256({"v": 1, "pack_sha256": pack.lock["pack_sha256"], "insts": sorted(i.leg() for i in insts),
+                                   "start_ms": start_ms, "end_ms": end_ms})
+
+
+def _spill_cache_load(sdir: Path, insts: list[Inst], paths: dict[Inst, Path]):
+    """Copy a verified cache entry into ``paths``; None on any mismatch (the entry is then removed)."""
+    try:
+        man = json.loads((sdir / "manifest.json").read_text(encoding="utf-8"))
+        if man.get("v") != 1:
+            raise ValueError("version")
+        chains: dict[Inst, _FrozenChain] = {}
+        for i in insts:
+            f, c = man["files"][i.leg()], man["chains"][i.leg()]
+            src = sdir / f["name"]
+            if src.stat().st_size != f["bytes"] or _file_sha256(src) != f["sha256"]:
+                raise ValueError("digest")
+            chains[i] = _FrozenChain(c["rows"], c["first_ms"], c["last_ms"], c["sha256"])
+        for i in insts:
+            shutil.copyfile(sdir / man["files"][i.leg()]["name"], paths[i])
+        os.utime(sdir)
+        return chains
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        shutil.rmtree(sdir, ignore_errors=True)
+        return None
+
+
+def _spill_cache_store(root: Path, key: str, insts: list[Inst], paths: dict[Inst, Path], chains: dict[Inst, Chain]) -> None:
+    tmp = root / f".tmp-{key}-{os.getpid()}"
+    try:
+        shutil.rmtree(tmp, ignore_errors=True)
+        tmp.mkdir(parents=True)
+        files, ch = {}, {}
+        for i in insts:
+            name = paths[i].name
+            shutil.copyfile(paths[i], tmp / name)
+            files[i.leg()] = {"name": name, "sha256": _file_sha256(tmp / name), "bytes": (tmp / name).stat().st_size}
+            c = chains[i]
+            ch[i.leg()] = {"rows": c.rows, "first_ms": c.first_ms, "last_ms": c.last_ms, "sha256": c.hexdigest()}
+        (tmp / "manifest.json").write_text(json.dumps({"v": 1, "files": files, "chains": ch}, sort_keys=True), encoding="utf-8")
+        target = root / key
+        if target.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
+        else:
+            os.replace(tmp, target)
+        entries = sorted((d for d in root.iterdir() if d.is_dir() and not d.name.startswith(".tmp-")), key=lambda d: d.stat().st_mtime)
+        for d in entries[:-_SPILL_KEEP] if len(entries) > _SPILL_KEEP else []:
+            shutil.rmtree(d, ignore_errors=True)
+    except OSError:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def spill_klines(pack: Pack, insts: list[Inst], start_ms: int, end_ms: int, work: Path) -> tuple[dict[Inst, Path], dict[Inst, Chain]]:
+    """``_spill_klines_uncached`` with a per-pack cache under ``<pack cache root>/spill/<key>/`` (derived, reproducible files;
+    at most ``_SPILL_KEEP`` entries). The same pack, instruments and window re-use the verified files instead of re-reading
+    the pack. A cache problem never fails the run."""
+    root = None
+    if pack.cache is not None:
+        try:
+            root = pack.cache.root / "spill"
+            key = _spill_key(pack, insts, start_ms, end_ms)
+        except (OSError, KeyError, TypeError):
+            root = None
+    if root is None:
+        return _spill_klines_uncached(pack, insts, start_ms, end_ms, work)
+    work.mkdir(parents=True, exist_ok=True)
+    paths = {i: work / f"{i.venue}-{i.market}-{i.symbol}.klines".replace("/", "_") for i in insts}
+    sdir = root / key
+    if sdir.is_dir():
+        frozen = _spill_cache_load(sdir, insts, paths)
+        if frozen is not None:
+            return paths, frozen  # type: ignore[return-value]
+    paths, chains = _spill_klines_uncached(pack, insts, start_ms, end_ms, work)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return paths, chains
+    _spill_cache_store(root, key, insts, paths, chains)
+    return paths, chains
+
+
+def _spill_klines_uncached(pack: Pack, insts: list[Inst], start_ms: int, end_ms: int, work: Path) -> tuple[dict[Inst, Path], dict[Inst, Chain]]:
     """One pass over the pack's ``kline_1m`` objects: each wanted instrument's trade bars in ``[start, end)`` go to its own
     file (``t close_time close volume_quote`` per line, time order checked; ``close_time`` must be ``t + 59999``).
 
@@ -207,11 +311,11 @@ def spill_klines(pack: Pack, insts: list[Inst], start_ms: int, end_ms: int, work
             for o in sorted((o for o in pack.lock["objects"] if o["role"] == "market" and o["name"].startswith(tag)), key=lambda o: o["name"]):
                 if (o["last_ms"] or 0) < start_ms or (o["first_ms"] or 0) >= end_ms:
                     continue
-                for r in pack._read(o["name"]):
+                for r in pack._read_rows_floatfree(o["name"]):
                     if r[1] not in by_symbol or not (start_ms <= r[0] < end_ms):
                         continue
                     for i in by_symbol[r[1]]:
-                        chains[i].push(r[0], r)
+                        chains[i].push_floatfree(r[0], r)
                     if r[10] != "trade":
                         continue
                     if r[2] != r[0] + ir_views.KLINE_SPAN_MS:
@@ -221,7 +325,6 @@ def spill_klines(pack: Pack, insts: list[Inst], start_ms: int, end_ms: int, work
                             raise EvidenceError("evidence.reference", f"klines of {i.leg()} are not in strict time order at {r[0]}")
                         last[i] = r[0]
                         files[i].write(f"{r[0]} {r[2]} {r[6]} {r[8]}\n")
-                pack._mem.pop(o["name"], None)  # bounded memory: one decoded object at a time
     finally:
         for f in files.values():
             f.close()
@@ -303,6 +406,9 @@ class DatasetCursor:
             rows = [s for s in pack.settlements(i, lo, end_ms) if s.event_kind in ir_views.SETTLEMENT_KINDS]
             self.settles[i] = [_Settle(s.t, s.available_at_ms if s.available_at_ms is not None else s.t + delay, s.rate,
                                        s.interval_seconds, s.mark_price) for s in rows]
+        for rows in self.settles.values():
+            rows.sort(key=lambda s: s.t)  # stable: bisect windows in settlements_until
+        self._settle_ts = {i: [s.t for s in rows] for i, rows in self.settles.items()}
         self._vis = {i: sorted(v, key=lambda s: (s.visible_ms, s.t)) for i, v in self.settles.items()}
         self._vis_ptr = {i: 0 for i in self._vis}
         self._vis_last: dict[Inst, _Settle | None] = {i: None for i in self._vis}
@@ -359,7 +465,9 @@ class DatasetCursor:
         """Settlements with ``after < t <= end_incl`` (time order, then instrument order)."""
         out = []
         for i, rows in self.settles.items():
-            out.extend((s.t, i, s) for s in rows if (after is None or s.t > after) and s.t <= end_incl)
+            ts = self._settle_ts[i]
+            lo = 0 if after is None else bisect.bisect_right(ts, after)
+            out.extend((s.t, i, s) for s in rows[lo:bisect.bisect_right(ts, end_incl)])
         out.sort(key=lambda x: (x[0], x[1].leg()))
         return out
 
@@ -598,6 +706,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
     step = step_minutes * MINUTE_MS
     run_id = run_id_of(sid, pack.id, start_ms, end_ms, step_minutes, fees, capital_base)
     work = out / ".work"
+    t0 = time.monotonic()  # the spill (DatasetCursor) is part of the run's elapsed time
     cursor = DatasetCursor(pack, insts, start_ms, end_ms, fees=fees, work=work)
     sim = Sim()
     ir_obj = IR.Ir(loaded.doc)
@@ -612,7 +721,6 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
     dd = {"amount": Decimal(0), "peak_ms": None, "trough_ms": None}
     peak_t = start_ms
     last_settled_t: int | None = None
-    t0 = time.monotonic()
     ftr = open(out / "trades.jsonl", "w", encoding="utf-8")
     feq = open(out / "equity.jsonl", "w", encoding="utf-8")
     fde = open(out / "decisions.jsonl", "w", encoding="utf-8")
