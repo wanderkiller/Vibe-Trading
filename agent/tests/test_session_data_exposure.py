@@ -113,3 +113,58 @@ def test_an_in_process_read_is_recorded_for_the_bound_session_only(session) -> N
 
 def test_ir_export_without_reads_passes_no_exposure(session, monkeypatch) -> None:
     assert "--data-exposure-end-ms" not in _export_argv(session, monkeypatch)
+
+
+# --- the agent loop's tool threads keep the bound conversation ----------------------------------------------------------
+
+class _ReadonlyRegistry:
+    """A readonly tool whose body records a data read in-process, as the market data tool's loaders do."""
+
+    class _Tool:
+        is_readonly = True
+
+    def get(self, tool_name: str) -> object:
+        return self._Tool()
+
+    def execute(self, tool_name: str, args: dict) -> str:
+        from backtest import data_audit
+
+        data_audit.record_exposure("okx", 1_700_000_000_000)
+        return '{"status":"ok"}'
+
+
+def _agent(registry=None):
+    from types import SimpleNamespace
+
+    from src.agent.loop import AgentLoop
+
+    return AgentLoop(registry=registry or _ReadonlyRegistry(), llm=SimpleNamespace(), max_iterations=1)  # type: ignore[arg-type]
+
+
+def test_a_readonly_tool_thread_records_reads_for_the_bound_session(session) -> None:
+    """Readonly tools run in a worker thread; a new thread starts with an empty context, which lost the session."""
+    from src.tools import alphakeel_research_ledger as ledger
+
+    result, _ = _agent()._invoke_tool("market_data", {}, call_id="c1")
+    assert json.loads(result)["status"] == "ok"
+    assert ledger.exposure_end_ms(SESSION) == 1_700_000_000_000
+
+
+def test_parallel_readonly_tools_run_in_the_bound_session(session, monkeypatch) -> None:
+    """Consecutive readonly tool calls run in a thread pool; each worker must see the conversation the loop bound."""
+    from types import SimpleNamespace
+
+    from src.providers.session_context import current_llm_session_id
+
+    agent = _agent()
+    seen: list[str] = []
+
+    def invoke(name, args, call_id=None):
+        seen.append(current_llm_session_id())
+        return '{"status":"ok"}', 0
+
+    monkeypatch.setattr(agent, "_invoke_tool", invoke)
+    monkeypatch.setattr(agent, "_finalize_tool_result", lambda *a, **k: None)
+    calls = [SimpleNamespace(name="market_data", arguments={}, id=f"c{i}") for i in range(3)]
+    agent._execute_parallel(calls, None, [], SimpleNamespace(write=lambda row: None), [], 0)  # type: ignore[arg-type]
+    assert seen == [SESSION] * 3
