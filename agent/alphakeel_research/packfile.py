@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import os
+import uuid
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
@@ -248,7 +249,9 @@ class PackCache:
         want_stored = obj["sha256"]
         last_err: ApiError | None = None
         for _attempt in range(2):  # same artifact, retried once
-            part = dst.with_suffix(".part")
+            # one temporary file per writer (pid + uuid, as upstream's loader cache): two calls filling the same object
+            # never replace each other's file; os.replace makes the verified content visible atomically
+            part = dst.with_name(f"{dst.name}.{os.getpid()}.{uuid.uuid4().hex}.part")
             h_stored = hashlib.sha256()
             buf = io.BytesIO()
             try:
@@ -274,10 +277,10 @@ class PackCache:
                 return dst
             except ApiError as e:
                 last_err = e
-                if part.exists():
-                    part.unlink()
                 if e.code != "evidence.hash_mismatch" and not e.retryable:
                     raise
+            finally:
+                part.unlink(missing_ok=True)  # any failure (ApiError, OSError, ...) leaves no stray temporary file
         assert last_err is not None
         raise last_err
 

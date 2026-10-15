@@ -22,6 +22,14 @@ from alphakeel_research.screen import screen
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.fixture(autouse=True)
+def _run_roots(tmp_path, monkeypatch):
+    """Tool calls get a run directory under ``tmp_path``: an allowed run and write root, as the agent's runs are in production
+    (write paths go through upstream's ``resolve_safe_path``)."""
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(tmp_path))
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_WRITE_ROOTS", str(tmp_path))
+
 DAY_MS = 86_400_000
 CUTOFF_MS = 1_782_000_000_000 + 12_345  # not UTC day aligned
 _EXAMPLE = Path(ir_backtest.__file__).resolve().parent / "examples" / "ir" / "strategy.json"

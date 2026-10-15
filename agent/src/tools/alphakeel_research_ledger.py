@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import time
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from pathlib import Path
@@ -63,6 +64,20 @@ def _flock(path: Path) -> Iterator[None]:
             yield
         finally:
             fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def _fsync_dir(path: Path) -> None:
+    """Make a new directory entry durable (POSIX; a no-op where directories cannot be opened)."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def _session_dir(session_id: str) -> Path:
@@ -165,8 +180,16 @@ def record(session_id: str, run_dir: str | Path, result: dict, evidence_dir: str
     ledger = _session_dir(session_id) / LEDGER_FILE
     ledger.parent.mkdir(parents=True, exist_ok=True)
     with _flock(ledger):
+        created = not ledger.exists()
         with open(ledger, "a", encoding="utf-8") as f:
             f.write(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n")
+            # the row is a trial for the DSR floor: durable before the call returns (upstream TraceWriter.write: flush +
+            # fsync per record, the directory entry too when the file is new)
+            f.flush()
+            with contextlib.suppress(OSError):  # a filesystem without fsync: flush-only, as upstream
+                os.fsync(f.fileno())
+        if created:
+            _fsync_dir(ledger.parent)
     hid = session_hypothesis(session_id, card.get("name") or "")
     scr = card.get("screen") or {}
     metrics = {"strategy_id": card["strategy_id"], "name": card.get("name"), "window": card.get("window"),

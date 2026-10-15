@@ -697,6 +697,7 @@ robustness sub-runs.
 - `agent/alphakeel_research/ir_backtest.py`
 - `agent/alphakeel_research/cli.py`
 - `agent/tests/test_alphakeel_research_truth.py`
+- `agent/tests/test_alphakeel_upstream_alignment.py`
 - `agent/tests/fixtures/alphakeel_tool_cli.py`
 - `agent/tests/test_ir_validate_all.py`
 - `agent/tests/test_strategy_fidelity.py`
