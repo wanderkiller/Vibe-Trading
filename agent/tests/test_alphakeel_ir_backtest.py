@@ -595,6 +595,18 @@ def test_ir_export_round_trips_with_the_same_strategy_id_and_full_provenance(tmp
     assert ir.validate(doc) == []
 
 
+def test_ir_export_folds_the_conversations_other_reads_into_the_exposure_end(tmp_path, capsys):
+    """G1 1.14: data the conversation read in other processes (``--data-exposure-end-ms``, set by the tool from the
+    session's exposure file) raises provenance.data_exposure_end_ms."""
+    run = _run(tmp_path, "--trials", "1")
+    later = 1_790_000_000_000
+    exp = tmp_path / "export"
+    assert cli.main(["ir", "export", "--ir", str(tmp_path / "ir.json"), "--run", str(run), "--out", str(exp),
+                     "--data-exposure-end-ms", str(later)]) == 0
+    capsys.readouterr()
+    assert json.loads((exp / "strategy.json").read_text())["provenance"]["data_exposure_end_ms"] == later
+
+
 def test_entry_freshness_warnings_follow_alphakeels_runtime_defaults():
     """U8: the shipped template carries both bounds; a missing or looser bound is reported, a tighter one is not."""
     example = json.loads((Path(ir_backtest.__file__).parent / "examples" / "ir" / "strategy.json").read_text())

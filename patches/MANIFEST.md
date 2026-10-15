@@ -32,7 +32,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `alpha-bench-universe` | alpha_bench_tool, factors/cli_handlers | local-only (follows the leaf package) |
 | `crypto-funding` | engines/_market_hooks, crypto, composite; ccxt_loader | upstreamable as a bug-fix PR (see below) |
 | `metrics-conventions` | metrics, validation | partly upstreamed already; rest upstreamable |
-| `run-card-data-audit` | run_card, loaders/base (exposure hook) | local-only as written; a generic provenance hook is upstreamable |
+| `run-card-data-audit` | run_card, loaders/base (exposure hook), backtest_tool (one helper, two call sites), agent/loop (tool threads keep the caller's context) | local-only as written; a generic provenance hook is upstreamable |
 | `alphakeel-handoff` | api_server (one hook), RunDetail (one import, one element), api.ts (one `export`) | local-only (follows the leaf package) |
 | `packaging-docs` | pyproject, SKILL.md, READMEs, .gitignore, .env.example, CHANGELOG (one section) | local-only |
 | `ci-env-gate` | alpha_routes (one line) | upstreamable: upstream's own gate e fails on it |
@@ -385,13 +385,24 @@ non-auditable data and renders a "Data Audit" section. Loaders record provenance
 (`data_audit.record_provenance`). Since AlphaKeel protocol 2.5 (02 WP5) every non-empty read through the shared
 loader cache wrapper (`cached_loader_fetch`, used by the ccxt/okx/binance loaders) also records the end of the data it
 returned (`data_audit.record_exposure`); the IR export writes the latest one as `provenance.data_exposure_end_ms`.
+Every tool call that reads data runs in a process of its own (the backtest tool's engine child, the research tool's
+CLI child), so the in-process record alone missed a direct exchange pull made earlier in the conversation (round 1
+review, appendix C1). `record_exposure` therefore also appends to the conversation's exposure file
+`<sessions dir>/<session_id>/data_exposure.jsonl` (flock + fsync, as the IR trial ledger) for the session the agent loop
+binds (`src.providers.session_context`); the backtest tool folds its child's exposure into it after the child (the run
+card's `data_exposure_end_ms`, and for a live source the config's end, also after a failure or timeout); `ir_export`
+passes the latest end as `--data-exposure-end-ms`. The loop runs readonly tool threads in a copy of the caller's
+context so the binding reaches them (as upstream already does for the compaction thread).
 
 **Files.**
 - `agent/backtest/run_card.py`
 - `agent/backtest/data_audit.py`
 - `agent/backtest/loaders/base.py`
+- `agent/src/tools/backtest_tool.py`
+- `agent/src/agent/loop.py`
+- `agent/tests/test_session_data_exposure.py`
 
-**Commits.** `83ea7c2a` `5370ab12`.
+**Commits.** `83ea7c2a` `5370ab12`, plus the session-exposure commit on `fix/session-data-exposure`.
 
 **Upstreamable.** Not as written (the auditable set is AlphaKeel's). A generic "source provenance / reproducibility
 class" field in the run card would be upstreamable.
@@ -410,6 +421,14 @@ class" field in the run card would be upstreamable.
 - hook `agent/backtest/loaders/base.py`: `def _note_exposure(source: str, end_date: str, frame: pd.DataFrame | None) -> None:`
 - hook `agent/backtest/loaders/base.py`: `_note_exposure(source, end_date, cached)`
 - hook `agent/backtest/loaders/base.py`: `_note_exposure(source, end_date, frame)`
+- upstream `agent/src/tools/backtest_tool.py`: `runner = Runner(timeout=_backtest_timeout_seconds())`
+- upstream `agent/src/tools/backtest_tool.py`: `state_store = RunStateStore()`
+- hook `agent/src/tools/backtest_tool.py`: `def _note_child_exposure(run_path: Path, config: dict[str, Any]) -> None:`
+- hook `agent/src/tools/backtest_tool.py`: `    _note_child_exposure(run_path, config)\n    state_store = RunStateStore()`
+- upstream `agent/src/agent/loop.py`: `name=f"tool-{tool_name}",`
+- hook `agent/src/agent/loop.py`: `args=(_worker,),`
+- hook `agent/src/agent/loop.py`: `pool.submit(contextvars.copy_context().run, _run, item)`
+- preimage `agent/src/agent/loop.py`: `futures = [pool.submit(_run, item) for item in runnable]`
 
 ## `alphakeel-handoff` — hand-off of an IR run to AlphaKeel
 

@@ -765,7 +765,10 @@
    "files": [
     "agent/backtest/run_card.py",
     "agent/backtest/data_audit.py",
-    "agent/backtest/loaders/base.py"
+    "agent/backtest/loaders/base.py",
+    "agent/src/tools/backtest_tool.py",
+    "agent/src/agent/loop.py",
+    "agent/tests/test_session_data_exposure.py"
    ],
    "anchors": [
     {
@@ -832,6 +835,48 @@
      "file": "agent/backtest/loaders/base.py",
      "kind": "hook",
      "literal": "_note_exposure(source, end_date, frame)"
+    },
+    {
+     "file": "agent/src/tools/backtest_tool.py",
+     "kind": "upstream",
+     "literal": "runner = Runner(timeout=_backtest_timeout_seconds())"
+    },
+    {
+     "file": "agent/src/tools/backtest_tool.py",
+     "kind": "upstream",
+     "literal": "state_store = RunStateStore()"
+    },
+    {
+     "file": "agent/src/tools/backtest_tool.py",
+     "kind": "hook",
+     "literal": "def _note_child_exposure(run_path: Path, config: dict[str, Any]) -> None:",
+     "note": "folds the engine child's data exposure into the session's exposure file; called after the child and on its timeout"
+    },
+    {
+     "file": "agent/src/tools/backtest_tool.py",
+     "kind": "hook",
+     "literal": "    _note_child_exposure(run_path, config)\n    state_store = RunStateStore()"
+    },
+    {
+     "file": "agent/src/agent/loop.py",
+     "kind": "upstream",
+     "literal": "name=f\"tool-{tool_name}\","
+    },
+    {
+     "file": "agent/src/agent/loop.py",
+     "kind": "hook",
+     "literal": "args=(_worker,),",
+     "note": "readonly tool worker runs in the caller's context (the bound session)"
+    },
+    {
+     "file": "agent/src/agent/loop.py",
+     "kind": "hook",
+     "literal": "pool.submit(contextvars.copy_context().run, _run, item)"
+    },
+    {
+     "file": "agent/src/agent/loop.py",
+     "kind": "preimage",
+     "literal": "futures = [pool.submit(_run, item) for item in runnable]"
     }
    ]
   },

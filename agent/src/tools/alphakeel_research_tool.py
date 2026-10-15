@@ -476,6 +476,18 @@ def _session_id(tool: Any) -> str | None:
     return v or None
 
 
+def _session_exposure_argv(session_id: str | None, warnings: list[str]) -> list[str]:
+    """``--data-exposure-end-ms`` from the conversation's exposure file (data read by its other tool calls, each in a
+    process of its own); set by the tool, never by the model."""
+    if session_id is None:
+        warnings.append("no session id: data read by earlier tool calls is not in provenance.data_exposure_end_ms")
+        return []
+    from src.tools import alphakeel_research_ledger as ledger
+
+    end = ledger.exposure_end_ms(session_id)
+    return [] if end is None else ["--data-exposure-end-ms", str(end)]
+
+
 def _plan_ir_backtest(args: dict[str, Any], run_dir: Any, session_id: str | None, warnings: list[str]) -> dict[str, Any]:
     """The CLI request of an ``ir_backtest``, in this order: arguments parsed, hand-off guard and ``out`` check, one
     ``check()`` + ``alphakeel_ir_request.plan``, then the conversation's trial ledger (``trials`` / ``trials_evidence``).
@@ -687,6 +699,8 @@ class AlphakeelResearchTool(BaseTool):
                 argv = _argv(action, planned)
             else:
                 argv = _argv(action, args)
+            if action == "ir_export":
+                argv += _session_exposure_argv(_session_id(self), warnings)
         except ImportError as e:
             return json.dumps({"status": "error", "error": f"alphakeel_research is not installed: {e}"})
         except ValueError as e:

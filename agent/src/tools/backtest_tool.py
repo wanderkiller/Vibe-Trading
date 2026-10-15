@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,33 @@ def _persist_timeout_output(run_path: Path, exc: subprocess.TimeoutExpired) -> d
     (log_dir / "runner_stdout.txt").write_text(output["stdout"], encoding="utf-8")
     (log_dir / "runner_stderr.txt").write_text(output["stderr"], encoding="utf-8")
     return output
+
+
+def _note_child_exposure(run_path: Path, config: dict[str, Any]) -> None:
+    """Fold the engine child's data exposure into this process (``backtest.data_audit.record_exposure``, which also writes
+    the bound conversation's exposure file): the child's own record dies with it. The later of the run card's
+    ``data_audit.data_exposure_end_ms`` and, for a source whose reads are recorded (``NON_AUDITABLE_SOURCES``: live
+    exchange pulls), the end the config asked for -- a run that failed or timed out after its fetch wrote no card (or
+    left an earlier run's) but still saw that data. Never raises."""
+    try:
+        import pandas as pd
+
+        from backtest.data_audit import NON_AUDITABLE_SOURCES, record_exposure
+
+        source = str(config.get("source") or "")
+        ends = []
+        try:
+            card = json.loads((run_path / "run_card.json").read_text(encoding="utf-8"))
+            ends.append((card.get("data_audit") or {}).get("data_exposure_end_ms"))
+        except (OSError, ValueError, AttributeError):
+            pass
+        if source in NON_AUDITABLE_SOURCES and config.get("end_date"):
+            ends.append(int((pd.Timestamp(str(config["end_date"])) + pd.Timedelta(days=1)).timestamp() * 1000))
+        ends = [e for e in ends if isinstance(e, int) and not isinstance(e, bool)]
+        if ends:
+            record_exposure(source or "backtest", max(ends), via=f"backtest:{run_path.name}")
+    except Exception:  # noqa: BLE001 - provenance bookkeeping must not break the tool result
+        logging.getLogger(__name__).warning("backtest data exposure not recorded for %s", run_path, exc_info=True)
 
 
 def run_backtest(run_dir: str) -> str:
@@ -125,6 +153,7 @@ def run_backtest(run_dir: str) -> str:
             cli_args=[str(run_path)],
         )
     except subprocess.TimeoutExpired as exc:
+        _note_child_exposure(run_path, config)
         # The lifecycle block below is unreachable on a timeout, so record the
         # failure here — otherwise the run is indistinguishable from never-run
         # (the evidence gate fail-closes either way, but the reason is lost).
@@ -147,6 +176,7 @@ def run_backtest(run_dir: str) -> str:
     # evidence pipeline: refresh_strategy_evidence fail-closes without
     # state.json, which previously only the runtime loop wrote (#1412).
     # Same contract as the runtime — success, or failure with a reason.
+    _note_child_exposure(run_path, config)
     state_store = RunStateStore()
     if result.success:
         state_store.mark_success(run_path)

@@ -1119,7 +1119,8 @@ def check_handoff_consistency(rdir: Path, rdoc: dict, card: dict, reconciliation
 
 
 def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_credential: dict | None = None,
-           robustness_dir: str | Path | None = None, reconciliation: str | Path | None = None) -> dict:
+           robustness_dir: str | Path | None = None, reconciliation: str | Path | None = None,
+           data_exposure_end_ms: int | None = None) -> dict:
     """Write ``strategy.json`` (the IR with ``strategy_id`` and ``provenance``), the trials evidence,
     ``evidence/ir-backtest-audit.json`` and -- when the battery was run (``robustness_dir``, default ``<run_dir>/robustness``
     if present) -- ``evidence/robustness.json``, ``robustness.md``, ``robustness-trials.jsonl`` into ``out_dir``. Without
@@ -1181,11 +1182,12 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
     if isinstance(fixed, dict):
         prov["fixed_literals"] = copy.deepcopy(fixed)
     # AlphaKeel protocol 2.5 (1.14): the latest end of every data read behind this research -- the run's data window, the
-    # robustness windows and any read in this process (data_audit.record_exposure; also direct exchange pulls).
-    from backtest.data_audit import data_exposure_end_ms
+    # robustness windows, any read in this process (data_audit.record_exposure) and ``data_exposure_end_ms``: the reads
+    # of the conversation's other processes (direct exchange pulls through the backtest tool; its exposure file).
+    from backtest.data_audit import data_exposure_end_ms as process_exposure_end_ms
 
-    ends = [card["data_window"]["end_ms"], research_end_ms, data_exposure_end_ms(),
-            (card.get("data_audit") or {}).get("data_exposure_end_ms")]
+    ends = [card["data_window"]["end_ms"], research_end_ms, process_exposure_end_ms(),
+            (card.get("data_audit") or {}).get("data_exposure_end_ms"), data_exposure_end_ms]
     prov["data_exposure_end_ms"] = max(x for x in ends if isinstance(x, int) and not isinstance(x, bool))
     warnings = []
     prov["robustness"] = None
