@@ -928,8 +928,8 @@ def backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, en
         ir_views.require_fees(kw.get("fees"))  # before a pack is frozen
         card = _backtest(client, ir_doc, instruments, start_ms=start_ms, end_ms=end_ms, out_dir=out, cache_dir=cache_dir,
                          pack_dir=pack_dir, accept_partial=accept_partial, **kw)
-        # Trial ledger (audit 2 P1-1 c): every run is a trial of the research service's global ledger (registered ledger-only via POST /trials, no service run); an unregistered run is
-        # refused here rather than left to look like the only one.
+        # Trial ledger (audit 2 P1-1 c): every run is a trial of the research service's global ledger, registered ledger-only
+        # (POST /trials: no service run); an unregistered run is refused here rather than left to look like the only one.
         if register:
             if client is None:
                 raise ApiError("request.invalid", "registering the run needs the research-service client (or --no-register)", field="register")
