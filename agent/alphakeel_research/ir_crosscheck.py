@@ -225,6 +225,14 @@ def register_trial(client: Any, ir_doc: dict, card: dict, *, queue_wait_s: float
             time.sleep(poll_s)
 
 
+def record_trial_only(client: Any, ir_doc: dict, card: dict) -> dict:
+    """Ledger-only trial registration (``POST /trials``): AlphaKeel writes a ``research_run`` row with ``executed: false`` and
+    creates no run. Body and key are identical to :func:`register_trial`, so the ledger trial_key is the same. The endpoint
+    never queues; any ApiError propagates. The battery keeps :func:`register_trial` because AlphaKeel's verdict 1.6 checks its run ids."""
+    body, key = mirror_request(ir_doc, card, key_salt=trial_key_salt())
+    return client.record_trial(body, key=key)
+
+
 def alphakeel_check(client: Any, ir_doc: dict, run_dir: str | Path, *, timeout: float = 7200.0) -> dict:
     """Run the mirrored AlphaKeel ``ir_strategy`` + ``dataset_view`` run and compare; writes ``alphakeel-check.json``."""
     run_dir = Path(run_dir)

@@ -259,6 +259,13 @@ class Client:
         body["key"] = key
         return self.post("/runs", body, key=key)
 
+    def record_trial(self, body: dict, *, key: str | None = None) -> dict:
+        """``POST /trials``: ledger-only trial registration (same body and validation as ``POST /runs``; no run is created)."""
+        body = dict(body)
+        key = key or key_for("run", body)
+        body["key"] = key
+        return self.post("/trials", body, key=key)
+
     def register_external(self, body: dict, *, key: str | None = None) -> dict:
         body = dict(body)
         key = key or key_for("external", body)

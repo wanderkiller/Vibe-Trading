@@ -201,9 +201,10 @@ AlphaKeel imports the file into its registry (`strategy_ir::Ir::parse` + `valida
 **The long-history run is research evidence, not reconciliation input.** Reconciliation with AlphaKeel's evaluator is
 `ir review` on a scan pack (`reconciliation.json`, accepted by `arb strategy reconcile --from-file`).
 
-**Validation protocol v2 (docs/45; research side).** `ir backtest` and every candidate run of `ir robustness` are registered in the
-research service's trial ledger (`POST /runs`, mode `ir_strategy`, one `research_run` row each; ids in `run_card.json`
-`service_registration` / `robustness.json` `service_runs`; `--no-register` opts out and is recorded). `ir robustness` never uses a
+**Validation protocol v2 (docs/45; research side).** `ir backtest` registers its trial ledger-only
+(`POST /trials`, no service run; `trial_id` / `trial_key` in `run_card.json` `service_registration`), while every candidate run of
+`ir robustness` still creates one service run (`POST /runs`, mode `ir_strategy`, one `research_run` row each; ids in `robustness.json`
+`service_runs`; `--no-register` opts out and is recorded). `ir robustness` never uses a
 `prior_trials` below the run card's `trials.count`. If the IR has `excluded_bases`, or `universe.bases` allows fewer coins than the
 battery had data for, the filter permutation test runs without `--filter` (`rating.facts.filter_required`); `parameters.ranges` lists
 every `robust` range and the precheck's 1.9 fails a range narrower than +-20% of the value. `ir export` refuses a battery whose

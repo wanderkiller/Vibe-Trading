@@ -143,6 +143,15 @@ class FakeService:
         self.keys: list[str] = []
         self.queue_full = fail_first_with_queue_full
         self.fail_with = fail_with
+        self.trial_bodies: list[dict] = []
+        self.trial_keys: list[str] = []
+
+    def record_trial(self, body, *, key=None):
+        if self.fail_with is not None:
+            raise self.fail_with
+        self.trial_bodies.append(body)
+        self.trial_keys.append(key)
+        return {"trial_id": f"trial-{len(self.trial_bodies):04d}", "trial_key": "research:x", "request_sha256": "x", "recorded": True}
 
     def create_run(self, body, *, key=None):
         if self.fail_with is not None:
@@ -179,6 +188,7 @@ def test_runs_registered_with_service(tmp_path, monkeypatch):
     assert sr["service_conservative_net"] == "9.25" and cons["fill_model"] == "conservative" and cons["net_basis"] == "net_of_capital_cost"
     assert Decimal(cons["difference"]) == Decimal("9.25") - Decimal(cons["local_net"])
     assert any("conservative run of the same IR" in x for x in doc["notes"])
+    assert svc.trial_bodies == []  # the battery still uses POST /runs
     assert all("profile" not in b for b in svc.bodies)  # the registered runs use the server default (conservative)
     on_disk = json.loads((tmp_path / "rb" / "robustness.json").read_text())
     assert on_disk["service_runs"]["ids"] == sr["ids"]
@@ -193,15 +203,21 @@ def test_runs_registered_with_service(tmp_path, monkeypatch):
     assert not (tmp_path / "rb3" / "robustness.json").exists()
 
 
-def test_ir_backtest_registers_its_run(tmp_path):
+def test_ir_backtest_registers_its_trial_ledger_only(tmp_path):
     from tests.test_alphakeel_ir_backtest import BN, OK, START as S0, END, export_dir, golden_built
 
     pd = export_dir(tmp_path, golden_built())
     svc = FakeService()
     card = ir_backtest.backtest(svc, golden_ir(), [BN, OK], start_ms=S0, end_ms=END, out_dir=tmp_path / "r1", pack_dir=pd, register=True, trials=1, fees=FEES)
-    assert len(svc.bodies) == 1 and card["service_registration"] == {
-        "registered": True, "service_run_id": "run-0001", "ledger": "research-service trial ledger (POST /runs, mode ir_strategy)"}
-    assert json.loads((tmp_path / "r1" / "run_card.json").read_text())["service_registration"]["service_run_id"] == "run-0001"
+    assert svc.bodies == [] and len(svc.trial_bodies) == 1
+    tb = svc.trial_bodies[0]
+    assert tb["mode"] == "ir_strategy" and "profile" not in tb and tb["dataset_view"]["view"] == "kline_close_synthetic_bbo"
+    _, want_key = ir_crosscheck.mirror_request(tb["ir"], card, key_salt=ir_crosscheck.trial_key_salt())
+    assert svc.trial_keys == [want_key]
+    expect = {"registered": True, "trial_id": "trial-0001", "trial_key": "research:x", "recorded": True,
+              "ledger": "research-service trial ledger (POST /trials, ledger only, not executed)"}
+    assert card["service_registration"] == expect
+    assert json.loads((tmp_path / "r1" / "run_card.json").read_text())["service_registration"] == expect
     off = ir_backtest.backtest(None, golden_ir(), [BN, OK], start_ms=S0, end_ms=END, out_dir=tmp_path / "r2", pack_dir=pd, trials=1, fees=FEES)
     assert off["service_registration"]["registered"] is False
     with pytest.raises(ApiError, match="needs the research-service client"):
