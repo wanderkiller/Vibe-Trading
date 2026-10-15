@@ -12,10 +12,12 @@ floating point): use SQL to filter, join and locate differences, never to do acc
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
 import os
+import time
 import uuid
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -223,6 +225,13 @@ class PackCache:
         self.root = Path(root)
         (self.root / "content").mkdir(parents=True, exist_ok=True)
         (self.root / "locks").mkdir(parents=True, exist_ok=True)
+        # a writer killed mid-write (tool timeout: SIGKILL) leaves its unique temporary file behind; an hour-old one is
+        # nobody's any more (a write takes seconds). Temporary files only: verified content is never touched.
+        stale = time.time() - 3600
+        for part in (self.root / "content").glob("*.part"):
+            with contextlib.suppress(OSError):
+                if part.stat().st_mtime < stale:
+                    part.unlink()
 
     def content_path(self, content_sha: str) -> Path:
         return self.root / "content" / content_sha

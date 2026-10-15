@@ -63,6 +63,7 @@ def test_a_timeout_returns_and_keeps_the_partial_output(tmp_path, monkeypatch) -
     from src.tools import alphakeel_research_tool as tool
 
     monkeypatch.setenv("ALPHAKEEL_RESEARCH_TOKEN", "ak_rs_env-secret")
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(tmp_path))
     script = ("import sys, time\n"
               "print('freeze: job 7 queued token ak_rs_env-secret', file=sys.stderr, flush=True)\n"
               "time.sleep(30)\n")
@@ -113,3 +114,54 @@ def test_two_writers_of_the_same_cached_object_both_succeed(tmp_path, monkeypatc
         t.join(20)
     assert results == [cache.content_path(sha)] * 2, results
     assert cache.has(sha) and sorted(p.name for p in (tmp_path / "cache" / "content").iterdir()) == [sha]
+
+
+def test_a_path_argument_that_is_not_a_string_is_refused(run_dir, monkeypatch) -> None:
+    """A list went past the hand-off guard and the root check, and ``_csv`` turned it back into the path (review round 1)."""
+    from src.tools.alphakeel_research_tool import AlphakeelResearchTool
+
+    monkeypatch.setenv("ALPHAKEEL_HANDOFF_DIR", str(run_dir.parent / "handoff"))
+    calls = []
+    patch_cli(monkeypatch, lambda argv: calls.append(argv) or 0)
+    for action, args in (("ir_export", {"ir": "s.json", "run": "r", "out": [str(run_dir.parent / "handoff" / "sid")]}),
+                         ("ir_robustness", {"run": [str(run_dir.parent.parent / "private")]}),
+                         ("ir_export", {"ir": "s.json", "run": "r", "out": 7})):
+        res = json.loads(AlphakeelResearchTool().execute(action=action, args=args, run_dir=str(run_dir)))
+        assert res["status"] == "error" and "must be a path string" in res["error"], res
+    assert calls == []
+
+
+def test_a_sibling_under_the_runs_root_is_allowed_as_upstream_write_file_allows_it(run_dir, monkeypatch) -> None:
+    from src.tools.alphakeel_research_tool import AlphakeelResearchTool
+
+    calls = []
+    patch_cli(monkeypatch, lambda argv: calls.append(argv) or 0)
+    AlphakeelResearchTool().execute(action="ir_export", args={"ir": "s.json", "run": "r", "out": "../other/x"},
+                                    run_dir=str(run_dir))
+    assert len(calls) == 1
+
+
+def test_oversized_kept_fields_still_fit_the_budget() -> None:
+    from src.config.limits import TOOL_RESULT_LIMIT
+    from src.tools.alphakeel_research_tool import _dump
+
+    for out in ({"status": "error", "result": {"error": {"code": "x", "message": "m" * 12000}}},
+                {"status": "ok", "evidence_dir": "ir_runs/x", "result": {"summary": {"k": "v" * 18000}}},
+                {"status": "ok", "result": {k: "s" * 1499 for k in ("summary", "run_dir", "run_card", "run_id", "strategy_id",
+                                                                     "pack_id", "comparison_id")}}):
+        text = _dump(out, [])
+        assert len(text) <= TOOL_RESULT_LIMIT and json.loads(text)["status"] == out["status"], len(text)
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "killpg"), reason="process groups are POSIX")
+def test_timeout_logs_are_written_only_under_an_allowed_run_root(tmp_path, monkeypatch) -> None:
+    from src.agent import loop
+    from src.tools import alphakeel_research_tool as tool
+
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(tmp_path / "runs"))
+    script = "import sys, time\nprint('partial', file=sys.stderr, flush=True)\ntime.sleep(30)\n"
+    monkeypatch.setattr(tool, "_child_cmd", lambda argv: [sys.executable, "-c", script])
+    monkeypatch.setattr(loop, "TOOL_TIMEOUT_SECONDS", 2.0, raising=False)
+    outside = tmp_path / "handoff" / "sid"
+    out = json.loads(tool.AlphakeelResearchTool().execute(action="check", run_dir=str(outside)))
+    assert out["stderr"].strip() == "partial" and "logs" not in out and not outside.exists(), out

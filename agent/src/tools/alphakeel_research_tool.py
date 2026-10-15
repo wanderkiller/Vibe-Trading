@@ -24,7 +24,7 @@ from src.config.accessor import get_env_value
 from src.config.limits import TOOL_RESULT_LIMIT
 from src.tools.alphakeel_ir_request import IGNORED_NOTE
 from src.tools.alphakeel_research_ledger import NO_SESSION_WARNING
-from src.tools.path_utils import allowed_write_roots, resolve_safe_path
+from src.tools.path_utils import allowed_write_roots, resolve_safe_path, safe_run_dir
 
 _ACTIONS = ("check", "freeze", "read", "review", "policy", "native", "compare", "ir_validate", "ir_review", "ir_backtest", "ir_robustness", "ir_crosscheck", "ir_export")
 #: ``read`` tables: scan packs have quotes/observations/settlements; dataset packs have klines/bbo/instrument_meta (and settlements).
@@ -131,13 +131,24 @@ def _dump(out: dict, warnings: list[str]) -> str:
     if isinstance(env.get("result"), dict):
         _fit(env["result"], env, omitted, "result.")
     _fit(env, env, omitted, "")
-    if len(_enc(env)) > TOOL_RESULT_LIMIT:  # the kept fields alone are too long: shorten their text, never the JSON
+    if len(_enc(env)) > TOOL_RESULT_LIMIT:  # the kept fields alone are too long: shorten them, never the JSON
         for d in (env, env["result"] if isinstance(env.get("result"), dict) else {}):
             for k, v in list(d.items()):
-                if isinstance(v, str) and len(v) > 1500:
-                    d[k] = v[:1500] + " [cut]"
-                elif k == "warnings" and isinstance(v, list):
+                if k in ("result", "omitted"):
+                    continue
+                if k == "warnings" and isinstance(v, list):
                     d[k] = [str(w)[:300] for w in v[:10]]
+                elif isinstance(v, str) and len(v) > 1500:
+                    d[k] = v[:1500] + " [cut]"
+                elif isinstance(v, (dict, list)) and len(_enc(v)) > 1500:
+                    d[k] = _enc(v)[:1500] + " [cut]"
+    if len(_enc(env)) > TOOL_RESULT_LIMIT:  # still too long: the minimal envelope
+        result = env.get("result") if isinstance(env.get("result"), dict) else {}
+        env = {"status": env.get("status"), **{k: str(v)[:1000] for k, v in (("error", env.get("error") or result.get("error")),
+                                                                            ("evidence_status", result.get("evidence_status")),
+                                                                            ("evidence_dir", env.get("evidence_dir")),
+                                                                            ("run_dir", result.get("run_dir"))) if v is not None},
+               "omitted": "everything else", "omitted_note": _OMITTED_NOTE}
     return _enc(env)
 
 
@@ -189,9 +200,12 @@ _PATH_KEYS = ("out", "robustness", "run")
 
 
 def _handoff_guard(action: str, a: dict[str, Any]) -> None:
-    """No path-valued argument may point into AlphaKeel's hand-off directory."""
+    """Path-valued arguments are strings (a list or number would pass every check here and reach the CLI as a path via
+    ``_csv`` / ``str``), and none may point into AlphaKeel's hand-off directory."""
     for k in _PATH_KEYS:
         v = a.get(k)
+        if v not in (None, "") and not isinstance(v, (str, os.PathLike)):
+            raise ValueError(f"{action}: {k} must be a path string, not {type(v).__name__}")
         if isinstance(v, (str, os.PathLike)) and str(v) != "" and _under_handoff(str(v)):
             raise ValueError(f"{action}: {k} points into AlphaKeel's hand-off directory, which is not an agent action. Hand-off is the "
                              "user's decision: the user presses 'Hand off to AlphaKeel' on the run page (docs/45 section 7). Use another "
@@ -370,6 +384,9 @@ def _drain(proc: subprocess.Popen) -> tuple[str, str]:
     try:
         out, err = proc.communicate(timeout=5)
         return out or "", err or ""
+    except subprocess.TimeoutExpired as e:  # a descendant outside the group holds the pipes: keep what was read
+        return tuple(v.decode("utf-8", errors="replace") if isinstance(v, bytes) else (v or "")
+                     for v in (e.stdout, e.stderr))  # type: ignore[return-value]
     except Exception:  # noqa: BLE001
         return "", ""
 
@@ -381,12 +398,12 @@ def _timeout_error(timeout: float | None, e: subprocess.TimeoutExpired, run_dir:
     output = {k: _redact(str(getattr(e, k, None) or "")) for k in ("stdout", "stderr")}
     if isinstance(run_dir, str) and run_dir.strip() and any(output.values()):
         try:
-            logs = Path(run_dir) / "logs"
+            logs = safe_run_dir(run_dir) / "logs"  # the model may pass run_dir: only an allowed run root is written
             logs.mkdir(parents=True, exist_ok=True)
             for k, v in output.items():
                 (logs / f"alphakeel_research_{k}.txt").write_text(v, encoding="utf-8")
             err["logs"] = "logs/alphakeel_research_stdout.txt, logs/alphakeel_research_stderr.txt"
-        except OSError:
+        except (OSError, ValueError):
             pass
     err.update({k: v[-2000:] for k, v in output.items() if v})
     return err
