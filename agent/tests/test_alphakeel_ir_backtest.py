@@ -441,6 +441,19 @@ def test_simulator_golden_one_pair_one_settlement_one_close(tmp_path):
     assert Decimal(card["max_drawdown"]["amount"]) >= 0
 
 
+def test_every_trade_record_carries_its_entry_features(tmp_path):
+    """The entry decision's features are written with the trade (decimals as strings), so the reason for an entry can be
+    audited from trades.jsonl alone."""
+    pack = Pack.from_directory(export_dir(tmp_path, golden_built()))
+    out = tmp_path / "bt"
+    ir_backtest.run(golden_ir(), pack, [BN, OK], start_ms=START, end_ms=END, out_dir=out, step_minutes=2, fees=FEES)
+    (t,) = [json.loads(x) for x in (out / "trades.jsonl").read_text().splitlines()]
+    f = t["entry_features"]
+    assert set(f) == set(ir.FEATURES)
+    assert f["funding_hourly_net"] is not None and isinstance(f["funding_hourly_net"], str) and Decimal(f["funding_hourly_net"]) > 0
+    assert f["basis"] == ir.fmt(Decimal("0.2") / 100) and f["spread"] == "0" and f["price_estimated"] is False
+
+
 def test_dataset_sim_prices_funding_at_the_official_mark_when_published(tmp_path):
     """AlphaKeel F04 (docs/37): a settlement row's published mark wins over the last 1m close. The golden run with Binance's
     START+30m settlement publishing mark 100.7 (its last close is 100): the long pays 10 x 100.7 x 0.0001 = 0.1007 instead of

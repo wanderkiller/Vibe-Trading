@@ -9,9 +9,15 @@ Runs (each in ``out_dir/runs/<label>/``, independent runs in ``workers`` process
 
 * ``base``             the IR as given on the IS window;
 * ``cost-x1.5|x2``     same IR, every taker fee of the effective fee table multiplied (Decimal);
-* ``basis-x2``         IR copy with ``assumptions.basis_stress`` doubled (a different IR: a different strategy_id);
+* ``basis-x2``         IR copy with ``assumptions.basis_stress`` doubled (a different IR: a different strategy_id); not run
+                       and reported ``not_applicable`` when no condition or rank_by reads ``stress`` / ``net_conservative``
+                       (``ir_backtest.basis_stress_inert``: the copy would rerun the base strategy);
 * ``param-<n>-lo|hi``  for every ``parameters`` entry, the literal at its README §3 rule 5 ``path`` (and the parameter's
-                       ``value``) set to ``robust[0]`` / ``robust[1]``; each neighbour is its own IR;
+                       ``value``) set to ``robust[0]`` / ``robust[1]``; each neighbour is its own IR. A parameter that is
+                       inert on the dataset view (``ir_backtest.inert_parameters``: a condition on spread, price_estimated,
+                       quote_age_ms or leg_skew_ms, constant by construction) is not run: its sides are listed in
+                       ``parameters.skipped`` with the reason, and it is left out of the walk-forward grid, the PBO
+                       candidates and the trial count (its neighbours would be copies of the base run);
 * ``wf<k>-train-gNN``  anchored walk-forward (see below): every grid point of fold k on the fold's training window;
 * ``wf<k>-test``       the training winner of fold k on the fold's test window;
 * ``oos``              the same IR on the OOS window (another pack allowed), when given;
@@ -590,13 +596,14 @@ def _days_of(w: tuple[int, int]) -> int:
     return -(-(w[1] - w[0]) // ir_backtest.DAY_MS)
 
 
-def walk_forward_grid(base_doc: dict) -> tuple[list[dict], str]:
+def walk_forward_grid(base_doc: dict, skip: Any = ()) -> tuple[list[dict], str]:
     """The per-fold parameter grid: ``[{"parameters": {name: value}, "doc": IR | None, "skipped": reason | None}]`` in grid
     order (first point = all parameters at their base value), and its kind ``cartesian`` (<= 27 points) or
-    ``one_at_a_time``. Each parameter's values are {value, robust[0], robust[1]}, deduplicated, base value first."""
+    ``one_at_a_time``. Each parameter's values are {value, robust[0], robust[1]}, deduplicated, base value first.
+    Parameters named in ``skip`` (inert on the dataset view) stay at their base value and are not grid axes."""
     import itertools
 
-    names = sorted(base_doc["parameters"])
+    names = sorted(set(base_doc["parameters"]) - set(skip))
     values: dict[str, list[str]] = {}
     for n in names:
         p = base_doc["parameters"][n]
@@ -692,10 +699,14 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
             raise ApiError("request.invalid", "the OOS window overlaps the IS window: it would not be out of sample", field="oos_window")
     wf_cfg = {"folds": wf_folds, "test_days": wf_test_days, "min_train_days": wf_min_train_days}
     wf_plan = walk_forward_plan(windows["is"], wf_folds, wf_test_days, wf_min_train_days)
+    # parameters whose path the dataset view cannot move (constant features): no neighbour, no grid axis
+    inert = {x["parameter"]: x for x in ir_backtest.inert_parameters(base_doc)}
     wf_grid: list[dict] = []
     if wf_plan["computable"]:
-        wf_grid, wf_cfg["grid"] = walk_forward_grid(base_doc)
+        wf_grid, wf_cfg["grid"] = walk_forward_grid(base_doc, skip=inert)
         wf_cfg["grid_size"] = len(wf_grid)
+        if inert:
+            wf_cfg["inert_parameters_held_at_base"] = sorted(inert)
         for f in wf_plan["folds"]:
             for part in ("train", "test"):
                 windows[f"wf{f['k']}-{part}"], packs[f"wf{f['k']}-{part}"] = f[part], pack
@@ -720,7 +731,14 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     jobs += cost.values()
     bs = Decimal(base_doc["assumptions"]["basis_stress"])
     basis_job = None
-    if bs > 0 and bs * Decimal(BASIS_MULTIPLIER) < 1:
+    basis_ok = bs > 0 and bs * Decimal(BASIS_MULTIPLIER) < 1
+    basis_inert = ir_backtest.basis_stress_inert(base_doc) if basis_ok else None
+    if inert:
+        notes.append(f"warning: parameters inert on the dataset view, their neighbours not run: {sorted(inert)} "
+                     "(robustness not demonstrated for them)")
+    if basis_inert:
+        notes.append(f"basis_stress x{BASIS_MULTIPLIER} not applicable: {basis_inert}")
+    elif basis_ok:
         bdoc = copy.deepcopy(base_doc)
         bdoc["assumptions"]["basis_stress"] = IR.fmt(bs * Decimal(BASIS_MULTIPLIER))
         basis_job = R.job("basis-x2", "basis_stress", bdoc, fees=fees)
@@ -736,6 +754,9 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         for side, v in (("lo", p["robust"][0]), ("hi", p["robust"][1])):
             if Decimal(v) == Decimal(p["value"]):
                 skipped_params.append({"parameter": name, "side": side, "value": v, "reason": "equals the base value"})
+                continue
+            if name in inert:
+                skipped_params.append({"parameter": name, "side": side, "value": v, "reason": inert[name]["reason"]})
                 continue
             try:
                 ndoc = neighbour_doc(base_doc, name, v)
@@ -907,8 +928,12 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     worst_seg = min(segs, key=lambda s: Decimal(s["net"])) if segs else None
     cost_doc = {m: {"net": _s(net(j)), "over_base": _ratio(net(j), b_net), "trades_closed": R.result(j)["card"]["counts"]["closed"],
                     "fees": R.result(j)["card"]["amounts"]["fees"]} for m, j in cost.items()}
+    if basis_inert:
+        # present but without a net: the stress could not be applied, which is not a pass (G1 1.5 reads the net)
+        cost_doc["basis_stress_x2"] = {"result": "not_applicable", "reason": basis_inert, "net": None, "over_base": None,
+                                       "trades_closed": None}
     if basis_job:
-        cost_doc["basis_stress_x2"] = {"net": _s(net(basis_job)), "over_base": _ratio(net(basis_job), b_net),
+        cost_doc["basis_stress_x2"] = {"result": "run", "net": _s(net(basis_job)), "over_base": _ratio(net(basis_job), b_net),
                                        "trades_closed": R.result(basis_job)["card"]["counts"]["closed"], "strategy_id": basis_job["strategy_id"]}
     nb = [{**m, "strategy_id": j["strategy_id"], "net": _s(net(j)), "positive": net(j) > 0,
            "sharpe_annualised": R.result(j)["card"]["alphakeel_metrics"].get("sharpe_annualised"),
@@ -920,7 +945,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
 
     for w in narrow_ranges({"parameters": {"ranges": ranges}}):
         notes.append(f"warning: robust range too narrow to test anything (G1 1.9 fails): {w}")
-    params_doc = {"ranges": ranges, "neighbours": nb, "skipped": skipped_params, "positive_fraction": _positive_fraction([x["net"] for x in nb]),
+    params_doc = {"ranges": ranges, "neighbours": nb, "skipped": skipped_params, "inert": list(inert.values()), "positive_fraction": _positive_fraction([x["net"] for x in nb]),
                   "worst_net": _s(worst_nb), "worst_over_base": _ratio(worst_nb, b_net)}
     oos_doc = None
     if oos_job:
@@ -1069,7 +1094,9 @@ def render_markdown(doc: dict) -> str:
     ])
     L += ["", "## Cost stress", ""]
     L += _table(["variant", "net", "net / base", "closed trades"],
-                [[f"taker fee x{k}" if k in COST_MULTIPLIERS else k, v["net"], v["over_base"], v["trades_closed"]] for k, v in doc["cost_stress"].items()])
+                [[f"taker fee x{k}" if k in COST_MULTIPLIERS else k, v["net"],
+                  f"not applicable: {v['reason']}" if v.get("result") == "not_applicable" else v["over_base"], v["trades_closed"]]
+                 for k, v in doc["cost_stress"].items()])
     p = doc["parameters"]
     L += ["", "## Parameter neighbours", ""]
     if p["neighbours"]:

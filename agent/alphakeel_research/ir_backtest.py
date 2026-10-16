@@ -36,6 +36,7 @@ import hashlib
 import inspect
 import json
 import os
+import re
 import shutil
 import time
 import uuid
@@ -564,7 +565,9 @@ class Trade:
         closed = self.closed_ms is not None
         return {"trade": self.trade, "pair_key": self.key, "pair_id": self.pair_id, "base": self.base, "opened_ms": self.opened_ms,
                 "closed_ms": self.closed_ms, "status": "closed" if closed else "open", "exit_reason": self.reason,
-                "long": leg(self.long), "short": leg(self.short), "realized": _s(self.realized()) if closed else None}
+                "long": leg(self.long), "short": leg(self.short), "realized": _s(self.realized()) if closed else None,
+                # the entry decision's features (``Features.to_json``: decimals as strings): why this pair was entered
+                "entry_features": dict(self.entry_features)}
 
 
 class Sim:
@@ -929,6 +932,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                          "fraction_of_capital": _s(q8(dd["amount"] / capital_base))},
         "files": {"equity": "equity.jsonl", "trades": "trades.jsonl", "decisions": "decisions.jsonl"},
         "trials": trials_doc,
+        "warnings": inert_warnings(loaded.doc),
         "alphakeel_metrics": ak,
         "metrics": {"total_return_on_capital": _s(q8(final_eq / capital_base)), "days": len(days), "trades_closed": sim.closed,
                     "sharpe_daily_annualised": ak.get("sharpe_annualised") if isinstance(ak, dict) else None},
@@ -1149,6 +1153,55 @@ def freshness_warnings(ir_doc: dict) -> list[str]:
     return out
 
 
+#: features the dataset view makes constant by construction (``ir_views`` dataset touch: bid = ask = close, synthetic bbo,
+#: quote_ms = the last closed bar's close time on the step grid): a threshold on them separates nothing in this data
+DATASET_INERT_FEATURES = {
+    "spread": "spread is 0 on the dataset view (bid = ask = the 1m close)",
+    "price_estimated": "price_estimated is false on the dataset view (synthetic bbo on every leg)",
+    "quote_age_ms": "quote_age_ms is ~1 ms on the dataset view (quote_ms = the last closed bar's close time)",
+    "leg_skew_ms": "leg_skew_ms is 0 on the dataset view (both legs' quote_ms = the same bar close time)",
+}
+#: the features that read ``assumptions.basis_stress`` (``ir.compute_features``): stress and net_conservative
+BASIS_STRESS_FEATURES = ("stress", "net_conservative")
+_CONDITION_VALUE = re.compile(r"(entry|exit)\.conditions\[([0-9]+)\]\.value(\[[01]\])?")
+
+
+def basis_stress_inert(ir_doc: dict) -> str | None:
+    """Why ``assumptions.basis_stress`` cannot change a dataset backtest of this IR, else None: it only enters the
+    ``stress`` and ``net_conservative`` features, and no entry/exit condition or ``entry.rank_by`` reads either."""
+    used = {c["feature"] for sec in ("entry", "exit") for c in ir_doc[sec]["conditions"]} | {ir_doc["entry"]["rank_by"]}
+    if used & set(BASIS_STRESS_FEATURES):
+        return None
+    return (f"no entry/exit condition or rank_by reads {' or '.join(BASIS_STRESS_FEATURES)}: basis_stress does not "
+            "change any decision")
+
+
+def inert_parameters(ir_doc: dict) -> list[dict]:
+    """``parameters`` whose ``path`` cannot change a dataset-view backtest: a condition value on a feature of
+    ``DATASET_INERT_FEATURES``, or ``assumptions.basis_stress`` when :func:`basis_stress_inert`. ``[{"parameter", "path",
+    "feature", "reason"}]`` sorted by name. Their robust neighbours rerun the base strategy and prove nothing."""
+    out = []
+    for name in sorted(ir_doc.get("parameters") or {}):
+        path = ir_doc["parameters"][name]["path"]
+        m = _CONDITION_VALUE.fullmatch(path)
+        feature = why = None
+        if m:
+            conds = ir_doc[m.group(1)]["conditions"]
+            i = int(m.group(2))
+            feature = conds[i]["feature"] if i < len(conds) else None
+            why = DATASET_INERT_FEATURES.get(feature)
+        elif path == "assumptions.basis_stress":
+            feature, why = "basis_stress", basis_stress_inert(ir_doc)
+        if why:
+            out.append({"parameter": name, "path": path, "feature": feature, "reason": f"inert on the dataset view: {why}"})
+    return out
+
+
+def inert_warnings(ir_doc: dict) -> list[str]:
+    return [f"parameter {x['parameter']} ({x['path']}) is {x['reason']}; its robustness cannot be tested on this data "
+            "(the robustness battery skips its neighbours)" for x in inert_parameters(ir_doc)]
+
+
 ROBUSTNESS_SCHEMA = "vibe-trading.ir-robustness/2"
 #: robustness.json's trials.jsonl lands under this name: AlphaKeel's importer whitelists exactly these evidence names
 EVIDENCE_ROBUSTNESS = ("robustness.json", "robustness.md", "robustness-trials.jsonl")
@@ -1348,6 +1401,7 @@ def export(ir_doc: dict, run_dir: str | Path, out_dir: str | Path, *, research_c
         warnings.append(f"universe.bases {'is absent' if allowed is None else 'allows bases outside the backtest'}: "
                         f"the backtest covered only {researched}; paper/live consider every contract a scan lists")
     warnings += freshness_warnings(loaded.doc)
+    warnings += inert_warnings(loaded.doc)
     if warnings:
         prov["warnings"] = warnings
     doc = copy.deepcopy(loaded.doc)

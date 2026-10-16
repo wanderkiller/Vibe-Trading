@@ -222,7 +222,9 @@ def test_battery_end_to_end_counts_trials_honestly_and_tests_the_filter(tmp_path
     insts, pd = _market(tmp_path)
     pack = Pack.from_directory(pd)
     out = tmp_path / "rb"
-    doc = robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), oos_window=(START + H6, HI), fees=FEES, out_dir=out,
+    d = _ir()
+    d["entry"]["rank_by"] = "net_conservative"  # reads basis_stress: basis-x2 is a real stress (else not_applicable)
+    doc = robustness.battery(d, pack, insts, is_window=(START, START + H6), oos_window=(START + H6, HI), fees=FEES, out_dir=out,
                              filter_spec={"kind": "excluded_bases", "bases": ["ETH"]}, permutations=4, seed=11, step_minutes=2,
                              workers=1)
     assert doc["schema"] == "vibe-trading.ir-robustness/2" and (out / "robustness.md").is_file() and (out / "trials.jsonl").is_file()
@@ -268,10 +270,40 @@ def test_battery_end_to_end_counts_trials_honestly_and_tests_the_filter(tmp_path
     caps = {c["id"] for c in doc["rating"]["caps"]}
     assert {"synthetic_view", "short_window", "few_trades"} <= caps and doc["rating"]["grade"] in ("C", "D", "F")
     # deterministic: the same seed draws the same sets
-    again = robustness.battery(_ir(), pack, insts, is_window=(START, START + H6), fees=FEES, out_dir=tmp_path / "rb2",
+    again = robustness.battery(d, pack, insts, is_window=(START, START + H6), fees=FEES, out_dir=tmp_path / "rb2",
                                filter_spec={"kind": "excluded_bases", "bases": ["ETH"]}, permutations=4, seed=11, step_minutes=2, workers=1)
     assert [d["bases"] for d in again["filter"]["permutation"]["draws_detail"]] == [d["bases"] for d in pm["draws_detail"]]
     assert "no_oos" in {c["id"] for c in again["rating"]["caps"]}
+
+
+def test_parameters_and_basis_stress_inert_on_the_dataset_view_are_skipped_not_passed(tmp_path):
+    """The dataset view makes quote_age_ms / leg_skew_ms / spread / price_estimated constant, and basis_stress only moves
+    stress / net_conservative: neighbours of such a parameter, or basis-x2 of an IR that reads neither, rerun the base
+    strategy. They are skipped with the reason (not counted as passing neighbours, PBO candidates or trials)."""
+    insts, pd = _market(tmp_path)
+    pack = Pack.from_directory(pd)
+    d = _ir()
+    d["entry"]["conditions"] = [{"feature": "quote_age_ms", "op": "<=", "value": "5000"}]
+    d["parameters"]["max_age"] = {"value": "5000", "robust": ["4000", "6000"], "path": "entry.conditions[0].value"}
+    assert d["entry"]["rank_by"] == "funding_hourly_net" and Decimal(d["assumptions"]["basis_stress"]) > 0
+    ir.load(d)
+    out = tmp_path / "rb"
+    doc = robustness.battery(d, pack, insts, is_window=(START, START + H6), fees=FEES, out_dir=out, permutations=0, step_minutes=2,
+                             workers=1)
+    labels = {r["label"] for r in doc["runs"]}
+    assert "param-hold-hi" in labels and not {"param-max_age-lo", "param-max_age-hi", "basis-x2"} & labels
+    skipped = {(s["parameter"], s["side"]): s["reason"] for s in doc["parameters"]["skipped"]}
+    assert skipped[("max_age", "lo")].startswith("inert on the dataset view: quote_age_ms") and ("max_age", "hi") in skipped
+    assert [x["parameter"] for x in doc["parameters"]["inert"]] == ["max_age"]
+    assert [x["parameter"] for x in doc["parameters"]["neighbours"]] == ["hold"]
+    b = doc["cost_stress"]["basis_stress_x2"]
+    assert b["result"] == "not_applicable" and b["net"] is None and b["over_base"] is None
+    assert doc["trials"]["distinct_candidate_variants"] == 2  # base and param-hold-hi only
+    from alphakeel_research import precheck
+    assert {"max_age:hi", "max_age:lo"} <= set(precheck.missing_neighbour_sides(doc))  # G1 1.9 does not pass an untested parameter
+    card = json.loads((out / "runs" / "base" / "run_card.json").read_text())
+    assert any(w.startswith("parameter max_age (entry.conditions[0].value) is inert") for w in card["warnings"])
+    assert "not applicable" in (out / "robustness.md").read_text()
 
 
 def test_battery_cli_with_process_workers_matches_in_process(tmp_path, capsys):
@@ -426,7 +458,9 @@ def test_walk_forward_battery_vector_fixed_seed(tmp_path):
     assert len(w) == 6 and not any(t["counted_trial"] for t in w) and doc["trials"]["walk_forward_runs_not_counted"] == 6
     di = doc["statistics"]["dsr_inputs"]
     assert M.sharpe(di["daily_returns"]) == di["sharpe_daily"] and M.moments(di["daily_returns"]) == (di["skewness"], di["kurtosis_non_excess"])
-    assert doc["trials"]["count"] == 3 and doc["trials"]["count"] == doc["statistics"]["dsr_inputs"]["trials"]  # base, basis-x2, param-hold-hi
+    # base, param-hold-hi; basis-x2 is not applicable (the IR reads no stress feature: it would rerun the base strategy)
+    assert doc["trials"]["count"] == 2 and doc["trials"]["count"] == doc["statistics"]["dsr_inputs"]["trials"]
+    assert doc["cost_stress"]["basis_stress_x2"]["result"] == "not_applicable"
     # dsr_inputs reproduce the reported DSR; the walk-forward table is rendered
     i = doc["statistics"]["dsr_inputs"]
     assert M.psr(i["sharpe_daily"], M.sr0(i["var_sr_used"], i["trials"]), i["effective_days"], i["skewness"],
