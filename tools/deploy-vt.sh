@@ -45,7 +45,7 @@ while [ $# -gt 0 ]; do
         --ak-pin) AK_PIN="$2"; shift 2 ;;
         --allow-pair-override) ALLOW_PAIR_OVERRIDE=1; shift ;;
         --repo) GH_REPO="$2"; shift 2 ;;
-        -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,/^set -euo/{/^#/p}' "$0"; exit 0 ;;
         *) echo "deploy-vt: unknown argument $1" >&2; exit 2 ;;
     esac
 done
@@ -79,13 +79,16 @@ refuse() {  # step detail — the old container keeps (or resumes) serving the o
             detail="$detail; RESTORING the image tag $IMAGE to $OLD_IMAGE_ID FAILED"
         fi
     fi
-    log_line "$1" refused "$detail"
+    log_line "$1" refused "$detail" || echo "deploy-vt: WARNING: cannot write $LOG" >&2
     echo "deploy-vt: REFUSED at $1: $detail" >&2
     exit 1
 }
 rollback() {  # step detail — the new container is up but failed its checks
     echo "deploy-vt: $1 failed ($2); rolling back to $ROLLBACK_TAG" >&2
-    docker tag "$ROLLBACK_TAG" "$IMAGE"
+    if ! docker tag "$ROLLBACK_TAG" "$IMAGE"; then
+        log_line "$1" rollback_failed "$2; retagging $ROLLBACK_TAG as $IMAGE failed" || true
+        exit 1
+    fi
     if docker compose up -d --no-build --no-deps "$SERVICE"; then
         log_line "$1" rolled_back "$2; volumes not restored (backup $BACKUP)"
         echo "deploy-vt: volumes were not restored; if the new image migrated them, restore from $BACKUP (DEPLOYMENT.local.md)" >&2
@@ -192,7 +195,8 @@ for pair in $VOLUMES; do
         refuse backup "archiving volume $vol failed (old container restarted)"
     fi
 done
-log_line backup ok "$(printf '%s' "$VOLUMES" | tr '\n' ' ')"
+log_line backup ok "$(printf '%s' "$VOLUMES" | tr '\n' ' ')" \
+    || { docker compose start "$SERVICE" || true; refuse backup "cannot write the deploy log (old container restarted)"; }
 
 # 6. start the new image and check it
 docker compose up -d --no-build --no-deps "$SERVICE" || rollback up "docker compose up failed"

@@ -889,10 +889,12 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                 rec["entries"].append({"pair_id": e["pair_id"], "position_id": f"pair-{n}", "qty": _s(qty),
                                        "intents": [f"n{n}-L-open", f"n{n}-S-open"]})
             # R2-D-3, AlphaKeel MarkRounder.observe (ab_backtest.rs): the engine frame snaps only the held legs (opened this
-            # frame included) and the legs closed this frame, plus the intents' prices; a leg merely quoted is not counted
+            # frame included) and the legs closed this frame whose quote snap_of takes, plus the intents' prices; a leg
+            # merely quoted is not counted
+            snaps = {ir_views.key_of(x): (x["view"]["bid"], x["view"]["ask"]) for x in legs if ir_views.snap_ok(x)}
             for tr in list(sim.open.values()) + closed_pending:
                 for leg in tr.legs():
-                    q = touch.get((leg.inst.venue, leg.inst.market, leg.inst.symbol))
+                    q = snaps.get((leg.inst.venue, leg.inst.market, leg.inst.symbol))
                     fills = [leg.entry_px] if tr.opened_ms == t else []
                     fills += [leg.exit_px] if tr.closed_ms == t else []
                     if q is not None or fills:

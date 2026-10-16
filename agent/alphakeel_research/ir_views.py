@@ -147,6 +147,19 @@ def valid(x) -> bool:
     return v.get("funding_rate") is None or abs(Decimal(v["funding_rate"])) <= 1
 
 
+def snap_ok(x) -> bool:
+    """AlphaKeel ``ab_backtest::snap_of``: a quote the engine takes into its frame (and ``MarkRounder.observe`` counts) --
+    ``bbo``, bid > 0, ask >= bid and funding price > 0 (the view's ``funding_px``, else the mark). Unlike :func:`valid` it
+    does not judge the funding rate. Freshness is the frame's own (dataset view: the 5-minute bar age, README §5a)."""
+    v = x["view"]
+    if not v["bbo"]:
+        return False
+    bid, ask = Decimal(v["bid"]), Decimal(v["ask"])
+    mark = Decimal(x["mark"]) if x.get("mark") is not None else (bid + ask) / 2
+    fpx = Decimal(v["funding_px"]) if v.get("funding_px") is not None else mark
+    return bid > 0 and ask >= bid and fpx > 0
+
+
 def fresh(x, now_ms: int, max_age_ms: int) -> bool:
     """README §5a: the leg's quote time (``quote_ts``, else the venue's fetch time) is at most ``max_age_ms`` old and at
     most ``FUTURE_TOLERANCE_MS`` ahead of ``now_ms``; an unknown quote time is not judged (AlphaKeel ``obs_fresh``)."""

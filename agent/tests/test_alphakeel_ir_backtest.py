@@ -517,6 +517,11 @@ def test_dataset_sim_price_dp_counts_only_held_and_touched_legs(tmp_path):
     assert t["opened_ms"] == START - 2 * MIN and t["long"]["entry_price"] == "100"
     assert (t["long"]["funding"], t["short"]["funding"]) == ("-0.101", "0.2004")
     assert card["counts"]["funding_events"] == 2
+    # only a quote AlphaKeel's snap_of takes is observed: bbo, bid > 0, ask >= bid, funding price > 0 (the rate is not judged)
+    def leg(bid="1.5", ask="1.5", bbo=True, fpx="1.5", rate="2"):
+        return {"view": {"bid": bid, "ask": ask, "bbo": bbo, "funding_px": fpx, "funding_rate": rate}}
+    assert ir_views.snap_ok(leg()) and not ir_views.valid(leg())
+    assert not any(ir_views.snap_ok(x) for x in (leg(bid="0"), leg(bid="2"), leg(bbo=False), leg(fpx="0")))
 
 
 def test_default_fees_removed_requires_explicit_fees(tmp_path):
