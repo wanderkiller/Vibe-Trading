@@ -30,7 +30,7 @@ tools/deploy-vt.sh   # pair = AlphaKeel origin/main:ci/vibe-trading.{ref,pin} (-
 ```
 
 It refuses (exit 1; a refusal after the build points the compose image tag back at the old image) unless the checkout is
-clean (no modified and no untracked files), GitHub workflow `CI` succeeded on exactly this commit,
+clean (no modified and no untracked files), GitHub workflow `Deploy gate` (`.github/workflows/deploy-gate.yml`) succeeded on exactly this commit,
 the commit equals AlphaKeel's `ci/vibe-trading.ref` and `agent/alphakeel_research/contract/PIN` equals AlphaKeel's
 `ci/vibe-trading.pin`, both read from AlphaKeel's published main (`git fetch origin main`, `git show origin/main:...`),
 not from its working tree; `--ak-ref`/`--ak-pin` files override that for diagnosis and are recorded as `override` in the

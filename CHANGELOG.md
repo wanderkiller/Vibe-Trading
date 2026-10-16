@@ -7,7 +7,7 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### AlphaKeel patch layer — wave 2 · vt (2026-10-13)
 
-Local patch layer only. Resolves the round-2 residuals of the section below except `run_assumptions.fee_source`
+Local patch layer only. Resolves the round-2 residuals of the "2026-10-12 (end-to-end audit)" section except `run_assumptions.fee_source`
 (contract change, protocol 2.5).
 
 - `ir backtest`: an official settlement mark is rounded half-even to the contract's price decimals seen so far in
