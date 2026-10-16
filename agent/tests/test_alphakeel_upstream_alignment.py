@@ -14,6 +14,7 @@ import threading
 import pytest
 
 from tests.fixtures.alphakeel_tool_cli import patch_cli
+from tests.module_os_helpers import patch_module_os
 
 pytestmark = pytest.mark.unit
 
@@ -97,7 +98,7 @@ def test_two_writers_of_the_same_cached_object_both_succeed(tmp_path, monkeypatc
         barrier.wait()
         real(src, dst)
 
-    monkeypatch.setattr(packfile.os, "replace", replace)
+    patch_module_os(monkeypatch, packfile, replace=replace)
     cache = packfile.PackCache(tmp_path / "cache")
     results: list = []
 
