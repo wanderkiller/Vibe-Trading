@@ -66,6 +66,13 @@ _FOREX_RE = re.compile(r"^([A-Z]{3})[-/_]?([A-Z]{3})$")
 _CRYPTO_PAIR_RE = re.compile(r"^([A-Z0-9]{2,15})[-/_]([A-Z0-9]{2,6})$")
 #: perpetual / swap names (OKX ``BTC-USDT-SWAP``, ``BTC-PERP``, ``BTC_PERP``): any base with such a suffix is crypto.
 _DERIVATIVE_SUFFIX_RE = re.compile(r"^([A-Z0-9]{2,15}(?:[-/_][A-Z]{3,5})?)[-_](?:SWAP|PERP|PERPETUAL)$")
+#: dated crypto futures (OKX ``BTC-USDT-251226``, Deribit ``BTC-26DEC25``, Binance COIN-M ``BTCUSD_251226``).
+_DATED_FUTURE_RE = re.compile(r"^([A-Z0-9]{2,15}(?:[-/_][A-Z]{3,5})?)[-_](?:\d{6}|\d{1,2}[A-Z]{3}\d{2})$")
+#: CME crypto futures roots as Yahoo continuous contracts (``BTC=F``, ``MBT=F``, ``ETH=F``, ``MET=F``): ~1:1 with the coin.
+CME_CRYPTO_FUTURE_ROOTS: frozenset[str] = frozenset({"BTC", "MBT", "ETH", "MET", "BFF", "XRP", "MXR", "SOL", "MSL", "SOLM"})
+#: an unseparated pair ending in a USD stablecoin, or in USD with a non-ISO base of 3+ letters (6+ characters: longer than
+#: any US equity ticker), is a crypto spot/CFD name (``MATICUSD``, ``POLUSDT``, ``AXSUSD``).
+_USD_CONCAT_RE = re.compile(r"^([A-Z0-9]{2,15})(USDT|USDC)$|^([A-Z]{3,10})USD$")
 _BROKER_SUFFIX_RE = re.compile(r"^(.*)\.[A-Z0-9]{1,3}$")
 _MT5_SUFFIX_RE = re.compile(r"^([A-Z0-9]+)[a-z]$")
 _MAX_ENTRIES_PER_SOURCE = 64
@@ -99,7 +106,9 @@ def is_crypto_code(code: str) -> bool:
 
     1. two ISO-4217 codes (``EUR-USD``, ``EURUSD``, ``GBP/USD``, ``XAU-USD``) -> not crypto;
     2. the runner's ``_detect_market`` says crypto -> crypto;
-    3. a perpetual / swap suffix -> crypto;
+    0. a Yahoo CME crypto future (``BTC=F``, ``MBT=F``, ``ETH=F``) -> crypto;
+    3. a perpetual / swap suffix or a dated-future expiry (``-251226``, ``-26DEC25``) -> crypto;
+    3b. ``*USDT`` / ``*USDC``, or ``XXX+USD`` with a non-ISO base of 3+ letters (``MATICUSD``) -> crypto;
     4. a ``CRYPTO_PROXY_TICKERS`` member (``IBIT``, ``GBTC``, bare ``BTC``) or a name starting with ``XBT`` -> crypto;
     5. ``BASE[-/_]QUOTE``: base in ``CRYPTO_BASES``, or quote in fiat / stable / crypto quotes with a non-ISO base -> crypto;
     6. ``BASEQUOTE`` for a base in ``CRYPTO_BASES`` and a quote in ``CRYPTO_QUOTES`` (``BTCCAD``, ``XBTUSD``) -> crypto;
@@ -113,6 +122,8 @@ def is_crypto_code(code: str) -> bool:
         m = _VENUE_PREFIX_RE.match(symbol)  # TradingView / Polygon venue prefix ``BINANCE:BTCUSDT``, ``X:BTCUSD``
         if m:
             symbol = m.group(1).strip()
+        if symbol.upper().endswith("=F") and symbol.upper()[:-2] in CME_CRYPTO_FUTURE_ROOTS:
+            return True
         if symbol.upper().endswith("=X"):
             symbol = symbol[:-2]
         m = _MT5_SUFFIX_RE.match(symbol)
@@ -135,7 +146,10 @@ def is_crypto_code(code: str) -> bool:
                 return True
         except Exception:  # noqa: BLE001 - fall through to the patterns
             pass
-        if _DERIVATIVE_SUFFIX_RE.match(upper):
+        if _DERIVATIVE_SUFFIX_RE.match(upper) or _DATED_FUTURE_RE.match(upper):
+            return True
+        m = _USD_CONCAT_RE.match(upper)
+        if m and (m.group(1) or m.group(3) not in ISO_4217):
             return True
         if upper in CRYPTO_PROXY_TICKERS or upper.startswith("XBT"):
             return True

@@ -476,7 +476,7 @@ def test_card_shows_net_return_on_the_capital_base_and_the_g1_basis(tmp_path) ->
     ("BTC-USDC", True), ("BTC-EUR", True), ("ETH-JPY", True), ("BTC-IRT", True), ("BTC-TMN", True), ("BTCUSDT", True),
     ("btc-usdt", True), ("local:BTC-IRT", True), ("LOCAL: ETH-USD", True), ("1000PEPE-USDT", True),
     ("BTC-USDT-SWAP", True), ("BTC-PERP", True), ("BTC/USDT:USDT", True), ("BTCUSD", True), ("XBTUSD", True),
-    ("local:ETH-USDT-SWAP", True), ("X:BTCUSD", True), ("BINANCE:BTCUSDT", True), ("NASDAQ:AAPL", False),
+    ("local:ETH-USDT-SWAP", True), ("X:BTCUSD", True), ("BTC=F", True), ("MBT=F", True), ("ETH=F", True), ("MET=F", True), ("MATICUSD", True), ("POLUSDT", True), ("AXSUSD", True), ("BTC-USDT-251226", True), ("BTC-26DEC25", True), ("BTCUSD_251226", True), ("ES=F", False), ("GC=F", False), ("AUDUSD", False), ("AAPL", False), ("SPY", False), ("BINANCE:BTCUSDT", True), ("NASDAQ:AAPL", False),
     ("BTC-CAD", True), ("BTC-INR", True), ("BTC-CNY", True), ("BTC-HKD", True), ("BTC-CHF", True), ("BTCCAD", True),
     ("BTCUSDm", True), ("BTCUSD.a", True), ("BTCUSD=X", True), ("IBIT", True), ("GBTC", True), ("BTC", True), ("BITCOIN", True),
     ("USDT-IRT", True), ("SOLBTC", True), ("local:btc-cad", True),

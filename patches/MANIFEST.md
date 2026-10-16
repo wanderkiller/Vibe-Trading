@@ -835,7 +835,8 @@ gains an engine section (1.6 recomputed at render time with the current trial co
 current variance; a render never improves a stored verdict, only worsens it; IR trial counts include engine trials) and
 a hold-out warning that makes no network call. (2) One classifier, `data_audit.is_crypto_code` (after
 stripping `local:`, venue prefixes, `=X`, MT5/broker suffixes and a ccxt `:SETTLE`: ISO-4217 pairs are forex, not crypto;
-then runner `_detect_market`, perp/swap names, BTC/ETH fund tickers such as IBIT/GBTC/bare `BTC`, `BASE-QUOTE` with a
+then Yahoo CME crypto futures (`BTC=F`, `MBT=F`, `ETH=F`), runner `_detect_market`, perp/swap and dated-future names,
+`*USDT`/`*USDC` and non-ISO `XXX+USD` CFD names, BTC/ETH fund tickers such as IBIT/GBTC/bare `BTC`, `BASE-QUOTE` with a
 known crypto base or a non-ISO base priced in fiat/stablecoin, unseparated crypto-base pairs, `XBT*`; bare `ETH` is not
 crypto), and `crypto_sources()` (static set plus crypto-only registered loaders). A backtest with a crypto
 source or code, or a `local` source once the session has read crypto data past the cutoff, whose plain `YYYY-MM-DD`
