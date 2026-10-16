@@ -1637,10 +1637,10 @@
   },
   "validation": {
     "noData": "Tidak ada data validasi yang tersedia.",
-    "monteCarlo": "Monte Carlo Permutation Test",
+    "monteCarlo": "Monte Carlo: uji pembalikan tanda (Sharpe) dan uji permutasi urutan (drawdown)",
     "significant": "Signifikan",
     "notSignificant": "Tidak Signifikan",
-    "monteCarloDesc": "Urutan trade diacak {{n}} kali untuk menguji apakah Sharpe lebih baik daripada hasil acak.",
+    "monteCarloDesc": "Tanda PnL setiap trade dibalik {{n}} kali untuk menguji apakah Sharpe lebih besar dari nol, dan urutan trade diacak {{n}} kali untuk menguji drawdown.",
     "actualSharpe": "Sharpe Aktual",
     "pValueSharpe": "Sign-flip p-value (Sharpe)",
     "simulatedMean": "Rata-rata Simulasi",

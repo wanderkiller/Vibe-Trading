@@ -1632,10 +1632,10 @@
   },
   "validation": {
     "noData": "검증 데이터가 없습니다.",
-    "monteCarlo": "몬테카를로 치환 검정",
+    "monteCarlo": "몬테카를로: 부호 반전 검정(Sharpe) 및 순서 치환 검정(드로다운)",
     "significant": "유의함",
     "notSignificant": "유의하지 않음",
-    "monteCarloDesc": "거래 순서를 {{n}}번 셔플하여 Sharpe가 무작위보다 나은지 검정합니다.",
+    "monteCarloDesc": "각 거래 손익의 부호를 {{n}}번 뒤집어 Sharpe가 0보다 큰지 검정하고, 거래 순서를 {{n}}번 셔플하여 드로다운을 검정합니다.",
     "actualSharpe": "실제 Sharpe",
     "pValueSharpe": "부호 반전 검정 p-값 (Sharpe)",
     "simulatedMean": "시뮬레이션 평균",

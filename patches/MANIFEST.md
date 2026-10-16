@@ -819,13 +819,18 @@ Sharpe (order-invariant, p = 0.543); OKX data was read 13 days into AlphaKeel's 
 turn were redacted because grounding evidence was per turn and an IR run's metrics were recorded under `backtest`.
 Fixes: (1) `backtest/engine_screen.py` screens every engine run on G1 1.1/1.2/1.3/1.6 (DSR with the session's trial
 count)/1.8 plus code-measured facts (direction, time in market, exposure, data audit); the backtest tool records each
-run in `<session>/engine_ledger.jsonl` with a snapshot (`engine_runs/NNNN/`: code, config, metrics, screen) and returns
-`research_screen`; the result card gains an engine section and a hold-out warning. (2) A crypto-source backtest whose
+run in `<session>/engine_ledger.jsonl` (trial key = sha256 of the engine-written metrics.csv, so a parameter swept
+outside code/config still counts) with a snapshot (`engine_runs/NNNN/`: code, config, metrics, screen, daily returns)
+and returns
+`research_screen`; the result card gains an engine section (1.6 recomputed at render time with the current trial
+count; IR trial counts include engine trials) and a hold-out warning. (2) A backtest with a crypto source or any crypto
+code (the runner's `_detect_market`, whatever the source) whose plain `YYYY-MM-DD`
 `end_date` reaches the AlphaKeel hold-out (service `holdout_cutoff_ms`, cached 6 h per session; fallback today − 60 d)
 is refused before the engine runs. Market-data reads are not blocked (quotes stay usable) but are flagged on the card.
 (3) `monte_carlo_test`: sign-flip test for the Sharpe, order permutation only for the drawdown, `(k+1)/(n+1)` p-values,
-`method` and `sharpe_basis` fields. (4) `GroundingLedger(prior_run_dirs=…)` carries observed non-quote evidence of
-earlier completed turns (`prior:<dir>:<call>`); a tool-name ref also names records its calls made under another tool.
+`method` and `sharpe_basis` fields. (4) `GroundingLedger(prior_ledgers=…, session_copy=…)` carries observed non-quote evidence of
+earlier completed turns from their copies in `<session>/grounding/` (outside the model's write roots; run-dir files are
+never read back), without prices, bash rows or engine-run figures (only immutable `ir_runs/` copies); a tool-name ref also names records its calls made under another tool.
 (5) Prompt: verdicts come from the card; factor ids only when a zoo tool returned them; Layer 4 wording.
 
 **Files.**
@@ -865,12 +870,12 @@ still has them); the engine screen, ledger, hold-out guard and card are local-on
 - hook `agent/src/tools/backtest_tool.py`: `refusal = _holdout_refusal(`
 - hook `agent/src/tools/backtest_tool.py`: `envelope["research_screen"] = _research_screen(`
 - upstream `agent/src/agent/grounding/ledger.py`: `GROUNDING_ARTIFACT = "grounding_evidence.json"`
-- hook `agent/src/agent/grounding/ledger.py`: `prior_run_dirs: Sequence[Path] = (),`
+- hook `agent/src/agent/grounding/ledger.py`: `prior_ledgers: Sequence[Path] = (),`
 - upstream `agent/src/agent/grounding/policies.py`: `def _analysis_entries(self, symbol: str | None) -> list[dict[str, Any]]:`
 - hook `agent/src/agent/grounding/policies.py`: `calls = self._calls_of_tool(key)`
 - preimage `agent/src/agent/grounding/policies.py`: `if key in (record.call_id, record.tool)`
 - upstream `agent/src/agent/loop.py`: `self._grounding = GroundingLedger(`
-- hook `agent/src/agent/loop.py`: `prior_run_dirs=_prior_run_dirs(session_id, run_dir),`
+- hook `agent/src/agent/loop.py`: `prior_ledgers=_prior_ledgers(session_id, run_dir),`
 - hook `agent/src/agent/context.py`: `- Research verdicts come from the system result card appended after your answer`
 - preimage `agent/src/agent/context.py`: `**Layer 4 — Monte Carlo Permutation Test**`
 - upstream `frontend/src/i18n/locales/en.json`: `"pValueSharpe"`

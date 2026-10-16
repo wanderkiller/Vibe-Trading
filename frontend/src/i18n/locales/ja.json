@@ -1632,10 +1632,10 @@
   },
   "validation": {
     "noData": "検証データがありません。",
-    "monteCarlo": "モンテカルロ置換検定",
+    "monteCarlo": "モンテカルロ：符号反転検定（Sharpe）と順序置換検定（ドローダウン）",
     "significant": "有意",
     "notSignificant": "有意でない",
-    "monteCarloDesc": "トレード順を {{n}} 回シャッフルし、Sharpe がランダムより優れているか検定します。",
+    "monteCarloDesc": "各トレードの損益の符号を {{n}} 回反転させ、Sharpe がゼロを上回るか検定し、トレード順を {{n}} 回シャッフルしてドローダウンを検定します。",
     "actualSharpe": "実 Sharpe",
     "pValueSharpe": "符号反転検定 p 値 (Sharpe)",
     "simulatedMean": "シミュレーション平均",

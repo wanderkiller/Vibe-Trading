@@ -1637,10 +1637,10 @@
   },
   "validation": {
     "noData": "No validation data available.",
-    "monteCarlo": "Monte Carlo Permutation Test",
+    "monteCarlo": "Monte Carlo: sign-flip (Sharpe) and order-permutation (drawdown) tests",
     "significant": "Significant",
     "notSignificant": "Not Significant",
-    "monteCarloDesc": "Shuffled trade order {{n}} times to test if Sharpe is better than random.",
+    "monteCarloDesc": "Flipped the sign of each trade's PnL {{n}} times to test whether the Sharpe beats zero, and shuffled the trade order {{n}} times to test the drawdown.",
     "actualSharpe": "Actual Sharpe",
     "pValueSharpe": "Sign-flip p-value (Sharpe)",
     "simulatedMean": "Simulated Mean",

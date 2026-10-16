@@ -30,7 +30,9 @@ def test_the_prompt_forbids_substituting_a_strategy() -> None:
 def test_the_prompt_leaves_research_verdicts_to_the_result_card() -> None:
     prompt = ContextBuilder(ToolRegistry(), WorkspaceMemory()).build_system_prompt("回测一下")
     assert "Research verdicts come from the system result card appended after your answer, not from you" in prompt
-    assert "unless the card for that run says passed_screen" in prompt
+    assert "never call a result validated, robust, risk-controlled, market-neutral, statistically significant or ready for live trading." in prompt
+    assert "When the card says passed_screen, say only that it passed the basic screen" in prompt
+    assert "Describe what actually ran from the card's facts (direction, time in market)" in prompt
     assert "AlphaKeel's G1/G2 gates" in prompt
     assert "Never cite news or events that no tool returned." in prompt
     assert "sign-flip Sharpe test, order-permutation drawdown test" in prompt

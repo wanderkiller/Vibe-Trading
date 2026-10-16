@@ -1637,10 +1637,10 @@
   },
   "validation": {
     "noData": "Não há dados de validação disponíveis.",
-    "monteCarlo": "Teste de permutação Monte Carlo",
+    "monteCarlo": "Monte Carlo: testes de inversão de sinal (Sharpe) e de permutação da ordem (drawdown)",
     "significant": "Significativo",
     "notSignificant": "Não significativo",
-    "monteCarloDesc": "Ordem de negociação embaralhada {{n}} vezes para testar se Sharpe é melhor do que aleatório.",
+    "monteCarloDesc": "O sinal do PnL de cada negociação foi invertido {{n}} vezes para testar se o Sharpe supera zero, e a ordem das negociações foi embaralhada {{n}} vezes para testar o drawdown.",
     "actualSharpe": "Sharpe real",
     "pValueSharpe": "valor p de inversão de sinal (Sharpe)",
     "simulatedMean": "Média Simulada",

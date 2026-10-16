@@ -1632,10 +1632,10 @@
   },
   "validation": {
     "noData": "暂无验证数据。",
-    "monteCarlo": "蒙特卡罗置换检验",
+    "monteCarlo": "蒙特卡洛：符号翻转检验（Sharpe）与顺序置换检验（回撤）",
     "significant": "显著",
     "notSignificant": "不显著",
-    "monteCarloDesc": "对交易顺序进行 {{n}} 次随机打乱，检验夏普比率是否优于随机。",
+    "monteCarloDesc": "将每笔交易盈亏的符号随机翻转 {{n}} 次检验 Sharpe 是否显著大于零，并将交易顺序打乱 {{n}} 次检验回撤。",
     "actualSharpe": "实际夏普比率",
     "pValueSharpe": "符号翻转检验 p 值（Sharpe）",
     "simulatedMean": "模拟均值",

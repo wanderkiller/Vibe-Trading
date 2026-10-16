@@ -1637,10 +1637,10 @@
   },
   "validation": {
     "noData": "Keine Validierungsdaten verfügbar.",
-    "monteCarlo": "Monte-Carlo-Permutationstest",
+    "monteCarlo": "Monte Carlo: Vorzeichenwechsel-Test (Sharpe) und Reihenfolge-Permutationstest (Drawdown)",
     "significant": "Signifikant",
     "notSignificant": "Nicht signifikant",
-    "monteCarloDesc": "Trade-Reihenfolge {{n}}-mal gemischt, um zu prüfen, ob Sharpe besser als zufällig ist.",
+    "monteCarloDesc": "Das Vorzeichen des PnL jedes Trades wurde {{n}}-mal umgedreht, um zu prüfen, ob Sharpe über null liegt, und die Trade-Reihenfolge wurde {{n}}-mal gemischt, um den Drawdown zu prüfen.",
     "actualSharpe": "Tatsächlicher Sharpe",
     "pValueSharpe": "Vorzeichenumkehr-p-Wert (Sharpe)",
     "simulatedMean": "Simulierter Mittelwert",

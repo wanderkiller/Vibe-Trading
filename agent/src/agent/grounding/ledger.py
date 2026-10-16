@@ -19,7 +19,13 @@ from src.agent.grounding.identity import (
     _scan_symbols,
     _utc_now,
 )
-from src.agent.grounding.evidence import EvidenceRecord, _EvidenceMixin, _json_object
+from src.agent.grounding.evidence import (
+    _PRICE_FIELDS,
+    EvidenceRecord,
+    _EvidenceMixin,
+    _json_object,
+    _price_field_for_path,
+)
 from src.agent.grounding.figures import Figure, parse_figures_block, scan_figures, strip_figures_block
 from src.agent.grounding.policies import ValidationResult, _PolicyMixin
 from src.agent.grounding.registry import GROUNDING_CHECKS
@@ -47,8 +53,12 @@ _ANALYSIS_TOOLS = frozenset(
 logger = logging.getLogger(__name__)
 
 _PRIOR_PREFIX = "prior:"
-# Quotes are per turn (freshness): never carried from an earlier turn.
-_PER_TURN_TOOLS = frozenset({"get_market_data", "search_symbol"})
+# Quotes are per turn (freshness): never carried from an earlier turn. ``bash``
+# output is arbitrary model-run text, never durable evidence.
+_PER_TURN_TOOLS = frozenset({"get_market_data", "search_symbol", "bash"})
+# IR evidence copies are immutable per run; an engine run dir can be re-run and
+# overwritten, so its figures belong to the turn that read them.
+_IMMUTABLE_BACKTEST_SCOPE = "ir_runs/"
 # Analysis-entry keys that would hold a path relative to another turn's run dir.
 _RUN_DIR_RELATIVE_KEYS = ("artifact", "scope", "path", "run_dir", "file")
 _MAX_CARRIED_RECORDS = 5000
@@ -112,7 +122,8 @@ class GroundingLedger(
         user_message: str,
         history: Sequence[Mapping[str, Any]] | None = None,
         contextual_identity_constraints: bool = True,
-        prior_run_dirs: Sequence[Path] = (),
+        prior_ledgers: Sequence[Path] = (),
+        session_copy: Path | None = None,
     ) -> None:
         """Create a ledger and seed only authoritative prior identities.
 
@@ -125,12 +136,17 @@ class GroundingLedger(
                 instructions cannot authorize a new subject.
             contextual_identity_constraints: Whether explicit market words in
                 the original conversation may narrow resolver candidates.
-            prior_run_dirs: Run directories of earlier completed turns of the
-                same conversation, oldest first. Their observed tool evidence
-                (never quotes, which are per turn) and analysis metrics are
-                carried into this ledger under ``prior:<dir>:<call_id>``.
+            prior_ledgers: Ledger JSON files of earlier completed turns of the
+                same conversation, oldest first, read from the session store
+                (never from a run directory, which the model can write to).
+                Their observed tool evidence (never quotes, bash output or
+                engine backtest figures, which are per turn) and analysis
+                metrics are carried under ``prior:<file stem>:<call_id>``.
+            session_copy: Where ``persist`` also writes the ledger, outside the
+                model's write roots, so a later turn can carry it.
         """
         self.run_dir = Path(run_dir)
+        self.session_copy = Path(session_copy) if session_copy is not None else None
         self.user_message = user_message
         self.resolution_context = ResolutionContext.from_messages(
             user_message,
@@ -171,21 +187,21 @@ class GroundingLedger(
         # call id -> tool of the analysis calls carried from earlier turns (``_calls_of_tool``).
         self._prior_call_tools: dict[str, str] = {}
         self._seed_symbols(user_message, source="user_message")
-        self._carry_prior_evidence(prior_run_dirs)
+        self._carry_prior_evidence(prior_ledgers)
         self.persist()
 
-    def _carry_prior_evidence(self, prior_run_dirs: Sequence[Path]) -> None:
+    def _carry_prior_evidence(self, prior_ledgers: Sequence[Path]) -> None:
         """Carry observed evidence persisted by earlier turns of the conversation.
 
         Args:
-            prior_run_dirs: Earlier run directories, oldest first. Unreadable or
-                foreign-schema ledgers are skipped.
+            prior_ledgers: Earlier turns' ledger files, oldest first. Unreadable
+                or foreign-schema ledgers are skipped.
         """
         carried_evidence: list[EvidenceRecord] = []
         carried_metrics: list[dict[str, Any]] = []
-        for directory in prior_run_dirs:
-            directory = Path(directory)
-            path = directory / "artifacts" / GROUNDING_ARTIFACT
+        for path in prior_ledgers:
+            path = Path(path)
+            prefix = f"{_PRIOR_PREFIX}{path.stem}:"
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError) as exc:
@@ -194,27 +210,38 @@ class GroundingLedger(
             if not isinstance(data, dict) or data.get("schema_version") != 1:
                 logger.debug("prior grounding ledger %s has an unsupported schema", path)
                 continue
+            carried_calls: set[str] = set()
             for raw in data.get("evidence") or []:
                 if not isinstance(raw, dict) or raw.get("status") != "observed":
                     continue
-                if raw.get("tool") in _PER_TURN_TOOLS:
+                tool = raw.get("tool")
+                if tool in _PER_TURN_TOOLS:
+                    continue
+                field = str(raw.get("field") or "")
+                if field in _PRICE_FIELDS or _price_field_for_path(field) is not None:
+                    continue
+                if tool == "backtest" and not str(raw.get("scope") or "").startswith(_IMMUTABLE_BACKTEST_SCOPE):
                     continue
                 call_id = str(raw.get("call_id") or "")
                 if call_id.startswith(_PRIOR_PREFIX):
                     continue
                 try:
-                    record = EvidenceRecord(**{**raw, "call_id": f"{_PRIOR_PREFIX}{directory.name}:{call_id}",
+                    record = EvidenceRecord(**{**raw, "call_id": f"{prefix}{call_id}",
                                                "artifact": None, "scope": None})
                 except TypeError:
                     continue
                 carried_evidence.append(record)
+                carried_calls.add(call_id)
             for raw in data.get("analysis_evidence") or []:
                 if not isinstance(raw, dict):
                     continue
                 call_id = str(raw.get("call_id") or "")
                 if call_id.startswith(_PRIOR_PREFIX):
                     continue
-                entry = {**raw, "call_id": f"{_PRIOR_PREFIX}{directory.name}:{call_id}"}
+                # Backtest-artifact metrics follow the immutability rule of their call.
+                if raw.get("tool") == "backtest" and call_id not in carried_calls:
+                    continue
+                entry = {**raw, "call_id": f"{prefix}{call_id}"}
                 for key in _RUN_DIR_RELATIVE_KEYS:
                     if key in entry:
                         entry[key] = None
@@ -223,8 +250,8 @@ class GroundingLedger(
                 if isinstance(raw, dict) and raw.get("call_id") and raw.get("tool"):
                     call_id = str(raw["call_id"])
                     if not call_id.startswith(_PRIOR_PREFIX):
-                        self._prior_call_tools[f"{_PRIOR_PREFIX}{directory.name}:{call_id}"] = str(raw["tool"])
-        # Most recent directories win the cap.
+                        self._prior_call_tools[f"{prefix}{call_id}"] = str(raw["tool"])
+        # Most recent ledgers win the cap.
         self._evidence.extend(carried_evidence[-_MAX_CARRIED_RECORDS:])
         self._analysis_metrics.extend(carried_metrics[-_MAX_CARRIED_RECORDS:])
 
@@ -471,31 +498,36 @@ class GroundingLedger(
         return result
 
     def persist(self) -> None:
-        """Atomically persist the current structured ledger."""
-        artifact_dir = self.run_dir / "artifacts"
-        try:
-            artifact_dir.mkdir(parents=True, exist_ok=True)
-            path = artifact_dir / GROUNDING_ARTIFACT
-            temp = path.with_suffix(path.suffix + ".tmp")
-            payload = {
-                "schema_version": 1,
-                "updated_at": _utc_now(),
-                "identity": self.identity_summary(),
-                "session_symbols": sorted(self._session_symbols),
-                "session_symbol_roots": sorted(self._session_symbol_roots),
-                "evidence": [asdict(record) for record in self._evidence],
-                "tool_failures": list(self._tool_failures),
-                "analysis_completed": list(self._analysis_completed),
-                "analysis_evidence": list(self._analysis_metrics),
-                "validations": list(self._validations),
-                "released": dict(self._released) if self._released else None,
-            }
-            temp.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            temp.replace(path)
-        except OSError:
-            # Grounding decisions remain in memory; a read-only/broken artifact
-            # directory must not crash the agent's error path.
-            return
+        """Atomically persist the current structured ledger (and its session copy)."""
+        payload = {
+            "schema_version": 1,
+            "updated_at": _utc_now(),
+            "identity": self.identity_summary(),
+            "session_symbols": sorted(self._session_symbols),
+            "session_symbol_roots": sorted(self._session_symbol_roots),
+            "evidence": [asdict(record) for record in self._evidence],
+            "tool_failures": list(self._tool_failures),
+            "analysis_completed": list(self._analysis_completed),
+            "analysis_evidence": list(self._analysis_metrics),
+            "validations": list(self._validations),
+            "released": dict(self._released) if self._released else None,
+        }
+        text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        # Grounding decisions remain in memory; a read-only/broken artifact
+        # directory must not crash the agent's error path.
+        targets = [self.run_dir / "artifacts" / GROUNDING_ARTIFACT]
+        if self.session_copy is not None:
+            targets.append(self.session_copy)
+        for path in targets:
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                self._write_atomic(path, text)
+            except OSError:
+                continue
+
+    @staticmethod
+    def _write_atomic(path: Path, text: str) -> None:
+        """Write ``text`` to ``path`` through a temp file and an atomic replace."""
+        temp = path.with_suffix(path.suffix + ".tmp")
+        temp.write_text(text, encoding="utf-8")
+        temp.replace(path)

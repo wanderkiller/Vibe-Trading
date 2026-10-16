@@ -1715,7 +1715,7 @@
     {
      "file": "agent/src/agent/grounding/ledger.py",
      "kind": "hook",
-     "literal": "prior_run_dirs: Sequence[Path] = (),"
+     "literal": "prior_ledgers: Sequence[Path] = (),"
     },
     {
      "file": "agent/src/agent/grounding/policies.py",
@@ -1740,7 +1740,7 @@
     {
      "file": "agent/src/agent/loop.py",
      "kind": "hook",
-     "literal": "prior_run_dirs=_prior_run_dirs(session_id, run_dir),"
+     "literal": "prior_ledgers=_prior_ledgers(session_id, run_dir),"
     },
     {
      "file": "agent/src/agent/context.py",

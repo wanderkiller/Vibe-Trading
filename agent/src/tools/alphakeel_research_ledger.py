@@ -21,10 +21,13 @@ data runs in a process of its own and the exporting CLI child cannot see their i
 the latest end to the export (``provenance.data_exposure_end_ms``).
 
 The generic ``backtest`` tool has its own private trial ledger, ``<session dir>/engine_ledger.jsonl``: one row per
-successful engine run, with a snapshot of the run (code, config, metrics, the code-made screen) under
-``<session dir>/engine_runs/<NNNN>/`` because the next backtest overwrites the same run dir. The card shows these rows
-too, from the snapshots only (sha256 of ``screen.json`` checked). ``alphakeel_holdout.json`` caches the research
-service's hold-out cutoff: the backtest tool refuses crypto data that reaches into the hold-out.
+successful engine run, with a snapshot of the run (code, config, metrics, the daily returns, the code-made screen) under
+``<session dir>/engine_runs/<NNNN>/`` because the next backtest overwrites the same run dir. A trial is identified by
+``trial_key`` = sha256 of the engine-written ``artifacts/metrics.csv`` (results the model cannot steer; ``input_key`` is the
+old code+config hash, kept for information). The card shows these rows too, from the snapshots only (sha256 of
+``screen.json`` and ``returns.json`` checked); the DSR item and the verdict are recomputed at render time with the
+session's current trial count, since the count grows after a run. ``alphakeel_holdout.json`` caches the research service's
+hold-out cutoff: the backtest tool refuses crypto data that reaches into the hold-out.
 """
 
 from __future__ import annotations
@@ -49,10 +52,13 @@ TRIALS_EVIDENCE_FILE = "ir_trials_evidence.jsonl"
 EXPOSURE_FILE = "data_exposure.jsonl"
 ENGINE_LEDGER_FILE = "engine_ledger.jsonl"
 ENGINE_RUNS_DIR = "engine_runs"
+RETURNS_FILE = "returns.json"
 DEFAULT_HOLDOUT_DAYS = 60
 HOLDOUT_FILE = "alphakeel_holdout.json"
 HOLDOUT_SOURCES = frozenset({"okx", "binance", "ccxt", "alphakeel_b2", "alphakeel_pack"})
 HOLDOUT_CACHE_SECONDS = 6 * 3600
+HOLDOUT_FALLBACK_MEMO_SECONDS = 300
+_FALLBACK_MEMO: dict[str | None, tuple[float, int]] = {}  # session id -> (monotonic time, cutoff_ms); memory only
 CARD_MAX_ROWS = 10
 NO_SESSION_WARNING = "no session id: trial ledger and result card skipped"
 
@@ -142,6 +148,45 @@ def exposure_end_ms(session_id: str) -> int | None:
     return best
 
 
+def _run_has_crypto_code(snapshot_dir: Any) -> bool:
+    try:
+        config = json.loads((Path(str(snapshot_dir)) / "config.json").read_text(encoding="utf-8"))
+        from src.tools.backtest_tool import _has_crypto_code
+
+        return isinstance(config, dict) and _has_crypto_code(config)
+    except Exception:  # noqa: BLE001 - an unreadable snapshot is not shown to be crypto
+        return False
+
+
+def crypto_exposure_end_ms(session_id: str) -> int | None:
+    """The latest ``end_ms`` of the conversation's *crypto* data reads, or None. Counted: rows whose source is in
+    ``HOLDOUT_SOURCES`` or ``auto``, and rows whose ``via`` is ``backtest:<run>`` for a run recorded in the engine ledger
+    whose snapshot config has a crypto code (``yfinance``/``local`` BTC runs; equity exposure is not hold-out data)."""
+    crypto_runs: set[str] | None = None
+    best = None
+    try:
+        with open(_session_dir(session_id) / EXPOSURE_FILE, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                    v, source, via = row.get("end_ms"), row.get("source"), str(row.get("via") or "")
+                except (ValueError, AttributeError):
+                    continue
+                if not isinstance(v, int) or isinstance(v, bool) or (best is not None and v <= best):
+                    continue
+                if source in HOLDOUT_SOURCES or source == "auto":
+                    best = v
+                elif via.startswith("backtest:"):
+                    if crypto_runs is None:
+                        crypto_runs = {Path(str(r.get("run_dir"))).name for r in engine_rows(session_id)
+                                       if _run_has_crypto_code(r.get("snapshot_dir"))}
+                    if via[len("backtest:"):] in crypto_runs:
+                        best = v
+    except OSError:
+        return None
+    return best
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -210,8 +255,10 @@ def _json_file(path: Path) -> Any:
 
 def trials_for(session_id: str, run_dir: str | Path, strategy_id: str, *, ir_doc: dict | None = None,
                window: dict | None = None, ir_name: str = "") -> tuple[int, str]:
-    """``(count, evidence_path)``: the distinct ``strategy_id`` in the conversation's private ledger plus this one, and
-    ``<run_dir>/ir_trials_evidence.jsonl`` with one line per version (strategy_id, parameter values, window, run_dir)."""
+    """``(count, evidence_path)``: the distinct ``strategy_id`` in the conversation's private ledger plus this one plus the
+    distinct generic-engine trial keys, and ``<run_dir>/ir_trials_evidence.jsonl`` with one line per version / engine trial
+    (strategy_id -- ``engine:<trial_key[:24]>`` for an engine trial --, parameter values, window, run_dir). The research
+    service takes the evidence file as an opaque, hashed file (no line schema), so engine lines share it."""
     session_hypothesis(session_id, ir_name)
     versions: dict[str, dict] = {}
     for row in ledger_rows(session_id):  # in append order: the latest run of a version wins
@@ -221,6 +268,9 @@ def trials_for(session_id: str, run_dir: str | Path, strategy_id: str, *, ir_doc
                                         "window": card.get("window"), "run_dir": str(card_path.parent)}
     if strategy_id not in versions:
         versions[strategy_id] = {"strategy_id": strategy_id, "parameters": _parameters(ir_doc), "window": window, "run_dir": None}
+    for key, row in _latest_engine_rows(session_id).items():  # one trial per distinct engine result
+        sid = f"engine:{key[:24]}"
+        versions[sid] = {"strategy_id": sid, "parameters": {}, "window": None, "run_dir": row.get("snapshot_dir")}
     path = Path(run_dir) / TRIALS_EVIDENCE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(v, sort_keys=True, ensure_ascii=False) + "\n" for v in versions.values()), encoding="utf-8")
@@ -271,30 +321,64 @@ def engine_rows(session_id: str) -> list[dict]:
     return rows
 
 
-def _trial_key(run_dir: Path) -> str:
+def _latest_engine_rows(session_id: str) -> dict[str, dict]:
+    """``trial_key`` -> its latest engine ledger row (append order: the latest row of a key wins)."""
+    latest: dict[str, dict] = {}
+    for r in engine_rows(session_id):
+        latest[r["trial_key"]] = r
+    return latest
+
+
+def trial_count(session_id: str, extra_key: str | None = None) -> int:
+    """The conversation's trials: distinct engine trial keys (plus ``extra_key``, the run being recorded) + distinct IR
+    ``strategy_id``. One function for record time and render time."""
+    keys = set(_latest_engine_rows(session_id)) | ({extra_key} if extra_key else set())
+    return len(keys) + len({r["strategy_id"] for r in ledger_rows(session_id)})
+
+
+def variant_sharpes_for(session_id: str, key: str | None) -> list[float]:
+    """The daily Sharpes of the other engine trials (latest row per key, ``key`` itself excluded)."""
+    out = []
+    for k, r in _latest_engine_rows(session_id).items():
+        v = r.get("sharpe_daily")
+        if k != key and isinstance(v, (int, float)) and not isinstance(v, bool):
+            out.append(float(v))
+    return out
+
+
+def _input_key(run_dir: Path) -> str:
     config = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
     code = (run_dir / "code" / "signal_engine.py").read_bytes()
     return hashlib.sha256(code + b"\0" + json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+def _trial_key(run_dir: Path) -> str:
+    """sha256 of the engine-written ``artifacts/metrics.csv``: the trial is what the engine produced, not what the model
+    wrote into code or config (a signal engine can read its parameters from any file). Only a run without metrics falls
+    back to the input hash (such a run is not screened anyway)."""
+    try:
+        return hashlib.sha256((run_dir / "artifacts" / "metrics.csv").read_bytes()).hexdigest()
+    except OSError:
+        return _input_key(run_dir)
+
+
 def record_engine_run(session_id: str, run_dir: Path) -> dict:
     """After a successful generic ``backtest``: count the trial, screen the run, snapshot it and append the private row.
 
-    ``trials`` = distinct (code, config) trial keys in the engine ledger (this one included) + distinct IR
-    ``strategy_id`` of the conversation. Returns the screen dict plus ``trials`` and ``seq``."""
+    ``trials`` = ``trial_count`` (distinct engine ``trial_key`` values, this one included, + distinct IR ``strategy_id`` of
+    the conversation). Returns the screen dict plus ``trials`` and ``seq``."""
     from backtest.engine_screen import screen_engine_run
 
     run_dir = Path(run_dir)
     key = _trial_key(run_dir)
+    try:
+        input_key = _input_key(run_dir)
+    except (OSError, ValueError):
+        input_key = None
     prior = engine_rows(session_id)
-    keys = {r["trial_key"] for r in prior} | {key}
-    trials = len(keys) + len({r["strategy_id"] for r in ledger_rows(session_id)})
-    latest: dict[str, dict] = {}
-    for r in prior:  # append order: the latest row of a trial key wins
-        latest[r["trial_key"]] = r
-    sharpes = [float(r["sharpe_daily"]) for k, r in latest.items()
-               if k != key and isinstance(r.get("sharpe_daily"), (int, float)) and not isinstance(r.get("sharpe_daily"), bool)]
-    screen = screen_engine_run(run_dir, trials=trials, variant_sharpes=sharpes)
+    trials = trial_count(session_id, key)
+    screen = screen_engine_run(run_dir, trials=trials, variant_sharpes=variant_sharpes_for(session_id, key), include_returns=True)
+    returns = screen.pop("daily_returns", None)
     runs = _session_dir(session_id) / ENGINE_RUNS_DIR
     seq = len(prior) + 1
     while True:
@@ -309,14 +393,30 @@ def record_engine_run(session_id: str, run_dir: Path) -> dict:
         if src.is_file():
             (snap / rel).parent.mkdir(parents=True, exist_ok=True)
             (snap / rel).write_bytes(src.read_bytes())
+    returns_path = snap / RETURNS_FILE
+    returns_path.write_text(json.dumps(returns if isinstance(returns, list) else []), encoding="utf-8")
     screen_path = snap / "screen.json"
     screen_path.write_text(json.dumps(screen, sort_keys=True, ensure_ascii=False, indent=2), encoding="utf-8")
     sharpe = (screen.get("facts") or {}).get("sharpe_daily")
-    row = {"seq": seq, "trial_key": key, "run_dir": str(run_dir), "snapshot_dir": str(snap),
-           "screen_sha256": _sha256(screen_path), "sharpe_daily": sharpe if isinstance(sharpe, (int, float)) else None,
-           "ts": int(time.time() * 1000)}
+    row = {"seq": seq, "trial_key": key, "input_key": input_key, "run_dir": str(run_dir), "snapshot_dir": str(snap),
+           "screen_sha256": _sha256(screen_path), "returns_sha256": _sha256(returns_path),
+           "sharpe_daily": sharpe if isinstance(sharpe, (int, float)) else None, "ts": int(time.time() * 1000)}
     _append_durable(_session_dir(session_id) / ENGINE_LEDGER_FILE, row)
     return {**screen, "trials": trials, "seq": seq}
+
+
+def verified_engine_returns(row: dict) -> list[float] | None:
+    """The snapshot ``returns.json`` an engine ledger row names, re-read; None when missing, mistyped or its sha256 differs."""
+    try:
+        path = Path(str(row["snapshot_dir"])) / RETURNS_FILE
+        if _sha256(path) != row.get("returns_sha256"):
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(data, list) or not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in data):
+        return None
+    return [float(x) for x in data]
 
 
 def verified_engine_screen(row: dict) -> dict | None:
@@ -357,10 +457,14 @@ def cached_holdout_cutoff_ms(session_id: str | None, *, max_age_seconds: float |
 def holdout_cutoff(session_id: str | None) -> dict:
     """``{"cutoff_ms", "source"}``: AlphaKeel's hold-out start. ``source`` is ``service`` (the research service's
     ``holdout_cutoff_ms``, cached per session for 6 h) or ``fallback_60d`` (UTC day floor of now minus 60 days, used
-    when the service cannot be asked). Only a service answer is cached, and only with a session id."""
+    when the service cannot be asked). Only a service answer is cached in a file, and only with a session id; a fallback
+    answer is remembered in memory for ``HOLDOUT_FALLBACK_MEMO_SECONDS`` so a down service is not asked on every call."""
     cached = cached_holdout_cutoff_ms(session_id, max_age_seconds=HOLDOUT_CACHE_SECONDS)
     if cached is not None:
         return {"cutoff_ms": cached, "source": "service"}
+    memo = _FALLBACK_MEMO.get(session_id)
+    if memo is not None and time.monotonic() - memo[0] < HOLDOUT_FALLBACK_MEMO_SECONDS:
+        return {"cutoff_ms": memo[1], "source": "fallback_60d"}
     try:
         from src.tools.alphakeel_ir_request import service_check
 
@@ -368,7 +472,10 @@ def holdout_cutoff(session_id: str | None) -> dict:
         if isinstance(v, bool) or not isinstance(v, int):
             raise TypeError("holdout_cutoff_ms is not an int")
     except Exception:  # noqa: BLE001 - no answer from the service: the conservative fallback applies
-        return {"cutoff_ms": _fallback_cutoff_ms(), "source": "fallback_60d"}
+        fallback = _fallback_cutoff_ms()
+        _FALLBACK_MEMO[session_id] = (time.monotonic(), fallback)
+        return {"cutoff_ms": fallback, "source": "fallback_60d"}
+    _FALLBACK_MEMO.pop(session_id, None)
     if session_id:
         path = _session_dir(session_id) / HOLDOUT_FILE
         with contextlib.suppress(OSError):
@@ -526,20 +633,20 @@ def _ir_section(session_id: str, zh: bool) -> list[str]:
 
 
 _ENGINE_TEXT = {
-    True: {"title": "**通用引擎回测（backtest 工具；系统根据试验账本生成，非模型撰写）**",
+    True: {"title": "**通用引擎回测（backtest 工具；系统根据试验账本生成，非模型撰写）· 初筛口径：AlphaKeel G1**",
            "summary": "通用引擎回测 {m} 次 / {n} 个不同版本（代码+配置）：通过初筛 {p}，未通过 {f}，证据不足 {i}",
-           "head": "| # | 标的 / 来源 | 窗口天数 | 成交 | 净收益 | DSR（试验数） | 方向 / 在场时间 | 判定 |",
-           "passed": "通过初筛，1.4–1.14 未评估", "failed": "未通过初筛（{ids}）", "insufficient": "证据不足（{ids}）",
+           "head": "| # | 标的 / 来源 | 窗口天数 | 成交 | 净收益率 | DSR（试验数） | 方向 / 在场时间 | 判定 |",
+           "passed": "通过初筛，{ne} 未评估", "failed": "未通过初筛（{ids}）", "insufficient": "证据不足（{ids}）",
            "unavailable": "初筛不可用", "tampered": "，已改动 {n}", "tampered_row": "快照已改动或缺失",
            "more": "另有 {n} 次回测见账本",
            "no_live": "通用引擎结果不能直接上实盘：须交接 Strategy IR，通过 ir_robustness 与 AlphaKeel G1/G2。",
            "non_auditable": "数据不可审计（{srcs}）：实时拉取的数据无法逐位复现，不能作为 AlphaKeel 证据。",
            "holdout": "⚠ 本会话读取过 AlphaKeel hold-out 区间的数据（截至 {day}，hold-out 起点 {cutoff_day}）：本会话的研究不能交接 AlphaKeel（G1 1.14）。",
            "long_only": "仅多", "short_only": "仅空", "long_short": "多空", "flat": "空仓"},
-    False: {"title": "**Generic engine backtests (`backtest` tool; generated by the system from the trial ledger, not written by the model)**",
+    False: {"title": "**Generic engine backtests (`backtest` tool; generated by the system from the trial ledger, not written by the model) · Screen basis: AlphaKeel G1**",
             "summary": "Generic engine backtests {m} / {n} distinct versions (code + config): passed screen {p}, failed screen {f}, insufficient {i}",
-            "head": "| # | Symbols / source | Window days | Trades | Net | DSR (trials) | Direction / time in market | Status |",
-            "passed": "passed screen; 1.4–1.14 not evaluated", "failed": "failed screen ({ids})", "insufficient": "insufficient ({ids})",
+            "head": "| # | Symbols / source | Window days | Trades | Net return | DSR (trials) | Direction / time in market | Status |",
+            "passed": "passed screen; {ne} not evaluated", "failed": "failed screen ({ids})", "insufficient": "insufficient ({ids})",
             "unavailable": "screen unavailable", "tampered": ", modified {n}", "tampered_row": "snapshot modified or missing",
             "more": "{n} more backtests in the ledger",
             "no_live": "Engine results cannot go live directly: hand over a Strategy IR, pass ir_robustness and AlphaKeel G1/G2.",
@@ -547,7 +654,7 @@ _ENGINE_TEXT = {
             "holdout": "⚠ This session read data inside AlphaKeel's hold-out window (up to {day}, hold-out starts {cutoff_day}): its research cannot be handed to AlphaKeel (G1 1.14).",
             "long_only": "long only", "short_only": "short only", "long_short": "long/short", "flat": "flat"},
 }
-_ENGINE_GROUPS = {"insufficient": ("1.1", "1.2"), "failed_screen": ("1.3", "1.6", "1.8")}
+_ENGINE_GROUPS = {"insufficient": ("1.1", "1.2"), "failed_screen": ("1.3", "1.6", "1.8", "1.16")}
 
 
 def _item_observed(screen: dict, item_id: str) -> Any:
@@ -557,10 +664,28 @@ def _item_observed(screen: dict, item_id: str) -> Any:
     return None
 
 
+def _ids_text(ids: Any) -> str:
+    """Item ids as text, runs of three or more consecutive ids as a range: ``1.4, 1.5, 1.7, 1.9–1.15``."""
+    nums = []
+    for x in ids if isinstance(ids, list) else []:
+        head, _, tail = str(x).partition(".")
+        if head == "1" and tail.isdigit():
+            nums.append(int(tail))
+    nums = sorted(set(nums))
+    parts, i = [], 0
+    while i < len(nums):
+        j = i
+        while j + 1 < len(nums) and nums[j + 1] == nums[j] + 1:
+            j += 1
+        parts += [f"1.{nums[i]}–1.{nums[j]}"] if j - i >= 2 else [f"1.{n}" for n in nums[i:j + 1]]
+        i = j + 1
+    return ", ".join(parts) or "—"
+
+
 def _engine_verdict(screen: dict, t: dict) -> str:
     status = screen.get("evidence_status")
     if status == "passed_screen":
-        return t["passed"]
+        return t["passed"].format(ne=_ids_text(screen.get("not_evaluated")))
     if status in _ENGINE_GROUPS:
         ids = [i.get("id") for i in screen.get("items") or []
                if isinstance(i, dict) and i.get("result") == "FAIL" and i.get("id") in _ENGINE_GROUPS[status]]
@@ -574,12 +699,31 @@ def _day(ms: int) -> str:
     return _dt.datetime.fromtimestamp(ms / 1000, tz=_dt.timezone.utc).strftime("%Y-%m-%d")
 
 
+def _current_screen(session_id: str, row: dict, screen: dict | None) -> dict | None:
+    """The row's stored screen with item 1.6 (DSR) and the verdict recomputed for the session's CURRENT trial count and
+    variant Sharpes from the snapshot's verified daily returns; None (shown as modified) when the screen or the returns
+    cannot be verified. The tool result keeps the screen as computed at run time."""
+    if screen is None or screen.get("evidence_status") == "unavailable":
+        return screen
+    returns = verified_engine_returns(row)
+    if returns is None:
+        return None
+    from backtest.engine_screen import rescreen
+
+    return rescreen(screen, returns, trials=trial_count(session_id), variant_sharpes=variant_sharpes_for(session_id, row.get("trial_key")))
+
+
+def _net_return(screen: dict) -> str:
+    net, base = _dec(_item_observed(screen, "1.3")), _dec((screen.get("facts") or {}).get("capital_base"))
+    return "—" if net is None or base is None or base <= 0 else fmt_fraction(net / base)
+
+
 def _engine_section(session_id: str, zh: bool, first: bool) -> list[str]:
     rows_all = engine_rows(session_id)
     if not rows_all:
         return []
     t = _ENGINE_TEXT[bool(zh)]
-    entries = [(row, verified_engine_screen(row)) for row in rows_all]
+    entries = [(row, _current_screen(session_id, row, verified_engine_screen(row))) for row in rows_all]
     screens = [s for _, s in entries if s is not None]
     bad = sum(1 for _, s in entries if s is None)
     counts = {"passed_screen": 0, "failed_screen": 0, "insufficient": 0}
@@ -599,7 +743,7 @@ def _engine_section(session_id: str, zh: bool, first: bool) -> list[str]:
         label = ",".join(str(c) for c in facts.get("codes") or []) or "—"
         direction = t.get(str(facts.get("direction")), str(facts.get("direction") or "—"))
         rows.append(f"| {seq} | {label} / {facts.get('source') or '—'} | {_item_observed(s, '1.1') if _item_observed(s, '1.1') is not None else '—'} | "
-                    f"{_item_observed(s, '1.2') if _item_observed(s, '1.2') is not None else '—'} | {fmt_amount(_item_observed(s, '1.3'))} | "
+                    f"{_item_observed(s, '1.2') if _item_observed(s, '1.2') is not None else '—'} | {_net_return(s)} | "
                     f"{fmt_amount(facts.get('dsr'))} ({facts.get('trials', '—')}) | {direction} / {fmt_fraction(facts.get('time_in_market'))} | "
                     f"{_engine_verdict(s, t)} |")
     summary = t["summary"].format(m=len(entries), n=len({r["trial_key"] for r in rows_all}), p=counts["passed_screen"],
@@ -615,9 +759,14 @@ def _engine_section(session_id: str, zh: bool, first: bool) -> list[str]:
 
 
 def _holdout_warning(session_id: str, zh: bool) -> list[str]:
-    exposure = exposure_end_ms(session_id)
-    cutoff = cached_holdout_cutoff_ms(session_id)
-    if exposure is None or cutoff is None or exposure <= cutoff:
+    exposure = crypto_exposure_end_ms(session_id)
+    if exposure is None:
+        return []
+    try:
+        cutoff = int(holdout_cutoff(session_id)["cutoff_ms"])
+    except Exception:  # noqa: BLE001 - the card never fails on the cutoff: the 60-day fallback applies
+        cutoff = _fallback_cutoff_ms()
+    if exposure <= cutoff:
         return []
     return [_ENGINE_TEXT[bool(zh)]["holdout"].format(day=_day(exposure - 1), cutoff_day=_day(cutoff))]
 

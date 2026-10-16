@@ -226,16 +226,19 @@ logger = logging.getLogger(__name__)
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 
 
-def _prior_run_dirs(session_id: str | None, current: Path, limit: int = 20) -> list[Path]:
-    """Run directories of this conversation's earlier completed turns, oldest first.
+def _prior_ledgers(session_id: str | None, current: Path, limit: int = 20) -> list[Path]:
+    """Session-store grounding ledgers of this conversation's earlier completed turns, oldest first.
+
+    The ledgers live under the sessions dir, outside the model's write roots; a
+    run directory's own artifact is never read back.
 
     Args:
         session_id: Conversation id, or None outside a session.
-        current: This turn's run directory, which is never returned.
-        limit: Keep only the most recent ``limit`` directories.
+        current: This turn's run directory, whose attempt is never returned.
+        limit: Keep only the most recent ``limit`` ledgers.
 
     Returns:
-        Existing run directories ordered by attempt creation time; an empty list
+        Existing ledger files ordered by attempt creation time; an empty list
         on any error.
     """
     try:
@@ -248,12 +251,15 @@ def _prior_run_dirs(session_id: str | None, current: Path, limit: int = 20) -> l
                 if data.get("status") != "completed" or not data.get("run_dir"):
                     continue
                 run_dir = Path(str(data["run_dir"]))
-                if run_dir.is_dir() and run_dir != Path(current):
-                    rows.append((str(data.get("created_at") or ""), run_dir))
+                if run_dir.name == Path(current).name:
+                    continue
+                ledger = SESSIONS_DIR / session_id / "grounding" / f"{run_dir.name}.json"
+                if ledger.is_file():
+                    rows.append((str(data.get("created_at") or ""), ledger))
             except (OSError, ValueError, AttributeError):
                 continue
         rows.sort(key=lambda row: row[0])
-        return [run_dir for _, run_dir in rows[-limit:]] if limit > 0 else []
+        return [ledger for _, ledger in rows[-limit:]] if limit > 0 else []
     except Exception:  # noqa: BLE001 - grounding carry-over must never break a turn
         return []
 
@@ -1204,7 +1210,8 @@ class AgentLoop:
             contextual_identity_constraints=(
                 get_env_config().agent_tuning.vibe_contextual_identity_constraints
             ),
-            prior_run_dirs=_prior_run_dirs(session_id, run_dir),
+            prior_ledgers=_prior_ledgers(session_id, run_dir),
+            session_copy=(SESSIONS_DIR / session_id / "grounding" / f"{run_dir.name}.json") if session_id else None,
         )
 
         context = ContextBuilder(self.registry, self.memory,

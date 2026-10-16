@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -88,13 +90,36 @@ def _note_child_exposure(run_path: Path, config: dict[str, Any]) -> None:
         logging.getLogger(__name__).warning("backtest data exposure not recorded for %s", run_path, exc_info=True)
 
 
+def _has_crypto_code(config: dict[str, Any]) -> bool:
+    """True when any code of ``config`` is crypto by the runner's own market detection (``_detect_market``; a ``local:``
+    prefix is stripped first). A non-list ``codes`` is read as one code; unreadable entries are ignored (the runner's own
+    config schema rejects them)."""
+    from backtest.engines._market_hooks import _detect_market
+
+    codes = config.get("codes")
+    for code in codes if isinstance(codes, list) else [codes]:
+        if not isinstance(code, str):
+            continue
+        symbol = code.strip()
+        if symbol[:6].lower() == "local:":
+            symbol = symbol[6:]
+        if _detect_market(symbol) == "crypto":
+            return True
+    return False
+
+
+_END_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 def _holdout_refusal(config: dict[str, Any], session_id: str | None) -> str | None:
-    """None when the config may run; else the refusal message. A crypto/AlphaKeel source must end before AlphaKeel's
-    hold-out cutoff (AGENTS.md rule 7: research never reads the hold-out). Any failure here refuses against the fallback
-    cutoff -- the guard is never skipped."""
+    """None when the config may run; else the refusal message. The guard applies when the source is a crypto/AlphaKeel
+    source OR any code is crypto by the runner's market detection (so ``auto``, ``yfinance`` BTC-USD, ``local:BTC-USDT`` are
+    covered): such data must end before AlphaKeel's hold-out cutoff (AGENTS.md rule 7: research never reads the hold-out).
+    ``end_date`` must be a plain ``YYYY-MM-DD`` date. Any failure here refuses against the fallback cutoff -- the guard is
+    never skipped."""
     from src.tools import alphakeel_research_ledger as L
 
-    if config.get("source") not in L.HOLDOUT_SOURCES:
+    if config.get("source") not in L.HOLDOUT_SOURCES and not _has_crypto_code(config):
         return None
     day_ms = 86_400_000
     try:
@@ -110,11 +135,13 @@ def _holdout_refusal(config: dict[str, Any], session_id: str | None) -> str | No
     if not end_date:
         return f"a crypto backtest needs an explicit end_date on or before {last_allowed}. {tail}"
     try:
-        import pandas as pd
-
-        end_ms = int((pd.Timestamp(str(end_date)).tz_localize(None) + pd.Timedelta(days=1)).tz_localize("UTC").timestamp() * 1000)
-    except Exception:  # noqa: BLE001 - an unreadable end_date cannot be shown to be safe
-        return f"end_date {end_date!r} is not an ISO date (YYYY-MM-DD) and cannot be checked. {tail}"
+        if not isinstance(end_date, str) or not _END_DATE_RE.match(end_date):
+            raise ValueError(end_date)
+        end_day = datetime.date.fromisoformat(end_date)
+    except ValueError:
+        return (f"end_date {end_date!r} must be a plain date string in the format YYYY-MM-DD (no time, offset or other "
+                f"format) so the hold-out check is exact. {tail}")
+    end_ms = int(datetime.datetime(end_day.year, end_day.month, end_day.day, tzinfo=datetime.timezone.utc).timestamp() * 1000) + day_ms
     if end_ms <= cutoff_ms:
         return None
     return f"end_date {end_date} reaches into the hold-out. {tail}"

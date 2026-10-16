@@ -1637,10 +1637,10 @@
   },
   "validation": {
     "noData": "No hay datos de validación disponibles.",
-    "monteCarlo": "Prueba de permutación de Monte Carlo",
+    "monteCarlo": "Monte Carlo: pruebas de inversión de signo (Sharpe) y de permutación del orden (drawdown)",
     "significant": "Significativo",
     "notSignificant": "No significativo",
-    "monteCarloDesc": "Se mezcló el orden de las operaciones {{n}} veces para probar si el Sharpe es mejor que el azar.",
+    "monteCarloDesc": "Se invirtió el signo del PnL de cada operación {{n}} veces para probar si el Sharpe supera cero, y se mezcló el orden de las operaciones {{n}} veces para probar el drawdown.",
     "actualSharpe": "Sharpe real",
     "pValueSharpe": "valor p de inversión de signo (Sharpe)",
     "simulatedMean": "Media simulada",
