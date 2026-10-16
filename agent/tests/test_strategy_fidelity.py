@@ -27,8 +27,16 @@ def test_the_prompt_forbids_substituting_a_strategy() -> None:
     assert "is not that confirmation" in prompt
 
 
+def test_the_prompt_leaves_research_verdicts_to_the_result_card() -> None:
+    prompt = ContextBuilder(ToolRegistry(), WorkspaceMemory()).build_system_prompt("回测一下")
+    assert "Research verdicts come from the system result card appended after your answer, not from you" in prompt
+    assert "unless the card for that run says passed_screen" in prompt
+    assert "AlphaKeel's G1/G2 gates" in prompt
+    assert "Never cite news or events that no tool returned." in prompt
+    assert "sign-flip Sharpe test, order-permutation drawdown test" in prompt
+
+
 def _run(monkeypatch, main) -> dict:
-    from alphakeel_research import cli
     from src.tools.alphakeel_research_tool import AlphakeelResearchTool
 
     patch_cli(monkeypatch, main)

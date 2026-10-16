@@ -1637,7 +1637,7 @@
     "notSignificant": "不显著",
     "monteCarloDesc": "对交易顺序进行 {{n}} 次随机打乱，检验夏普比率是否优于随机。",
     "actualSharpe": "实际夏普比率",
-    "pValueSharpe": "p 值（夏普比率）",
+    "pValueSharpe": "符号翻转检验 p 值（Sharpe）",
     "simulatedMean": "模拟均值",
     "simulatedRange": "模拟 90% 区间",
     "bootstrap": "自举夏普置信区间",

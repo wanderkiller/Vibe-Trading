@@ -1642,7 +1642,7 @@
     "notSignificant": "Tidak Signifikan",
     "monteCarloDesc": "Urutan trade diacak {{n}} kali untuk menguji apakah Sharpe lebih baik daripada hasil acak.",
     "actualSharpe": "Sharpe Aktual",
-    "pValueSharpe": "p-value (Sharpe)",
+    "pValueSharpe": "Sign-flip p-value (Sharpe)",
     "simulatedMean": "Rata-rata Simulasi",
     "simulatedRange": "Rentang Simulasi 90%",
     "bootstrap": "Bootstrap Sharpe CI",

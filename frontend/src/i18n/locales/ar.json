@@ -1637,7 +1637,7 @@
     "notSignificant": "غير ذو دلالة",
     "monteCarloDesc": "تمت خلط ترتيب التداولات {{n}} مرة لاختبار ما إذا كان Sharpe أفضل من العشوائي.",
     "actualSharpe": "Sharpe الفعلي",
-    "pValueSharpe": "قيمة p (Sharpe)",
+    "pValueSharpe": "قيمة p لاختبار قلب الإشارة (Sharpe)",
     "simulatedMean": "المتوسط المحاكى",
     "simulatedRange": "نطاق المحاكاة 90٪",
     "bootstrap": "فاصل ثقة Sharpe عبر البوتستراب",

@@ -226,6 +226,38 @@ logger = logging.getLogger(__name__)
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 
 
+def _prior_run_dirs(session_id: str | None, current: Path, limit: int = 20) -> list[Path]:
+    """Run directories of this conversation's earlier completed turns, oldest first.
+
+    Args:
+        session_id: Conversation id, or None outside a session.
+        current: This turn's run directory, which is never returned.
+        limit: Keep only the most recent ``limit`` directories.
+
+    Returns:
+        Existing run directories ordered by attempt creation time; an empty list
+        on any error.
+    """
+    try:
+        if not session_id:
+            return []
+        rows: list[tuple[str, Path]] = []
+        for path in (SESSIONS_DIR / session_id / "attempts").glob("*/attempt.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if data.get("status") != "completed" or not data.get("run_dir"):
+                    continue
+                run_dir = Path(str(data["run_dir"]))
+                if run_dir.is_dir() and run_dir != Path(current):
+                    rows.append((str(data.get("created_at") or ""), run_dir))
+            except (OSError, ValueError, AttributeError):
+                continue
+        rows.sort(key=lambda row: row[0])
+        return [run_dir for _, run_dir in rows[-limit:]] if limit > 0 else []
+    except Exception:  # noqa: BLE001 - grounding carry-over must never break a turn
+        return []
+
+
 def _ir_result_card(session_id: str, user_message: str) -> str | None:
     """The AlphaKeel IR result card of this conversation (research-truth §5), or None (no session id: no card).
 
@@ -1172,6 +1204,7 @@ class AgentLoop:
             contextual_identity_constraints=(
                 get_env_config().agent_tuning.vibe_contextual_identity_constraints
             ),
+            prior_run_dirs=_prior_run_dirs(session_id, run_dir),
         )
 
         context = ContextBuilder(self.registry, self.memory,

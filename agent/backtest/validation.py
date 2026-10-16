@@ -1,7 +1,8 @@
 """Statistical validation for backtest results.
 
 Three independent tools:
-  - Monte Carlo permutation test: is the strategy significantly better than random?
+  - Monte Carlo tests on the trade PnLs: a sign-flip randomization test for the
+    Sharpe ratio and an order-permutation test for the max drawdown
   - Bootstrap Sharpe CI: how stable is the risk-adjusted return?
   - Walk-Forward analysis: is performance consistent across time windows?
 
@@ -34,22 +35,38 @@ def monte_carlo_test(
     seed: int = 42,
     bars_per_year: int = 252,
 ) -> Dict[str, Any]:
-    """Shuffle trade PnL order to test path significance.
+    """Monte Carlo significance tests on the trade PnLs.
 
-    Null hypothesis: the observed Sharpe / max-drawdown is no better than
-    a random ordering of the same trades.
+    Two tests, each with its own null hypothesis:
+
+    * Sharpe -- sign-flip randomization test. Null: the trade PnLs are
+      symmetric around zero (no edge: each trade is equally likely to have
+      won or lost the same amount). Each simulation multiplies every trade PnL
+      by an independent random +/-1 and recomputes the Sharpe;
+      ``p_value_sharpe`` is the share of sign-flipped Sharpes >= the observed
+      one. (A plain order permutation cannot test this: the Sharpe of
+      per-trade returns is almost invariant to the order of the trades.)
+    * Max drawdown -- order permutation. Null: the order of the trades is
+      random, i.e. the observed drawdown is no better than a random ordering of
+      the same trades. ``p_value_max_dd`` is the share of permuted paths whose
+      max drawdown is >= (not deeper than) the observed one.
+
+    Both p-values use the ``(count + 1) / (n_simulations + 1)`` estimator, so
+    they are never 0. ``actual_sharpe`` is the per-trade Sharpe (see
+    ``sharpe_basis``) and is not comparable with the metrics Sharpe.
 
     Args:
         trades: Completed round-trip trades from backtest.
         initial_capital: Starting capital.
-        n_simulations: Number of random permutations.
+        n_simulations: Number of random simulations per test.
         seed: Random seed for reproducibility.
         bars_per_year: Annualisation factor (must match bootstrap_sharpe_ci
             and walk_forward_analysis so the report's Sharpe figures agree).
 
     Returns:
         Dict with actual_sharpe, p_value_sharpe, actual_max_dd,
-        p_value_max_dd, simulated_sharpes (percentiles).
+        p_value_max_dd, simulated_sharpe_* (sign-flip distribution), method
+        and sharpe_basis.
     """
     if isinstance(n_simulations, bool) or not isinstance(n_simulations, Integral) or n_simulations < 1:
         return {
@@ -67,24 +84,31 @@ def monte_carlo_test(
         return {"error": "the path's returns have no variance: its Sharpe ratio is undefined", "p_value_sharpe": None}
 
     rng = np.random.default_rng(seed)
+    n = len(pnls)
     sharpe_count = 0
     dd_count = 0
     sim_sharpes = []
     # The full path matrix feeds the fan-chart payload; skip it for
     # pathological sizes so a huge run cannot balloon memory or the JSON.
-    keep_paths = n_simulations * len(pnls) <= 2_000_000
-    sim_equities = np.empty((n_simulations, len(pnls))) if keep_paths else None
+    keep_paths = n_simulations * n <= 2_000_000
+    sim_equities = np.empty((n_simulations, n)) if keep_paths else None
 
+    # Sharpe: sign-flip randomization (null: PnLs symmetric around zero).
+    for _ in range(n_simulations):
+        flipped = pnls * rng.choice([-1.0, 1.0], size=n)
+        sim = _path_metrics(flipped, initial_capital, bars_per_year)
+        if sim["sharpe"] is None:
+            return {"error": "a sign-flipped path has no return variance: its Sharpe ratio is undefined", "p_value_sharpe": None}
+        sim_sharpes.append(sim["sharpe"])
+        if sim["sharpe"] >= actual["sharpe"]:
+            sharpe_count += 1
+
+    # Max drawdown: order permutation (path-dependent).
     for i in range(n_simulations):
         shuffled = rng.permutation(pnls)
         if sim_equities is not None:
             sim_equities[i] = initial_capital + np.cumsum(shuffled)
         sim = _path_metrics(shuffled, initial_capital, bars_per_year)
-        if sim["sharpe"] is None:
-            return {"error": "a permuted path has no return variance: its Sharpe ratio is undefined", "p_value_sharpe": None}
-        sim_sharpes.append(sim["sharpe"])
-        if sim["sharpe"] >= actual["sharpe"]:
-            sharpe_count += 1
         if sim["max_dd"] >= actual["max_dd"]:  # less negative = "better"
             dd_count += 1
 
@@ -92,8 +116,8 @@ def monte_carlo_test(
     result = {
         "actual_sharpe": round(actual["sharpe"], 4),
         "actual_max_dd": round(actual["max_dd"], 4),
-        "p_value_sharpe": round(sharpe_count / n_simulations, 4),
-        "p_value_max_dd": round(dd_count / n_simulations, 4),
+        "p_value_sharpe": round((sharpe_count + 1) / (n_simulations + 1), 4),
+        "p_value_max_dd": round((dd_count + 1) / (n_simulations + 1), 4),
         "simulated_sharpe_mean": round(float(sim_arr.mean()), 4),
         "simulated_sharpe_std": round(float(sim_arr.std()), 4),
         "simulated_sharpe_p5": round(float(np.percentile(sim_arr, 5)), 4),
@@ -101,6 +125,11 @@ def monte_carlo_test(
         "n_simulations": n_simulations,
         "n_trades": len(trades),
         "sharpe_samples": [round(float(s), 4) for s in sim_sharpes],
+        "method": {"sharpe": "sign_flip", "max_dd": "order_permutation"},
+        "sharpe_basis": (
+            "per-trade PnL over running equity, annualised with bars_per_year; "
+            "not comparable with metrics sharpe (daily equity returns)"
+        ),
     }
     if sim_equities is not None:
         idx = np.unique(np.linspace(0, len(pnls) - 1, min(len(pnls), 400)).astype(int))

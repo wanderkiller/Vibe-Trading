@@ -1642,7 +1642,7 @@
     "notSignificant": "Não significativo",
     "monteCarloDesc": "Ordem de negociação embaralhada {{n}} vezes para testar se Sharpe é melhor do que aleatório.",
     "actualSharpe": "Sharpe real",
-    "pValueSharpe": "valor p (Sharpe)",
+    "pValueSharpe": "valor p de inversão de sinal (Sharpe)",
     "simulatedMean": "Média Simulada",
     "simulatedRange": "Faixa simulada de 90%",
     "bootstrap": "IC de Sharpe por bootstrap",

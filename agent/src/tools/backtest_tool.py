@@ -88,6 +88,67 @@ def _note_child_exposure(run_path: Path, config: dict[str, Any]) -> None:
         logging.getLogger(__name__).warning("backtest data exposure not recorded for %s", run_path, exc_info=True)
 
 
+def _holdout_refusal(config: dict[str, Any], session_id: str | None) -> str | None:
+    """None when the config may run; else the refusal message. A crypto/AlphaKeel source must end before AlphaKeel's
+    hold-out cutoff (AGENTS.md rule 7: research never reads the hold-out). Any failure here refuses against the fallback
+    cutoff -- the guard is never skipped."""
+    from src.tools import alphakeel_research_ledger as L
+
+    if config.get("source") not in L.HOLDOUT_SOURCES:
+        return None
+    day_ms = 86_400_000
+    try:
+        cutoff = L.holdout_cutoff(session_id)
+        cutoff_ms, origin = int(cutoff["cutoff_ms"]), str(cutoff["source"])
+    except Exception:  # noqa: BLE001 - never skip the guard
+        logging.getLogger(__name__).warning("hold-out cutoff failed; using the %d-day fallback", L.DEFAULT_HOLDOUT_DAYS, exc_info=True)
+        cutoff_ms, origin = L._fallback_cutoff_ms(), "fallback_60d"
+    last_allowed = L._day(cutoff_ms - day_ms)
+    end_date = config.get("end_date")
+    tail = ("The hold-out is AlphaKeel's out-of-sample window that research never reads: "
+            f"the hold-out starts {L._day(cutoff_ms)} (cutoff from {origin}); last allowed end_date is {last_allowed}.")
+    if not end_date:
+        return f"a crypto backtest needs an explicit end_date on or before {last_allowed}. {tail}"
+    try:
+        import pandas as pd
+
+        end_ms = int((pd.Timestamp(str(end_date)).tz_localize(None) + pd.Timedelta(days=1)).tz_localize("UTC").timestamp() * 1000)
+    except Exception:  # noqa: BLE001 - an unreadable end_date cannot be shown to be safe
+        return f"end_date {end_date!r} is not an ISO date (YYYY-MM-DD) and cannot be checked. {tail}"
+    if end_ms <= cutoff_ms:
+        return None
+    return f"end_date {end_date} reaches into the hold-out. {tail}"
+
+
+def _research_screen(run_path: Path) -> dict[str, Any]:
+    """The code-made screen of a finished run, reduced for the tool result; never raises."""
+    from backtest.engine_screen import screen_engine_run
+    from src.providers.session_context import current_llm_session_id
+
+    session_id = current_llm_session_id()
+    try:
+        if session_id:
+            from src.tools.alphakeel_research_ledger import record_engine_run
+
+            screen = record_engine_run(session_id, run_path)
+        else:
+            screen = {**screen_engine_run(run_path, trials=1), "trials": 1, "warning": "no session id: trials not counted"}
+    except Exception as exc:  # noqa: BLE001 - the screen never turns a successful run into an error
+        logging.getLogger(__name__).warning("engine run not recorded for %s", run_path, exc_info=True)
+        return {"evidence_status": "unavailable", "error": str(exc)}
+    if screen.get("evidence_status") == "unavailable":
+        return {k: screen[k] for k in ("evidence_status", "error", "trials", "seq", "warning") if k in screen}
+    out: dict[str, Any] = {
+        "evidence_status": screen.get("evidence_status"),
+        "items": [{"id": i.get("id"), "result": i.get("result"), "observed": i.get("observed")} for i in screen.get("items") or []],
+        "facts": screen.get("facts"), "trials": screen.get("trials"), "seq": screen.get("seq"),
+        "next": screen.get("next"), "not_evaluated": screen.get("not_evaluated"),
+    }
+    if screen.get("warning"):
+        out["warning"] = screen["warning"]
+    return {k: v for k, v in out.items() if v is not None}
+
+
 def run_backtest(run_dir: str) -> str:
     """Run backtest: validate config.json + signal_engine.py, invoke built-in engine.
 
@@ -135,6 +196,16 @@ def run_backtest(run_dir: str) -> str:
             },
             ensure_ascii=False,
         )
+
+    from src.providers.session_context import current_llm_session_id
+
+    try:
+        refusal = _holdout_refusal(config, current_llm_session_id() or None)
+    except Exception:  # noqa: BLE001 - never skip the guard
+        logging.getLogger(__name__).warning("hold-out guard failed", exc_info=True)
+        refusal = "the hold-out guard failed; fix end_date and retry (research never reads AlphaKeel's hold-out)"
+    if refusal:
+        return json.dumps({"status": "error", "error_code": "holdout", "error": refusal, "run_dir": run_dir}, ensure_ascii=False)
 
     agent_root = Path(__file__).resolve().parents[2]
     entry_script = agent_root / "backtest" / "runner.py"
@@ -202,6 +273,7 @@ def run_backtest(run_dir: str) -> str:
         summary = try_build_backtest_summary(run_path, ohlcv_paths)
         if summary is not None:
             envelope["summary"] = summary
+        envelope["research_screen"] = _research_screen(run_path)
     return _serialize_result(envelope)
 
 
@@ -229,6 +301,10 @@ def _serialize_result(envelope: dict[str, Any]) -> str:
     if len(encode()) > TOOL_RESULT_LIMIT:
         envelope["artifacts"] = {}
         envelope["artifacts_omitted"] = "Artifact paths exceed the result budget; inspect the run directory with read_file."
+    screen = envelope.get("research_screen")
+    if len(encode()) > TOOL_RESULT_LIMIT and isinstance(screen, dict):  # last resort: keep status, facts and counts
+        for key in ("not_evaluated", "next", "items"):
+            screen.pop(key, None)
     return encode()
 
 

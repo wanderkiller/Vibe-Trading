@@ -306,7 +306,7 @@ def test_result_card_rows_order_and_language(session) -> None:
     lines = zh.splitlines()
     assert lines[0] == "---" and lines[1] == "**研究结果（系统根据试验账本生成，非模型撰写）**"
     assert lines[2] == "费率口径：公开基础档 taker（工具默认） — binance 0.05% / bybit 0.055% / okx 0.05% 每笔"
-    assert lines[3] == "本会话 3 个版本 / 4 次回测：通过初筛 1，未通过 1，证据不足 2"
+    assert lines[3] == "本会话 IR 3 个版本 / 4 次回测：通过初筛 1，未通过 1，证据不足 2"
     rows = [ln for ln in lines if ln.startswith("| carry")]
     assert rows == [
         "| carry-wide (ir-bbbbb) | 2026-01-01→06-29 | 40 | 50.00 | 300.43 | 190.11 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
@@ -318,7 +318,7 @@ def test_result_card_rows_order_and_language(session) -> None:
     assert lines[-1] == "账本：ir_trials_evidence.jsonl"  # no hypothesis id handed to the model
     assert "hyp_" not in zh
     en = render_card(SESSION_ID, False)
-    assert "This session: 3 versions / 4 backtests: passed screen 1, failed screen 1, insufficient 2" in en
+    assert "This session's IR: 3 versions / 4 backtests: passed screen 1, failed screen 1, insufficient 2" in en
     assert "| carry-tight (ir-ccccc) | 2026-01-01→06-29 | 40 | −10.00 | 300.43 | 190.11 | 0.27% | failed screen (1.3) |" in en
     assert en.splitlines()[-1] == "Ledger: ir_trials_evidence.jsonl"
 
@@ -339,7 +339,7 @@ def test_p1_1_one_conversation_two_turns_counts_both_versions(session) -> None:
     assert len((turn2 / "ir_trials_evidence.jsonl").read_text().splitlines()) == 2
     assert out["evidence_dir"] == "ir_runs/20261014_091500_ir" and (turn2 / "ir_runs" / "20261014_091500_ir" / "run_card.json").is_file()
     card = render_card(SESSION_ID, True)
-    assert "本会话 2 个版本 / 2 次回测" in card and len([ln for ln in card.splitlines() if ln.startswith("| v")]) == 2
+    assert "本会话 IR 2 个版本 / 2 次回测" in card and len([ln for ln in card.splitlines() if ln.startswith("| v")]) == 2
     hyp = session["tmp"] / "sessions" / SESSION_ID / "ir_hypothesis.json"
     assert hyp.is_file() and not (turn1 / "ir_hypothesis.json").exists()
 
@@ -364,7 +364,7 @@ def test_p1_2_the_card_shows_only_verified_private_ledger_rows(session) -> None:
     reg.link_backtest(hid, run_card_path="/tmp/forged/run_card.json", metrics={"strategy_id": "ir-forged", "name": "forged",
                                                                                "net_usdt": "99999", "evidence_status": "passed_screen"})
     card = L.render_card(SESSION_ID, True)
-    assert "forged" not in card and "99999" not in card and "本会话 2 个版本 / 2 次回测" in card
+    assert "forged" not in card and "99999" not in card and "本会话 IR 2 个版本 / 2 次回测" in card
     # a changed run card is not shown, and counted
     path = session["runs"] / "20261014_090950_ir" / "run_card.json"
     doc = json.loads(path.read_text())
@@ -378,10 +378,10 @@ def test_p1_2_the_card_shows_only_verified_private_ledger_rows(session) -> None:
     assert table == ["| real-b (ir-bbbbb) | 2026-01-01→06-29 | 40 | 12.50 | 300.43 | 190.11 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
                      f"| real-a ({s8}) | — | — | — | — | — | — | run card 已改动或缺失 |"]
     # N / M count every private ledger row (= trials.count); the changed row is in no screen class
-    assert "本会话 2 个版本 / 2 次回测：通过初筛 1，未通过 0，证据不足 0，已改动 1" in lines
+    assert "本会话 IR 2 个版本 / 2 次回测：通过初筛 1，未通过 0，证据不足 0，已改动 1" in lines
     assert not any("未显示" in ln for ln in lines)
     en = L.render_card(SESSION_ID, False)
-    assert "This session: 2 versions / 2 backtests: passed screen 1, failed screen 0, insufficient 0, modified 1" in en
+    assert "This session's IR: 2 versions / 2 backtests: passed screen 1, failed screen 0, insufficient 0, modified 1" in en
     assert f"| real-a ({s8}) | — | — | — | — | — | — | run card modified or missing |" in en
 
 
@@ -474,10 +474,10 @@ def test_r2_untouched_header_counts_with_a_changed_card(session) -> None:
     _run_tool(session, "a_ir", _card("ir-aaaaaaaaaa", "va", "-5", 40))
     _run_tool(session, "b_ir", _card("ir-bbbbbbbbbb", "vb", "3", 40))
     before = L.render_card(SESSION_ID, True).splitlines()[3]
-    assert before == "本会话 2 个版本 / 2 次回测：通过初筛 1，未通过 1，证据不足 0"
+    assert before == "本会话 IR 2 个版本 / 2 次回测：通过初筛 1，未通过 1，证据不足 0"
     (session["runs"] / "b_ir" / "run_card.json").unlink()  # missing counts as changed
     lines = L.render_card(SESSION_ID, True).splitlines()
-    assert lines[3] == "本会话 2 个版本 / 2 次回测：通过初筛 0，未通过 1，证据不足 0，已改动 1"
+    assert lines[3] == "本会话 IR 2 个版本 / 2 次回测：通过初筛 0，未通过 1，证据不足 0，已改动 1"
     table = [ln for ln in lines if ln.startswith("| v")]
     assert table[-1] == "| vb (ir-bbbbb) | — | — | — | — | — | — | run card 已改动或缺失 |"
 

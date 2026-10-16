@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from dataclasses import asdict
 from pathlib import Path
@@ -41,6 +42,16 @@ _ANALYSIS_TOOLS = frozenset(
     {"backtest", "factor_analysis", "run_shadow_backtest", "quantlib_call",
      "alphakeel_research"}
 )
+
+
+logger = logging.getLogger(__name__)
+
+_PRIOR_PREFIX = "prior:"
+# Quotes are per turn (freshness): never carried from an earlier turn.
+_PER_TURN_TOOLS = frozenset({"get_market_data", "search_symbol"})
+# Analysis-entry keys that would hold a path relative to another turn's run dir.
+_RUN_DIR_RELATIVE_KEYS = ("artifact", "scope", "path", "run_dir", "file")
+_MAX_CARRIED_RECORDS = 5000
 
 
 def _passed_figures(
@@ -101,6 +112,7 @@ class GroundingLedger(
         user_message: str,
         history: Sequence[Mapping[str, Any]] | None = None,
         contextual_identity_constraints: bool = True,
+        prior_run_dirs: Sequence[Path] = (),
     ) -> None:
         """Create a ledger and seed only authoritative prior identities.
 
@@ -113,6 +125,10 @@ class GroundingLedger(
                 instructions cannot authorize a new subject.
             contextual_identity_constraints: Whether explicit market words in
                 the original conversation may narrow resolver candidates.
+            prior_run_dirs: Run directories of earlier completed turns of the
+                same conversation, oldest first. Their observed tool evidence
+                (never quotes, which are per turn) and analysis metrics are
+                carried into this ledger under ``prior:<dir>:<call_id>``.
         """
         self.run_dir = Path(run_dir)
         self.user_message = user_message
@@ -152,8 +168,65 @@ class GroundingLedger(
         # names an instrument the run really handled.
         self._session_symbol_roots: set[str] = set()
 
+        # call id -> tool of the analysis calls carried from earlier turns (``_calls_of_tool``).
+        self._prior_call_tools: dict[str, str] = {}
         self._seed_symbols(user_message, source="user_message")
+        self._carry_prior_evidence(prior_run_dirs)
         self.persist()
+
+    def _carry_prior_evidence(self, prior_run_dirs: Sequence[Path]) -> None:
+        """Carry observed evidence persisted by earlier turns of the conversation.
+
+        Args:
+            prior_run_dirs: Earlier run directories, oldest first. Unreadable or
+                foreign-schema ledgers are skipped.
+        """
+        carried_evidence: list[EvidenceRecord] = []
+        carried_metrics: list[dict[str, Any]] = []
+        for directory in prior_run_dirs:
+            directory = Path(directory)
+            path = directory / "artifacts" / GROUNDING_ARTIFACT
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                logger.debug("prior grounding ledger %s not carried: %s", path, exc)
+                continue
+            if not isinstance(data, dict) or data.get("schema_version") != 1:
+                logger.debug("prior grounding ledger %s has an unsupported schema", path)
+                continue
+            for raw in data.get("evidence") or []:
+                if not isinstance(raw, dict) or raw.get("status") != "observed":
+                    continue
+                if raw.get("tool") in _PER_TURN_TOOLS:
+                    continue
+                call_id = str(raw.get("call_id") or "")
+                if call_id.startswith(_PRIOR_PREFIX):
+                    continue
+                try:
+                    record = EvidenceRecord(**{**raw, "call_id": f"{_PRIOR_PREFIX}{directory.name}:{call_id}",
+                                               "artifact": None, "scope": None})
+                except TypeError:
+                    continue
+                carried_evidence.append(record)
+            for raw in data.get("analysis_evidence") or []:
+                if not isinstance(raw, dict):
+                    continue
+                call_id = str(raw.get("call_id") or "")
+                if call_id.startswith(_PRIOR_PREFIX):
+                    continue
+                entry = {**raw, "call_id": f"{_PRIOR_PREFIX}{directory.name}:{call_id}"}
+                for key in _RUN_DIR_RELATIVE_KEYS:
+                    if key in entry:
+                        entry[key] = None
+                carried_metrics.append(entry)
+            for raw in data.get("analysis_completed") or []:
+                if isinstance(raw, dict) and raw.get("call_id") and raw.get("tool"):
+                    call_id = str(raw["call_id"])
+                    if not call_id.startswith(_PRIOR_PREFIX):
+                        self._prior_call_tools[f"{_PRIOR_PREFIX}{directory.name}:{call_id}"] = str(raw["tool"])
+        # Most recent directories win the cap.
+        self._evidence.extend(carried_evidence[-_MAX_CARRIED_RECORDS:])
+        self._analysis_metrics.extend(carried_metrics[-_MAX_CARRIED_RECORDS:])
 
     @property
     def authorized_symbols(self) -> set[str]:

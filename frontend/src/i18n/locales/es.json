@@ -1642,7 +1642,7 @@
     "notSignificant": "No significativo",
     "monteCarloDesc": "Se mezcló el orden de las operaciones {{n}} veces para probar si el Sharpe es mejor que el azar.",
     "actualSharpe": "Sharpe real",
-    "pValueSharpe": "valor p (Sharpe)",
+    "pValueSharpe": "valor p de inversión de signo (Sharpe)",
     "simulatedMean": "Media simulada",
     "simulatedRange": "Rango simulado 90%",
     "bootstrap": "IC de Sharpe por bootstrap",

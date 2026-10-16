@@ -1642,7 +1642,7 @@
     "notSignificant": "Nicht signifikant",
     "monteCarloDesc": "Trade-Reihenfolge {{n}}-mal gemischt, um zu prüfen, ob Sharpe besser als zufällig ist.",
     "actualSharpe": "Tatsächlicher Sharpe",
-    "pValueSharpe": "p-Wert (Sharpe)",
+    "pValueSharpe": "Vorzeichenumkehr-p-Wert (Sharpe)",
     "simulatedMean": "Simulierter Mittelwert",
     "simulatedRange": "Simulierter 90%-Bereich",
     "bootstrap": "Bootstrap Sharpe-KI",

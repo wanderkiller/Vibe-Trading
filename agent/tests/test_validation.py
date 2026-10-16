@@ -1,7 +1,7 @@
 """Tests for backtest validation module.
 
 Validates:
-  - Monte Carlo permutation test: p-value, output structure
+  - Monte Carlo tests (sign-flip Sharpe, permutation max-DD): p-values, output structure
   - Bootstrap Sharpe CI: confidence interval bounds, prob_positive
   - Walk-Forward analysis: window splitting, consistency metrics
   - run_validation dispatcher
@@ -91,8 +91,8 @@ class TestMonteCarlo:
         """A consistently profitable strategy should have low p-value."""
         trades = _make_trades([100, 200, 150, 180, 120, 90, 110, 130, 160, 140])
         result = monte_carlo_test(trades, 1_000_000, n_simulations=500, seed=42)
-        # All trades profitable → hard to beat by shuffling (already optimal)
-        # p-value should be moderate (shuffling can't make it worse when all positive)
+        # Sign-flip test: consistent winners are very unlikely under a zero-edge null.
+        assert result["p_value_sharpe"] <= 0.05
         assert result["actual_sharpe"] > 0
 
     def test_too_few_trades(self) -> None:
@@ -136,6 +136,33 @@ class TestMonteCarlo:
         assert crypto["actual_sharpe"] == pytest.approx(
             default["actual_sharpe"] * expected_ratio, abs=1e-3
         )
+
+    def test_sign_flip_detects_consistent_winners(self) -> None:
+        """10 identical positive trades: the old permutation test gave ~1.0 or 0.5."""
+        trades = _make_trades([1000.0] * 10)
+        result = monte_carlo_test(trades, 1_000_000, n_simulations=1000, seed=42)
+        assert result["p_value_sharpe"] <= 0.01
+
+    def test_sign_flip_symmetric_trades_not_significant(self) -> None:
+        trades = _make_trades([1000.0, -1000.0] * 10)
+        result = monte_carlo_test(trades, 1_000_000, n_simulations=1000, seed=42)
+        assert result["p_value_sharpe"] > 0.2
+
+    def test_audited_session_samples_vary_and_method_reported(self) -> None:
+        pnls = [
+            -12116.2518, 21411.2021, 8100.8528, -21276.419, -13437.6742,
+            21982.7592, 15295.2054, -3441.9475, -10371.5206, 673.1428,
+        ]
+        result = monte_carlo_test(_make_trades(pnls), 1_000_000, n_simulations=500, seed=42)
+        assert result["method"] == {"sharpe": "sign_flip", "max_dd": "order_permutation"}
+        assert "not comparable with metrics sharpe" in result["sharpe_basis"]
+        assert result["simulated_sharpe_std"] > 0.1
+
+    def test_p_values_never_zero(self) -> None:
+        trades = _make_trades([1000.0] * 10)
+        result = monte_carlo_test(trades, 1_000_000, n_simulations=50, seed=3)
+        assert result["p_value_sharpe"] >= round(1 / 51, 4)
+        assert result["p_value_max_dd"] >= round(1 / 51, 4)
 
 
 # ---------------------------------------------------------------------------

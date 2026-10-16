@@ -41,6 +41,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `ir-validate-all` | none (leaf package and its tool only) | local-only (follows the leaf package) |
 | `research-truth` | tools/__init__ (one session-injected class), grounding/ledger (one tool name), grounding/evidence (one branch, five amount fields), agent/context (one placeholder, one lookup), agent/loop (one helper, two call sites), test_context_attribution_layers (one placeholder) | local-only (follows the leaf package) |
 | `upstream-test-fixes` | _market_hooks (two patterns), alpha_bench_tool (one `getattr`) | upstreamable: two upstream tests are red on upstream main without them |
+| `research-integrity` | validation, backtest_tool, grounding ledger + policies, loop, context, 9 locale labels | partly upstreamable (Monte Carlo, cross-turn grounding, tool-name refs); the rest local-only |
 
 ---
 
@@ -294,6 +295,7 @@ settlements through `funding_settlements.attach_settlements` (shared with the `a
 - `agent/src/tools/autopilot_tool.py`
 - `agent/tests/test_shadow_account.py`
 - `agent/tests/test_autopilot_tool.py`
+- `agent/tests/test_korea_equity_engine.py`
 
 **Wave 2 (2026-10-13, R2-D-4 b / R2-D-6).** `CryptoEngine` has no default taker fee: `config.taker_rate` is required
 (`taker_rate_of`; a crypto run without it is refused, the rate used is in the metrics), and the strict path's evidence
@@ -807,3 +809,69 @@ robustness sub-runs.
 - hook `agent/src/agent/loop.py`: `card = _ir_result_card(session_id, user_message)  # research-truth: card at the answer`
 - hook `agent/src/agent/loop.py`: `card = _ir_result_card(session_id, user_message)  # research-truth: card at the no-progress answer`
 - hook `agent/tests/test_context_attribution_layers.py`: `alphakeel_ir_routing="[test alphakeel routing]",`
+
+## `research-integrity` — research results the code can vouch for
+
+**Purpose.** Audit of in-app session f9941f6d027f (2026-10-16): ten generic `backtest` runs (nine in one run dir) were
+invisible to the result card, which said "2 versions / 2 backtests"; the model called a 5-round-trip, Sharpe 0.10 pair
+trade "validated" and a long-only trend run a funding carry; the Monte Carlo "permutation test" could not test a
+Sharpe (order-invariant, p = 0.543); OKX data was read 13 days into AlphaKeel's hold-out; and real figures of an earlier
+turn were redacted because grounding evidence was per turn and an IR run's metrics were recorded under `backtest`.
+Fixes: (1) `backtest/engine_screen.py` screens every engine run on G1 1.1/1.2/1.3/1.6 (DSR with the session's trial
+count)/1.8 plus code-measured facts (direction, time in market, exposure, data audit); the backtest tool records each
+run in `<session>/engine_ledger.jsonl` with a snapshot (`engine_runs/NNNN/`: code, config, metrics, screen) and returns
+`research_screen`; the result card gains an engine section and a hold-out warning. (2) A crypto-source backtest whose
+`end_date` reaches the AlphaKeel hold-out (service `holdout_cutoff_ms`, cached 6 h per session; fallback today − 60 d)
+is refused before the engine runs. Market-data reads are not blocked (quotes stay usable) but are flagged on the card.
+(3) `monte_carlo_test`: sign-flip test for the Sharpe, order permutation only for the drawdown, `(k+1)/(n+1)` p-values,
+`method` and `sharpe_basis` fields. (4) `GroundingLedger(prior_run_dirs=…)` carries observed non-quote evidence of
+earlier completed turns (`prior:<dir>:<call>`); a tool-name ref also names records its calls made under another tool.
+(5) Prompt: verdicts come from the card; factor ids only when a zoo tool returned them; Layer 4 wording.
+
+**Files.**
+- `agent/backtest/engine_screen.py`
+- `agent/backtest/validation.py`
+- `agent/src/tools/backtest_tool.py`
+- `agent/src/tools/alphakeel_research_ledger.py`
+- `agent/src/agent/grounding/ledger.py`
+- `agent/src/agent/grounding/policies.py`
+- `agent/src/agent/loop.py`
+- `agent/src/agent/context.py`
+- `frontend/src/i18n/locales/ar.json`
+- `frontend/src/i18n/locales/de.json`
+- `frontend/src/i18n/locales/en.json`
+- `frontend/src/i18n/locales/es.json`
+- `frontend/src/i18n/locales/id.json`
+- `frontend/src/i18n/locales/ja.json`
+- `frontend/src/i18n/locales/ko.json`
+- `frontend/src/i18n/locales/pt-BR.json`
+- `frontend/src/i18n/locales/zh-CN.json`
+- `agent/tests/test_engine_screen.py`
+- `agent/tests/test_grounding_prior_turns.py`
+- `agent/tests/test_validation.py`
+- `agent/tests/test_strategy_fidelity.py`
+- `agent/tests/test_alphakeel_research_truth.py`
+
+**Commits.** (this commit).
+
+**Upstreamable.** Monte Carlo, cross-turn grounding and the tool-name ref fix are upstream bugs (upstream main 596fcf3d
+still has them); the engine screen, ledger, hold-out guard and card are local-only (AlphaKeel protocol).
+
+**Anchors.**
+- upstream `agent/backtest/validation.py`: `def monte_carlo_test(`
+- hook `agent/backtest/validation.py`: `"method": {"sharpe": "sign_flip", "max_dd": "order_permutation"}`
+- preimage `agent/backtest/validation.py`: `"p_value_sharpe": round(sharpe_count / n_simulations, 4),`
+- upstream `agent/src/tools/backtest_tool.py`: `def run_backtest(run_dir: str) -> str:`
+- hook `agent/src/tools/backtest_tool.py`: `refusal = _holdout_refusal(`
+- hook `agent/src/tools/backtest_tool.py`: `envelope["research_screen"] = _research_screen(`
+- upstream `agent/src/agent/grounding/ledger.py`: `GROUNDING_ARTIFACT = "grounding_evidence.json"`
+- hook `agent/src/agent/grounding/ledger.py`: `prior_run_dirs: Sequence[Path] = (),`
+- upstream `agent/src/agent/grounding/policies.py`: `def _analysis_entries(self, symbol: str | None) -> list[dict[str, Any]]:`
+- hook `agent/src/agent/grounding/policies.py`: `calls = self._calls_of_tool(key)`
+- preimage `agent/src/agent/grounding/policies.py`: `if key in (record.call_id, record.tool)`
+- upstream `agent/src/agent/loop.py`: `self._grounding = GroundingLedger(`
+- hook `agent/src/agent/loop.py`: `prior_run_dirs=_prior_run_dirs(session_id, run_dir),`
+- hook `agent/src/agent/context.py`: `- Research verdicts come from the system result card appended after your answer`
+- preimage `agent/src/agent/context.py`: `**Layer 4 — Monte Carlo Permutation Test**`
+- upstream `frontend/src/i18n/locales/en.json`: `"pValueSharpe"`
+- hook `frontend/src/i18n/locales/en.json`: `Sign-flip p-value (Sharpe)`

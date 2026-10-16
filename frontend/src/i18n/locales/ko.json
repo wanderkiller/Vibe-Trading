@@ -1637,7 +1637,7 @@
     "notSignificant": "유의하지 않음",
     "monteCarloDesc": "거래 순서를 {{n}}번 셔플하여 Sharpe가 무작위보다 나은지 검정합니다.",
     "actualSharpe": "실제 Sharpe",
-    "pValueSharpe": "p-값 (Sharpe)",
+    "pValueSharpe": "부호 반전 검정 p-값 (Sharpe)",
     "simulatedMean": "시뮬레이션 평균",
     "simulatedRange": "시뮬레이션 90% 구간",
     "bootstrap": "부트스트랩 Sharpe CI",

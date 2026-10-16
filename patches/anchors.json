@@ -476,7 +476,8 @@
     "agent/src/tools/shadow_account_tool.py",
     "agent/src/tools/autopilot_tool.py",
     "agent/tests/test_shadow_account.py",
-    "agent/tests/test_autopilot_tool.py"
+    "agent/tests/test_autopilot_tool.py",
+    "agent/tests/test_korea_equity_engine.py"
    ],
    "anchors": [
     {
@@ -1645,6 +1646,121 @@
      "file": "agent/tests/test_context_attribution_layers.py",
      "kind": "hook",
      "literal": "alphakeel_ir_routing=\"[test alphakeel routing]\","
+    }
+   ]
+  },
+  {
+   "id": "research-integrity",
+   "title": "Research integrity: engine trial ledger and screen, hold-out guard, sign-flip Monte Carlo, cross-turn grounding",
+   "files": [
+    "agent/backtest/engine_screen.py",
+    "agent/backtest/validation.py",
+    "agent/src/tools/backtest_tool.py",
+    "agent/src/tools/alphakeel_research_ledger.py",
+    "agent/src/agent/grounding/ledger.py",
+    "agent/src/agent/grounding/policies.py",
+    "agent/src/agent/loop.py",
+    "agent/src/agent/context.py",
+    "frontend/src/i18n/locales/ar.json",
+    "frontend/src/i18n/locales/de.json",
+    "frontend/src/i18n/locales/en.json",
+    "frontend/src/i18n/locales/es.json",
+    "frontend/src/i18n/locales/id.json",
+    "frontend/src/i18n/locales/ja.json",
+    "frontend/src/i18n/locales/ko.json",
+    "frontend/src/i18n/locales/pt-BR.json",
+    "frontend/src/i18n/locales/zh-CN.json",
+    "agent/tests/test_engine_screen.py",
+    "agent/tests/test_grounding_prior_turns.py",
+    "agent/tests/test_validation.py",
+    "agent/tests/test_strategy_fidelity.py",
+    "agent/tests/test_alphakeel_research_truth.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/backtest/validation.py",
+     "kind": "upstream",
+     "literal": "def monte_carlo_test("
+    },
+    {
+     "file": "agent/backtest/validation.py",
+     "kind": "hook",
+     "literal": "\"method\": {\"sharpe\": \"sign_flip\", \"max_dd\": \"order_permutation\"}"
+    },
+    {
+     "file": "agent/backtest/validation.py",
+     "kind": "preimage",
+     "literal": "\"p_value_sharpe\": round(sharpe_count / n_simulations, 4),"
+    },
+    {
+     "file": "agent/src/tools/backtest_tool.py",
+     "kind": "upstream",
+     "literal": "def run_backtest(run_dir: str) -> str:"
+    },
+    {
+     "file": "agent/src/tools/backtest_tool.py",
+     "kind": "hook",
+     "literal": "refusal = _holdout_refusal("
+    },
+    {
+     "file": "agent/src/tools/backtest_tool.py",
+     "kind": "hook",
+     "literal": "envelope[\"research_screen\"] = _research_screen("
+    },
+    {
+     "file": "agent/src/agent/grounding/ledger.py",
+     "kind": "upstream",
+     "literal": "GROUNDING_ARTIFACT = \"grounding_evidence.json\""
+    },
+    {
+     "file": "agent/src/agent/grounding/ledger.py",
+     "kind": "hook",
+     "literal": "prior_run_dirs: Sequence[Path] = (),"
+    },
+    {
+     "file": "agent/src/agent/grounding/policies.py",
+     "kind": "upstream",
+     "literal": "def _analysis_entries(self, symbol: str | None) -> list[dict[str, Any]]:"
+    },
+    {
+     "file": "agent/src/agent/grounding/policies.py",
+     "kind": "hook",
+     "literal": "calls = self._calls_of_tool(key)"
+    },
+    {
+     "file": "agent/src/agent/grounding/policies.py",
+     "kind": "preimage",
+     "literal": "if key in (record.call_id, record.tool)"
+    },
+    {
+     "file": "agent/src/agent/loop.py",
+     "kind": "upstream",
+     "literal": "self._grounding = GroundingLedger("
+    },
+    {
+     "file": "agent/src/agent/loop.py",
+     "kind": "hook",
+     "literal": "prior_run_dirs=_prior_run_dirs(session_id, run_dir),"
+    },
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "hook",
+     "literal": "- Research verdicts come from the system result card appended after your answer"
+    },
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "preimage",
+     "literal": "**Layer 4 — Monte Carlo Permutation Test**"
+    },
+    {
+     "file": "frontend/src/i18n/locales/en.json",
+     "kind": "upstream",
+     "literal": "\"pValueSharpe\""
+    },
+    {
+     "file": "frontend/src/i18n/locales/en.json",
+     "kind": "hook",
+     "literal": "Sign-flip p-value (Sharpe)"
     }
    ]
   }

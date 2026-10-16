@@ -1637,7 +1637,7 @@
     "notSignificant": "有意でない",
     "monteCarloDesc": "トレード順を {{n}} 回シャッフルし、Sharpe がランダムより優れているか検定します。",
     "actualSharpe": "実 Sharpe",
-    "pValueSharpe": "p 値 (Sharpe)",
+    "pValueSharpe": "符号反転検定 p 値 (Sharpe)",
     "simulatedMean": "シミュレーション平均",
     "simulatedRange": "シミュレーション 90% 区間",
     "bootstrap": "ブートストラップ Sharpe CI",

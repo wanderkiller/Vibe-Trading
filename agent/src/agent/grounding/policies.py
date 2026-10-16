@@ -804,17 +804,21 @@ class _PolicyMixin:
                 # that backtest observed there, and nothing another run did.
                 records, metrics = artifact_scope, []
             else:
+                # A tool name also names the output its calls recorded under
+                # another tool (an ``alphakeel_research`` IR run's metrics are
+                # recorded as ``backtest`` output), this turn's or carried.
+                calls = self._calls_of_tool(key)
                 records = [
                     record
                     for record in self._evidence
-                    if key in (record.call_id, record.tool)
+                    if (key in (record.call_id, record.tool) or record.call_id in calls)
                     and record.status == "observed"
                     and record.value is not None
                 ]
                 metrics = [
                     float(entry["value"])
                     for entry in self._analysis_entries(symbol)
-                    if key in (entry.get("call_id"), entry.get("tool"))
+                    if (key in (entry.get("call_id"), entry.get("tool")) or entry.get("call_id") in calls)
                     and entry.get("value") is not None
                 ]
                 if not records and not metrics:
@@ -841,6 +845,12 @@ class _PolicyMixin:
             records = [record for record in records if _is_price_kind(record)]
             metrics = []
         return records, metrics
+
+    def _calls_of_tool(self, tool: str) -> set[str]:
+        """Call ids of the analysis calls made with ``tool``: this turn's and those carried from earlier turns."""
+        calls = {str(c.get("call_id")) for c in self._analysis_completed if c.get("tool") == tool and c.get("call_id")}
+        calls.update(cid for cid, name in getattr(self, "_prior_call_tools", {}).items() if name == tool)
+        return calls
 
     def _analysis_entries(self, symbol: str | None) -> list[dict[str, Any]]:
         """Scope metrics by explicit observed symbols recorded on their call.

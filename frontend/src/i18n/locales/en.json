@@ -1642,7 +1642,7 @@
     "notSignificant": "Not Significant",
     "monteCarloDesc": "Shuffled trade order {{n}} times to test if Sharpe is better than random.",
     "actualSharpe": "Actual Sharpe",
-    "pValueSharpe": "p-value (Sharpe)",
+    "pValueSharpe": "Sign-flip p-value (Sharpe)",
     "simulatedMean": "Simulated Mean",
     "simulatedRange": "Simulated 90% Range",
     "bootstrap": "Bootstrap Sharpe CI",
