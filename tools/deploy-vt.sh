@@ -18,7 +18,7 @@
 #      the container must report `contract_pin: matched` (deploy AlphaKeel first when the pin changed);
 #      any failure here retags the rollback image and recreates the old container.
 #   7. after a successful deploy only: prune old `vibe-trading-rollback:*` tags (keep the newest VT_ROLLBACK_KEEP,
-#      default 3, and always this run's tag), then `docker builder prune --filter until=${VT_BUILDER_MAX_AGE:-72h}` (the legacy builder ignores --keep-storage);
+#      default 3, and always this run's tag), then `docker builder prune --filter until=${VT_BUILDER_MAX_AGE:-72h}` (by age: works on BuildKit and the legacy builder, which ignores --keep-storage);
 #      failures only warn and never change the exit status (log step `prune`).
 # Every attempt (refused, rolled back or deployed) appends one JSON line to deploy-log.jsonl next to
 # DEPLOYMENT.local.md: ts, sha, step, status, image ids, pin digest. Exit status is non-zero unless deployed.

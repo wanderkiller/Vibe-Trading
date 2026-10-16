@@ -40,7 +40,7 @@ container. Every attempt appends one JSON line (sha, step, status, old/new image
 in-container check talks to the running research service. Manual rollback to an earlier deployment:
 `docker tag vibe-trading-rollback:<ts> "$(docker compose config --images vibe-trading)"` then
 `docker compose up -d --no-build --no-deps vibe-trading`.
-After a successful deploy only the most recent `VT_ROLLBACK_KEEP` (default 3) rollback images are kept, including this one; the volume backups under `~/vibe-trading-backups/<ts>` are all kept, so the image for an older backup may no longer exist - then restore from the current image plus the volume backup.
+After a successful deploy only the most recent `VT_ROLLBACK_KEEP` (default 3) rollback images are kept, including this one; the volume backups under `~/vibe-trading-backups/<ts>` are all kept, so the image for an older backup may no longer exist - then restore from the current image plus the volume backup. Builds go through BuildKit via the `docker-buildx` package (installed on the host 2026-10-16; without it `docker builder prune` falls back to the legacy path and ignores `--keep-storage`); the post-deploy prune drops builder cache older than `VT_BUILDER_MAX_AGE` (default 72h).
 
 Back up the existing image, environment files, and named volumes before
 upgrading. Stop the service while archiving its volumes to preserve a consistent
