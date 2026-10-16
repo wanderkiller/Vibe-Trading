@@ -226,40 +226,42 @@ logger = logging.getLogger(__name__)
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 
 
-def _prior_ledgers(session_id: str | None, current: Path, limit: int = 20) -> list[Path]:
-    """Session-store grounding ledgers of this conversation's earlier completed turns, oldest first.
+def _prior_ledgers(session_id: str | None, current_copy: Path | None, limit: int = 20) -> list[Path]:
+    """Session-store grounding ledgers of this conversation's earlier turns, oldest first.
 
     The ledgers live under the sessions dir, outside the model's write roots; a
-    run directory's own artifact is never read back.
+    run directory's own artifact is never read back. Each turn has its own copy
+    (``<start ms>_<run dir name>.json``), so turns that share a run directory
+    keep separate files. A failed turn's evidence is still real tool output, so
+    attempt status is not consulted.
 
     Args:
         session_id: Conversation id, or None outside a session.
-        current: This turn's run directory, whose attempt is never returned.
+        current_copy: This turn's own session copy, never returned.
         limit: Keep only the most recent ``limit`` ledgers.
 
     Returns:
-        Existing ledger files ordered by attempt creation time; an empty list
-        on any error.
+        Existing ledger files ordered by their integer prefix; files without
+        one (the earlier naming scheme) come first, ordered by mtime. An empty
+        list on any error.
     """
     try:
-        if not session_id:
+        if not session_id or limit <= 0:
             return []
-        rows: list[tuple[str, Path]] = []
-        for path in (SESSIONS_DIR / session_id / "attempts").glob("*/attempt.json"):
+        rows: list[tuple[int, int, float, str, Path]] = []
+        for path in (SESSIONS_DIR / session_id / "grounding").glob("*.json"):
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                if data.get("status") != "completed" or not data.get("run_dir"):
+                if not path.is_file() or (current_copy is not None and path == Path(current_copy)):
                     continue
-                run_dir = Path(str(data["run_dir"]))
-                if run_dir.name == Path(current).name:
-                    continue
-                ledger = SESSIONS_DIR / session_id / "grounding" / f"{run_dir.name}.json"
-                if ledger.is_file():
-                    rows.append((str(data.get("created_at") or ""), ledger))
-            except (OSError, ValueError, AttributeError):
+                prefix = path.name.split("_", 1)[0]
+                if "_" in path.name and prefix.isascii() and prefix.isdigit():
+                    rows.append((1, int(prefix), 0.0, path.name, path))
+                else:
+                    rows.append((0, 0, path.stat().st_mtime, path.name, path))
+            except (OSError, ValueError):
                 continue
-        rows.sort(key=lambda row: row[0])
-        return [ledger for _, ledger in rows[-limit:]] if limit > 0 else []
+        rows.sort(key=lambda row: row[:4])
+        return [row[4] for row in rows[-limit:]]
     except Exception:  # noqa: BLE001 - grounding carry-over must never break a turn
         return []
 
@@ -1203,6 +1205,10 @@ class AgentLoop:
             self.memory.run_dir = str(run_dir)
 
         state_store.save_request(run_dir, user_message, {"session_id": session_id})
+        grounding_copy = (
+            SESSIONS_DIR / session_id / "grounding" / f"{int(run_started_wall * 1000)}_{run_dir.name}.json"
+            if session_id else None
+        )
         self._grounding = GroundingLedger(
             run_dir=run_dir,
             user_message=user_message,
@@ -1210,8 +1216,8 @@ class AgentLoop:
             contextual_identity_constraints=(
                 get_env_config().agent_tuning.vibe_contextual_identity_constraints
             ),
-            prior_ledgers=_prior_ledgers(session_id, run_dir),
-            session_copy=(SESSIONS_DIR / session_id / "grounding" / f"{run_dir.name}.json") if session_id else None,
+            prior_ledgers=_prior_ledgers(session_id, grounding_copy),
+            session_copy=grounding_copy,
         )
 
         context = ContextBuilder(self.registry, self.memory,

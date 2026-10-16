@@ -72,7 +72,7 @@ def _note_child_exposure(run_path: Path, config: dict[str, Any]) -> None:
     try:
         import pandas as pd
 
-        from backtest.data_audit import NON_AUDITABLE_SOURCES, record_exposure
+        from backtest.data_audit import NON_AUDITABLE_SOURCES, crypto_sources, is_crypto_code, record_exposure
 
         source = str(config.get("source") or "")
         ends = []
@@ -85,27 +85,28 @@ def _note_child_exposure(run_path: Path, config: dict[str, Any]) -> None:
             ends.append(int((pd.Timestamp(str(config["end_date"])) + pd.Timedelta(days=1)).timestamp() * 1000))
         ends = [e for e in ends if isinstance(e, int) and not isinstance(e, bool)]
         if ends:
-            record_exposure(source or "backtest", max(ends), via=f"backtest:{run_path.name}")
+            crypto = any(is_crypto_code(c) for c in _config_codes(config)) or source in crypto_sources()
+            record_exposure(source or "backtest", max(ends), via=f"backtest:{run_path.name}", crypto=crypto)
     except Exception:  # noqa: BLE001 - provenance bookkeeping must not break the tool result
         logging.getLogger(__name__).warning("backtest data exposure not recorded for %s", run_path, exc_info=True)
 
 
-def _has_crypto_code(config: dict[str, Any]) -> bool:
-    """True when any code of ``config`` is crypto by the runner's own market detection (``_detect_market``; a ``local:``
-    prefix is stripped first). A non-list ``codes`` is read as one code; unreadable entries are ignored (the runner's own
-    config schema rejects them)."""
-    from backtest.engines._market_hooks import _detect_market
-
+def _config_codes(config: dict[str, Any]) -> list[str]:
+    """The string codes of ``config`` (a non-list ``codes`` is read as one code; unreadable entries are ignored: the
+    runner's own config schema rejects them)."""
     codes = config.get("codes")
-    for code in codes if isinstance(codes, list) else [codes]:
-        if not isinstance(code, str):
-            continue
-        symbol = code.strip()
-        if symbol[:6].lower() == "local:":
-            symbol = symbol[6:]
-        if _detect_market(symbol) == "crypto":
-            return True
-    return False
+    return [c for c in (codes if isinstance(codes, list) else [codes]) if isinstance(c, str)]
+
+
+def _has_crypto_code(config: dict[str, Any]) -> bool:
+    """True when any code of ``config`` is crypto by ``backtest.data_audit.is_crypto_code`` (the one classifier)."""
+    from backtest.data_audit import is_crypto_code
+
+    return any(is_crypto_code(c) for c in _config_codes(config))
+
+
+def _is_local_config(config: dict[str, Any]) -> bool:
+    return config.get("source") == "local" or any(c.strip()[:6].lower() == "local:" for c in _config_codes(config))
 
 
 _END_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -115,11 +116,15 @@ def _holdout_refusal(config: dict[str, Any], session_id: str | None) -> str | No
     """None when the config may run; else the refusal message. The guard applies when the source is a crypto/AlphaKeel
     source OR any code is crypto by the runner's market detection (so ``auto``, ``yfinance`` BTC-USD, ``local:BTC-USDT`` are
     covered): such data must end before AlphaKeel's hold-out cutoff (AGENTS.md rule 7: research never reads the hold-out).
-    ``end_date`` must be a plain ``YYYY-MM-DD`` date. Any failure here refuses against the fallback cutoff -- the guard is
-    never skipped."""
+    ``end_date`` must be a plain ``YYYY-MM-DD`` date. A ``local`` source / ``local:`` code is guarded whatever its name
+    once the bound session has read crypto data past the cutoff (a CSV saved from a hold-out read can be renamed). Any
+    failure here refuses against the fallback cutoff -- the guard is never skipped."""
+    from backtest.data_audit import crypto_sources
     from src.tools import alphakeel_research_ledger as L
 
-    if config.get("source") not in L.HOLDOUT_SOURCES and not _has_crypto_code(config):
+    crypto = config.get("source") in crypto_sources() or _has_crypto_code(config)
+    local = not crypto and bool(session_id) and _is_local_config(config)
+    if not crypto and not local:
         return None
     day_ms = 86_400_000
     try:
@@ -128,6 +133,10 @@ def _holdout_refusal(config: dict[str, Any], session_id: str | None) -> str | No
     except Exception:  # noqa: BLE001 - never skip the guard
         logging.getLogger(__name__).warning("hold-out cutoff failed; using the %d-day fallback", L.DEFAULT_HOLDOUT_DAYS, exc_info=True)
         cutoff_ms, origin = L._fallback_cutoff_ms(), "fallback_60d"
+    if local:  # only a session that already read crypto past the cutoff taints a renamed local file
+        exposure = L.crypto_exposure_end_ms(str(session_id))
+        if exposure is None or exposure <= cutoff_ms:
+            return None
     last_allowed = L._day(cutoff_ms - day_ms)
     end_date = config.get("end_date")
     tail = ("The hold-out is AlphaKeel's out-of-sample window that research never reads: "
@@ -147,6 +156,10 @@ def _holdout_refusal(config: dict[str, Any], session_id: str | None) -> str | No
     return f"end_date {end_date} reaches into the hold-out. {tail}"
 
 
+PROVISIONAL_NOTE = ("1.6 and the status are recomputed on the result card as this session's trial count grows; "
+                    "quote the card, not this field")
+
+
 def _research_screen(run_path: Path) -> dict[str, Any]:
     """The code-made screen of a finished run, reduced for the tool result; never raises."""
     from backtest.engine_screen import screen_engine_run
@@ -159,7 +172,8 @@ def _research_screen(run_path: Path) -> dict[str, Any]:
 
             screen = record_engine_run(session_id, run_path)
         else:
-            screen = {**screen_engine_run(run_path, trials=1), "trials": 1, "warning": "no session id: trials not counted"}
+            screen = {**screen_engine_run(run_path, trials=1), "trials": 1}
+            screen["warning"] = "; ".join(w for w in (screen.get("warning"), "no session id: trials not counted") if w)
     except Exception as exc:  # noqa: BLE001 - the screen never turns a successful run into an error
         logging.getLogger(__name__).warning("engine run not recorded for %s", run_path, exc_info=True)
         return {"evidence_status": "unavailable", "error": str(exc)}
@@ -170,6 +184,7 @@ def _research_screen(run_path: Path) -> dict[str, Any]:
         "items": [{"id": i.get("id"), "result": i.get("result"), "observed": i.get("observed")} for i in screen.get("items") or []],
         "facts": screen.get("facts"), "trials": screen.get("trials"), "seq": screen.get("seq"),
         "next": screen.get("next"), "not_evaluated": screen.get("not_evaluated"),
+        "provisional": PROVISIONAL_NOTE,
     }
     if screen.get("warning"):
         out["warning"] = screen["warning"]

@@ -168,3 +168,52 @@ def test_parallel_readonly_tools_run_in_the_bound_session(session, monkeypatch) 
     calls = [SimpleNamespace(name="market_data", arguments={}, id=f"c{i}") for i in range(3)]
     agent._execute_parallel(calls, None, [], SimpleNamespace(write=lambda row: None), [], 0)  # type: ignore[arg-type]
     assert seen == [SESSION] * 3
+
+
+# --- exposure rows carry the market ---------------------------------------------------------------------------------------
+
+def _rows(root) -> list[dict]:
+    return [json.loads(x) for x in (root / "sessions" / SESSION / "data_exposure.jsonl").read_text().splitlines()]
+
+
+def test_exposure_rows_carry_the_crypto_flag_and_old_rows_stay_readable(session) -> None:
+    from backtest import data_audit
+    from src.tools import alphakeel_research_ledger as ledger
+
+    far = int(pd.Timestamp("2026-06-01").timestamp() * 1000)
+    data_audit.record_exposure("yfinance", far, via="a", crypto=False)
+    data_audit.record_exposure("yfinance", far + 1, via="b")  # unknown market: the field is omitted
+    assert [r.get("crypto", "absent") for r in _rows(session)] == [False, "absent"]
+    assert ledger.crypto_exposure_end_ms(SESSION) is None
+    data_audit.record_exposure("yfinance", far + 2, via="c", crypto=True)
+    assert ledger.crypto_exposure_end_ms(SESSION) == far + 2
+    data_audit.record_exposure("okx", far + 3, via="d", crypto=False)  # a crypto-only source is crypto whatever the symbol
+    assert _rows(session)[-1]["crypto"] is True and ledger.crypto_exposure_end_ms(SESSION) == far + 3
+    with open(session / "sessions" / SESSION / "data_exposure.jsonl", "a") as f:  # rows written before the field existed
+        f.write(json.dumps({"source": "binance", "end_ms": far + 10, "via": "old", "ts": 1}) + "\n")
+        f.write(json.dumps({"source": "yfinance", "end_ms": far + 20, "via": "backtest:x", "ts": 1}) + "\n")
+        f.write(json.dumps({"source": "auto", "end_ms": far + 30, "via": "old", "ts": 1}) + "\n")
+    assert ledger.crypto_exposure_end_ms(SESSION) == far + 10  # source in crypto_sources() counts; yfinance / auto do not
+
+
+def test_the_loader_records_the_symbols_market(session, monkeypatch) -> None:
+    from backtest.loaders import base
+
+    frame = pd.DataFrame({"close": [1.0]}, index=pd.to_datetime(["2026-01-01"]))
+    monkeypatch.setattr(base, "loader_cache_get", lambda **k: None)
+    monkeypatch.setattr(base, "loader_cache_put", lambda **k: None)
+    for symbol in ("BTC-USDC", "AAPL.US", "BRK-B"):
+        base.cached_loader_fetch(source="yfinance", symbol=symbol, timeframe="1D", start_date="2026-01-01",
+                                 end_date="2026-01-02", fields=None, fetch=lambda: frame)
+    assert [r["crypto"] for r in _rows(session)] == [True, False, False]
+
+
+def test_the_backtest_tool_marks_a_crypto_config_row_by_its_codes_and_source(session, monkeypatch) -> None:
+    from src.tools import backtest_tool
+
+    (session / "run").mkdir()
+    card = {"data_audit": {"data_exposure_end_ms": int(pd.Timestamp("2026-01-08").timestamp() * 1000)}}
+    (session / "run" / "run_card.json").write_text(json.dumps(card))
+    for source, codes in (("yfinance", ["AAPL.US", "BTC-EUR"]), ("yfinance", ["AAPL.US"]), ("nobitex", ["X"]), ("okx", ["Y"])):
+        backtest_tool._note_child_exposure(session / "run", {"source": source, "codes": codes, "end_date": "2026-01-10"})
+    assert [r["crypto"] for r in _rows(session)] == [True, False, True, True]

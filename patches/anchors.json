@@ -950,17 +950,17 @@
     {
      "file": "agent/backtest/loaders/base.py",
      "kind": "hook",
-     "literal": "def _note_exposure(source: str, end_date: str, frame: pd.DataFrame | None) -> None:"
+     "literal": "def _note_exposure(source: str, end_date: str, frame: pd.DataFrame | None, symbol: str = \"\") -> None:"
     },
     {
      "file": "agent/backtest/loaders/base.py",
      "kind": "hook",
-     "literal": "_note_exposure(source, end_date, cached)"
+     "literal": "_note_exposure(source, end_date, cached, symbol)"
     },
     {
      "file": "agent/backtest/loaders/base.py",
      "kind": "hook",
-     "literal": "_note_exposure(source, end_date, frame)"
+     "literal": "_note_exposure(source, end_date, frame, symbol)"
     },
     {
      "file": "agent/src/tools/backtest_tool.py",
@@ -1740,7 +1740,7 @@
     {
      "file": "agent/src/agent/loop.py",
      "kind": "hook",
-     "literal": "prior_ledgers=_prior_ledgers(session_id, run_dir),"
+     "literal": "prior_ledgers=_prior_ledgers(session_id, grounding_copy),"
     },
     {
      "file": "agent/src/agent/context.py",

@@ -55,7 +55,6 @@ ENGINE_RUNS_DIR = "engine_runs"
 RETURNS_FILE = "returns.json"
 DEFAULT_HOLDOUT_DAYS = 60
 HOLDOUT_FILE = "alphakeel_holdout.json"
-HOLDOUT_SOURCES = frozenset({"okx", "binance", "ccxt", "alphakeel_b2", "alphakeel_pack"})
 HOLDOUT_CACHE_SECONDS = 6 * 3600
 HOLDOUT_FALLBACK_MEMO_SECONDS = 300
 _FALLBACK_MEMO: dict[str | None, tuple[float, int]] = {}  # session id -> (monotonic time, cutoff_ms); memory only
@@ -124,10 +123,13 @@ def _append_durable(path: Path, row: dict) -> None:
             _fsync_dir(path.parent)
 
 
-def record_exposure(session_id: str, source: str, end_ms: int, via: str) -> None:
+def record_exposure(session_id: str, source: str, end_ms: int, via: str, crypto: bool | None = None) -> None:
     """Append one data read of the conversation (``source`` returned data up to ``end_ms``, exclusive) to its exposure
-    file. Called by ``backtest.data_audit.record_exposure`` for the session bound in the agent process."""
+    file. Called by ``backtest.data_audit.record_exposure`` for the session bound in the agent process. ``crypto`` (None =
+    unknown, the field is then omitted) says the read was crypto data; rows without it stay readable."""
     row = {"source": str(source), "end_ms": int(end_ms), "via": str(via), "ts": int(time.time() * 1000)}
+    if crypto is not None:
+        row["crypto"] = bool(crypto)
     _append_durable(_session_dir(session_id) / EXPOSURE_FILE, row)
 
 
@@ -148,40 +150,27 @@ def exposure_end_ms(session_id: str) -> int | None:
     return best
 
 
-def _run_has_crypto_code(snapshot_dir: Any) -> bool:
-    try:
-        config = json.loads((Path(str(snapshot_dir)) / "config.json").read_text(encoding="utf-8"))
-        from src.tools.backtest_tool import _has_crypto_code
-
-        return isinstance(config, dict) and _has_crypto_code(config)
-    except Exception:  # noqa: BLE001 - an unreadable snapshot is not shown to be crypto
-        return False
-
-
 def crypto_exposure_end_ms(session_id: str) -> int | None:
-    """The latest ``end_ms`` of the conversation's *crypto* data reads, or None. Counted: rows whose source is in
-    ``HOLDOUT_SOURCES`` or ``auto``, and rows whose ``via`` is ``backtest:<run>`` for a run recorded in the engine ledger
-    whose snapshot config has a crypto code (``yfinance``/``local`` BTC runs; equity exposure is not hold-out data)."""
-    crypto_runs: set[str] | None = None
+    """The latest ``end_ms`` of the conversation's *crypto* data reads, or None. A row counts when its ``crypto`` field is
+    True or, for a row without the field (written before it existed), when its source is in
+    ``backtest.data_audit.crypto_sources()``. Equity reads are not hold-out data."""
+    from backtest.data_audit import crypto_sources
+
+    sources = crypto_sources()
     best = None
     try:
         with open(_session_dir(session_id) / EXPOSURE_FILE, encoding="utf-8") as f:
             for line in f:
                 try:
                     row = json.loads(line)
-                    v, source, via = row.get("end_ms"), row.get("source"), str(row.get("via") or "")
+                    v, flag = row.get("end_ms"), row.get("crypto", None)
+                    source = row.get("source")
                 except (ValueError, AttributeError):
                     continue
                 if not isinstance(v, int) or isinstance(v, bool) or (best is not None and v <= best):
                     continue
-                if source in HOLDOUT_SOURCES or source == "auto":
+                if flag is True or (not isinstance(flag, bool) and source in sources):
                     best = v
-                elif via.startswith("backtest:"):
-                    if crypto_runs is None:
-                        crypto_runs = {Path(str(r.get("run_dir"))).name for r in engine_rows(session_id)
-                                       if _run_has_crypto_code(r.get("snapshot_dir"))}
-                    if via[len("backtest:"):] in crypto_runs:
-                        best = v
     except OSError:
         return None
     return best
@@ -634,7 +623,7 @@ def _ir_section(session_id: str, zh: bool) -> list[str]:
 
 _ENGINE_TEXT = {
     True: {"title": "**通用引擎回测（backtest 工具；系统根据试验账本生成，非模型撰写）· 初筛口径：AlphaKeel G1**",
-           "summary": "通用引擎回测 {m} 次 / {n} 个不同版本（代码+配置）：通过初筛 {p}，未通过 {f}，证据不足 {i}",
+           "summary": "通用引擎回测 {m} 次 / {n} 个不同结果（按 metrics 去重）：通过初筛 {p}，未通过 {f}，证据不足 {i}",
            "head": "| # | 标的 / 来源 | 窗口天数 | 成交 | 净收益率 | DSR（试验数） | 方向 / 在场时间 | 判定 |",
            "passed": "通过初筛，{ne} 未评估", "failed": "未通过初筛（{ids}）", "insufficient": "证据不足（{ids}）",
            "unavailable": "初筛不可用", "tampered": "，已改动 {n}", "tampered_row": "快照已改动或缺失",
@@ -644,7 +633,7 @@ _ENGINE_TEXT = {
            "holdout": "⚠ 本会话读取过 AlphaKeel hold-out 区间的数据（截至 {day}，hold-out 起点 {cutoff_day}）：本会话的研究不能交接 AlphaKeel（G1 1.14）。",
            "long_only": "仅多", "short_only": "仅空", "long_short": "多空", "flat": "空仓"},
     False: {"title": "**Generic engine backtests (`backtest` tool; generated by the system from the trial ledger, not written by the model) · Screen basis: AlphaKeel G1**",
-            "summary": "Generic engine backtests {m} / {n} distinct versions (code + config): passed screen {p}, failed screen {f}, insufficient {i}",
+            "summary": "Generic engine backtests {m} / {n} distinct results (by metrics): passed screen {p}, failed screen {f}, insufficient {i}",
             "head": "| # | Symbols / source | Window days | Trades | Net return | DSR (trials) | Direction / time in market | Status |",
             "passed": "passed screen; {ne} not evaluated", "failed": "failed screen ({ids})", "insufficient": "insufficient ({ids})",
             "unavailable": "screen unavailable", "tampered": ", modified {n}", "tampered_row": "snapshot modified or missing",
@@ -762,9 +751,12 @@ def _holdout_warning(session_id: str, zh: bool) -> list[str]:
     exposure = crypto_exposure_end_ms(session_id)
     if exposure is None:
         return []
-    try:
-        cutoff = int(holdout_cutoff(session_id)["cutoff_ms"])
-    except Exception:  # noqa: BLE001 - the card never fails on the cutoff: the 60-day fallback applies
+    try:  # no network on the card: the session's cache file, else the in-memory memo, else the 60-day fallback
+        cutoff = cached_holdout_cutoff_ms(session_id, max_age_seconds=HOLDOUT_CACHE_SECONDS)
+        if cutoff is None:
+            memo = _FALLBACK_MEMO.get(session_id)
+            cutoff = memo[1] if memo is not None else _fallback_cutoff_ms()
+    except Exception:  # noqa: BLE001 - the card never fails on the cutoff
         cutoff = _fallback_cutoff_ms()
     if exposure <= cutoff:
         return []

@@ -464,9 +464,9 @@ class" field in the run card would be upstreamable.
 - hook `agent/backtest/run_card.py`: `"## Data Audit"`
 - preimage `agent/backtest/run_card.py`: `"warnings": [*(warnings or []), *provenance_warnings],`
 - upstream `agent/backtest/loaders/base.py`: `def cached_loader_fetch(`
-- hook `agent/backtest/loaders/base.py`: `def _note_exposure(source: str, end_date: str, frame: pd.DataFrame | None) -> None:`
-- hook `agent/backtest/loaders/base.py`: `_note_exposure(source, end_date, cached)`
-- hook `agent/backtest/loaders/base.py`: `_note_exposure(source, end_date, frame)`
+- hook `agent/backtest/loaders/base.py`: `def _note_exposure(source: str, end_date: str, frame: pd.DataFrame | None, symbol: str = "") -> None:`
+- hook `agent/backtest/loaders/base.py`: `_note_exposure(source, end_date, cached, symbol)`
+- hook `agent/backtest/loaders/base.py`: `_note_exposure(source, end_date, frame, symbol)`
 - upstream `agent/src/tools/backtest_tool.py`: `runner = Runner(timeout=_backtest_timeout_seconds())`
 - upstream `agent/src/tools/backtest_tool.py`: `state_store = RunStateStore()`
 - hook `agent/src/tools/backtest_tool.py`: `def _note_child_exposure(run_path: Path, config: dict[str, Any]) -> None:`
@@ -822,14 +822,20 @@ count)/1.8 plus code-measured facts (direction, time in market, exposure, data a
 run in `<session>/engine_ledger.jsonl` (trial key = sha256 of the engine-written metrics.csv, so a parameter swept
 outside code/config still counts) with a snapshot (`engine_runs/NNNN/`: code, config, metrics, screen, daily returns)
 and returns
-`research_screen`; the result card gains an engine section (1.6 recomputed at render time with the current trial
-count; IR trial counts include engine trials) and a hold-out warning. (2) A backtest with a crypto source or any crypto
-code (the runner's `_detect_market`, whatever the source) whose plain `YYYY-MM-DD`
+`research_screen` (with `provisional`); 1.16 comes from the run card or the run's `ohlcv_*.csv` coverage. The result card
+gains an engine section (1.6 recomputed at render time with the current trial count and the larger of the stored and
+current variance; a render never improves a stored verdict, only worsens it; IR trial counts include engine trials) and
+a hold-out warning that makes no network call. (2) One classifier, `data_audit.is_crypto_code` (runner
+`_detect_market`, `BASE[-/_]QUOTE` with a crypto/fiat quote, perp/swap names, unseparated major pairs, `XBT*`; bare
+tickers unclassified), and `crypto_sources()` (static set plus crypto-only registered loaders). A backtest with a crypto
+source or code, or a `local` source once the session has read crypto data past the cutoff, whose plain `YYYY-MM-DD`
 `end_date` reaches the AlphaKeel hold-out (service `holdout_cutoff_ms`, cached 6 h per session; fallback today − 60 d)
-is refused before the engine runs. Market-data reads are not blocked (quotes stay usable) but are flagged on the card.
+is refused before the engine runs. Exposure rows carry a `crypto` flag (forced True for crypto sources); the card counts
+flagged rows, or unflagged legacy rows of crypto sources. Market-data reads are not blocked (quotes stay usable) but are
+flagged on the card.
 (3) `monte_carlo_test`: sign-flip test for the Sharpe, order permutation only for the drawdown, `(k+1)/(n+1)` p-values,
 `method` and `sharpe_basis` fields. (4) `GroundingLedger(prior_ledgers=…, session_copy=…)` carries observed non-quote evidence of
-earlier completed turns from their copies in `<session>/grounding/` (outside the model's write roots; run-dir files are
+earlier completed turns from their copies in `<session>/grounding/<start ms>_<run dir>.json` (outside the model's write roots; run-dir files are
 never read back), without prices, bash rows or engine-run figures (only immutable `ir_runs/` copies); a tool-name ref also names records its calls made under another tool.
 (5) Prompt: verdicts come from the card; factor ids only when a zoo tool returned them; Layer 4 wording.
 
@@ -875,7 +881,7 @@ still has them); the engine screen, ledger, hold-out guard and card are local-on
 - hook `agent/src/agent/grounding/policies.py`: `calls = self._calls_of_tool(key)`
 - preimage `agent/src/agent/grounding/policies.py`: `if key in (record.call_id, record.tool)`
 - upstream `agent/src/agent/loop.py`: `self._grounding = GroundingLedger(`
-- hook `agent/src/agent/loop.py`: `prior_ledgers=_prior_ledgers(session_id, run_dir),`
+- hook `agent/src/agent/loop.py`: `prior_ledgers=_prior_ledgers(session_id, grounding_copy),`
 - hook `agent/src/agent/context.py`: `- Research verdicts come from the system result card appended after your answer`
 - preimage `agent/src/agent/context.py`: `**Layer 4 — Monte Carlo Permutation Test**`
 - upstream `frontend/src/i18n/locales/en.json`: `"pValueSharpe"`

@@ -177,34 +177,81 @@ def test_engine_backtest_records_are_per_turn_but_ir_ones_are_carried(tmp_path: 
     assert later._prior_call_tools == {"prior:run-1:eng": "backtest", "prior:run-1:ir": "alphakeel_research"}
 
 
-def _attempt(sessions: Path, session: str, attempt_id: str, status: str, created: str, run_dir: Path) -> None:
-    path = sessions / session / "attempts" / attempt_id
-    path.mkdir(parents=True)
-    (path / "attempt.json").write_text(
-        json.dumps({"attempt_id": attempt_id, "status": status, "created_at": created, "run_dir": str(run_dir)}),
-        encoding="utf-8",
-    )
+def _grounding_dir(sessions: Path) -> Path:
+    return sessions / "s1" / "grounding"
 
 
-def test_prior_ledgers_are_completed_attempts_in_creation_order(tmp_path: Path, monkeypatch) -> None:
+def test_prior_ledgers_are_ordered_by_turn_prefix_and_exclude_the_current_copy(tmp_path: Path, monkeypatch) -> None:
     import src.agent.loop as loop
 
     sessions = tmp_path / "sessions"
     monkeypatch.setattr(loop, "SESSIONS_DIR", sessions)
-    dirs = {name: tmp_path / "runs" / name for name in ("a", "b", "c", "d", "cur", "nofile")}
-    for name in ("a", "b", "c", "d", "cur"):
-        _write_ledger(sessions / "s1" / "grounding" / f"{name}.json")
-    _attempt(sessions, "s1", "x2", "completed", "2026-01-02T00:00:00", dirs["b"])
-    _attempt(sessions, "s1", "x1", "completed", "2026-01-01T00:00:00", dirs["a"])
-    _attempt(sessions, "s1", "x3", "failed", "2026-01-03T00:00:00", dirs["c"])
-    _attempt(sessions, "s1", "x4", "completed", "2026-01-04T00:00:00", dirs["nofile"])
-    _attempt(sessions, "s1", "x5", "completed", "2026-01-05T00:00:00", dirs["cur"])
-    _attempt(sessions, "s1", "x6", "completed", "2026-01-06T00:00:00", dirs["d"])
-    g = sessions / "s1" / "grounding"
-    assert _prior_ledgers("s1", dirs["cur"]) == [g / "a.json", g / "b.json", g / "d.json"]
-    assert _prior_ledgers("s1", dirs["cur"], limit=2) == [g / "b.json", g / "d.json"]
-    assert _prior_ledgers("missing", dirs["cur"]) == []
-    assert _prior_ledgers(None, dirs["cur"]) == []
+    g = _grounding_dir(sessions)
+    for name in ("300_run-c", "100_run-a", "1000_run-d", "200_run-b", "400_run-cur"):
+        _write_ledger(g / f"{name}.json")
+    current = g / "400_run-cur.json"
+    assert _prior_ledgers("s1", current) == [g / "100_run-a.json", g / "200_run-b.json", g / "300_run-c.json",
+                                              g / "1000_run-d.json"]
+    assert _prior_ledgers("s1", current, limit=2) == [g / "300_run-c.json", g / "1000_run-d.json"]
+    assert _prior_ledgers("s1", None, limit=1) == [g / "1000_run-d.json"]
+    assert _prior_ledgers("s1", current, limit=0) == []
+    assert _prior_ledgers("missing", current) == []
+    assert _prior_ledgers(None, current) == []
+
+
+def test_a_failed_turns_ledger_is_still_carried_without_attempt_files(tmp_path: Path, monkeypatch) -> None:
+    import src.agent.loop as loop
+
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(loop, "SESSIONS_DIR", sessions)
+    g = _grounding_dir(sessions)
+    _write_ledger(g / "100_run-a.json")
+    assert _prior_ledgers("s1", g / "200_run-b.json") == [g / "100_run-a.json"]
+
+
+def test_legacy_unprefixed_ledgers_are_read_first_by_mtime(tmp_path: Path, monkeypatch) -> None:
+    import os
+
+    import src.agent.loop as loop
+
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(loop, "SESSIONS_DIR", sessions)
+    g = _grounding_dir(sessions)
+    new = _write_ledger(g / "50_run-new.json")
+    old_b = _write_ledger(g / "run-b.json")
+    old_a = _write_ledger(g / "run-a.json")
+    os.utime(old_a, (1_000, 1_000))
+    os.utime(old_b, (2_000, 2_000))
+    os.utime(new, (1, 1))
+    assert _prior_ledgers("s1", g / "99_run-cur.json") == [old_a, old_b, new]
+
+
+def test_turns_sharing_one_run_dir_keep_separate_copies_and_the_third_carries_both(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import src.agent.loop as loop
+
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(loop, "SESSIONS_DIR", sessions)
+    g = _grounding_dir(sessions)
+    shared = tmp_path / "runs" / "run-1"
+    copy1, copy2, copy3 = (g / f"{ms}_run-1.json" for ms in (1000, 2000, 3000))
+
+    assert _prior_ledgers("s1", copy1) == []
+    t1 = _ledger(shared, prior_ledgers=_prior_ledgers("s1", copy1), session_copy=copy1)
+    _ingest(t1, "alphakeel_research", {"status": "ok", "fees": 4534.98312158}, "call-a")
+
+    t2 = _ledger(shared, prior_ledgers=_prior_ledgers("s1", copy2), session_copy=copy2)
+    _ingest(t2, "alphakeel_research", {"status": "ok", "sharpe": 0.69}, "call-b")
+    assert copy1.is_file() and copy2.is_file()
+    assert copy1.read_text(encoding="utf-8") != copy2.read_text(encoding="utf-8")
+
+    priors = _prior_ledgers("s1", copy3)
+    assert priors == [copy1, copy2]
+    t3 = _ledger(shared, prior_ledgers=priors, session_copy=copy3)
+    carried = {r.call_id for r in t3._evidence}
+    assert "prior:1000_run-1:call-a" in carried and any(c.startswith("prior:2000_run-1:") for c in carried)
+    assert _fee_issues(t3.validate_final_answer(_ANSWER)) == []
 
 
 def _ir_run_ledger(path: Path) -> Path:

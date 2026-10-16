@@ -637,15 +637,16 @@ def loader_cache_put(
     _write_loader_cache_frame(cache_path, frame)
 
 
-def _note_exposure(source: str, end_date: str, frame: pd.DataFrame | None) -> None:
+def _note_exposure(source: str, end_date: str, frame: pd.DataFrame | None, symbol: str = "") -> None:
     """A non-empty read of ``source`` up to ``end_date`` (inclusive day) exposed the research to that data: remember its end
     (``backtest.data_audit.record_exposure``; AlphaKeel protocol 2.5 counts it in the research horizon). Never raises."""
     if frame is None or getattr(frame, "empty", True):
         return
     try:
-        from backtest.data_audit import record_exposure
+        from backtest.data_audit import is_crypto_code, record_exposure
 
-        record_exposure(source, int((pd.Timestamp(end_date) + pd.Timedelta(days=1)).timestamp() * 1000))
+        record_exposure(source, int((pd.Timestamp(end_date) + pd.Timedelta(days=1)).timestamp() * 1000),
+                        crypto=is_crypto_code(symbol))
     except Exception:  # noqa: BLE001 - provenance bookkeeping must not break a data read
         logger.debug("data exposure not recorded for %s", source, exc_info=True)
 
@@ -676,11 +677,11 @@ def cached_loader_fetch(
         fields=fields,
     )
     if cached is not None:
-        _note_exposure(source, end_date, cached)
+        _note_exposure(source, end_date, cached, symbol)
         return cached
 
     frame = fetch()
-    _note_exposure(source, end_date, frame)
+    _note_exposure(source, end_date, frame, symbol)
     loader_cache_put(
         source=source,
         symbol=symbol,
