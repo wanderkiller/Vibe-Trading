@@ -86,7 +86,9 @@ def test_battery_output_has_every_item_and_agrees_with_its_own_facts(tmp_path):
     assert got["1.2"]["result"] == "FAIL" and f["trades_closed"] < 30
     assert got["1.3"]["result"] == ("PASS" if Decimal(f["base_net"]) > 0 else "FAIL")
     assert got["1.4"]["result"] == ("PASS" if Decimal(doc["cost_stress"]["1.5"]["net"]) > 0 else "FAIL")
-    assert got["1.5"]["result"] == ("PASS" if Decimal(doc["cost_stress"]["basis_stress_x2"]["net"]) > 0 else "FAIL")
+    bs = doc["cost_stress"]["basis_stress_x2"]  # not_applicable (net null) when the IR reads neither stress feature: 1.5 fails
+    assert bs["result"] in ("run", "not_applicable") and (bs["net"] is None) == (bs["result"] == "not_applicable")
+    assert got["1.5"]["result"] == ("FAIL" if bs["net"] is None else "PASS" if Decimal(bs["net"]) > 0 else "FAIL")
     # a 6-hour window is one UTC day: the DSR is undefined, dsr_inputs is null and 1.6 fails (the next test covers a real DSR)
     assert doc["statistics"]["dsr_inputs"] is None and doc["statistics"]["alphakeel_metrics"]["dsr"] is None
     assert got["1.6"]["result"] == "FAIL" and "dsr_inputs missing" in got["1.6"]["note"]
