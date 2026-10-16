@@ -112,6 +112,7 @@ The `langchain-core==1.6.1` anchor fails when upstream moves that pin; then the 
 - hook `requirements-local-providers-lock.txt`: `langchain-anthropic==1.7.2`
 - hook `tools/deploy-vt.sh`: `refuse pairing "contract/PIN differs from $AK_PIN"` — the release gate (audit 2026-10-12 D6-1): "Deploy gate" workflow success on the exact commit, commit = AlphaKeel `ci/vibe-trading.ref`, PIN = `ci/vibe-trading.pin`, backup, health + `contract_pin: matched`, rollback; log in `deploy-log.jsonl`
 - hook `tools/deploy-vt.sh`: `--workflow "Deploy gate"` — the gate waits for `.github/workflows/deploy-gate.yml`, not upstream's "CI"
+- hook `tools/deploy-vt.sh`: `docker builder prune -f --keep-storage` — post-success prune of old `vibe-trading-rollback:*` tags (keep `VT_ROLLBACK_KEEP`=3 and the current one) and the builder cache (`VT_BUILDER_KEEP`=4GB); warn-only
 - hook `DEPLOYMENT.local.md`: `tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref`
 
 ## `leaf-package` — AlphaKeel research client

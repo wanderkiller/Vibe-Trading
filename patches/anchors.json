@@ -143,6 +143,11 @@
      "literal": "--workflow \"Deploy gate\""
     },
     {
+     "file": "tools/deploy-vt.sh",
+     "kind": "hook",
+     "literal": "docker builder prune -f --keep-storage"
+    },
+    {
      "file": "DEPLOYMENT.local.md",
      "kind": "hook",
      "literal": "tools/deploy-vt.sh --ak-ref /home/ubuntu/alphakeel/ci/vibe-trading.ref"

@@ -17,6 +17,9 @@
 #   6. `up -d --no-build --no-deps`, then `/health` on 127.0.0.1:8899 and `python -m alphakeel_research check` inside
 #      the container must report `contract_pin: matched` (deploy AlphaKeel first when the pin changed);
 #      any failure here retags the rollback image and recreates the old container.
+#   7. after a successful deploy only: prune old `vibe-trading-rollback:*` tags (keep the newest VT_ROLLBACK_KEEP,
+#      default 3, and always this run's tag), then `docker builder prune --keep-storage ${VT_BUILDER_KEEP:-4GB}`;
+#      failures only warn and never change the exit status (log step `prune`).
 # Every attempt (refused, rolled back or deployed) appends one JSON line to deploy-log.jsonl next to
 # DEPLOYMENT.local.md: ts, sha, step, status, image ids, pin digest. Exit status is non-zero unless deployed.
 #
@@ -33,7 +36,7 @@ while [ $# -gt 0 ]; do
         --ak-ref) AK_REF="$2"; shift 2 ;;
         --ak-pin) AK_PIN="$2"; shift 2 ;;
         --repo) GH_REPO="$2"; shift 2 ;;
-        -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
         *) echo "deploy-vt: unknown argument $1" >&2; exit 2 ;;
     esac
 done
@@ -70,6 +73,32 @@ rollback() {  # step detail — the new container is up but failed its checks
         log_line "$1" rollback_failed "$2"
     fi
     exit 1
+}
+
+prune_old() {  # step 7: runs only after a successful deploy; never fails the deploy
+    local keep="${VT_ROLLBACK_KEEP:-3}" tag removed="" warn="" out reclaimed n=0
+    case "$keep" in ''|*[!0-9]*) keep=3 ;; esac
+    while IFS= read -r tag; do
+        [ -n "$tag" ] || continue
+        n=$((n + 1))
+        if [ "$tag" = "$ROLLBACK_TAG" ] || [ "$n" -le "$keep" ]; then continue; fi
+        if docker image rm "$tag" >/dev/null 2>&1; then
+            echo "deploy-vt: prune: removed $tag"
+            removed="$removed $tag"
+        else
+            echo "deploy-vt: prune: kept $tag (docker refused to remove it)" >&2
+        fi
+    done < <(docker images --format '{{.Repository}}:{{.Tag}}' vibe-trading-rollback 2>/dev/null \
+                 | grep '^vibe-trading-rollback:' | sort -r || true)
+    if out="$(docker builder prune -f --keep-storage "${VT_BUILDER_KEEP:-4GB}" 2>&1)"; then
+        reclaimed="$(printf '%s\n' "$out" | grep -i 'total' | tail -1 || true)"
+        echo "deploy-vt: prune: builder cache pruned (${reclaimed:-no total reported})"
+    else
+        warn=1
+        reclaimed="builder prune failed"
+        echo "deploy-vt: WARNING: docker builder prune failed" >&2
+    fi
+    log_line prune "${warn:+warn}${warn:-ok}" "removed:${removed:- none}; ${reclaimed:-}" || true
 }
 
 # 1. clean checkout
@@ -130,3 +159,6 @@ printf '%s' "$CHECK" | grep -q '"contract_pin": *"matched"' || rollback contract
 
 log_line deploy deployed ""
 echo "deploy-vt: deployed $SHA (image $NEW_IMAGE_ID; rollback tag $ROLLBACK_TAG; backup $BACKUP)"
+
+# 7. housekeeping after success (best effort)
+prune_old || echo "deploy-vt: WARNING: prune step failed" >&2
