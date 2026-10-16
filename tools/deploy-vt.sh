@@ -18,7 +18,7 @@
 #      the container must report `contract_pin: matched` (deploy AlphaKeel first when the pin changed);
 #      any failure here retags the rollback image and recreates the old container.
 #   7. after a successful deploy only: prune old `vibe-trading-rollback:*` tags (keep the newest VT_ROLLBACK_KEEP,
-#      default 3, and always this run's tag), then `docker builder prune --keep-storage ${VT_BUILDER_KEEP:-4GB}`;
+#      default 3, and always this run's tag), then `docker builder prune --filter until=${VT_BUILDER_MAX_AGE:-72h}` (the legacy builder ignores --keep-storage);
 #      failures only warn and never change the exit status (log step `prune`).
 # Every attempt (refused, rolled back or deployed) appends one JSON line to deploy-log.jsonl next to
 # DEPLOYMENT.local.md: ts, sha, step, status, image ids, pin digest. Exit status is non-zero unless deployed.
@@ -90,7 +90,7 @@ prune_old() {  # step 7: runs only after a successful deploy; never fails the de
         fi
     done < <(docker images --format '{{.Repository}}:{{.Tag}}' vibe-trading-rollback 2>/dev/null \
                  | grep '^vibe-trading-rollback:' | sort -r || true)
-    if out="$(docker builder prune -f --keep-storage "${VT_BUILDER_KEEP:-4GB}" 2>&1)"; then
+    if out="$(docker builder prune -f --filter "until=${VT_BUILDER_MAX_AGE:-72h}" 2>&1)"; then
         reclaimed="$(printf '%s\n' "$out" | grep -i 'total' | tail -1 || true)"
         echo "deploy-vt: prune: builder cache pruned (${reclaimed:-no total reported})"
     else

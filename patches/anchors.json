@@ -145,7 +145,7 @@
     {
      "file": "tools/deploy-vt.sh",
      "kind": "hook",
-     "literal": "docker builder prune -f --keep-storage"
+     "literal": "docker builder prune -f --filter"
     },
     {
      "file": "DEPLOYMENT.local.md",
