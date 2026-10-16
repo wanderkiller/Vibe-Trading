@@ -21,12 +21,13 @@ from typing import Any
 
 from src.agent.tools import BaseTool
 from src.config.accessor import get_env_value
+from src.config.limits import TOOL_RESULT_LIMIT
 from src.tools.alphakeel_ir_request import IGNORED_NOTE
 from src.tools.alphakeel_research_ledger import NO_SESSION_WARNING
+from src.tools.path_utils import allowed_write_roots, resolve_safe_path, safe_run_dir
 
 _ACTIONS = ("check", "freeze", "read", "review", "policy", "native", "compare", "ir_validate", "ir_review", "ir_backtest", "ir_robustness", "ir_crosscheck", "ir_export")
 #: ``read`` tables: scan packs have quotes/observations/settlements; dataset packs have klines/bbo/instrument_meta (and settlements).
-_MAX_OUT = 20_000
 #: Added to an error that means the service has no market data at all: the strategy cannot be backtested here, and
 #: the agent must say so instead of switching to another strategy or engine (session 8125728230d5).
 _MARKET_BLOCKED_NEXT = (
@@ -81,15 +82,77 @@ def _resolve_paths(args: dict[str, Any], run_dir: Any) -> dict[str, Any]:
     return out
 
 
+#: kept whole when a result is fitted to the budget: outcome, error, run identity and evidence references (grounding reads
+#: ``evidence_dir``; the result card reads ``evidence_status`` / ``summary``).
+_KEEP = frozenset({"status", "error", "code", "request_id", "retryable", "next", "warnings", "evidence_dir", "ignored_args",
+                   "ignored_args_note", "evidence_status", "summary", "valid", "passed", "run_dir", "run_card", "run_id",
+                   "strategy_id", "pack_id", "comparison_id", "reconciliation", "result", "omitted", "omitted_note"})
+_OMITTED_NOTE = ("Fields were cut to fit the tool result budget (whole records kept from the start of each list); the full "
+                 "output is on disk under run_dir / evidence_dir. Do not treat a cut list as complete.")
+
+
+def _enc(o: Any) -> str:
+    return json.dumps(o, ensure_ascii=False, default=str)
+
+
+def _fit(body: dict, env: dict, omitted: dict[str, str], prefix: str) -> None:
+    """Shrink ``body`` (part of ``env``) in place until ``env`` fits: the largest field outside ``_KEEP`` first; a list
+    keeps its leading whole records (halved), anything else goes. Each cut is noted in ``omitted``."""
+    totals: dict[str, int] = {}
+    while len(_enc(env)) > TOOL_RESULT_LIMIT:
+        sizes = {k: len(_enc(v)) for k, v in body.items() if k not in _KEEP}
+        if not sizes:
+            return
+        k = max(sizes, key=sizes.__getitem__)
+        v = body[k]
+        if isinstance(v, list) and len(v) > 1:
+            total = totals.setdefault(k, len(v))
+            body[k] = v[: len(v) // 2]
+            omitted[prefix + k] = f"{len(body[k])} of {total} records"
+        else:
+            del body[k]
+            omitted[prefix + k] = f"{sizes[k]} characters"
+
+
 def _dump(out: dict, warnings: list[str]) -> str:
-    """The envelope as JSON, cut to ``_MAX_OUT``; unit warnings ride at the top level, also on a truncated envelope."""
+    """The envelope as JSON within upstream's ``TOOL_RESULT_LIMIT`` (the agent loop cuts any longer result mid-JSON). An
+    oversized envelope is fitted field by field, as upstream's ``backtest_tool._serialize_result``: ``_KEEP`` fields stay,
+    lists keep whole records, every cut is listed in ``omitted``. Unit warnings ride at the top level."""
     if warnings:
         out = {**out, "warnings": warnings}
-    body = json.dumps(out, ensure_ascii=False, default=str)
-    if len(body) <= _MAX_OUT:
+    body = _enc(out)
+    if len(body) <= TOOL_RESULT_LIMIT:
         return body
-    cut = {"status": out["status"], "truncated": True, "head": body[:_MAX_OUT]}
-    return json.dumps({**cut, "warnings": warnings} if warnings else cut)
+    env = json.loads(body)
+    omitted: dict[str, str] = {}
+    env["omitted"], env["omitted_note"] = omitted, _OMITTED_NOTE
+    if isinstance(env.get("result"), list):
+        env["result"] = {"records": env["result"]}
+    if isinstance(env.get("result"), dict):
+        _fit(env["result"], env, omitted, "result.")
+    _fit(env, env, omitted, "")
+    if len(_enc(env)) > TOOL_RESULT_LIMIT:  # the kept fields alone are too long: shorten them, never the JSON
+        for d in (env, env["result"] if isinstance(env.get("result"), dict) else {}):
+            for k, v in list(d.items()):
+                if k in ("result", "omitted"):
+                    continue
+                if k == "warnings" and isinstance(v, list):
+                    d[k] = [str(w)[:300] for w in v[:10]]
+                elif isinstance(v, str) and len(v) > 1500:
+                    d[k] = v[:1500] + " [cut]"
+                elif isinstance(v, (dict, list)) and len(_enc(v)) > 1500:
+                    d[k] = _enc(v)[:1500] + " [cut]"
+    if len(_enc(env)) > TOOL_RESULT_LIMIT:  # still too long: the minimal envelope
+        result = env.get("result") if isinstance(env.get("result"), dict) else {}
+        env = {"status": env.get("status"), **{k: str(v)[:1000] for k, v in (("error", env.get("error") or result.get("error")),
+                                                                            ("evidence_status", result.get("evidence_status")),
+                                                                            ("evidence_dir", env.get("evidence_dir")),
+                                                                            ("run_dir", result.get("run_dir"))) if v is not None},
+               "omitted": "everything else", "omitted_note": _OMITTED_NOTE}
+        while len(_enc(env)) > TOOL_RESULT_LIMIT:  # escaping (control characters: \u00XX) can still overflow
+            k = max((k for k in env if k != "status"), key=lambda k: len(_enc(env[k])))
+            env[k] = str(env[k])[: len(str(env[k])) // 2]
+    return _enc(env)
 
 
 def _csv(v: Any) -> str:
@@ -140,13 +203,32 @@ _PATH_KEYS = ("out", "robustness", "run")
 
 
 def _handoff_guard(action: str, a: dict[str, Any]) -> None:
-    """No path-valued argument may point into AlphaKeel's hand-off directory."""
+    """Path-valued arguments are strings (a list or number would pass every check here and reach the CLI as a path via
+    ``_csv`` / ``str``), and none may point into AlphaKeel's hand-off directory."""
     for k in _PATH_KEYS:
         v = a.get(k)
+        if v not in (None, "") and not isinstance(v, (str, os.PathLike)):
+            raise ValueError(f"{action}: {k} must be a path string, not {type(v).__name__}")
+        if isinstance(v, str) and v != "" and not v.strip():  # skips every path check, reaches the CLI as a cwd path
+            raise ValueError(f"{action}: {k} must not be blank")
         if isinstance(v, (str, os.PathLike)) and str(v) != "" and _under_handoff(str(v)):
             raise ValueError(f"{action}: {k} points into AlphaKeel's hand-off directory, which is not an agent action. Hand-off is the "
                              "user's decision: the user presses 'Hand off to AlphaKeel' on the run page (docs/45 section 7). Use another "
                              "directory, or tell the user the run is ready for review.")
+
+
+def _authorize_paths(args: dict[str, Any], run_dir: Any) -> None:
+    """Every path a command writes under (``_PATH_KEYS``) must pass upstream's write rule (``path_utils.resolve_safe_path``,
+    as ``write_file``): inside ``run_dir`` or an allowed write root, else ``ValueError`` naming the roots and
+    ``VIBE_TRADING_ALLOWED_WRITE_ROOTS``. The values are not rewritten: later checks (``_check_out``) see them as given."""
+    rd = run_dir if isinstance(run_dir, str) and run_dir.strip() else None
+    for k in _PATH_KEYS:
+        v = args.get(k)
+        if isinstance(v, (str, os.PathLike)) and str(v).strip():
+            try:
+                resolve_safe_path(str(v), rd, allowed_write_roots(), purpose="write")
+            except ValueError as e:
+                raise ValueError(f"{k}: {e}") from None
 
 
 def _argv(action: str, a: dict[str, Any]) -> list[str]:
@@ -272,27 +354,64 @@ def _child_cmd(argv: list[str]) -> list[str]:
 
 def _run_child(cmd: list[str], timeout: float | None) -> subprocess.CompletedProcess:
     """Run the CLI in its own process group (cwd None: relative paths are already absolute, ``_resolve_paths``); on
-    timeout the whole group is killed (grandchildren included) and ``TimeoutExpired`` is raised."""
+    timeout the whole group is killed (grandchildren included) and ``TimeoutExpired`` is raised carrying the output read
+    so far (``stdout`` / ``stderr``), as upstream's ``backtest_tool`` keeps it."""
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=os.environ.copy(), cwd=None,
                             start_new_session=True)
     done = False
     try:
         out, err = proc.communicate(timeout=timeout)
         done = True
+    except subprocess.TimeoutExpired as e:
+        _kill_group(proc)
+        e.stdout, e.stderr = _drain(proc)  # communicate keeps what it read before the timeout and returns it all here
+        done = True
+        raise
     finally:
-        if not done:  # timeout or any other exception: the group goes, the original exception propagates
-            if hasattr(os, "killpg"):
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            else:  # pragma: no cover - Windows
-                proc.kill()
-            try:
-                proc.communicate(timeout=5)
-            except Exception:  # noqa: BLE001 - give up reading rather than block
-                pass
+        if not done:  # any other exception: the group goes, the original exception propagates
+            _kill_group(proc)
+            _drain(proc)
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+    if hasattr(os, "killpg"):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    else:  # pragma: no cover - Windows
+        proc.kill()
+
+
+def _drain(proc: subprocess.Popen) -> tuple[str, str]:
+    """What the killed child wrote (empty when it cannot be read within 5 s: give up rather than block)."""
+    try:
+        out, err = proc.communicate(timeout=5)
+        return out or "", err or ""
+    except subprocess.TimeoutExpired as e:  # a descendant outside the group holds the pipes: keep what was read
+        return tuple(v.decode("utf-8", errors="replace") if isinstance(v, bytes) else (v or "")
+                     for v in (e.stdout, e.stderr))  # type: ignore[return-value]
+    except Exception:  # noqa: BLE001
+        return "", ""
+
+
+def _timeout_error(timeout: float | None, e: subprocess.TimeoutExpired, run_dir: Any) -> dict[str, Any]:
+    """The timeout envelope: the child's partial output saved (redacted) under ``<run_dir>/logs/`` and its tail returned,
+    so a timed-out call stays diagnosable (upstream ``backtest_tool._persist_timeout_output``)."""
+    err: dict[str, Any] = {"status": "error", "error": f"alphakeel_research timed out after {timeout} s"}
+    output = {k: _redact(str(getattr(e, k, None) or "")) for k in ("stdout", "stderr")}
+    if isinstance(run_dir, str) and run_dir.strip() and any(output.values()):
+        try:
+            logs = safe_run_dir(run_dir) / "logs"  # the model may pass run_dir: only an allowed run root is written
+            logs.mkdir(parents=True, exist_ok=True)
+            for k, v in output.items():
+                (logs / f"alphakeel_research_{k}.txt").write_text(v, encoding="utf-8")
+            err["logs"] = "logs/alphakeel_research_stdout.txt, logs/alphakeel_research_stderr.txt"
+        except (OSError, ValueError):
+            pass
+    err.update({k: v[-2000:] for k, v in output.items() if v})
+    return err
 
 
 def _redact(text: str) -> str:
@@ -355,6 +474,18 @@ def _check_out(out: Any, run_dir: Any) -> None:
 def _session_id(tool: Any) -> str | None:
     v = str(getattr(tool, "_default_session_id", None) or "").strip()
     return v or None
+
+
+def _session_exposure_argv(session_id: str | None, warnings: list[str]) -> list[str]:
+    """``--data-exposure-end-ms`` from the conversation's exposure file (data read by its other tool calls, each in a
+    process of its own); set by the tool, never by the model."""
+    if session_id is None:
+        warnings.append("no session id: data read by earlier tool calls is not in provenance.data_exposure_end_ms")
+        return []
+    from src.tools import alphakeel_research_ledger as ledger
+
+    end = ledger.exposure_end_ms(session_id)
+    return [] if end is None else ["--data-exposure-end-ms", str(end)]
 
 
 def _plan_ir_backtest(args: dict[str, Any], run_dir: Any, session_id: str | None, warnings: list[str]) -> dict[str, Any]:
@@ -554,6 +685,8 @@ class AlphakeelResearchTool(BaseTool):
         warnings: list[str] = []
         planned: dict[str, Any] | None = None
         try:
+            _handoff_guard(action, args)  # its message first: hand-off is the user's button, not a missing root
+            _authorize_paths(args, session_run_dir)
             from alphakeel_research import ir
             from alphakeel_research.errors import ApiError
 
@@ -566,6 +699,8 @@ class AlphakeelResearchTool(BaseTool):
                 argv = _argv(action, planned)
             else:
                 argv = _argv(action, args)
+            if action == "ir_export":
+                argv += _session_exposure_argv(_session_id(self), warnings)
         except ImportError as e:
             return json.dumps({"status": "error", "error": f"alphakeel_research is not installed: {e}"})
         except ValueError as e:
@@ -588,9 +723,9 @@ class AlphakeelResearchTool(BaseTool):
         timeout = _tool_timeout_seconds()
         try:
             proc = _run_child(_child_cmd(argv), timeout)
-        except subprocess.TimeoutExpired:
-            err = {"status": "error", "error": f"alphakeel_research timed out after {timeout} s"}
-            return json.dumps({**err, "warnings": warnings} if warnings else err)
+        except subprocess.TimeoutExpired as e:
+            err = _timeout_error(timeout, e, session_run_dir)
+            return json.dumps({**err, "warnings": warnings} if warnings else err, ensure_ascii=False)
         except Exception as e:  # noqa: BLE001 - surfaced as a clean tool error, never with credentials
             err = {"status": "error", "error": _redact(f"{e.__class__.__name__}: {str(e)[:500]}")}
             return json.dumps({**err, "warnings": warnings} if warnings else err)
@@ -609,7 +744,7 @@ class AlphakeelResearchTool(BaseTool):
         try:
             result: Any = json.loads(text)
         except ValueError:
-            result = (_ir_review_summary(args) if action == "ir_review" and rc == 0 else None) or {"output": text[:_MAX_OUT]}
+            result = (_ir_review_summary(args) if action == "ir_review" and rc == 0 else None) or {"output": text[-TOOL_RESULT_LIMIT // 2:]}
         out = {"status": "ok" if rc == 0 else "error", "result": result}
         e = result.get("error") if isinstance(result, dict) else None
         if rc != 0 and isinstance(e, dict) and _market_blocked(e.get("code"), e.get("message")):

@@ -2733,7 +2733,7 @@ class AgentLoop:
             return tc, result, elapsed_ms
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(runnable), 8)) as pool:
-            futures = [pool.submit(_run, item) for item in runnable]
+            futures = [pool.submit(contextvars.copy_context().run, _run, item) for item in runnable]
             results = []
             for i, f in enumerate(futures):
                 try:
@@ -2920,8 +2920,11 @@ class AgentLoop:
             finally:
                 _set_emitter(None)
 
+        # In the caller's context: a new thread starts empty, and the bound session is where a tool's data reads are
+        # recorded (backtest.data_audit.record_exposure).
         worker = threading.Thread(
-            target=_worker,
+            target=contextvars.copy_context().run,
+            args=(_worker,),
             name=f"tool-{tool_name}",
             daemon=True,
         )

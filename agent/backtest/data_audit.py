@@ -7,7 +7,8 @@ not: the exchange can revise, truncate or rate-limit history, nothing pins the r
 different rows. Those results stay usable for exploration, but the run card says so instead of implying otherwise.
 
 Loaders running in the same process as the run record per-source provenance here (``record_provenance``); the run card
-reads it back (``data_audit``). Nothing in this module touches the network.
+reads it back (``data_audit``). Data exposure (``record_exposure``) also goes to the bound conversation's exposure file
+(``src.tools.alphakeel_research_ledger``). Nothing in this module touches the network.
 """
 
 from __future__ import annotations
@@ -44,13 +45,31 @@ def record_provenance(source: str, entry: dict[str, Any]) -> None:
         lst.append(entry)
 
 
-def record_exposure(source: str, end_ms: int) -> None:
-    """Remember that ``source`` returned data up to ``end_ms`` (exclusive; capped at now: a future end shows nothing yet)."""
+def record_exposure(source: str, end_ms: int, via: str = "in-process") -> None:
+    """Remember that ``source`` returned data up to ``end_ms`` (exclusive; capped at now: a future end shows nothing yet).
+
+    Also appended to the exposure file of the conversation bound in this context (``src.providers.session_context``; the
+    agent loop binds it for a run), because ``ir_export`` runs in a CLI child of its own and sees none of this process's
+    records. Without a bound session (a backtest child, a CLI) only this process remembers it. Never raises."""
     import time
 
     end = min(int(end_ms), int(time.time() * 1000))
     if end > _EXPOSURE_END.get(source, -1):
         _EXPOSURE_END[source] = end
+    try:
+        from src.providers.session_context import current_llm_session_id
+    except ImportError:  # a process without the agent package (a standalone loader)
+        return
+    try:
+        session_id = current_llm_session_id()
+        if session_id:
+            from src.tools.alphakeel_research_ledger import record_exposure as record_session_exposure
+
+            record_session_exposure(session_id, source, end, via)
+    except Exception:  # noqa: BLE001 - provenance bookkeeping must not break a data read
+        import logging
+
+        logging.getLogger(__name__).warning("data exposure of %s not recorded for the session", source, exc_info=True)
 
 
 def data_exposure_end_ms() -> int | None:

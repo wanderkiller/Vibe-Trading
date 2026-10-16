@@ -35,9 +35,10 @@ def server_binary() -> str | None:
 
 
 class Fixture:
-    def __init__(self, info: dict, proc: subprocess.Popen):
+    def __init__(self, info: dict, proc: subprocess.Popen, log_path: Path):
         self.info = info
         self.proc = proc
+        self.log_path = log_path  # engine stderr; kept after stop() for post-mortem
         self.url = info["url"]
         self.token = info["token"]
         self.start_ms = info["start_ms"]
@@ -59,8 +60,13 @@ def start(frames: int = 61) -> Fixture:
         skip_or_fail("AlphaKeel fixture server binary not found: build it with `cargo build --example research_fixture_server` "
                      "and set ALPHAKEEL_FIXTURE_SERVER (or ALPHAKEEL_REPO)")
     d = tempfile.mkdtemp(prefix="ak-fixture-")
-    proc = subprocess.Popen([binary, "--dir", d, "--frames", str(frames)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    log_path = Path(d) / "server.stderr.log"
+    with log_path.open("w") as log:  # the child keeps its own copy of the fd
+        proc = subprocess.Popen([binary, "--dir", d, "--frames", str(frames)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True)
     line = proc.stdout.readline()
     if not line:
-        raise RuntimeError("the fixture server did not start")
-    return Fixture(json.loads(line), proc)
+        proc.wait(timeout=10)
+        tail = log_path.read_text(errors="replace")[-4000:]
+        raise RuntimeError(f"the fixture server did not start (exit {proc.returncode}); engine log {log_path}:\n{tail}")
+    print(f"AlphaKeel fixture server log: {log_path}")
+    return Fixture(json.loads(line), proc, log_path)

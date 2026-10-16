@@ -13,6 +13,12 @@ in ``<sessions dir>/<session_id>/ir_hypothesis.json``); the registry is not a so
 The card reads only the private ledger and re-reads every run card, checking its sha256: a run card that was changed
 or is missing is not shown (and counted in one line). Read-modify-writes run under ``fcntl.flock`` on
 ``<file>.lock`` (no lock where there is no ``fcntl``, as ``alphakeel_handoff_routes``).
+
+``<sessions dir>/<session_id>/data_exposure.jsonl`` is the conversation's data exposure (AlphaKeel protocol 2.5, G1 1.14):
+one line per read (``source``, ``end_ms`` exclusive, ``via``, ``ts``), appended by ``backtest.data_audit.record_exposure``
+in the agent process -- in-process tools directly, the backtest tool for its child -- because every tool call that reads
+data runs in a process of its own and the exporting CLI child cannot see their in-process records. ``ir_export`` passes
+the latest end to the export (``provenance.data_exposure_end_ms``).
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import time
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from pathlib import Path
@@ -33,6 +40,7 @@ except ImportError:  # pragma: no cover - Windows
 LEDGER_FILE = "ir_ledger.jsonl"
 HYPOTHESIS_FILE = "ir_hypothesis.json"
 TRIALS_EVIDENCE_FILE = "ir_trials_evidence.jsonl"
+EXPOSURE_FILE = "data_exposure.jsonl"
 CARD_MAX_ROWS = 10
 NO_SESSION_WARNING = "no session id: trial ledger and result card skipped"
 
@@ -65,8 +73,61 @@ def _flock(path: Path) -> Iterator[None]:
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
+def _fsync_dir(path: Path) -> None:
+    """Make a new directory entry durable (POSIX; a no-op where directories cannot be opened)."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _session_dir(session_id: str) -> Path:
     return _sessions_dir() / session_id
+
+
+def _append_durable(path: Path, row: dict) -> None:
+    """Append one JSON line under the file lock, durable before returning (upstream TraceWriter.write: flush + fsync per
+    record, the directory entry too when the file is new)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _flock(path):
+        created = not path.exists()
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n")
+            f.flush()
+            with contextlib.suppress(OSError):  # a filesystem without fsync: flush-only, as upstream
+                os.fsync(f.fileno())
+        if created:
+            _fsync_dir(path.parent)
+
+
+def record_exposure(session_id: str, source: str, end_ms: int, via: str) -> None:
+    """Append one data read of the conversation (``source`` returned data up to ``end_ms``, exclusive) to its exposure
+    file. Called by ``backtest.data_audit.record_exposure`` for the session bound in the agent process."""
+    row = {"source": str(source), "end_ms": int(end_ms), "via": str(via), "ts": int(time.time() * 1000)}
+    _append_durable(_session_dir(session_id) / EXPOSURE_FILE, row)
+
+
+def exposure_end_ms(session_id: str) -> int | None:
+    """The latest ``end_ms`` in the conversation's exposure file, or None (no file, no readable line)."""
+    best = None
+    try:
+        with open(_session_dir(session_id) / EXPOSURE_FILE, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    v = json.loads(line).get("end_ms")
+                except (ValueError, AttributeError):
+                    continue
+                if isinstance(v, int) and not isinstance(v, bool) and (best is None or v > best):
+                    best = v
+    except OSError:
+        return None
+    return best
 
 
 def _sha256(path: Path) -> str:
@@ -162,11 +223,8 @@ def record(session_id: str, run_dir: str | Path, result: dict, evidence_dir: str
     row = {"strategy_id": card["strategy_id"], "name": card.get("name"), "run_card_path": str(card_path),
            "run_card_sha256": _sha256(card_path), "evidence_dir": evidence_dir, "run_dir": str(run_dir),
            "ts": int(time.time() * 1000)}
-    ledger = _session_dir(session_id) / LEDGER_FILE
-    ledger.parent.mkdir(parents=True, exist_ok=True)
-    with _flock(ledger):
-        with open(ledger, "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, sort_keys=True, ensure_ascii=False) + "\n")
+    # the row is a trial for the DSR floor: durable before the call returns
+    _append_durable(_session_dir(session_id) / LEDGER_FILE, row)
     hid = session_hypothesis(session_id, card.get("name") or "")
     scr = card.get("screen") or {}
     metrics = {"strategy_id": card["strategy_id"], "name": card.get("name"), "window": card.get("window"),

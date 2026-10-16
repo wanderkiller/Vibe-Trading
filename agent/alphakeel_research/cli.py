@@ -224,7 +224,8 @@ def _ir_research(a) -> int:
             cred = c.check()
         finally:
             c.close()
-    r = workflow.ir_export(_load(a.ir), a.run, a.out, research_credential=cred, robustness_dir=a.robustness, reconciliation=a.reconciliation)
+    r = workflow.ir_export(_load(a.ir), a.run, a.out, research_credential=cred, robustness_dir=a.robustness, reconciliation=a.reconciliation,
+                           data_exposure_end_ms=a.data_exposure_end_ms)
     for w in r.get("warnings", []):
         print(f"warning: {w}", file=sys.stderr)
     _out(r)
@@ -349,6 +350,8 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--ir", required=True)
     q.add_argument("--run", required=True, help="the `ir backtest` output directory")
     q.add_argument("--research-credential", action="store_true", help="record the research-service credential (Client.check())")
+    q.add_argument("--data-exposure-end-ms", type=int, help="latest end (ms, exclusive) of data the research read in other "
+                   "processes (the conversation's exposure file); folded into provenance.data_exposure_end_ms")
     q.add_argument("--robustness", help="directory with robustness.json/.md/trials.jsonl (default: RUN/robustness when present)")
     q.add_argument("--reconciliation", help="reconciliation.json of `ir review` / `ir crosscheck` (default: RUN/reconciliation.json when present); "
                    "its pack_id must equal the robustness in-sample pack")
