@@ -120,6 +120,8 @@ The `langchain-core==1.6.1` anchor fails when upstream moves that pin; then the 
 - hook `tools/deploy-vt.sh`: `refuse checkout "the checkout has modified or untracked files` — wave 2 (R2-D-7): untracked files refuse; a refusal after the build restores the image tag; backup dir mode 700; tests agent/tests/test_deploy_vt.py
 - hook `tools/deploy-vt.sh`: `docker tag "$OLD_IMAGE_ID" "$IMAGE"`
 - hook `tools/deploy-vt.sh`: `git -C "$AK_REPO" fetch --quiet origin main` — wave 2 (R2-D-1): the pair is read from AlphaKeel origin/main, not its working tree
+- hook `tools/deploy-vt.sh`: `--allow-pair-override) ALLOW_PAIR_OVERRIDE=1; shift ;;` — `--ak-ref`/`--ak-pin` are refused at pairing without `--allow-pair-override` (round-3 review P2)
+- hook `tools/deploy-vt.sh`: `|| refuse backup "cannot write $BACKUP/image.json"` — every failure after the build goes through refuse(): log line + image tag restored (round-3 review P2)
 
 ## `leaf-package` — AlphaKeel research client
 

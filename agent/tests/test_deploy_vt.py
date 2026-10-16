@@ -28,6 +28,9 @@ printf '%s' "$GH_STUB_JSON"
 # docker: every call is recorded; `compose stop` fails (the backup step refuses) so the run never reaches `up`
 DOCKER = """#!/usr/bin/env bash
 echo "$*" >> "$DOCKER_CALLS"
+# DOCKER_FAIL: a call that starts with it fails (exit 1), to reach a refusal path
+call="$*"
+if [ -n "${DOCKER_FAIL:-}" ] && [ "${call#"$DOCKER_FAIL"}" != "$call" ]; then exit 1; fi
 case "$*" in
   "compose config --quiet") exit 0 ;;
   "compose config --images vibe-trading") echo "vibe-trading:local" ;;
@@ -79,11 +82,11 @@ def checkout(tmp_path):
     return {"repo": repo, "sha": sha, "ak_ref": ak / "vibe-trading.ref", "stubs": stubs, "home": home, "calls": tmp_path / "docker-calls"}
 
 
-def _run(c, *, ci: str = "success", ref: Path | None = None, args: list[str] | None = None):
+def _run(c, *, ci: str = "success", ref: Path | None = None, args: list[str] | None = None, docker_fail: str = ""):
     runs = [{"status": "completed", "conclusion": ci, "headSha": c["sha"], "databaseId": 1}]
     env = {**os.environ, "PATH": f"{c['stubs']}:{os.environ['PATH']}", "HOME": str(c["home"]), "GH_STUB_JSON": json.dumps(runs),
-           "DOCKER_CALLS": str(c["calls"])}
-    argv = args if args is not None else ["--ak-ref", str(ref or c["ak_ref"])]
+           "DOCKER_CALLS": str(c["calls"]), "DOCKER_FAIL": docker_fail}
+    argv = args if args is not None else ["--allow-pair-override", "--ak-ref", str(ref or c["ak_ref"])]
     p = subprocess.run(["bash", "tools/deploy-vt.sh", *argv], cwd=c["repo"], env=env, capture_output=True, text=True, timeout=60)
     log = [json.loads(x) for x in (c["repo"] / "deploy-log.jsonl").read_text().splitlines()]
     calls = c["calls"].read_text().splitlines() if c["calls"].exists() else []
@@ -154,9 +157,39 @@ def test_deploy_vt_defaults_to_ak_origin_main_pair(checkout, tmp_path):
     checkout["calls"].unlink()
     p, last, calls = _run(checkout, args=["--ak-repo", str(ak)])
     assert (last["step"], last["status"]) == ("pairing", "refused") and "3" * 40 in last["detail"] and calls == []
-    # explicit files still override, and say so
+    # explicit files still override (with --allow-pair-override, the default argv here), and say so
     p, last, _ = _run(checkout)
     assert last["pair_source"] == f"override:ref={checkout['ak_ref']} override:pin={checkout['ak_ref'].with_name('vibe-trading.pin')}"
     # the default repo path that does not exist: refused, not skipped
     p, last, _ = _run(checkout, args=["--ak-repo", str(tmp_path / "missing")])
     assert (last["step"], last["status"]) == ("pairing", "refused") and "fetch" in last["detail"]
+
+
+def test_deploy_vt_refuses_a_pair_override_without_the_flag(checkout):
+    """Round-3 review P2: --ak-ref / --ak-pin replace AlphaKeel's published pair, so they need --allow-pair-override;
+    without it the run is refused at pairing before anything is built."""
+    pin = str(checkout["ak_ref"].with_name("vibe-trading.pin"))
+    for argv in (["--ak-ref", str(checkout["ak_ref"])], ["--ak-pin", pin], ["--ak-ref", str(checkout["ak_ref"]), "--ak-pin", pin]):
+        p, last, calls = _run(checkout, args=argv)
+        assert p.returncode == 1 and (last["step"], last["status"]) == ("pairing", "refused"), argv
+        assert "--allow-pair-override" in last["detail"] and last["pair_source"] == "" and calls == []
+    p, last, _ = _run(checkout, args=["--allow-pair-override", "--ak-ref", str(checkout["ak_ref"])])
+    assert (last["step"], last["status"]) == ("backup", "refused") and last["pair_source"].startswith("override:ref=")
+
+
+@pytest.mark.parametrize("fail, step, what", [
+    ("image inspect", "build", "cannot inspect the new image"),
+    ("inspect --format {{range", "backup", "cannot list the running container's volumes"),
+    (None, "backup", "cannot create the backup directory"),
+])
+def test_deploy_vt_failures_after_the_build_refuse_and_restore_the_image_tag(checkout, fail, step, what):
+    """Round-3 review P2: every failure between the build and the service stop goes through refuse(): one log line and
+    the compose tag back on the old image (a bare `set -e` exit did neither)."""
+    if fail is None:  # the backup root is a file: `install -d` fails
+        (checkout["home"] / "vibe-trading-backups").write_text("not a directory\n")
+    p, last, calls = _run(checkout, docker_fail=fail or "")
+    assert p.returncode == 1 and (last["step"], last["status"]) == (step, "refused"), p.stderr
+    assert what in last["detail"] and "image tag vibe-trading:local restored to sha256:old" in last["detail"]
+    build = calls.index("compose build vibe-trading")
+    assert "tag sha256:old vibe-trading:local" in calls[build:]
+    assert not any(c.startswith(("compose stop", "compose up")) for c in calls)

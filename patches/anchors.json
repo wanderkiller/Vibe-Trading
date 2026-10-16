@@ -169,6 +169,18 @@
      "kind": "hook",
      "literal": "git -C \"$AK_REPO\" fetch --quiet origin main",
      "note": "wave 2 (R2-D-1): the pair is read from AlphaKeel origin/main, not its working tree"
+    },
+    {
+     "file": "tools/deploy-vt.sh",
+     "kind": "hook",
+     "literal": "--allow-pair-override) ALLOW_PAIR_OVERRIDE=1; shift ;;",
+     "note": "--ak-ref/--ak-pin are refused at pairing without --allow-pair-override (round-3 review P2)"
+    },
+    {
+     "file": "tools/deploy-vt.sh",
+     "kind": "hook",
+     "literal": "|| refuse backup \"cannot write $BACKUP/image.json\"",
+     "note": "every failure after the build goes through refuse(): log line + image tag restored (round-3 review P2)"
     }
    ]
   },

@@ -12,8 +12,9 @@
 #      byte-identical to AlphaKeel's `ci/vibe-trading.pin`, both read from AlphaKeel's PUBLISHED main: `git fetch origin
 #      main` in the AlphaKeel checkout (--ak-repo, default /home/ubuntu/alphakeel), then `git show origin/main:ci/...`
 #      (never its working tree, which may be ahead of or behind what is released; audit 2026-10-12 R2-D-1). --ak-ref /
-#      --ak-pin override that with files (diagnosis only; --ak-pin defaults to next to --ak-ref); the log line records
-#      `pair_source` (`origin/main@<sha>` or `override:<paths>`);
+#      --ak-pin override that with files (diagnosis only; --ak-pin defaults to next to --ak-ref) and are refused unless
+#      --allow-pair-override is also given (round-3 review: an override must be a deliberate act, not a leftover
+#      argument); the log line records `pair_source` (`origin/main@<sha>` or `override:<paths>`);
 #   4. the new image builds (`docker compose build`) while the old container still serves; a refusal after the build
 #      points the compose image tag back at the old image (a later manual `compose up` must not start an unverified one);
 #   5. backup to ~/vibe-trading-backups/<ts>/ (mode 700: the volumes may hold credentials): the old image is kept under the tag `vibe-trading-rollback:<ts>`
@@ -30,23 +31,26 @@
 # DEPLOYMENT.local.md: ts, sha, step, status, image ids, pin digest. Exit status is non-zero unless deployed.
 #
 # Usage:
-#   tools/deploy-vt.sh [--ak-repo /home/ubuntu/alphakeel] [--ak-ref PATH [--ak-pin PATH]] [--repo OWNER/NAME]
+#   tools/deploy-vt.sh [--ak-repo /home/ubuntu/alphakeel] [--allow-pair-override --ak-ref PATH [--ak-pin PATH]] [--repo OWNER/NAME]
 #
 # This script changes production; run it only with the user's explicit go-ahead (AGENTS.md rule 14).
 set -euo pipefail
 
-AK_REPO="/home/ubuntu/alphakeel" AK_REF="" AK_PIN="" GH_REPO="wanderkiller/Vibe-Trading"
+AK_REPO="/home/ubuntu/alphakeel" AK_REF="" AK_PIN="" GH_REPO="wanderkiller/Vibe-Trading" ALLOW_PAIR_OVERRIDE=0
 SERVICE="vibe-trading" HEALTH_URL="http://127.0.0.1:8899/health" HEALTH_WAIT_S=180
 while [ $# -gt 0 ]; do
     case "$1" in
         --ak-repo) AK_REPO="$2"; shift 2 ;;
         --ak-ref) AK_REF="$2"; shift 2 ;;
         --ak-pin) AK_PIN="$2"; shift 2 ;;
+        --allow-pair-override) ALLOW_PAIR_OVERRIDE=1; shift ;;
         --repo) GH_REPO="$2"; shift 2 ;;
-        -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
         *) echo "deploy-vt: unknown argument $1" >&2; exit 2 ;;
     esac
 done
+PAIR_OVERRIDE=0
+{ [ -n "$AK_REF" ] || [ -n "$AK_PIN" ]; } && PAIR_OVERRIDE=1
 [ -n "$AK_REF" ] && [ -z "$AK_PIN" ] && AK_PIN="$(dirname "$AK_REF")/vibe-trading.pin"
 PAIR_SOURCE=""
 
@@ -129,7 +133,9 @@ sha=sys.argv[1]; runs=[r for r in json.load(sys.stdin) if r.get("headSha")==sha 
 print("success" if runs and runs[0].get("conclusion")=="success" else (runs[0].get("conclusion") if runs else "none"))' "$SHA")"
 [ "$CI_OK" = success ] || refuse ci "latest completed Deploy gate run on $SHA: $CI_OK"
 
-# 3. pairing with AlphaKeel: its published main, unless overridden by files
+# 3. pairing with AlphaKeel: its published main, unless overridden by files -- and only on purpose
+[ "$PAIR_OVERRIDE" = 0 ] || [ "$ALLOW_PAIR_OVERRIDE" = 1 ] \
+    || refuse pairing "--ak-ref/--ak-pin override AlphaKeel's published pair; pass --allow-pair-override to use them (diagnosis only)"
 if [ -z "$AK_REF" ] || [ -z "$AK_PIN" ]; then
     PAIR_TMP="$(mktemp -d)"
     trap 'rm -rf "$PAIR_TMP"' EXIT
@@ -154,22 +160,29 @@ WANT="$(grep -Ev '^[[:space:]]*(#|$)' "$AK_REF" | head -1 | tr -d '[:space:]')"
 cmp -s agent/alphakeel_research/contract/PIN "$AK_PIN" || refuse pairing "contract/PIN differs from $AK_PIN"
 
 # 4. build the new image while the old container serves
+# every command from here on that can fail ends in `|| refuse ...` (or `|| rollback ...` once the new container is up):
+# under `set -e` a bare failure would exit without restoring the image tag or writing the log line
 docker compose config --quiet || refuse build "docker compose config failed"
-IMAGE="$(docker compose config --images "$SERVICE" | head -1)"
+IMAGE="$(docker compose config --images "$SERVICE" | head -1)" || refuse build "docker compose config --images failed"
+[ -n "$IMAGE" ] || refuse build "docker compose config names no image for $SERVICE"
 CID="$(docker compose ps -q "$SERVICE" || true)"
 [ -n "$CID" ] || refuse build "no running $SERVICE container to back up"
-OLD_IMAGE_ID="$(docker inspect --format '{{.Image}}' "$CID")"
+OLD_IMAGE_ID="$(docker inspect --format '{{.Image}}' "$CID")" || refuse build "cannot read the running container's image id"
+[ -n "$OLD_IMAGE_ID" ] || refuse build "the running container reports no image id"
 docker tag "$OLD_IMAGE_ID" "$ROLLBACK_TAG" || refuse build "cannot tag the old image"
 BUILT=1
 docker compose build "$SERVICE" || refuse build "docker compose build failed"
-NEW_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+NEW_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")" || refuse build "cannot inspect the new image $IMAGE"
 
 # 5. backup: image tag + id, env, volumes (service stopped while archiving)
-install -d -m 700 "$HOME/vibe-trading-backups" "$BACKUP"
+install -d -m 700 "$HOME/vibe-trading-backups" "$BACKUP" || refuse backup "cannot create the backup directory $BACKUP"
 python3 -I -c 'import json,sys; json.dump(dict(zip(["image","old_image_id","rollback_tag","sha_to_deploy"],sys.argv[1:5])),open(sys.argv[5],"w"),indent=1)' \
-    "$IMAGE" "$OLD_IMAGE_ID" "$ROLLBACK_TAG" "$SHA" "$BACKUP/image.json"
-[ -f agent/.env ] && install -m 600 agent/.env "$BACKUP/agent.env"
-VOLUMES="$(docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}={{.Destination}}{{"\n"}}{{end}}{{end}}' "$CID")"
+    "$IMAGE" "$OLD_IMAGE_ID" "$ROLLBACK_TAG" "$SHA" "$BACKUP/image.json" || refuse backup "cannot write $BACKUP/image.json"
+if [ -f agent/.env ]; then
+    install -m 600 agent/.env "$BACKUP/agent.env" || refuse backup "cannot copy agent/.env into $BACKUP"
+fi
+VOLUMES="$(docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}}={{.Destination}}{{"\n"}}{{end}}{{end}}' "$CID")" \
+    || refuse backup "cannot list the running container's volumes"
 docker compose stop "$SERVICE" || refuse backup "cannot stop $SERVICE"
 for pair in $VOLUMES; do
     vol="${pair%%=*}"

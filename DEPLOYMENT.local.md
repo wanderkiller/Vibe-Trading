@@ -29,12 +29,15 @@ go-ahead), from this checkout with the commit to deploy checked out:
 tools/deploy-vt.sh   # pair = AlphaKeel origin/main:ci/vibe-trading.{ref,pin} (--ak-repo, default /home/ubuntu/alphakeel)
 ```
 
-It refuses (exit 1; a refusal after the build points the compose image tag back at the old image) unless the checkout is
+It refuses (exit 1, one `deploy-log.jsonl` line; a refusal after the build, including a failed inspect, backup directory,
+`image.json` or `agent.env` copy, points the compose image tag back at the old image) unless the checkout is
 clean (no modified and no untracked files), GitHub workflow `Deploy gate` (`.github/workflows/deploy-gate.yml`) succeeded on exactly this commit,
 the commit equals AlphaKeel's `ci/vibe-trading.ref` and `agent/alphakeel_research/contract/PIN` equals AlphaKeel's
 `ci/vibe-trading.pin`, both read from AlphaKeel's published main (`git fetch origin main`, `git show origin/main:...`),
-not from its working tree; `--ak-ref`/`--ak-pin` files override that for diagnosis and are recorded as `override` in the
-log's `pair_source`. It then builds the new image while the old container serves, keeps the old image as
+not from its working tree; `--ak-ref`/`--ak-pin` files override that for diagnosis only, are refused unless
+`--allow-pair-override` is passed as well (`tools/deploy-vt.sh --allow-pair-override --ak-ref PATH [--ak-pin PATH]`),
+and are recorded as `override` in the log's `pair_source`. Do not use an override for a release: the pair to deploy is
+the one AlphaKeel published. It then builds the new image while the old container serves, keeps the old image as
 `vibe-trading-rollback:<ts>`, copies `agent/.env` and archives every named volume (service stopped) into
 `~/vibe-trading-backups/<ts>/` (mode 700: the volumes may hold credentials), starts the new image, and requires `/health` plus `python -m alphakeel_research check`
 in the container to report `contract_pin: matched`; on failure it re-tags the rollback image and recreates the old
