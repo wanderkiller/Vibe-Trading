@@ -715,7 +715,7 @@ def test_selection_reaches_the_dataset_request_cli_and_tool(tmp_path, capsys):
     assert "--selection is not valid JSON" in capsys.readouterr().out
     assert cli.main(["freeze", "--start-ms", "1", "--end-ms", "2", "--selection", "declared"]) == 1  # a scan pack has no selection
     assert "--selection applies to a dataset pack" in capsys.readouterr().out
-    t = _argv("ir_backtest", {"ir": "s.json", "start_ms": 1, "end_ms": 2, "instruments": "i.json", "selection": pit})
+    t = _argv("ir_backtest", {"ir": "s.json", "start_ms": 1, "end_ms": 2, "instruments": "i.json", "selection": pit, "fees": FEES})
     assert json.loads(t[t.index("--selection") + 1]) == pit
     f = _argv("freeze", {"start_ms": 1, "end_ms": 2, "instruments": "i.json", "selection": "declared"})
     assert f[f.index("--selection") + 1] == "declared"
