@@ -217,3 +217,36 @@ def test_the_backtest_tool_marks_a_crypto_config_row_by_its_codes_and_source(ses
     for source, codes in (("yfinance", ["AAPL.US", "BTC-EUR"]), ("yfinance", ["AAPL.US"]), ("nobitex", ["X"]), ("okx", ["Y"])):
         backtest_tool._note_child_exposure(session / "run", {"source": source, "codes": codes, "end_date": "2026-01-10"})
     assert [r["crypto"] for r in _rows(session)] == [True, False, True, True]
+
+
+def test_a_yfinance_crypto_fetch_taints_later_local_backtests_of_the_session(session, monkeypatch) -> None:
+    """The laundering path: yfinance bypasses ``cached_loader_fetch``; its read must still be a crypto exposure row."""
+    import time
+
+    from backtest import data_audit
+    from backtest.loaders import base
+    from backtest.loaders import yfinance_loader as yl
+    from src.tools import alphakeel_ir_request, alphakeel_research_ledger as ledger, backtest_tool
+
+    now_ms = int(time.time() * 1000)
+    cutoff = now_ms - 30 * 86_400_000
+    monkeypatch.setattr(alphakeel_ir_request, "service_check", lambda: {"holdout_cutoff_ms": cutoff})
+    monkeypatch.setattr(base, "loader_cache_get", lambda **k: None)
+    monkeypatch.setattr(yl, "loader_cache_get", lambda **k: None)
+    monkeypatch.setattr(yl, "loader_cache_put", lambda **k: None)
+    today = pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
+    idx = pd.date_range(today - pd.Timedelta(days=40), today, freq="D")
+    monkeypatch.setattr(yl, "_download_history", lambda t, s, e, i: pd.DataFrame(
+        {"Open": 1.0, "High": 1.0, "Low": 1.0, "Close": 1.0, "Volume": 1.0}, index=idx))
+    end_date = str(today.date())
+
+    local = {"source": "local", "codes": ["local:MYDATA"], "end_date": end_date}
+    assert backtest_tool._holdout_refusal(local, SESSION) is None  # nothing read yet
+    out = yl.DataLoader().fetch(["BTC-USD"], str(idx[0].date()), end_date)
+    assert len(out["BTC-USD"]) == len(idx)
+    rows = _rows(session)
+    assert rows[-1]["source"] == "yfinance" and rows[-1]["crypto"] is True
+    assert ledger.crypto_exposure_end_ms(SESSION) > cutoff
+    msg = backtest_tool._holdout_refusal(local, SESSION)
+    assert msg is not None and "a local file cannot be shown to be non-crypto" in msg
+    data_audit.reset_provenance()

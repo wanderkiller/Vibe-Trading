@@ -444,6 +444,8 @@ context so the binding reaches them (as upstream already does for the compaction
 - `agent/backtest/run_card.py`
 - `agent/backtest/data_audit.py`
 - `agent/backtest/loaders/base.py`
+- `agent/backtest/loaders/yfinance_loader.py`
+- `agent/backtest/loaders/india_broker_loader.py`
 - `agent/src/tools/backtest_tool.py`
 - `agent/src/agent/loop.py`
 - `agent/tests/test_session_data_exposure.py`
@@ -467,6 +469,12 @@ class" field in the run card would be upstreamable.
 - hook `agent/backtest/loaders/base.py`: `def _note_exposure(source: str, end_date: str, frame: pd.DataFrame | None, symbol: str = "") -> None:`
 - hook `agent/backtest/loaders/base.py`: `_note_exposure(source, end_date, cached, symbol)`
 - hook `agent/backtest/loaders/base.py`: `_note_exposure(source, end_date, frame, symbol)`
+- upstream `agent/backtest/loaders/yfinance_loader.py`: `results[original_code] = normalized.copy()`
+- hook `agent/backtest/loaders/yfinance_loader.py`: `_note_exposure(self.name, end_date, cached, original_code)` (yfinance
+  and the India broker loader bypass `cached_loader_fetch`, so they record their reads' exposure themselves)
+- hook `agent/backtest/loaders/yfinance_loader.py`: `_note_exposure(self.name, end_date, normalized, original_code)`
+- upstream `agent/backtest/loaders/india_broker_loader.py`: `result[code] = frame`
+- hook `agent/backtest/loaders/india_broker_loader.py`: `_note_exposure(self.name, end_date, frame, code)`
 - upstream `agent/src/tools/backtest_tool.py`: `runner = Runner(timeout=_backtest_timeout_seconds())`
 - upstream `agent/src/tools/backtest_tool.py`: `state_store = RunStateStore()`
 - hook `agent/src/tools/backtest_tool.py`: `def _note_child_exposure(run_path: Path, config: dict[str, Any]) -> None:`
@@ -825,12 +833,15 @@ and returns
 `research_screen` (with `provisional`); 1.16 comes from the run card or the run's `ohlcv_*.csv` coverage. The result card
 gains an engine section (1.6 recomputed at render time with the current trial count and the larger of the stored and
 current variance; a render never improves a stored verdict, only worsens it; IR trial counts include engine trials) and
-a hold-out warning that makes no network call. (2) One classifier, `data_audit.is_crypto_code` (runner
-`_detect_market`, `BASE[-/_]QUOTE` with a crypto/fiat quote, perp/swap names, unseparated major pairs, `XBT*`; bare
-tickers unclassified), and `crypto_sources()` (static set plus crypto-only registered loaders). A backtest with a crypto
+a hold-out warning that makes no network call. (2) One classifier, `data_audit.is_crypto_code` (after
+stripping `local:`, venue prefixes, `=X`, MT5/broker suffixes and a ccxt `:SETTLE`: ISO-4217 pairs are forex, not crypto;
+then runner `_detect_market`, perp/swap names, BTC/ETH fund tickers such as IBIT/GBTC/bare `BTC`, `BASE-QUOTE` with a
+known crypto base or a non-ISO base priced in fiat/stablecoin, unseparated crypto-base pairs, `XBT*`; bare `ETH` is not
+crypto), and `crypto_sources()` (static set plus crypto-only registered loaders). A backtest with a crypto
 source or code, or a `local` source once the session has read crypto data past the cutoff, whose plain `YYYY-MM-DD`
 `end_date` reaches the AlphaKeel hold-out (service `holdout_cutoff_ms`, cached 6 h per session; fallback today − 60 d)
-is refused before the engine runs. Exposure rows carry a `crypto` flag (forced True for crypto sources); the card counts
+is refused before the engine runs. After a run, any `ohlcv_*.csv` with weekend bars (≥ 20 %) that reaches the hold-out is
+recorded as crypto exposure and warned on, whatever its name (a CSV laundered in another session). Exposure rows carry a `crypto` flag (forced True for crypto sources); the card counts
 flagged rows, or unflagged legacy rows of crypto sources. Market-data reads are not blocked (quotes stay usable) but are
 flagged on the card.
 (3) `monte_carlo_test`: sign-flip test for the Sharpe, order permutation only for the drawdown, `(k+1)/(n+1)` p-values,

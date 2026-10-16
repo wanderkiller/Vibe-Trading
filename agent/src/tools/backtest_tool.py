@@ -133,27 +133,31 @@ def _holdout_refusal(config: dict[str, Any], session_id: str | None) -> str | No
     except Exception:  # noqa: BLE001 - never skip the guard
         logging.getLogger(__name__).warning("hold-out cutoff failed; using the %d-day fallback", L.DEFAULT_HOLDOUT_DAYS, exc_info=True)
         cutoff_ms, origin = L._fallback_cutoff_ms(), "fallback_60d"
+    lead = ""
     if local:  # only a session that already read crypto past the cutoff taints a renamed local file
         exposure = L.crypto_exposure_end_ms(str(session_id))
         if exposure is None or exposure <= cutoff_ms:
             return None
+        lead = (f"this session read crypto data up to {L._day(exposure - day_ms)}, inside the hold-out starting "
+                f"{L._day(cutoff_ms)}; a local file cannot be shown to be non-crypto, so local backtests in this session "
+                f"must end before {L._day(cutoff_ms)}. ")
     last_allowed = L._day(cutoff_ms - day_ms)
     end_date = config.get("end_date")
     tail = ("The hold-out is AlphaKeel's out-of-sample window that research never reads: "
             f"the hold-out starts {L._day(cutoff_ms)} (cutoff from {origin}); last allowed end_date is {last_allowed}.")
     if not end_date:
-        return f"a crypto backtest needs an explicit end_date on or before {last_allowed}. {tail}"
+        return f"{lead}a crypto backtest needs an explicit end_date on or before {last_allowed}. {tail}"
     try:
         if not isinstance(end_date, str) or not _END_DATE_RE.match(end_date):
             raise ValueError(end_date)
         end_day = datetime.date.fromisoformat(end_date)
     except ValueError:
-        return (f"end_date {end_date!r} must be a plain date string in the format YYYY-MM-DD (no time, offset or other "
+        return (f"{lead}end_date {end_date!r} must be a plain date string in the format YYYY-MM-DD (no time, offset or other "
                 f"format) so the hold-out check is exact. {tail}")
     end_ms = int(datetime.datetime(end_day.year, end_day.month, end_day.day, tzinfo=datetime.timezone.utc).timestamp() * 1000) + day_ms
     if end_ms <= cutoff_ms:
         return None
-    return f"end_date {end_date} reaches into the hold-out. {tail}"
+    return f"{lead}end_date {end_date} reaches into the hold-out. {tail}"
 
 
 PROVISIONAL_NOTE = ("1.6 and the status are recomputed on the result card as this session's trial count grows; "
@@ -189,6 +193,73 @@ def _research_screen(run_path: Path) -> dict[str, Any]:
     if screen.get("warning"):
         out["warning"] = screen["warning"]
     return {k: v for k, v in out.items() if v is not None}
+
+
+_SHAPE_MIN_BARS = 20
+_SHAPE_WEEKEND_SHARE = 0.2
+
+
+def _crypto_shaped_end_ms(path: Path) -> int | None:
+    """End (ms, exclusive: last bar day + 1 day, UTC) of an ohlcv csv that looks like crypto (>= 20 bars, >= 20% of the bar
+    dates on a Saturday or Sunday: equities and futures never trade then); None for any other file or an unreadable one."""
+    import pandas as pd
+
+    try:
+        stamps = pd.read_csv(path, usecols=[0]).iloc[:, 0].dropna()
+        if len(stamps) < _SHAPE_MIN_BARS:
+            return None
+        days = pd.to_datetime(stamps, utc=True).dt.tz_localize(None).dt.normalize()
+        if float((days.dt.dayofweek >= 5).mean()) < _SHAPE_WEEKEND_SHARE:
+            return None
+        return int((days.max() + pd.Timedelta(days=1)).tz_localize("UTC").timestamp() * 1000)
+    except Exception:  # noqa: BLE001 - an odd file is not evidence of anything
+        return None
+
+
+def _shape_cutoff_ms(config: dict[str, Any], session_id: str | None) -> int:
+    """The hold-out cutoff for the data-shape backstop: the guard's own lookup (``holdout_cutoff``, which may ask the
+    research service) when ``_holdout_refusal`` would have called it for this config, else the session's cached value, the
+    in-memory memo or the 60-day fallback (no network)."""
+    from src.tools import alphakeel_research_ledger as L
+
+    guarded = _has_crypto_code(config) or bool(session_id and _is_local_config(config))
+    if not guarded:
+        from backtest.data_audit import crypto_sources
+
+        guarded = config.get("source") in crypto_sources()
+    if guarded:
+        return int(L.holdout_cutoff(session_id)["cutoff_ms"])
+    cached = L.cached_holdout_cutoff_ms(session_id, max_age_seconds=L.HOLDOUT_CACHE_SECONDS)
+    if cached is not None:
+        return int(cached)
+    memo = L._FALLBACK_MEMO.get(session_id)
+    return int(memo[1]) if memo is not None else int(L._fallback_cutoff_ms())
+
+
+def _data_shape_backstop(run_path: Path, config: dict[str, Any]) -> list[str]:
+    """Warnings for ohlcv artifacts that are crypto-shaped (weekend bars) and reach the hold-out whatever their code or
+    source says (a renamed local file). Each is recorded as crypto data exposure of the session (``via="ohlcv-shape"``), so
+    later local backtests and the result card see it. Never raises."""
+    warnings: list[str] = []
+    try:
+        from backtest.data_audit import record_exposure
+        from src.providers.session_context import current_llm_session_id
+        from src.tools import alphakeel_research_ledger as L
+
+        files = sorted((run_path / "artifacts").glob("ohlcv_*.csv"))
+        shaped = [(f, end) for f in files if (end := _crypto_shaped_end_ms(f)) is not None]
+        if not shaped:
+            return warnings
+        cutoff_ms = _shape_cutoff_ms(config, current_llm_session_id() or None)
+        for f, end_ms in shaped:
+            if end_ms <= cutoff_ms:
+                continue
+            record_exposure(str(config.get("source") or "backtest"), end_ms, via="ohlcv-shape", crypto=True)
+            warnings.append(f"crypto-shaped data (weekend bars) in {f.name} reaches the AlphaKeel hold-out "
+                            f"({L._day(cutoff_ms)}): this run cannot be handed to AlphaKeel")
+    except Exception:  # noqa: BLE001 - a backstop never breaks the tool result
+        logging.getLogger(__name__).warning("data-shape backstop failed for %s", run_path, exc_info=True)
+    return warnings
 
 
 def run_backtest(run_dir: str) -> str:
@@ -316,6 +387,10 @@ def run_backtest(run_dir: str) -> str:
         if summary is not None:
             envelope["summary"] = summary
         envelope["research_screen"] = _research_screen(run_path)
+        shape_warnings = _data_shape_backstop(run_path, config)
+        if shape_warnings:
+            screen = envelope["research_screen"]
+            screen["warning"] = "; ".join(w for w in (screen.get("warning"), *shape_warnings) if w)
     return _serialize_result(envelope)
 
 

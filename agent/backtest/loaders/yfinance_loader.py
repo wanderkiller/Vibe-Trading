@@ -10,6 +10,7 @@ import pandas as pd
 import yfinance as yf
 
 from backtest.loaders.base import (
+    _note_exposure,
     declared_currency_required,
     loader_cache_get,
     loader_cache_put,
@@ -327,6 +328,7 @@ class DataLoader:
             if cached is not None:
                 for original_code in symbol_groups[symbol]:
                     results[original_code] = cached.copy()
+                    _note_exposure(self.name, end_date, cached, original_code)
             else:
                 pending.append(symbol)
 
@@ -372,6 +374,7 @@ class DataLoader:
                 )
                 for original_code in symbol_groups[symbol]:
                     results[original_code] = normalized.copy()
+                    _note_exposure(self.name, end_date, normalized, original_code)
             except Exception as exc:
                 logger.warning("Failed to fetch data for %s: %s", symbol, exc)
                 continue

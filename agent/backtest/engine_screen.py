@@ -61,7 +61,29 @@ def engine_initial_cash(config: dict) -> Decimal | None:
     return d if d is not None and d > 0 else None
 
 
-COVERAGE_TOLERANCE_DAYS = 7
+COVERAGE_TOLERANCE_DAYS = 7  # kept for importers; the screen uses the two values below
+CRYPTO_COVERAGE_TOLERANCE_DAYS = 3
+EQUITY_COVERAGE_TOLERANCE_DAYS = 14  # Lunar New Year closures
+
+
+def _ohlcv_path(run_dir: Path, code: str) -> Path:
+    """The ``artifacts/ohlcv_*.csv`` of ``code``: the literal name first, else a file whose stem matches case-insensitively
+    one of the code, the code without a leading ``local:`` (any case), or either upper-cased with ``/`` as ``-``."""
+    artifacts = run_dir / "artifacts"
+    bare = code.strip()
+    if bare[:6].lower() == "local:":
+        bare = bare[6:].strip()
+    wanted = {n.lower() for c in (code, code.strip(), bare) for n in (c, c.upper().replace("/", "-"))}
+    exact = artifacts / f"ohlcv_{code}.csv"
+    if exact.is_file():
+        return exact
+    try:
+        for path in sorted(artifacts.glob("ohlcv_*.csv")):
+            if path.stem[len("ohlcv_"):].lower() in wanted:
+                return path
+    except OSError:
+        pass
+    return exact
 
 
 def _utc_day(value: Any):
@@ -79,8 +101,9 @@ def _utc_day(value: Any):
 
 def _coverage_partial(run_dir: Path, config: dict) -> bool | None:
     """True when the config's data is only partly there: any code lacks a non-empty ``artifacts/ohlcv_<code>.csv``, its
-    first bar is more than ``COVERAGE_TOLERANCE_DAYS`` after ``start_date`` or its last bar more than that before
-    ``end_date`` (UTC days). None (not evaluated) when the config names no code. A config date that cannot be read skips
+    first bar is more than the tolerance after ``start_date`` or its last bar more than that before ``end_date`` (UTC
+    days; 3 days for a crypto code, else 14 for market closures). A code's file is found by normalised name
+    (``_ohlcv_path``). None (not evaluated) when the config names no code. A config date that cannot be read skips
     that bound only; an unreadable ohlcv file is partial."""
     import pandas as pd
 
@@ -89,9 +112,11 @@ def _coverage_partial(run_dir: Path, config: dict) -> bool | None:
         return None
     start = _utc_day(config["start_date"]) if config.get("start_date") else None
     end = _utc_day(config["end_date"]) if config.get("end_date") else None
-    tol = pd.Timedelta(days=COVERAGE_TOLERANCE_DAYS)
+    from backtest.data_audit import is_crypto_code
+
     for code in codes:
-        path = run_dir / "artifacts" / f"ohlcv_{code}.csv"
+        tol = pd.Timedelta(days=CRYPTO_COVERAGE_TOLERANCE_DAYS if is_crypto_code(code) else EQUITY_COVERAGE_TOLERANCE_DAYS)
+        path = _ohlcv_path(run_dir, code)
         try:
             if not path.is_file() or path.stat().st_size == 0:
                 return True

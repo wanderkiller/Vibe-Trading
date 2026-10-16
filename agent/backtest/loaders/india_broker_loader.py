@@ -28,7 +28,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from backtest.loaders.base import validate_date_range
+from backtest.loaders.base import _note_exposure, validate_date_range
 from backtest.loaders.registry import register
 
 logger = logging.getLogger(__name__)
@@ -201,4 +201,5 @@ class DataLoader:
             frame = _bars_to_frame(envelope.get("bars", []), start_date, end_date)
             if frame is not None and not frame.empty:
                 result[code] = frame
+                _note_exposure(self.name, end_date, frame, code)
         return result

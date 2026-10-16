@@ -35,17 +35,39 @@ AUDITABLE_SOURCES: frozenset[str] = frozenset({"alphakeel_b2", "alphakeel_pack"}
 #: sources that are crypto by construction (live exchange pulls and the AlphaKeel packs); ``crypto_sources`` adds every
 #: registered loader declaring ``markets == {"crypto"}``.
 STATIC_CRYPTO_SOURCES: frozenset[str] = frozenset({"okx", "binance", "ccxt", "alphakeel_b2", "alphakeel_pack"})
-#: quote currencies that make ``BASE-QUOTE`` / ``BASE/QUOTE`` / ``BASE_QUOTE`` a crypto code (forex pairs such as EUR-USD
-#: are treated as crypto on purpose: the hold-out guard is conservative).
-CRYPTO_QUOTES: frozenset[str] = frozenset({"USDT", "USDC", "USD", "BUSD", "FDUSD", "TUSD", "DAI", "EUR", "GBP", "JPY", "KRW",
-                                           "TRY", "BRL", "AUD", "IRT", "TMN", "BTC", "ETH", "BNB"})
-_CRYPTO_PAIR_RE = re.compile(r"^([A-Z0-9]{2,15})[-/_]([A-Z]{3,5})$")
+#: every active ISO-4217 alphabetic code (incl. the metals XAU XAG XPT XPD and the IMF unit XDR): a pair of two of them is
+#: forex / a metal quote, not crypto.
+ISO_4217: frozenset[str] = frozenset("""
+AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BOV BRL BSD BTN BWP BYN BZD CAD CDF CHE CHF
+CHW CLF CLP CNY COP COU CRC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL
+HTG HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD
+MMK MNT MOP MRU MUR MVR MWK MXN MXV MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF
+SAR SBD SCR SDG SEK SGD SHP SLE SOS SRD SSP STN SVC SYP SZL THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX USD USN UYI UYU
+UYW UZS VED VES VND VUV WST XAF XAG XAU XCD XDR XOF XPD XPF XPT YER ZAR ZMW ZWG
+""".split())
+#: ISO-4217 plus the unofficial Iranian quotes exchanges list (rial IRR is ISO; toman/IRT are not).
+FIAT_LIKE: frozenset[str] = ISO_4217 | {"IRT", "TMN"}
+STABLE_QUOTES: frozenset[str] = frozenset({"USDT", "USDC", "BUSD", "FDUSD", "TUSD", "DAI", "USDP", "PYUSD", "USDE", "USDS",
+                                           "EURC", "USD1"})
+CRYPTO_QUOTE_ASSETS: frozenset[str] = frozenset({"BTC", "ETH", "BNB", "SOL"})
+#: back-compat name: every quote that makes a pair with a crypto-looking base a crypto code.
+CRYPTO_QUOTES: frozenset[str] = FIAT_LIKE | STABLE_QUOTES | CRYPTO_QUOTE_ASSETS
+CRYPTO_BASES: frozenset[str] = frozenset("""
+BTC XBT ETH SOL BNB XRP DOGE ADA TRX TON AVAX LINK DOT LTC BCH SHIB PEPE 1000PEPE WIF BONK UNI ATOM NEAR APT ARB OP SUI SEI
+INJ TIA FIL ETC XLM HBAR ICP AAVE MKR LDO CRV RNDR RENDER FET TAO WLD JUP PYTH STX IMX GRT ALGO VET EOS XMR ZEC DASH KAS
+ONDO ENA HYPE TRUMP USDT USDC
+""".split())
+#: BTC/ETH spot and futures funds track the coin ~1:1, so their bars count as crypto data for the hold-out; bare "BTC" is
+#: the Grayscale Bitcoin Mini Trust on yfinance; bare ETH is deliberately absent (NYSE: Ethan Allen).
+CRYPTO_PROXY_TICKERS: frozenset[str] = frozenset({
+    "BTC", "IBIT", "GBTC", "FBTC", "ARKB", "BITB", "HODL", "BTCO", "BRRR", "EZBC", "BTCW", "ETHA", "ETHE", "FETH", "ETHW",
+    "ETHV", "CETH", "EZET", "QETH", "BITO", "BTF", "BITX", "BITU", "ETHU", "BITCOIN", "ETHEREUM", "XBT"})
+_FOREX_RE = re.compile(r"^([A-Z]{3})[-/_]?([A-Z]{3})$")
+_CRYPTO_PAIR_RE = re.compile(r"^([A-Z0-9]{2,15})[-/_]([A-Z0-9]{2,6})$")
 #: perpetual / swap names (OKX ``BTC-USDT-SWAP``, ``BTC-PERP``, ``BTC_PERP``): any base with such a suffix is crypto.
 _DERIVATIVE_SUFFIX_RE = re.compile(r"^([A-Z0-9]{2,15}(?:[-/_][A-Z]{3,5})?)[-_](?:SWAP|PERP|PERPETUAL)$")
-#: unseparated pairs of a major base (``BTCUSD``, ``XBTUSD``, ``ETHUSDT``); bare tickers stay unclassified (ETH is an
-#: NYSE ticker too).
-_CONCAT_MAJOR_RE = re.compile(r"^(BTC|XBT|ETH|SOL|BNB|XRP|DOGE|ADA|LTC|TRX|AVAX|LINK|DOT|TON)"
-                              r"(USDT|USDC|USD|BUSD|FDUSD|EUR|JPY|KRW|TRY|BTC|ETH)$")
+_BROKER_SUFFIX_RE = re.compile(r"^(.*)\.[A-Z0-9]{1,3}$")
+_MT5_SUFFIX_RE = re.compile(r"^([A-Z0-9]+)[a-z]$")
 _MAX_ENTRIES_PER_SOURCE = 64
 _PROVENANCE: dict[str, list[dict[str, Any]]] = {}
 #: source -> latest end (ms, exclusive) of any data read from it in this process (AlphaKeel protocol 2.5, item 1.14: the
@@ -53,31 +75,78 @@ _PROVENANCE: dict[str, list[dict[str, Any]]] = {}
 _EXPOSURE_END: dict[str, int] = {}
 
 
+def _is_concat_pair(upper: str) -> bool:
+    """``BASE+QUOTE`` without a separator for a base in ``CRYPTO_BASES`` and a quote in ``CRYPTO_QUOTES`` other than the base."""
+    for i in range(1, len(upper)):
+        base, quote = upper[:i], upper[i:]
+        if base in CRYPTO_BASES and quote in CRYPTO_QUOTES and quote != base:
+            return True
+    return False
+
+
+_VENUE_PREFIX_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,15}:([^:]+)$")
+
+
 def is_crypto_code(code: str) -> bool:
-    """The one crypto classifier (hold-out guard, exposure rows, result card). A leading ``local:`` (any case) is stripped;
-    crypto when the runner's own ``_detect_market`` says so, or the upper-cased code (a ccxt ``:SETTLE`` suffix dropped) is
-    ``BASE[-/_]QUOTE`` with a quote in ``CRYPTO_QUOTES``, a perpetual/swap name, an unseparated major pair or starts with
-    ``XBT``. Bare tickers (``BTC``, ``ETH``) are not classified. Never raises."""
+    """The one crypto classifier (hold-out guard, exposure rows, result card). Policy: conservative -- a code that may be
+    crypto data (or a ~1:1 proxy of it) is crypto, a plain forex / metal pair or an equity is not. Never raises.
+
+    Normalisation, in order: non-str is False; strip; drop a leading ``local:`` (any case); drop a
+    venue prefix (``BINANCE:``, ``X:``); drop a trailing ``=X``; drop
+    one trailing lower-case letter after ``[A-Z0-9]+`` (MT5 ``BTCUSDm``); drop a ccxt ``:SETTLE`` suffix (SETTLE a stable or
+    fiat quote); upper-case; drop a ``.XX`` broker suffix only when the rest is an unseparated crypto pair (so ``AAPL.US``
+    and ``600000.SH`` keep theirs and stay non-crypto). Rules on the result, first match wins:
+
+    1. two ISO-4217 codes (``EUR-USD``, ``EURUSD``, ``GBP/USD``, ``XAU-USD``) -> not crypto;
+    2. the runner's ``_detect_market`` says crypto -> crypto;
+    3. a perpetual / swap suffix -> crypto;
+    4. a ``CRYPTO_PROXY_TICKERS`` member (``IBIT``, ``GBTC``, bare ``BTC``) or a name starting with ``XBT`` -> crypto;
+    5. ``BASE[-/_]QUOTE``: base in ``CRYPTO_BASES``, or quote in fiat / stable / crypto quotes with a non-ISO base -> crypto;
+    6. ``BASEQUOTE`` for a base in ``CRYPTO_BASES`` and a quote in ``CRYPTO_QUOTES`` (``BTCCAD``, ``XBTUSD``) -> crypto;
+    7. otherwise not crypto (bare ``ETH`` is the NYSE ticker Ethan Allen)."""
     if not isinstance(code, str):
         return False
-    symbol = code.strip()
-    if symbol[:6].lower() == "local:":
-        symbol = symbol[6:].strip()
     try:
-        from backtest.engines._market_hooks import _detect_market
+        symbol = code.strip()
+        if symbol[:6].lower() == "local:":
+            symbol = symbol[6:].strip()
+        m = _VENUE_PREFIX_RE.match(symbol)  # TradingView / Polygon venue prefix ``BINANCE:BTCUSDT``, ``X:BTCUSD``
+        if m:
+            symbol = m.group(1).strip()
+        if symbol.upper().endswith("=X"):
+            symbol = symbol[:-2]
+        m = _MT5_SUFFIX_RE.match(symbol)
+        if m:
+            symbol = m.group(1)
+        base, sep, settle = symbol.rpartition(":")
+        if sep and settle.upper() in STABLE_QUOTES | FIAT_LIKE:  # ccxt contract symbol ``BTC/USDT:USDT``
+            symbol = base
+        upper = symbol.upper()
+        m = _BROKER_SUFFIX_RE.match(upper)
+        if m and _is_concat_pair(m.group(1)):
+            upper = m.group(1)
+        m = _FOREX_RE.match(upper)
+        if m and m.group(1) in ISO_4217 and m.group(2) in ISO_4217:
+            return False
+        try:
+            from backtest.engines._market_hooks import _detect_market
 
-        if _detect_market(symbol) == "crypto":
+            if _detect_market(upper) == "crypto":
+                return True
+        except Exception:  # noqa: BLE001 - fall through to the patterns
+            pass
+        if _DERIVATIVE_SUFFIX_RE.match(upper):
             return True
-    except Exception:  # noqa: BLE001 - fall through to the pair pattern
-        pass
-    upper = symbol.upper()
-    base, sep, settle = upper.rpartition(":")
-    if sep and settle in CRYPTO_QUOTES:  # ccxt contract symbol ``BTC/USDT:USDT``
-        upper = base
-    if _DERIVATIVE_SUFFIX_RE.match(upper) or _CONCAT_MAJOR_RE.match(upper) or upper.startswith("XBT"):
-        return True
-    m = _CRYPTO_PAIR_RE.match(upper)
-    return bool(m) and m.group(2) in CRYPTO_QUOTES
+        if upper in CRYPTO_PROXY_TICKERS or upper.startswith("XBT"):
+            return True
+        m = _CRYPTO_PAIR_RE.match(upper)
+        if m:
+            pair_base, quote = m.groups()
+            if pair_base in CRYPTO_BASES or (quote in CRYPTO_QUOTES and pair_base not in ISO_4217):
+                return True
+        return _is_concat_pair(upper)
+    except Exception:  # noqa: BLE001 - a classifier never raises
+        return False
 
 
 def crypto_sources() -> frozenset[str]:

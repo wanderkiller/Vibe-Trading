@@ -433,8 +433,10 @@ def test_coverage_1_16_is_evaluated_from_the_ohlcv_files_when_the_card_has_no_ve
     eth.write_text("\n".join([lines[0], *lines[11:]]) + "\n")  # first bar 10 days after start_date
     late = screen_engine_run(rd, trials=1)
     assert _items(late)["1.16"] == "FAIL" and late["evidence_status"] == "failed_screen"
-    eth.write_text("\n".join([lines[0], *lines[7:]]) + "\n")  # first bar 6 days after: within the 7-day tolerance
+    eth.write_text("\n".join([lines[0], *lines[4:]]) + "\n")  # first bar 3 days after: within the 3-day crypto tolerance
     assert _items(screen_engine_run(rd, trials=1))["1.16"] == "PASS"
+    eth.write_text("\n".join([lines[0], *lines[6:]]) + "\n")  # first bar 5 days after: beyond it
+    assert _items(screen_engine_run(rd, trials=1))["1.16"] == "FAIL"
     eth.write_text("\n".join(lines[:-12]) + "\n")  # last bar 12 days before end_date
     assert _items(screen_engine_run(rd, trials=1))["1.16"] == "FAIL"
     eth.write_text(saved)
@@ -472,11 +474,14 @@ def test_card_shows_net_return_on_the_capital_base_and_the_g1_basis(tmp_path) ->
 
 @pytest.mark.parametrize("code,crypto", [
     ("BTC-USDC", True), ("BTC-EUR", True), ("ETH-JPY", True), ("BTC-IRT", True), ("BTC-TMN", True), ("BTCUSDT", True),
-    ("btc-usdt", True), ("local:BTC-IRT", True), ("LOCAL: ETH-USD", True), ("EUR-USD", True), ("1000PEPE-USDT", True),
+    ("btc-usdt", True), ("local:BTC-IRT", True), ("LOCAL: ETH-USD", True), ("1000PEPE-USDT", True),
     ("BTC-USDT-SWAP", True), ("BTC-PERP", True), ("BTC/USDT:USDT", True), ("BTCUSD", True), ("XBTUSD", True),
-    ("local:ETH-USDT-SWAP", True),
-    ("AAPL.US", False), ("600000.SH", False), ("BRK-B", False), ("AAPL", False), ("local:MYDATA", False), ("BTC", False),
-    ("ETH", False), ("EURUSD", False),
+    ("local:ETH-USDT-SWAP", True), ("X:BTCUSD", True), ("BINANCE:BTCUSDT", True), ("NASDAQ:AAPL", False),
+    ("BTC-CAD", True), ("BTC-INR", True), ("BTC-CNY", True), ("BTC-HKD", True), ("BTC-CHF", True), ("BTCCAD", True),
+    ("BTCUSDm", True), ("BTCUSD.a", True), ("BTCUSD=X", True), ("IBIT", True), ("GBTC", True), ("BTC", True), ("BITCOIN", True),
+    ("USDT-IRT", True), ("SOLBTC", True), ("local:btc-cad", True),
+    ("AAPL.US", False), ("600000.SH", False), ("BRK-B", False), ("AAPL", False), ("local:MYDATA", False), ("MSFT", False),
+    ("ETH", False), ("EURUSD", False), ("EUR-USD", False), ("GBP/USD", False), ("XAU-USD", False), ("EURUSD=X", False),
 ])
 def test_is_crypto_code(code, crypto) -> None:
     from backtest.data_audit import is_crypto_code
@@ -592,3 +597,117 @@ def test_rescreen_never_improves_a_stored_screen_and_may_worsen_it(tmp_path) -> 
     assert worse["evidence_status"] == "failed_screen" and worse["facts"]["trials"] == 50
     failing = {**worse, "inputs": worse.get("inputs") or stored["inputs"]}
     assert rescreen(failing, returns, trials=1) is failing  # a better recomputation keeps the stored failed screen
+
+
+# --- review round 3: wider classifier, name-tolerant coverage, data-shape backstop ----------------------------------------------
+
+def test_the_guard_refuses_yfinance_btc_cad_but_not_a_forex_pair() -> None:
+    from src.tools import backtest_tool
+
+    cfg = {"source": "yfinance", "end_date": "2026-08-30"}
+    msg = backtest_tool._holdout_refusal({**cfg, "codes": ["BTC-CAD"]}, SESSION)
+    assert msg is not None and "reaches into the hold-out" in msg
+    assert backtest_tool._holdout_refusal({**cfg, "codes": ["EUR-USD"]}, SESSION) is None
+
+
+def test_the_local_refusal_names_the_read_and_the_rule() -> None:
+    from src.tools import alphakeel_research_ledger as L, backtest_tool
+
+    L.record_exposure(SESSION, "okx", CUTOFF_DAY_MS + 14 * DAY_MS, "x", crypto=True)
+    msg = backtest_tool._holdout_refusal({"source": "local", "codes": ["MYDATA"], "end_date": "2026-08-30"}, SESSION)
+    assert msg is not None
+    assert f"this session read crypto data up to {L._day(CUTOFF_DAY_MS + 14 * DAY_MS - 1)}" in msg
+    assert f"inside the hold-out starting {L._day(CUTOFF_MS)}" in msg
+    assert "a local file cannot be shown to be non-crypto" in msg
+    assert f"local backtests in this session must end before {L._day(CUTOFF_MS)}" in msg
+
+
+def _coverage_run(tmp_path, code: str, file_code: str, *, first_bar_offset: int = 0, name: str = "covrun") -> Path:
+    """A run dir whose only ohlcv file ``ohlcv_<file_code>.csv`` has daily bars 2024-01-01+offset .. 2024-07-18."""
+    rd = tmp_path / name
+    (rd / "artifacts").mkdir(parents=True)
+    first = datetime.date(2024, 1, 1) + datetime.timedelta(days=first_bar_offset)
+    days = (datetime.date(2024, 7, 18) - first).days + 1
+    bars = ["trade_date,open,high,low,close,volume"] + [
+        f"{first + datetime.timedelta(days=d)},1,1,1,1,1" for d in range(days)]
+    (rd / "artifacts" / f"ohlcv_{file_code}.csv").write_text("\n".join(bars) + "\n")
+    cfg = {"source": "local", "codes": [code], "start_date": "2024-01-01", "end_date": "2024-07-18"}
+    (rd / "config.json").write_text(json.dumps(cfg))
+    return rd
+
+
+def _partial(rd: Path) -> bool | None:
+    from backtest.engine_screen import _coverage_partial
+
+    return _coverage_partial(rd, json.loads((rd / "config.json").read_text()))
+
+
+def test_coverage_finds_the_file_by_normalised_name(tmp_path) -> None:
+    assert _partial(_coverage_run(tmp_path, "local:BTC-USDT", "BTC-USDT", name="a")) is False
+    assert _partial(_coverage_run(tmp_path, "btc-usdt", "BTC-USDT", name="b")) is False
+    assert _partial(_coverage_run(tmp_path, "BTC/USDT", "BTC-USDT", name="c")) is False
+    assert _partial(_coverage_run(tmp_path, "LOCAL:MYDATA", "mydata", name="d")) is False
+    assert _partial(_coverage_run(tmp_path, "ETH-USDT", "BTC-USDT", name="e")) is True  # another code's file does not count
+
+
+def test_coverage_tolerance_is_3_days_for_crypto_and_14_for_equities(tmp_path) -> None:
+    assert _partial(_coverage_run(tmp_path, "AAPL.US", "AAPL.US", first_bar_offset=10, name="eq10")) is False
+    assert _partial(_coverage_run(tmp_path, "AAPL.US", "AAPL.US", first_bar_offset=15, name="eq15")) is True
+    assert _partial(_coverage_run(tmp_path, "BTC-USDT", "BTC-USDT", first_bar_offset=5, name="cr5")) is True
+    assert _partial(_coverage_run(tmp_path, "BTC-USDT", "BTC-USDT", first_bar_offset=3, name="cr3")) is False
+
+
+def _shape_run(tmp_path, monkeypatch, *, weekend: bool) -> Path:
+    """Run ``backtest`` (the engine stubbed) on a renamed local file; ``weekend`` = bars every day, else weekdays only."""
+    import pandas as pd
+
+    from src.core.runner import RunResult
+    from src.tools import backtest_tool
+
+    class Ok:
+        def __init__(self, timeout=None):
+            self.timeout = timeout
+
+        def execute(self, *a, **k):
+            return RunResult(success=True, exit_code=0, stdout="", stderr="", artifacts={})
+
+    monkeypatch.setattr(backtest_tool, "Runner", Ok)
+    rd = _make_run(tmp_path, "shape", source="local", codes=("MYDATA",), ohlcv=False)
+    days = pd.date_range("2200-01-01", periods=60, freq="D" if weekend else "B")
+    bars = ["trade_date,open,high,low,close,volume"] + [f"{d.date()},1,1,1,1,1" for d in days]
+    (rd / "artifacts" / "ohlcv_MYDATA.csv").write_text("\n".join(bars) + "\n")
+    return rd
+
+
+def _run_bound(rd: Path) -> dict:
+    from src.providers.session_context import bind_llm_session_id, reset_llm_session_id
+    from src.tools import backtest_tool
+
+    token = bind_llm_session_id(SESSION)
+    try:
+        return json.loads(backtest_tool.run_backtest(str(rd)))
+    finally:
+        reset_llm_session_id(token)
+
+
+def _exposure_rows(tmp_path) -> list[dict]:
+    path = tmp_path / "sessions" / SESSION / "data_exposure.jsonl"
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_a_crypto_shaped_file_reaching_the_holdout_is_recorded_and_warned(tmp_path, monkeypatch) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    out = _run_bound(_shape_run(tmp_path, monkeypatch, weekend=True))
+    rows = [r for r in _exposure_rows(tmp_path) if r["via"] == "ohlcv-shape"]
+    assert len(rows) == 1 and rows[0]["crypto"] is True and rows[0]["source"] == "local"
+    assert L.crypto_exposure_end_ms(SESSION) == rows[0]["end_ms"]
+    warning = out["research_screen"]["warning"]
+    assert ("crypto-shaped data (weekend bars) in ohlcv_MYDATA.csv reaches the AlphaKeel hold-out (" in warning
+            and "this run cannot be handed to AlphaKeel" in warning)
+
+
+def test_a_weekday_only_file_records_nothing(tmp_path, monkeypatch) -> None:
+    out = _run_bound(_shape_run(tmp_path, monkeypatch, weekend=False))
+    assert not [r for r in _exposure_rows(tmp_path) if r["via"] == "ohlcv-shape"]
+    assert "crypto-shaped" not in out["research_screen"].get("warning", "")
