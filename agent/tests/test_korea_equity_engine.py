@@ -318,6 +318,6 @@ class TestRouting:
 
         with pytest.raises(ValueError, match="long-only"):
             _build_rule_engines(
-                {"initial_cash": 100_000, "allow_short": True},
+                {"initial_cash": 100_000, "allow_short": True, "taker_rate": 0.0005},
                 ["005930.KS", "BTC-USDT"],
             )
