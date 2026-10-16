@@ -18,8 +18,8 @@ both legs the same qty, named ``n<trade>-<L|S>-<open|close>`` / ``pair-<trade>``
 ask, short opens sell at the bid, closes the other side); a taker fee ``q8(qty * price * taker_fee)`` per fill; funding at
 each official settlement time ``t`` on every open position of that contract: ``q8(qty * mark * rate)`` paid by longs and
 received by shorts for a positive rate (``sim.py``'s sign), ``mark`` = the settlement's own published mark price (AlphaKeel
-F04; rounded half-even to the price decimals of the contract seen so far in decision frames, ``DatasetCursor.price_dp``,
-as AlphaKeel's ``MarkRounder`` does), else the close of the last 1m bar closed at or before ``t`` (``ir_views.settlement_price``); ``q8`` = half-even to 1e-8. No margin, leverage, liquidation,
+F04; rounded half-even to the price decimals of the contract seen so far while it was held or traded,
+``DatasetCursor.price_dp``, as AlphaKeel's ``MarkRounder`` does), else the close of the last 1m bar closed at or before ``t`` (``ir_views.settlement_price``); ``q8`` = half-even to 1e-8. No margin, leverage, liquidation,
 partial fills, latency or funding of spot legs. Equity = realized + every open pair valued close-now (§5a ``net_now``
 formula at the touch; a leg without a quote this instant at its last close). Amounts are in the legs' quote currency:
 only ``USDT`` is accepted (no FX model).
@@ -76,8 +76,8 @@ APPROXIMATIONS = [
     "next_funding_ms = settlement time + interval",
     "volume_quote = sum of volume_quote over the 1440 bars of the 24 h ending with the last closed bar (null unless all 1440 exist)",
     "a funding settlement on an open leg is booked at the settlement row's published mark price (AlphaKeel F04), rounded "
-    "half-even to the contract's price decimals seen so far (the most decimals of any close in a decision frame before it, "
-    "at most 16; AlphaKeel MarkRounder; unrounded before the first frame); without a mark at the close of the last 1m bar "
+    "half-even to the contract's price decimals seen so far (the most decimals of its quote in a frame where it was held or "
+    "closed, or of a fill price, before it; at most 16; AlphaKeel MarkRounder; unrounded before any such frame); without a mark at the close of the last 1m bar "
     "in the 5 minutes before it; with neither it is NOT booked (counts.funding_unpriced); "
     "a leg that stops trading is valued at its last close (stale) and cannot exit",
     f"a leg whose last closed bar is older than {ir_views.DATASET_MAX_BAR_AGE_MS // MINUTE_MS} minutes is not in the frame",
@@ -95,7 +95,7 @@ SIM_CONVENTIONS = {
     "fee": "q8(qty * price * taker_fee) per fill, taker_fee from the view's fee table",
     "funding": "at each official settlement time t on open positions of that contract: q8(qty * mark * rate), paid by longs and "
                "received by shorts for a positive rate; mark = the settlement's published mark price (AlphaKeel F04) rounded "
-               "half-even to the contract's price decimals seen so far in decision frames (AlphaKeel MarkRounder), else the close "
+               "half-even to the contract's price decimals seen so far while held or traded (AlphaKeel MarkRounder), else the close "
                "of the last 1m bar closed at or before t (within 5 minutes)",
     "rounding": "q8 = half-even to 1e-8; quantity half-even to 8 places (README §5a); the trade's executed quantity is that "
                 "quantity truncated toward zero to the decimals AlphaKeel's engine can hold exactly (README §5a engine precision: a "
@@ -468,9 +468,10 @@ class DatasetCursor:
         self._vis_ptr = {i: 0 for i in self._vis}
         self._vis_last: dict[Inst, _Settle | None] = {i: None for i in self._vis}
         self._vis_prev: dict[Inst, _Settle | None] = {i: None for i in self._vis}
-        #: per contract, the most price decimals of any close in a decision frame so far (capped at ``sim.ENGINE_MAX_DP``):
-        #: AlphaKeel's ``MarkRounder.observe`` over the same frames (bid = ask = mark = close here); an official mark is
-        #: rounded to it, and left as published while the contract has not been in a frame yet
+        #: per contract, the most price decimals observed so far (capped at ``sim.ENGINE_MAX_DP``; :meth:`observe`): the
+        #: quotes of held legs and legs closed in a frame, and fill prices -- AlphaKeel's ``MarkRounder.observe`` over the
+        #: engine frame's snaps and intents (bid = ask = mark = close here); an official mark is rounded to it, and left as
+        #: published while the contract has not been observed yet
         self.price_dp: dict[Inst, int] = {}
         self.now = None
 
@@ -518,8 +519,11 @@ class DatasetCursor:
                                        close_time_ms=b.last[1], volume_quote=b.volume(), settlement=st, taker_fee=fee)
             if leg is not None:
                 out.append(leg)
-                self.price_dp[i] = max(self.price_dp.get(i, 0), min(dp_of(b.last[2]), ENGINE_MAX_DP))
         return out
+
+    def observe(self, inst: Inst, prices) -> None:
+        """Raise ``price_dp[inst]`` to the most decimals of ``prices`` (capped at ``ENGINE_MAX_DP``)."""
+        self.price_dp[inst] = max(self.price_dp.get(inst, 0), min(max(dp_of(Decimal(p)) for p in prices), ENGINE_MAX_DP))
 
     def settlements_until(self, end_incl: int, after: int | None) -> list[tuple[int, Inst, _Settle]]:
         """Settlements with ``after < t <= end_incl`` (time order, then instrument order)."""
@@ -884,6 +888,15 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                 sim.open_pair(n, pair, qty, t, e["features"])
                 rec["entries"].append({"pair_id": e["pair_id"], "position_id": f"pair-{n}", "qty": _s(qty),
                                        "intents": [f"n{n}-L-open", f"n{n}-S-open"]})
+            # R2-D-3, AlphaKeel MarkRounder.observe (ab_backtest.rs): the engine frame snaps only the held legs (opened this
+            # frame included) and the legs closed this frame, plus the intents' prices; a leg merely quoted is not counted
+            for tr in list(sim.open.values()) + closed_pending:
+                for leg in tr.legs():
+                    q = touch.get((leg.inst.venue, leg.inst.market, leg.inst.symbol))
+                    fills = [leg.entry_px] if tr.opened_ms == t else []
+                    fills += [leg.exit_px] if tr.closed_ms == t else []
+                    if q is not None or fills:
+                        cursor.observe(leg.inst, [*(q or ()), *fills])
             if verbose:
                 rec["rejected_detail"] = decision["rejected"]
             _jsonl(fde, rec)

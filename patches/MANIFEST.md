@@ -30,7 +30,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `leaf-package` | none (new files only) | local-only |
 | `loader-registry-hooks` | registry, loader_health, metrics tables, runner `_get_loader` | local-only (follows the leaf package); the runner guard is upstreamable |
 | `alpha-bench-universe` | alpha_bench_tool, factors/cli_handlers | local-only (follows the leaf package) |
-| `crypto-funding` | engines/_market_hooks, crypto, composite; ccxt_loader; loaders/base `resample_bars`; perpetual_evidence; three routing tests | upstreamable as a bug-fix PR (see below) |
+| `crypto-funding` | engines/_market_hooks, crypto, composite; ccxt_loader; loaders/base `resample_bars`; perpetual_evidence; routing tests; shadow-account fee source and the journal `fee_currency` | upstreamable as a bug-fix PR (see below) |
 | `metrics-conventions` | metrics, validation | partly upstreamed already; rest upstreamable |
 | `run-card-data-audit` | run_card, loaders/base (exposure hook), backtest_tool (one helper, two call sites), agent/loop (tool threads keep the caller's context) | local-only as written; a generic provenance hook is upstreamable |
 | `alphakeel-handoff` | api_server (one hook), RunDetail (one import, one element), api.ts (one `export`) | local-only (follows the leaf package) |
@@ -290,7 +290,9 @@ settlements through `funding_settlements.attach_settlements` (shared with the `a
 - `agent/tests/test_composite_currency_guard.py`
 - `agent/tests/test_local_source_routing.py`
 - `agent/tests/test_yfinance_crypto_routing.py`
+- `agent/tests/test_korea_equity_engine.py`
 - `agent/src/shadow_account/backtester.py`
+- `agent/src/tools/trade_journal_parsers.py`
 - `agent/src/shadow_account/codegen.py`
 - `agent/src/tools/shadow_account_tool.py`
 - `agent/src/tools/autopilot_tool.py`
@@ -300,13 +302,16 @@ settlements through `funding_settlements.attach_settlements` (shared with the `a
 
 **Wave 2 (2026-10-13, R2-D-4 b / R2-D-6).** `CryptoEngine` has no default taker fee: `config.taker_rate` is required
 (`taker_rate_of`; a crypto run without it is refused, the rate used is in the metrics), and the strict path's evidence
-summary reads the same key; the three upstream routing tests that built a crypto engine without it now set it.
+summary reads the same key; the upstream tests that built a crypto engine without it now set it (the KRX short-config
+routing test too, `037d73d5`).
 `resample_bars` keeps settlement-attributed funding whole on 1W/1M bars (events concatenated, cash rate and count
 summed, last settlement time) instead of the last day's, and the composite reports the crypto leg's funding summary
 (`funding_estimate`, `funding_priced_at_close`) like `CryptoEngine`. The strict perpetual path still reads `funding_rate`
 per bar (ccxt only: `alphakeel_b2` frames carry no `mark_open`/`execution_open` and never enter it). The two production paths that write a crypto `config.json` take the fee from a real source: the shadow
-account's crypto pool from `crypto_taker_rate` or the journal's own crypto fills (highest fee/notional), else it is
-refused before any pool runs (`resolve_crypto_taker_rate`); `generate_backtest_config` refuses a crypto universe without
+account's crypto pool from `crypto_taker_rate` or the journal's own crypto fills (highest fee/notional, counting only
+fills whose fee is charged in the pair's quote currency: `TradeRecord.fee_currency`, which the generic parser reads
+from a `fee_currency`/`fee_asset`/`commission_asset` column or the fee cell; a BNB or unstated-currency fee is left
+out, round-3 review P2), else it is refused before any pool runs (`resolve_crypto_taker_rate`); `generate_backtest_config` refuses a crypto universe without
 `taker_rate`.
 
 **Commits.** `622ea894` (engines, ccxt loader, funding_settlements, tests), `41f8c94b` (composite test expectation), `fdab5523`
@@ -373,6 +378,9 @@ would be a separate, optional PR (config switch). The PR would contain `CryptoFu
 - hook `agent/backtest/loaders/base.py`: `settled = "funding_events" in frame.columns` — 1W/1M bars keep every settlement of the period (R2-D-6)
 - upstream `agent/src/shadow_account/backtester.py`: `def run_shadow_backtest(`
 - hook `agent/src/shadow_account/backtester.py`: `def resolve_crypto_taker_rate(explicit` — the crypto pool taker fee from the caller or the journal crypto fills, else refused (R2-D-4)
+- hook `agent/src/shadow_account/backtester.py`: `if not quote or r.fee_currency != quote:` — a journal fee counts toward the crypto taker rate only when charged in the pair's quote currency (round-3 review P2)
+- upstream `agent/src/tools/trade_journal_parsers.py`: `def parse_generic(df: pd.DataFrame) -> list[TradeRecord]:`
+- hook `agent/src/tools/trade_journal_parsers.py`: `    fee_currency: str = ""\n` — TradeRecord.fee_currency, read by parse_generic from a fee-currency column or the fee cell (round-3 review P2)
 - upstream `agent/src/shadow_account/codegen.py`: `def write_run_dir(`
 - hook `agent/src/shadow_account/codegen.py`: `        extra=extra,\n    )`
 - hook `agent/src/tools/shadow_account_tool.py`: `crypto_taker_rate=kwargs.get("crypto_taker_rate"),`

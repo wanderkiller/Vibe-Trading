@@ -493,6 +493,32 @@ def test_dataset_sim_rounds_official_mark_to_seen_price_dp(tmp_path):
     assert not any("NOT rounded" in n for n in X.NOTES) and any("MarkRounder" in n for n in X.NOTES)
 
 
+def test_dataset_sim_price_dp_counts_only_held_and_touched_legs(tmp_path):
+    """R2-D-3 (AlphaKeel ``MarkRounder.observe``, ab_backtest.rs): the price decimals that round an official mark come
+    from the quotes of the held legs, the legs closed in the frame and the fill prices -- not from every leg in the frame.
+    Binance closes at 100.123 (3 decimals) in the frames at START-6m and START-4m, while OKX has no bar yet (no pair, nothing held); the
+    pair opens at START-2m with Binance at 100. Binance's START+30m mark 100.7 is booked at 101 (0 decimals seen while
+    held: the long pays 10 x 101 x 0.0001 = 0.101), not at 100.7 (0.1007)."""
+    def p_bn_early(t):
+        return "100.123" if t < START - 4 * MIN else p_bn(t)
+
+    kl = {("binance", "BTCUSDT"): bars("BTCUSDT", p_bn_early, lo=LO - 10 * MIN), ("okx", "BTC-USDT-SWAP"): bars("BTC-USDT-SWAP", p_ok, lo=START - 3 * MIN)}
+    st = {"binance": [settle("binance:linear:USDT:BTCUSDT", START - 8 * 3_600_000, "-0.0001"),
+                      settle("binance:linear:USDT:BTCUSDT", START + 30 * MIN, "0.0001", mark="100.7")],
+          "okx": [settle("okx:linear:USDT:BTC-USDT-SWAP", START - 8 * 3_600_000, "0.0003"),
+                  settle("okx:linear:USDT:BTC-USDT-SWAP", START + 30 * MIN, "0.0002")]}
+    pack = Pack.from_directory(export_dir(tmp_path, build([BN, OK], kl, st, lo=LO - 10 * MIN)))  # warm-up day before START-6m
+    out = tmp_path / "bt"
+    card = ir_backtest.run(golden_ir(), pack, [BN, OK], start_ms=START - 6 * MIN, end_ms=END, out_dir=out, step_minutes=2, fees=FEES)
+    dec = [json.loads(x) for x in (out / "decisions.jsonl").read_text().splitlines()]
+    assert [d["t"] for d in dec[:3]] == [START - 6 * MIN, START - 4 * MIN, START - 2 * MIN]
+    assert all(d["pairs"] == 0 and not d["entries"] for d in dec[:2]) and dec[2]["entries"]
+    t = json.loads((out / "trades.jsonl").read_text().splitlines()[0])
+    assert t["opened_ms"] == START - 2 * MIN and t["long"]["entry_price"] == "100"
+    assert (t["long"]["funding"], t["short"]["funding"]) == ("-0.101", "0.2004")
+    assert card["counts"]["funding_events"] == 2
+
+
 def test_default_fees_removed_requires_explicit_fees(tmp_path):
     """D2-13: the silent 0.0005 default is gone (AlphaKeel's dataset_view requires the fee table too): the view, the run and
     the CLI refuse a missing table; an explicit one is recorded with where it came from."""

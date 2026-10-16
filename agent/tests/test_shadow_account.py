@@ -2560,10 +2560,10 @@ def test_crypto_pool_fee_comes_from_a_real_source(
     assert configs["USD"]["taker_rate"] == 0.0004 and configs["USD"]["taker_rate_source"] == "argument crypto_taker_rate"
     assert all("taker_rate" not in c for k, c in configs.items() if k != "USD")  # pools without crypto need none
     journal = tmp_path / "j.csv"
-    journal.write_text("time,symbol,side,quantity,price,amount,fee\n"
-                       "2026-01-02 10:00:00,BTC-USDT,buy,0.1,50000,5000,2.5\n"
-                       "2026-01-03 10:00:00,BTC-USDT,sell,0.1,51000,5100,5.1\n"
-                       "2026-01-04 10:00:00,AAPL,buy,10,100,1000,1\n")
+    journal.write_text("time,symbol,side,quantity,price,amount,fee,fee_currency\n"
+                       "2026-01-02 10:00:00,BTC-USDT,buy,0.1,50000,5000,2.5,USDT\n"
+                       "2026-01-03 10:00:00,BTC-USDT,sell,0.1,51000,5100,5.1,usdt\n"
+                       "2026-01-04 10:00:00,AAPL,buy,10,100,1000,1,USD\n")
     configs.clear()
     run_shadow_backtest(profile, journal_path=journal, **kw)
     assert configs["USD"]["taker_rate"] == pytest.approx(0.001)  # 5.1 / 5100; the AAPL fill is not crypto
@@ -2573,3 +2573,33 @@ def test_crypto_pool_fee_comes_from_a_real_source(
     configs.clear()
     run_shadow_backtest(profile, markets=("china_a", "us"), **kw)  # no crypto: no fee needed
     assert configs and all("taker_rate" not in c for c in configs.values())
+
+
+def test_crypto_fee_rate_from_journal_counts_only_fees_in_the_quote_currency(
+    profitable_journal: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round-3 review P2: a fee paid in BNB (or of unknown currency) divided by a USDT notional is not a rate (it gave
+    ~1e-6). Only fills whose fee currency is the pair's quote currency count; with none the pool is refused."""
+    from src.shadow_account.backtester import resolve_crypto_taker_rate
+
+    journal = tmp_path / "j.csv"
+    journal.write_text("time,symbol,side,quantity,price,amount,fee,fee_asset\n"
+                       "2026-01-02 10:00:00,BTCUSDT,buy,0.1,50000,5000,0.004,BNB\n"
+                       "2026-01-03 10:00:00,BTCUSDT,sell,0.1,51000,5100,0.0001,BTC\n"
+                       "2026-01-04 10:00:00,ETH-USDT,buy,1,2000,2000,0.8,\n")
+    with pytest.raises(ValueError, match="quote currency"):
+        resolve_crypto_taker_rate(None, journal)  # BNB, BTC and an unstated currency: no usable fill
+    journal.write_text("time,symbol,side,quantity,price,amount,fee,fee_asset\n"
+                       "2026-01-02 10:00:00,BTCUSDT,buy,0.1,50000,5000,0.004,BNB\n"
+                       "2026-01-03 10:00:00,BTC/USDT,sell,0.1,51000,5100,2.04,USDT\n"
+                       "2026-01-04 10:00:00,ETH-USDT,buy,1,2000,2000,0.8,\n")
+    rate, source = resolve_crypto_taker_rate(None, journal)
+    assert rate == pytest.approx(0.0004)  # 2.04 / 5100; the BNB fill (0.004 / 5000 = 8e-7) and the unstated one are out
+    assert "2 crypto fills left out" in source
+    # the currency written in the fee cell counts too; a bare number does not
+    journal.write_text("time,symbol,side,quantity,price,amount,fee\n"
+                       "2026-01-02 10:00:00,BTC-USDT,buy,0.1,50000,5000,0.0001BNB\n"
+                       "2026-01-03 10:00:00,BTC-USDT,sell,0.1,51000,5100,2.55 USDT\n"
+                       "2026-01-04 10:00:00,ETH-USDT,buy,1,2000,2000,9\n")
+    rate, _ = resolve_crypto_taker_rate(None, journal)
+    assert rate == pytest.approx(0.0005)

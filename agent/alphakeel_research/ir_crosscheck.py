@@ -36,8 +36,8 @@ NOTES = [
     "both sides use the kline_close_synthetic_bbo view on the same frozen dataset pack: same input, independent code",
     "funding settlements are booked at the settlement row's published mark price on both sides (AlphaKeel F04, docs/37 "
     "'settlement notional price'; ir_views.settlement_price), rounded half-even on both sides to the contract's price "
-    "decimals seen so far in decision frames (AlphaKeel MarkRounder, the simulator's DatasetCursor.price_dp; 2026-10-12 "
-    "audit R2-D-3); only a row without one falls back to the last price at or "
+    "decimals seen so far while it was held or traded (AlphaKeel MarkRounder over the held/closed legs' quotes and the "
+    "fill prices, the simulator's DatasetCursor.price_dp; 2026-10-12 audit R2-D-3); only a row without one falls back to the last price at or "
     "before it (AlphaKeel: the last frame's mark; the simulator: the last 1m close within 5 minutes), the same price when "
     "decision frames sit on the settlement grid (start aligned, step divides the interval)",
     "the engine checks same-instant cumulative initial margin (profile leverage) and may refuse an entry the simulator, "

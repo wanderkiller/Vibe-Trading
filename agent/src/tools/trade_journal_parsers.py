@@ -109,6 +109,10 @@ class TradeRecord:
         amount: Gross amount (quantity * price, pre-fee).
         fee: Total fees (commission + stamp + transfer).
         market: "china_a" / "us" / "hk" / "crypto" / "other".
+        fee_currency: Currency the fee was charged in (upper case), "" when the
+            journal does not say (only the generic parser reads it: a
+            fee_currency / fee_asset / commission_asset column, or a currency
+            code written in the fee cell, e.g. "0.5 USDT").
     """
 
     datetime: str
@@ -120,6 +124,7 @@ class TradeRecord:
     amount: float
     fee: float
     market: str
+    fee_currency: str = ""
 
 
 # ---------------- File loading ----------------
@@ -564,6 +569,8 @@ def parse_generic(df: pd.DataFrame) -> list[TradeRecord]:
     price_col = pick("price")
     amount_col = pick("amount", "value", "notional")
     fee_col = pick("fee", "commission", "fees")
+    fee_ccy_col = pick("fee_currency", "fee currency", "fee_asset", "fee asset", "fee_coin", "fee coin",
+                       "commission_asset", "commission asset", "commissionasset")
 
     if side_col is None:
         raise ValueError(
@@ -589,6 +596,7 @@ def parse_generic(df: pd.DataFrame) -> list[TradeRecord]:
         price = _to_float(row.get(price_col)) if price_col else 0.0
         amount = _to_float(row.get(amount_col)) if amount_col else qty * price
         fee = _to_float(row.get(fee_col)) if fee_col else 0.0
+        fee_currency = _fee_currency(row.get(fee_ccy_col) if fee_ccy_col else None, row.get(fee_col) if fee_col else None)
         generic_side = _normalize_side(row.get(side_col))
         generic_amount = amount or qty * price
         if generic_side == "dividend":
@@ -604,8 +612,28 @@ def parse_generic(df: pd.DataFrame) -> list[TradeRecord]:
             amount=generic_amount,
             fee=fee,
             market=market,
+            fee_currency=fee_currency,
         ))
     return records
+
+
+_FEE_CCY_IN_CELL_RE = re.compile(r"^\s*([A-Za-z]{2,10})?\s*[-+\d.,\u2212]+\s*([A-Za-z]{2,10})?\s*$")
+
+
+def _fee_currency(column_cell: Any, fee_cell: Any) -> str:
+    """The fee's currency: the fee-currency column when it has a value, else a currency code written before or after
+    the number in the fee cell ("0.5 USDT", "0.0001BNB"); "" when neither says (a crypto fee rate must not be taken from
+    a fee of unknown currency: exchanges also charge fees in BNB or the base asset)."""
+    if column_cell is not None and not (isinstance(column_cell, float) and pd.isna(column_cell)):
+        text = str(column_cell).strip().upper()
+        if text:
+            return text
+    if fee_cell is None or isinstance(fee_cell, (int, float)):
+        return ""
+    m = _FEE_CCY_IN_CELL_RE.match(str(fee_cell))
+    if m is None or (m.group(1) and m.group(2)):
+        return ""
+    return (m.group(1) or m.group(2) or "").upper()
 
 
 def _generic_datetime_cell(val: Any) -> str:

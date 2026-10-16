@@ -166,8 +166,10 @@ def resolve_crypto_taker_rate(explicit: float | str | None, journal_path: str | 
     layer, audit 2026-10-12 R2-D-4), so the rate must come from somewhere real.
 
     1. ``explicit`` (the caller's ``crypto_taker_rate``, e.g. the user's account tier);
-    2. else the journal's own crypto fills: the highest ``fee / notional`` among crypto rows that carry a fee (the
-       conservative side: a taker fill pays at least the maker rate);
+    2. else the journal's own crypto fills: the highest ``fee / notional`` among crypto rows that carry a fee charged
+       in the pair's quote currency (the conservative side: a taker fill pays at least the maker rate). A fee whose
+       currency the journal does not state, or one charged in another asset (BNB, the base coin), is not a rate over
+       the quote notional and is left out;
     3. else ``ValueError`` -- no constant is filled in.
     """
     from backtest.engines.crypto import taker_rate_of
@@ -177,18 +179,41 @@ def resolve_crypto_taker_rate(explicit: float | str | None, journal_path: str | 
     if journal_path and Path(journal_path).is_file():
         _, records = parse_file(Path(journal_path))
         rates = []
+        other_ccy = 0
         for r in records:
             notional = abs(float(r.amount or 0.0)) or abs(float(r.quantity) * float(r.price))
-            if r.market == "crypto" and notional > 0 and float(r.fee or 0.0) > 0:
-                rates.append(float(r.fee) / notional)
+            if r.market != "crypto" or notional <= 0 or float(r.fee or 0.0) <= 0:
+                continue
+            quote = _crypto_quote_currency(r.symbol)
+            if not quote or r.fee_currency != quote:
+                other_ccy += 1  # fee currency unknown or not the quote currency: fee / notional is not a rate
+                continue
+            rates.append(float(r.fee) / notional)
         if rates:
             rate = taker_rate_of({"taker_rate": max(rates)})
-            return rate, f"journal: highest fee/notional of {len(rates)} crypto fills"
+            skipped = f"; {other_ccy} crypto fills left out (fee currency unknown or not the quote)" if other_ccy else ""
+            return rate, f"journal: highest fee/notional of {len(rates)} crypto fills charged in the quote currency{skipped}"
     raise ValueError(
         "the crypto market needs a taker fee rate and there is no default: pass crypto_taker_rate (the account's crypto "
-        "taker fee per fill, e.g. 0.0005), give a journal_path whose crypto fills carry fees, or leave 'crypto' out of "
-        "markets"
+        "taker fee per fill, e.g. 0.0005), give a journal_path whose crypto fills carry fees in the pair's quote currency "
+        "(a fee_currency column, or the currency written in the fee cell), or leave 'crypto' out of markets"
     )
+
+
+_CRYPTO_QUOTES = ("USDT", "USDC", "BUSD", "FDUSD", "USD")
+
+
+def _crypto_quote_currency(symbol: str) -> str:
+    """The quote currency of a crypto journal symbol ("BTC-USDT", "BTC/USDT:USDT", "BTC-USDT-SWAP", "BTCUSDT"), else ""."""
+    s = str(symbol or "").upper().split(":")[0]
+    for sep in ("-", "/"):
+        if sep in s:
+            parts = s.split(sep)
+            return parts[1] if len(parts) > 1 and parts[1].isalpha() else ""
+    for q in _CRYPTO_QUOTES:
+        if len(s) > len(q) and s.endswith(q) and s[: -len(q)].isalpha():
+            return q
+    return ""
 
 
 # ---------------- Backtest execution ----------------

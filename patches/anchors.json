@@ -471,7 +471,9 @@
     "agent/tests/test_composite_currency_guard.py",
     "agent/tests/test_local_source_routing.py",
     "agent/tests/test_yfinance_crypto_routing.py",
+    "agent/tests/test_korea_equity_engine.py",
     "agent/src/shadow_account/backtester.py",
+    "agent/src/tools/trade_journal_parsers.py",
     "agent/src/shadow_account/codegen.py",
     "agent/src/tools/shadow_account_tool.py",
     "agent/src/tools/autopilot_tool.py",
@@ -750,6 +752,23 @@
      "kind": "hook",
      "literal": "def resolve_crypto_taker_rate(explicit",
      "note": "the crypto pool taker fee from the caller or the journal crypto fills, else refused (R2-D-4)"
+    },
+    {
+     "file": "agent/src/shadow_account/backtester.py",
+     "kind": "hook",
+     "literal": "if not quote or r.fee_currency != quote:",
+     "note": "a journal fee counts toward the crypto taker rate only when charged in the pair's quote currency (round-3 review P2)"
+    },
+    {
+     "file": "agent/src/tools/trade_journal_parsers.py",
+     "kind": "upstream",
+     "literal": "def parse_generic(df: pd.DataFrame) -> list[TradeRecord]:"
+    },
+    {
+     "file": "agent/src/tools/trade_journal_parsers.py",
+     "kind": "hook",
+     "literal": "    fee_currency: str = \"\"\n",
+     "note": "TradeRecord.fee_currency, read by parse_generic from a fee-currency column or the fee cell (round-3 review P2)"
     },
     {
      "file": "agent/src/shadow_account/codegen.py",
