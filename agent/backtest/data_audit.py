@@ -55,7 +55,8 @@ CRYPTO_QUOTES: frozenset[str] = FIAT_LIKE | STABLE_QUOTES | CRYPTO_QUOTE_ASSETS
 CRYPTO_BASES: frozenset[str] = frozenset("""
 BTC XBT ETH SOL BNB XRP DOGE ADA TRX TON AVAX LINK DOT LTC BCH SHIB PEPE 1000PEPE WIF BONK UNI ATOM NEAR APT ARB OP SUI SEI
 INJ TIA FIL ETC XLM HBAR ICP AAVE MKR LDO CRV RNDR RENDER FET TAO WLD JUP PYTH STX IMX GRT ALGO VET EOS XMR ZEC DASH KAS
-ONDO ENA HYPE TRUMP USDT USDC
+ONDO ENA HYPE TRUMP USDT USDC MATIC POL AXS SAND MANA GALA APE FLOW CHZ ENJ EGLD THETA XTZ KSM ZIL QTUM NEO IOTA
+CAKE RUNE SNX COMP YFI SUSHI 1INCH BAT ZRX OMG KNC BAL GMT ORDI SATS JTO STRK ZK ZRO BLUR MEME NOT DOGS EIGEN FLOKI
 """.split())
 #: BTC/ETH spot and futures funds track the coin ~1:1, so their bars count as crypto data for the hold-out; bare "BTC" is
 #: the Grayscale Bitcoin Mini Trust on yfinance; bare ETH is deliberately absent (NYSE: Ethan Allen).
@@ -70,9 +71,9 @@ _DERIVATIVE_SUFFIX_RE = re.compile(r"^([A-Z0-9]{2,15}(?:[-/_][A-Z]{3,5})?)[-_](?
 _DATED_FUTURE_RE = re.compile(r"^([A-Z0-9]{2,15}(?:[-/_][A-Z]{3,5})?)[-_](?:\d{6}|\d{1,2}[A-Z]{3}\d{2})$")
 #: CME crypto futures roots as Yahoo continuous contracts (``BTC=F``, ``MBT=F``, ``ETH=F``, ``MET=F``): ~1:1 with the coin.
 CME_CRYPTO_FUTURE_ROOTS: frozenset[str] = frozenset({"BTC", "MBT", "ETH", "MET", "BFF", "XRP", "MXR", "SOL", "MSL", "SOLM"})
-#: an unseparated pair ending in a USD stablecoin, or in USD with a non-ISO base of 3+ letters (6+ characters: longer than
-#: any US equity ticker), is a crypto spot/CFD name (``MATICUSD``, ``POLUSDT``, ``AXSUSD``).
-_USD_CONCAT_RE = re.compile(r"^([A-Z0-9]{2,15})(USDT|USDC)$|^([A-Z]{3,10})USD$")
+#: an unseparated pair ending in a USD stablecoin is a crypto spot name (``POLUSDT``). ``XXX+USD`` stays crypto only for a
+#: base in ``CRYPTO_BASES`` (rule 6): broker CFDs such as ``XTIUSD``, ``SPXUSD``, ``TSLAUSD`` are not crypto.
+_USD_CONCAT_RE = re.compile(r"^([A-Z0-9]{2,15})(USDT|USDC)$")
 _BROKER_SUFFIX_RE = re.compile(r"^(.*)\.[A-Z0-9]{1,3}$")
 _MT5_SUFFIX_RE = re.compile(r"^([A-Z0-9]+)[a-z]$")
 _MAX_ENTRIES_PER_SOURCE = 64
@@ -80,6 +81,17 @@ _PROVENANCE: dict[str, list[dict[str, Any]]] = {}
 #: source -> latest end (ms, exclusive) of any data read from it in this process (AlphaKeel protocol 2.5, item 1.14: the
 #: research horizon includes every read, also the ones that bypass the research service).
 _EXPOSURE_END: dict[str, int] = {}
+
+
+def _is_crypto_root(root: str) -> bool:
+    """The underlying of a dated future: a ``CRYPTO_BASES`` base, ``BASE-QUOTE`` with such a base or a stable/crypto
+    quote, or an unseparated crypto-base pair."""
+    parts = re.split(r"[-/_]", root)
+    if parts[0] in CRYPTO_BASES:
+        return True
+    if len(parts) == 2 and parts[1] in STABLE_QUOTES | CRYPTO_QUOTE_ASSETS:
+        return True
+    return _is_concat_pair(root)
 
 
 def _is_concat_pair(upper: str) -> bool:
@@ -107,8 +119,8 @@ def is_crypto_code(code: str) -> bool:
     1. two ISO-4217 codes (``EUR-USD``, ``EURUSD``, ``GBP/USD``, ``XAU-USD``) -> not crypto;
     2. the runner's ``_detect_market`` says crypto -> crypto;
     0. a Yahoo CME crypto future (``BTC=F``, ``MBT=F``, ``ETH=F``) -> crypto;
-    3. a perpetual / swap suffix or a dated-future expiry (``-251226``, ``-26DEC25``) -> crypto;
-    3b. ``*USDT`` / ``*USDC``, or ``XXX+USD`` with a non-ISO base of 3+ letters (``MATICUSD``) -> crypto;
+    3. a perpetual / swap suffix, ``*USDT`` / ``*USDC``, or a dated-future expiry (``-251226``, ``-26DEC25``) on a crypto
+       underlying -> crypto (``CL-251226``, ``XTIUSD``, ``SPXUSD`` are not);
     4. a ``CRYPTO_PROXY_TICKERS`` member (``IBIT``, ``GBTC``, bare ``BTC``) or a name starting with ``XBT`` -> crypto;
     5. ``BASE[-/_]QUOTE``: base in ``CRYPTO_BASES``, or quote in fiat / stable / crypto quotes with a non-ISO base -> crypto;
     6. ``BASEQUOTE`` for a base in ``CRYPTO_BASES`` and a quote in ``CRYPTO_QUOTES`` (``BTCCAD``, ``XBTUSD``) -> crypto;
@@ -146,10 +158,10 @@ def is_crypto_code(code: str) -> bool:
                 return True
         except Exception:  # noqa: BLE001 - fall through to the patterns
             pass
-        if _DERIVATIVE_SUFFIX_RE.match(upper) or _DATED_FUTURE_RE.match(upper):
+        if _DERIVATIVE_SUFFIX_RE.match(upper) or _USD_CONCAT_RE.match(upper):
             return True
-        m = _USD_CONCAT_RE.match(upper)
-        if m and (m.group(1) or m.group(3) not in ISO_4217):
+        m = _DATED_FUTURE_RE.match(upper)
+        if m and _is_crypto_root(m.group(1)):  # ``CL-251226`` / ``SPY-251219`` are not crypto
             return True
         if upper in CRYPTO_PROXY_TICKERS or upper.startswith("XBT"):
             return True
