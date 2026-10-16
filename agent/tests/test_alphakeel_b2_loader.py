@@ -824,3 +824,20 @@ def test_ccxt_fetch_records_data_exposure_end_in_provenance(monkeypatch):
         assert data_audit.data_exposure_end_ms() == int(pd.Timestamp("2024-01-03").timestamp() * 1000)
     finally:
         data_audit.reset_provenance()
+
+
+def test_read_of_an_instrument_outside_the_pack_is_an_error_not_zero_rows(monkeypatch, tmp_path, capsys):
+    # session 77963ca6bc9e: rows 0 / accesses [] for a symbol the pack does not hold; the agent froze probe packs
+    from alphakeel_research import cli
+
+    lock, blobs = kline_pack("BTCUSDT")
+    monkeypatch.setattr(cli, "Client", lambda url=None: FakeClient({"kline": (lock, blobs)}))
+    base = ["--cache", str(tmp_path / "packs"), "read", "--pack", lock["pack_id"], "--market", "spot", "--table", "klines",
+            "--start-ms", str(START), "--end-ms", str(START + DAY)]
+    assert cli.main(base + ["--venue", "binance", "--symbol", "DOGEUSDT"]) == 1
+    err = json.loads(capsys.readouterr().out)["error"]
+    assert err["code"] == "request.invalid" and err["field"] == "symbol"
+    assert err["message"] == (f"read: binance spot DOGEUSDT is not in pack {lock['pack_id']}; the pack holds: binance spot BTCUSDT; "
+                              "ir_backtest freezes its own pack")
+    assert cli.main(base + ["--venue", "binance", "--symbol", "BTCUSDT"]) == 0  # a held instrument still reads
+    assert json.loads(capsys.readouterr().out)["rows"] == 1440

@@ -384,6 +384,12 @@ def main(argv: list[str] | None = None) -> int:
         elif a.cmd == "read":
             pack = Pack.open(c, a.pack, a.cache)
             inst = Inst(a.venue, a.market, a.symbol)
+            held = pack.instruments()
+            if inst not in held:  # not "0 rows": the agent took silence for missing data and froze probe packs (session 77963ca6bc9e)
+                near = sorted(held, key=lambda i: (i.symbol != inst.symbol, i.venue != inst.venue, i.leg()))
+                shown = ", ".join(f"{i.venue} {i.market} {i.symbol}" for i in near[:30]) + (f" (+{len(near) - 30} more)" if len(near) > 30 else "")
+                raise ApiError("request.invalid", f"read: {inst.venue} {inst.market} {inst.symbol} is not in pack {pack.id}; the pack holds: "
+                               f"{shown or 'no instruments'}; ir_backtest freezes its own pack", field="symbol")
             from .packfile import Pit
 
             src = Pit(pack, a.as_of_ms) if a.as_of_ms is not None else pack

@@ -1171,3 +1171,15 @@ def test_spill_cache_is_keyed_by_code_format_and_cleans_stale_tmp_dirs(tmp_path,
     monkeypatch.setattr(ir_backtest, "SPILL_FORMAT", None)
     ir_backtest.spill_klines(pack, insts, START, END, tmp_path / "w3")
     assert not (pd / "spill").exists()
+
+
+def test_argv_reports_every_missing_required_argument_at_once() -> None:
+    # session 77963ca6bc9e: `read needs <key>` one key per call cost the agent four calls
+    from src.tools.alphakeel_research_tool import _argv
+
+    with pytest.raises(ValueError, match=r"^read needs pack, symbol, start_ms, end_ms$"):
+        _argv("read", {"venue": "binance"})
+    with pytest.raises(ValueError, match=r"^policy needs pack, strategy, instruments$"):
+        _argv("policy", {})
+    with pytest.raises(ValueError, match=r"^ir_backtest needs start_ms, end_ms, instruments$"):
+        _argv("ir_backtest", {"ir": "s.json", "instruments": []})

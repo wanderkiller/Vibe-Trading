@@ -231,15 +231,26 @@ def _authorize_paths(args: dict[str, Any], run_dir: Any) -> None:
                 raise ValueError(f"{k}: {e}") from None
 
 
+#: the arguments each action cannot run without; all missing ones are reported in one error (session 77963ca6bc9e: one
+#: ``read needs <key>`` per call cost the agent four calls)
+_REQUIRED: dict[str, tuple[str, ...]] = {
+    "freeze": ("start_ms", "end_ms"), "read": ("pack", "venue", "symbol", "start_ms", "end_ms"), "review": ("pack", "intents"),
+    "policy": ("pack", "strategy", "instruments"), "native": ("pack",), "compare": ("a", "b", "mode"), "ir_validate": ("ir",),
+    "ir_review": ("pack", "ir", "out"), "ir_backtest": ("ir", "start_ms", "end_ms", "instruments"), "ir_crosscheck": ("ir", "run"),
+    "ir_export": ("ir", "run", "out"),
+}
+
+
 def _argv(action: str, a: dict[str, Any]) -> list[str]:
     _handoff_guard(action, a)
+    missing = [k for k in _REQUIRED.get(action, ()) if a.get(k) is None or a.get(k) == "" or a.get(k) == []]
+    if missing:
+        raise ValueError(f"{action} needs {', '.join(missing)}")
     out: list[str] = action.split("_", 1) if action.startswith("ir_") else [action]
 
-    def add(flag: str, key: str, required: bool = False) -> None:
+    def add(flag: str, key: str) -> None:
         v = a.get(key)
         if v is None or v == "":
-            if required:
-                raise ValueError(f"{action} needs {key}")
             return
         if isinstance(v, bool):
             kind = ('funding dataset version: omit it (latest), "none", or a version id' if key == "funding"
@@ -260,7 +271,7 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
         out.extend(["--fees", _instruments_file(v, "ak-fees-", "fees")])
 
     if action == "freeze":
-        add("--start-ms", "start_ms", True), add("--end-ms", "end_ms", True), add("--venues", "venues"), add("--funding", "funding")
+        add("--start-ms", "start_ms"), add("--end-ms", "end_ms"), add("--venues", "venues"), add("--funding", "funding")
         add("--warmup-frames", "warmup_frames")
         # Dataset pack (no scan frames; any window): funding history and/or market tables for an explicit instrument list.
         if a.get("instruments") not in (None, "", []):
@@ -276,30 +287,28 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
             out.append("--accept-partial")
     elif action == "read":
         for f, k in (("--pack", "pack"), ("--venue", "venue"), ("--symbol", "symbol"), ("--start-ms", "start_ms"), ("--end-ms", "end_ms")):
-            add(f, k, True)
+            add(f, k)
         add("--market", "market"), add("--table", "table"), add("--as-of-ms", "as_of_ms"), add("--limit", "limit")
         add("--price-kind", "price_kind")
     elif action == "review":
-        add("--pack", "pack", True), add("--intents", "intents", True), add("--profile", "profile"), add("--instruments", "instruments")
+        add("--pack", "pack"), add("--intents", "intents"), add("--profile", "profile"), add("--instruments", "instruments")
     elif action == "policy":
         for f, k in (("--pack", "pack"), ("--strategy", "strategy"), ("--instruments", "instruments")):
-            add(f, k, True)
+            add(f, k)
         add("--profile", "profile"), add("--seed", "seed"), add("--parameters", "parameters")
     elif action == "native":
-        add("--pack", "pack", True), add("--rules", "rules"), add("--params", "params"), add("--profile", "profile")
+        add("--pack", "pack"), add("--rules", "rules"), add("--params", "params"), add("--profile", "profile")
     elif action == "compare":
-        add("--a", "a", True), add("--b", "b", True), add("--mode", "mode", True)
+        add("--a", "a"), add("--b", "b"), add("--mode", "mode")
     # Strategy IR: the document is a path (strategy.json); outputs go to the given directory
     elif action == "ir_validate":
-        add("--ir", "ir", True), add("--pack", "pack")
+        add("--ir", "ir"), add("--pack", "pack")
     elif action == "ir_review":
-        add("--pack", "pack", True), add("--ir", "ir", True), add("--out", "out", True), add("--seed", "seed"), add("--profile", "profile")
+        add("--pack", "pack"), add("--ir", "ir"), add("--out", "out"), add("--seed", "seed"), add("--profile", "profile")
     elif action == "ir_backtest":
         # ``a`` is the request planned by ``alphakeel_ir_request.plan`` (research-truth B2): window, instruments, step,
         # fees and their source derived by code; trials from the session's trial ledger.
-        add("--ir", "ir", True), add("--start-ms", "start_ms", True), add("--end-ms", "end_ms", True)
-        if a.get("instruments") in (None, "", []):
-            raise ValueError("ir_backtest needs instruments")
+        add("--ir", "ir"), add("--start-ms", "start_ms"), add("--end-ms", "end_ms")
         out.extend(["--instruments", _instruments_file(a["instruments"])])
         add("--out", "out")  # optional: the CLI creates a Vibe-Trading run directory
         for f, k in (("--step-minutes", "step_minutes"), ("--trials", "trials"), ("--trials-evidence", "trials_evidence"),
@@ -325,9 +334,9 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
                      ("--wf-test-days", "wf_test_days"), ("--wf-min-train-days", "wf_min_train_days"), ("--out", "out")):
             add(f, k)
     elif action == "ir_crosscheck":
-        add("--ir", "ir", True), add("--run", "run", True), add("--timeout-s", "timeout_s")
+        add("--ir", "ir"), add("--run", "run"), add("--timeout-s", "timeout_s")
     elif action == "ir_export":
-        add("--ir", "ir", True), add("--run", "run", True), add("--out", "out", True), add("--robustness", "robustness"), add("--reconciliation", "reconciliation")
+        add("--ir", "ir"), add("--run", "run"), add("--out", "out"), add("--robustness", "robustness"), add("--reconciliation", "reconciliation")
         if _under_handoff(str(a["out"])):
             raise ValueError("ir_export: writing into AlphaKeel's hand-off directory is not an agent action. Hand-off is the user's "
                              "decision: the user presses 'Hand off to AlphaKeel' on the run page (docs/45 section 7). Export to another "
