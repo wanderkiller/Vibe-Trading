@@ -31,6 +31,7 @@ streamed back in time order; frames, decisions and equity points are written as 
 from __future__ import annotations
 
 import bisect
+import contextlib
 import copy
 import datetime as dt
 import hashlib
@@ -259,7 +260,8 @@ def _spill_cache_load(sdir: Path, insts: list[Inst], paths: dict[Inst, Path]):
             chains[i] = _FrozenChain(c["rows"], c["first_ms"], c["last_ms"], c["sha256"])
         for i in insts:
             shutil.copyfile(sdir / man["files"][i.leg()]["name"], paths[i])
-        os.utime(sdir)
+        with contextlib.suppress(OSError):
+            os.utime(sdir)  # recently used: PackCache.evict() removes the least recently used first
         return chains
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         shutil.rmtree(sdir, ignore_errors=True)
@@ -1228,6 +1230,9 @@ def backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, en
             r = record_trial_only(client, IR.load(ir_doc).doc, card)
             card["service_registration"] = {"registered": True, "trial_id": r["trial_id"], "trial_key": r["trial_key"],
                                             "ledger": "research-service trial ledger (POST /trials, ledger only, not executed)"}
+            n_scope = r.get("ledger_trials_for_scope")
+            if isinstance(n_scope, int) and not isinstance(n_scope, bool):  # absent on an older service: no key
+                card["service_registration"]["ledger_trials_for_scope"] = n_scope
         else:
             card["service_registration"] = {"registered": False, "reason": "not requested (--no-register / no client)"}
         (out / "run_card.json").write_text(json.dumps(card, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")

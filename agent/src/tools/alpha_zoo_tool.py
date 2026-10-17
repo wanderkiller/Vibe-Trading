@@ -153,7 +153,8 @@ class AlphaZooTool(BaseTool):
     description = (
         "Browse the bundled alpha zoo. action=list_alphas filters by zoo/theme/universe; "
         "action=get_alpha returns one alpha's metadata (no source body); "
-        "action=health reports registry load status (loaded / failed / errors)."
+        "action=health reports registry load status (loaded / failed / errors). "
+        "These factors cannot be used in an AlphaKeel Strategy IR (alphakeel_research tool); to use a factor, use the general backtest tool."
     )
     parameters = {
         "type": "object",

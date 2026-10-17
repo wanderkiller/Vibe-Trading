@@ -326,7 +326,8 @@ class _ReleaseMixin:
                 return _RESOLVER_TOOL
             return None
         if self.identity_status == "locked" and any(
-            issue.get("code") in {"numeric_claim_unavailable", "unsourced_symbol_figures"}
+            issue.get("code") == "unsourced_symbol_figures"
+            or (issue.get("code") == "numeric_claim_unavailable" and issue.get("price_like"))
             for issue in validation.issues
         ):
             if self._price_evidence_attempts < MAX_PRICE_EVIDENCE_ATTEMPTS:
@@ -587,6 +588,7 @@ class _ReleaseMixin:
                 text = strip_figures_block(text, block)
             check = self._validate(text, record=False)
         removed = 0
+        price_cut = False
         keys: set[str] = set()
         for _ in range(_MAX_REDACTION_PASSES):
             if check.valid:
@@ -594,9 +596,10 @@ class _ReleaseMixin:
             codes = {issue.get("code") for issue in check.issues}
             if not codes <= (_REDACTABLE_CODES | _REPAIRABLE_PROVENANCE_CODES):
                 return None
-            cut, cut_keys = self._cut_flagged(text, check.issues)
+            cut, cut_keys, cut_price = self._cut_flagged(text, check.issues)
             if cut is None:
                 return None
+            price_cut = price_cut or cut_price
             if cut_keys:
                 text = cut
                 removed += len(cut_keys)
@@ -624,7 +627,7 @@ class _ReleaseMixin:
         released = body
         self.release_card_notes = check.card_notes
         if removed:
-            note = self._release_note(removed, body)
+            note = self._release_note(removed, body, price_cut=price_cut)
             # The note is answer text too (range, symbols), so it passes the
             # same gate, in undeclared mode.
             if not self._validate(note, record=False).valid:
@@ -670,7 +673,7 @@ class _ReleaseMixin:
         self,
         text: str,
         issues: Sequence[dict[str, Any]],
-    ) -> tuple[str | None, list[str]]:
+    ) -> tuple[str | None, list[str], bool]:
         """Replace every flagged figure with the omission marker.
 
         An issue without a value (``unsourced_symbol_figures``) cuts every
@@ -682,8 +685,8 @@ class _ReleaseMixin:
             issues: The issues raised against it.
 
         Returns:
-            ``(rewritten text, normalized digits of each figure cut)``, or
-            ``(None, [])`` when a flagged figure cannot be located and release
+            ``(rewritten text, normalized digits of each figure cut, whether a
+            price-like figure was cut)``, or ``(None, [], False)`` when a flagged figure cannot be located and release
             must fail closed.
         """
         figures = scan_figures(text, parse_figures_block(text))
@@ -694,7 +697,7 @@ class _ReleaseMixin:
                 continue
             span = self._issue_span(text, issue)
             if span is None:
-                return None, []
+                return None, [], False
             if issue.get("value") is None:
                 cuts.update(
                     ((figure.start, figure.end), figure)
@@ -706,8 +709,10 @@ class _ReleaseMixin:
             elif span in located:
                 cuts[span] = located[span]
             else:
-                return None, []
-        return self._apply_cuts(text, cuts.values())
+                return None, [], False
+        price_cut = any(figure.currency or figure.column for figure in cuts.values())
+        rewritten, removed = self._apply_cuts(text, cuts.values())
+        return rewritten, removed, price_cut
 
     def _sweep_same_values(self, text: str, keys: set[str]) -> tuple[str, list[str]]:
         """Cut every unchecked restatement of a figure that was already cut.
@@ -801,10 +806,12 @@ class _ReleaseMixin:
             else _REDACTION_MARKER_EN
         )
 
-    def _release_note(self, removed: int, content: str | None = None) -> str:
-        """Explain the redaction to the user, with the observed range."""
+    def _release_note(
+        self, removed: int, content: str | None = None, *, price_cut: bool = True
+    ) -> str:
+        """Explain the redaction to the user, with the observed range when a price was cut."""
         is_zh = self._user_writes_chinese()
-        joined = self._observed_range_summary(is_zh, content)
+        joined = self._observed_range_summary(is_zh, content) if price_cut else None
         if joined is None:
             if is_zh:
                 return f"※ 略去 {removed} 处无法与本会话工具数据对上的数值。"

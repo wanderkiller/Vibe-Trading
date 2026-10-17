@@ -704,3 +704,39 @@ def test_a_decimal_comma_document_reads_three_digit_fractions_as_decimals() -> N
 )
 def test_a_grouping_document_keeps_its_thousands(text: str, grouped: float) -> None:
     assert grouped in _measured_values(text)
+
+
+# ---------------------------------------------------------------------------
+# Currency-word and count-noun shapes (G1-G4)
+# ---------------------------------------------------------------------------
+
+def test_ci_yuan_is_not_a_currency_word() -> None:
+    assert _shapes("100 次元")["100"] != "measured"
+    assert _shapes("差 3 个美元")["3"] == "measured"
+
+
+def test_a_classifier_apart_from_its_currency_word_is_still_money() -> None:
+    assert _shapes("差 3 个 美元")["3"] == "measured"
+    assert _shapes("有 3 个 币")["3"] != "measured"
+
+
+def test_an_approximation_suffix_does_not_hide_a_currency_word() -> None:
+    assert _shapes("赚 3 美元左右")["3"] == "measured"
+    assert _shapes("赚 3 日元以上")["3"] == "measured"
+    assert _shapes("报价 100 人民币元宵")["100"] == "bare"
+
+
+def test_the_currency_extent_covers_the_word_not_the_suffix() -> None:
+    (figure,) = [f for f in _figures("赚 3 个 美元左右") if f.text == "3"]
+    start, end = figure.extent
+    text = "赚 3 个 美元左右"
+    assert text[start:end].endswith("美元") and "左右" not in text[start:end]
+
+
+@pytest.mark.parametrize("cell", ["10 个币", "5 币种", "10 个"])
+def test_a_counted_noun_decoration_is_a_plain_declared_number(cell: str) -> None:
+    block = parse_figures_block("```figures\n" + cell + " | count | n | -\n```")
+    assert block.malformed == ()
+    plain = parse_figures_block("```figures\n" + cell.split()[0] + " | count | n | -\n```")
+    assert [d.value for d in block.declarations] == [d.value for d in plain.declarations]
+    assert block.declarations[0].value == float(cell.split()[0])

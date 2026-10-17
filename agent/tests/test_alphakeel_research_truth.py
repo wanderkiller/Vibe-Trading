@@ -311,8 +311,8 @@ def test_result_card_rows_order_and_language(session) -> None:
     assert rows == [
         "| carry-wide (ir-bbbbb) | 2026-01-01→06-29 | 40 | 50.00 | −27.87 | 300.43 | 190.11 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
         "| carry-tight (ir-ccccc) | 2026-01-01→06-29 | 40 | −10.00 | −27.87 | 300.43 | 190.11 | 0.27% | 未通过初筛（1.3） |",
-        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −1.00 | −27.87 | 300.43 | 190.11 | 0.27% | 证据不足（1.2） |",
-        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −138.19 | −27.87 | 300.43 | 190.11 | 0.27% | 证据不足（1.2） |",
+        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −1.00 | −27.87 | 300.43 | 190.11 | 0.27% | 证据不足（1.2）；另未通过：1.3 |",
+        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −138.19 | −27.87 | 300.43 | 190.11 | 0.27% | 证据不足（1.2）；另未通过：1.3 |",
     ]
     assert "1.4–1.13（成本压力、DSR、PBO、邻域、走步等）未评估：需要 ir_robustness。" in lines
     assert lines[-1] == "账本：ir_trials_evidence.jsonl"  # no hypothesis id handed to the model
@@ -713,3 +713,89 @@ def test_supersedes_contract_goes_to_the_ledger_not_to_the_cli_and_is_not_ignore
     assert "ignored_args" not in out and "ignored_args_note" not in out
     assert seen == ["back to the carry the user asked for"]
     assert not any("supersedes" in str(x) or "the carry the user asked" in str(x) for x in session["argv"][0] if str(x).startswith("-") or " " in str(x))
+
+
+# --- review round: F6-F10 -----------------------------------------------------------------------------------------------
+
+def test_screen_1_3_is_not_applicable_with_zero_closed_trades() -> None:
+    s = screen(_screen_card("0", 0, 120))
+    item = next(i for i in s["items"] if i["id"] == "1.3")
+    assert item["result"] == "N/A" and item["observed"] == "0" and item["note"] == "0 closed trades"
+    assert s["evidence_status"] == "insufficient"  # 1.2 fails
+    assert next(i for i in s["items"] if i["id"] == "1.2")["result"] == "FAIL"
+    # 1.16 failing with no trades is still a screen failure only once 1.1/1.2 pass; N/A itself is not a FAIL
+    assert screen(_screen_card("-5", 3, 120))["items"][2]["result"] == "FAIL"
+
+
+def test_verdict_lists_fails_outside_the_primary_group_and_na_is_not_a_fail() -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    card = {"screen": screen(_screen_card("-138.19", 15, 180))}
+    assert L._verdict(card, L._TEXT[True]) == "证据不足（1.2）；另未通过：1.3"
+    assert L._verdict(card, L._TEXT[False]) == "insufficient (1.2); also failed: 1.3"
+    zero = {"screen": screen(_screen_card("0", 0, 180))}
+    assert L._verdict(zero, L._TEXT[True]) == "证据不足（1.2）"
+    assert L._item_observed(zero["screen"], "1.3") == "不适用（0 笔）"
+
+
+def _result_for(state, dirname, card, **args):
+    out = _run_tool(state, dirname, card, **args)
+    assert out["status"] == "ok", out
+    return out
+
+
+def test_ledger_records_contract_seq_declaration_unimplemented_rules_and_same_name(session) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    c1 = _card(session["sid"], "carry", "-1", 40)
+    c1["view"] = {"kind": "dataset"}
+    _result_for(session, "20261014_090950_ir", c1)
+    c2 = _card("ir-second", "carry", "-2", 40)  # same name, different content
+    c2["view"] = {"kind": "dataset"}
+    _result_for(session, "20261014_091500_ir", c2, unimplemented_rules=["only trade on weekdays", " "],
+                supersedes_contract="same strategy, only a longer explanation")
+    rows = L.ledger_rows(SESSION_ID)
+    assert rows[0]["unimplemented_rules"] == [] and "same_name_as" not in rows[0]
+    assert rows[1]["unimplemented_rules"] == ["only trade on weekdays"] and rows[1]["same_name_as"] == [session["sid"]]
+    hist = L.contract_history(SESSION_ID)
+    assert len(hist) == 1 and hist[0]["fields"] == [] and hist[0]["declared"] is True and hist[0]["seq"] == 2
+    assert hist[0]["strategy_id"] == "ir-second" and "longer explanation" in hist[0]["reason"]
+    assert rows[1]["contract_change"] is None
+    # a window change is a contract change and carries seq = ledger rows + 1
+    c3 = _card("ir-third", "other", "-3", 40)
+    c3["view"] = {"kind": "dataset"}
+    c3["window"] = {**c3["window"], "start_day": "2026-02-01"}
+    _result_for(session, "20261014_092000_ir", c3)
+    ch = L.ledger_rows(SESSION_ID)[2]["contract_change"]
+    assert ch["fields"] == ["window"] and ch["seq"] == 3
+    text = "\n".join(L._ir_section(SESSION_ID, True))
+    assert "未实现规则：only trade on weekdays" in text and f"同名不同内容（与 {session['sid'][:8]} 不同）" in text
+    assert "研究服务账本计数未取得（未登记或旧服务）" in text
+
+
+def test_ir_section_trials_line_and_approximations(session) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    card = _card(session["sid"], "carry", "-1", 40)
+    card["service_registration"] = {"ledger_trials_for_scope": 7}
+    card["approximations"] = ["spread is 0"]
+    _result_for(session, "20261014_090950_ir", card)
+    zh = "\n".join(L._ir_section(SESSION_ID, True))
+    assert "试验数：本会话 1；研究服务账本同 kind 同谱系 7（1.6 取较大值）" in zh
+    assert "回测近似：价差为 0（成本偏低）；资金费率用最近已结算值代替预测值" in zh
+    assert "service ledger, " not in zh
+    assert "Trials: this session 1; research-service ledger, same kind and lineage 7 (1.6 uses the larger)" in "\n".join(L._ir_section(SESSION_ID, False))
+
+
+def test_summary_trials_and_tool_text() -> None:
+    from src.tools.alpha_zoo_tool import AlphaZooTool
+    from src.tools.alphakeel_research_tool import AlphakeelResearchTool, _summary
+
+    res = {**_card("x", "n", "5", 40), "trials": {"count": 3}, "service_registration": {"ledger_trials_for_scope": 9}}
+    assert "trials: session 3, service ledger 9 (1.6 uses the larger)" in _summary(res)
+    assert "service ledger" not in _summary({**res, "service_registration": {}})
+    d = AlphakeelResearchTool.description
+    assert "spread of 0" in d and "ir.FEATURES" in d and "unimplemented_rules" in d and "change its name" in d
+    props = AlphakeelResearchTool.parameters["properties"]["args"]["properties"]
+    assert props["unimplemented_rules"]["type"] == "array"
+    assert "cannot be used in an AlphaKeel Strategy IR" in AlphaZooTool.description

@@ -90,6 +90,10 @@ _CURRENCY_CHARS = frozenset("$¥￥€£₩₹元币圆镑円원")
 # "2 对"), never a currency word, even though it holds the money character "币".
 _CJK_CLASSIFIERS = frozenset("个种枚只类家条项笔次位名组对轮档支款")
 _COUNT_NOUN_PREFIXES = ("币种", "币对")
+# Words that hold a money character without being money ("100 次元").
+_NON_CURRENCY_WORDS = ("次元",)
+# Approximation suffixes after a currency word ("3 美元左右", "3 日元以上").
+_APPROX_SUFFIXES = ("左右", "以上", "以下", "上下", "之间", "多", "余")
 _ISO_DATE_CELL_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[T ]\S*)?$")
 
 _CURRENCY_CODES = frozenset(
@@ -604,13 +608,28 @@ def _fenced_blocks(content: str) -> list[tuple[int, int, str, tuple[int, int]]]:
 
 def _is_currency_word(run: str) -> bool:
     """Whether a CJK run is short enough to be a currency word and holds a money mark."""
+    if run.startswith(_NON_CURRENCY_WORDS):
+        return False
     if run.startswith(_COUNT_NOUN_PREFIXES):
         return False
+    for suffix in _APPROX_SUFFIXES:
+        if run.endswith(suffix) and len(run) > len(suffix):
+            return _is_currency_word(run[: -len(suffix)])
     if run[:1] in _CJK_CLASSIFIERS:
         # "个币" counts coins; "个美元" is still money: judge what follows the classifier.
         rest = run[1:]
         return not rest.startswith("币") and _is_currency_word(rest)
     return len(run) <= _MAX_CURRENCY_WORD and any(char in _CURRENCY_CHARS for char in run)
+
+
+def _is_count_noun(word: str) -> bool:
+    """Whether a declared value's decoration is a counted noun ("个币", "币种", "个")."""
+    word = word.replace(" ", "")
+    if not word or not all(_is_cjk(char) for char in word):
+        return False
+    if word.startswith(_COUNT_NOUN_PREFIXES):
+        return True
+    return word[0] in _CJK_CLASSIFIERS and (len(word) == 1 or word[1:].startswith("币"))
 
 
 def _is_currency_mark(word: str) -> bool:
@@ -656,6 +675,8 @@ def _parse_value(
     tail = rest[consumed:].strip()
     if not unit and tail in _MULTIPLE_MARKS:
         # "5.5x": a multiple, written the way the answer writes it.
+        tail = ""
+    if _is_count_noun(tail):
         tail = ""
     if not (_is_currency_mark(tail) and _is_currency_mark(field[: token.start].strip())):
         return None
@@ -902,6 +923,31 @@ def _cjk_run(text: str) -> str:
     return text[:end]
 
 
+def _currency_word_extent(body: str) -> int:
+    """How many characters of ``body`` (opening with CJK) form a currency word, else 0.
+
+    A lone classifier may be separated from the word by blanks ("3 个 美元"); an
+    approximation suffix ("左右") is not part of the extent.
+    """
+    run = _cjk_run(body)
+    gap = 0
+    if run in _CJK_CLASSIFIERS:
+        after = body[1:]
+        gap = len(after) - len(after.lstrip(" \t"))
+        if gap:
+            run = run + _cjk_run(after[gap:])
+        else:
+            gap = 0
+    if not _is_currency_word(run):
+        return 0
+    core = run
+    for suffix in _APPROX_SUFFIXES:
+        if core.endswith(suffix) and len(core) > len(suffix):
+            core = core[: -len(suffix)]
+            break
+    return len(core) + (gap if len(core) > 1 else 0)
+
+
 def _currency_after(text: str, end: int) -> bool:
     """Whether a currency symbol or ISO code touches the number on its right.
 
@@ -914,7 +960,7 @@ def _currency_after(text: str, end: int) -> bool:
     if tail[0] in _CURRENCY_CHARS and not _is_cjk(tail[0]):
         return True
     if _is_cjk(tail[0]):
-        return _is_currency_word(_cjk_run(tail))
+        return _currency_word_extent(tail) > 0
     code = ""
     for char in tail:
         if not char.isascii() or not char.isalpha():
@@ -966,9 +1012,10 @@ def _currency_suffix_end(text: str, end: int) -> int:
     if not body:
         return end
     if _is_cjk(body[0]):
-        run = _cjk_run(body)
-        if not _is_currency_word(run):
+        extent = _currency_word_extent(body)
+        if not extent:
             return end
+        run = body[:extent]
     else:
         run = body[: len(body) - len(body.lstrip(string.ascii_letters))]
         if run.upper() not in _CURRENCY_CODES:

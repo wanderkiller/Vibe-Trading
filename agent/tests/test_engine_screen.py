@@ -816,7 +816,7 @@ def test_an_ir_run_sets_the_contract_and_a_later_generic_run_is_a_flagged_change
              supersedes="back to the cross-venue carry as asked")
     ir_row = L.ledger_rows(SESSION)[-1]
     assert ir_row["contract_change"]["declared"] is True and ir_row["contract_change"]["strategy_id"] == "ir-strategy-0002"
-    assert any(ln.startswith("- #ir-strat") and "已声明：back to the cross-venue carry" in ln for ln in _contract_card(SESSION).splitlines())
+    assert any(ln.startswith("- #2") and "已声明：back to the cross-venue carry" in ln for ln in _contract_card(SESSION).splitlines())
 
 
 def test_a_library_name_in_the_code_without_a_zoo_factor_call_is_listed_and_a_call_is_recorded(tmp_path) -> None:
@@ -1137,3 +1137,14 @@ def test_an_unavailable_run_does_not_reset_the_contract(tmp_path) -> None:
     out = L.record_engine_run(SESSION, _make_run(tmp_path, "good2", seed=3))
     assert "contract_drift" not in out and L.contract_history(SESSION) == []
     assert all(r["contract_change"] is None for r in L.engine_rows(SESSION))
+
+
+def test_engine_verdict_lists_failures_outside_the_primary_group() -> None:
+    from src.tools.alphakeel_research_ledger import _ENGINE_TEXT, _engine_verdict
+
+    screen = {"evidence_status": "insufficient", "items": [
+        {"id": "1.2", "result": "FAIL"}, {"id": "1.3", "result": "FAIL"}, {"id": "1.1", "result": "PASS"}]}
+    assert _engine_verdict(screen, _ENGINE_TEXT[True]) == "证据不足（1.2）；另未通过：1.3"
+    assert _engine_verdict(screen, _ENGINE_TEXT[False]) == "insufficient (1.2); also failed: 1.3"
+    assert _engine_verdict({"evidence_status": "insufficient", "items": [{"id": "1.2", "result": "FAIL"}]},
+                           _ENGINE_TEXT[True]) == "证据不足（1.2）"

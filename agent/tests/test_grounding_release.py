@@ -1681,7 +1681,7 @@ def test_the_released_document_is_validated_with_its_footnote(
     monkeypatch.setattr(
         ledger,
         "_release_note",
-        lambda removed, content=None: "※ 参考买入价 9.99 元。",
+        lambda removed, content=None, **_: "※ 参考买入价 9.99 元。",
     )
 
     assert ledger.redacted_release(draft, validation) is None
@@ -2486,3 +2486,77 @@ def test_loop_releases_verdict_words_and_factor_names_with_card_notes(tmp_path: 
         "- 本会话没有任何版本通过初筛；答复中的「已验证」不是系统判定。\n"
         "- 答复提到的因子名 「gtja191_010」 在本会话没有被使用或检索到。"
     )
+
+
+# ---------------------------------------------------------------------------
+# Recovery only chases prices; release note names OHLC only for cut prices;
+# AlphaKeel decimal strings are citable evidence (G5-G7)
+# ---------------------------------------------------------------------------
+
+def _numeric_unavailable(role: str, price_like: bool) -> SimpleNamespace:
+    return SimpleNamespace(
+        issues=[{"code": "numeric_claim_unavailable", "role": role, "price_like": price_like}]
+    )
+
+
+def test_a_count_claim_without_evidence_does_not_fetch_prices(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    assert ledger.identity_status == "locked"
+    assert ledger.recovery_action(_numeric_unavailable("count", False)) is None
+    assert ledger.recovery_action(_numeric_unavailable("proposed", True)) == "get_market_data"
+    unsourced = SimpleNamespace(issues=[{"code": "unsourced_symbol_figures"}])
+    assert ledger.recovery_action(unsourced) == "get_market_data"
+
+
+def test_figure_issues_carry_price_like(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    draft = HDR + " 建议买入价 1.10 元。"
+    result = ledger.validate_final_answer(draft)
+    flagged = [i for i in result.issues if i.get("value") == "1.10"]
+    assert flagged and flagged[0]["price_like"] is True
+
+
+def test_release_note_omits_the_entry_price_hint_for_a_cut_count(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    # Counts cut: no price figure removed, so no OHLC range / entry-price sentence.
+    note = ledger._release_note(1, "正文", price_cut=False)
+    assert "如需买入价" not in note and "OHLC" not in note
+    assert note == "※ 略去 1 处无法与本会话工具数据对上的数值。"
+    assert "如需买入价" in ledger._release_note(1, "正文", price_cut=True)
+
+
+def test_a_cut_price_keeps_the_entry_price_hint(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    draft = HDR + " 均线空头排列。建议买入价 1.10 元，分批建仓。"
+    released = ledger.redacted_release(draft, ledger.validate_final_answer(draft))
+    assert released is not None and "如需买入价" in released
+
+
+def test_cut_flagged_reports_whether_a_price_was_cut(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    draft = HDR + " 建议买入价 1.10 元。"
+    result = ledger.validate_final_answer(draft)
+    _, keys, price_cut = ledger._cut_flagged(draft, result.issues)
+    assert keys and price_cut is True
+
+
+def test_alphakeel_decimal_strings_are_citable_but_not_prices(tmp_path: Path) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="回测手续费假设是多少")
+    payload = {
+        "assumptions": {"fees": {"binance": {"perp": "0.0005"}}},
+        "amounts": {"equity_end": "40000"},
+    }
+    ledger.ingest_tool_result(
+        tool_name="alphakeel_research",
+        arguments={"action": "ir_backtest"},
+        result=json.dumps(payload),
+        call_id="ak1",
+        success=True,
+    )
+    fields = {r.field: r.value for r in ledger._evidence if r.tool == "alphakeel_research"}
+    assert fields["assumptions.fees.binance.perp"] == 0.0005
+    assert fields["amounts.equity_end"] == 40000.0
+    assert not [r for r in ledger._price_records() if r.tool == "alphakeel_research"]
+    assert ledger._observed_range_summary(True) is None
+    draft = "Perp 手续费假设 0.0005。\n" + _block("0.0005 | observed | fee | ak1")
+    assert ledger.validate_final_answer(draft).valid is True

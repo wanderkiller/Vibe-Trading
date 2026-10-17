@@ -1951,7 +1951,7 @@
     {
      "file": "agent/src/tools/alphakeel_research_tool.py",
      "kind": "hook",
-     "literal": "ledger.record(session_id, run_dir, result, rel, supersedes=supersedes)"
+     "literal": "ledger.record(session_id, run_dir, result, rel, supersedes=supersedes, unimplemented_rules=unimplemented_rules)"
     },
     {
      "file": "agent/src/skills/strategy-generate/SKILL.md",
@@ -2271,6 +2271,51 @@
      "file": "agent/src/agent/grounding/release.py",
      "kind": "preimage",
      "literal": "text = strip_figures_block(text, parse_figures_block(text))"
+    }
+   ]
+  },
+  {
+   "id": "research-cleanup",
+   "title": "Research audit cleanup: money words around classifiers and approximations, price-only recovery, citable AlphaKeel decimals, IR-limit note on the Alpha Zoo tool, bounded pack cache",
+   "files": [
+    "agent/src/tools/alpha_zoo_tool.py",
+    "agent/tests/test_alphakeel_packfile.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/src/tools/alpha_zoo_tool.py",
+     "kind": "upstream",
+     "literal": "action=health reports registry load status (loaded / failed / errors). "
+    },
+    {
+     "file": "agent/src/tools/alpha_zoo_tool.py",
+     "kind": "hook",
+     "literal": "These factors cannot be used in an AlphaKeel Strategy IR (alphakeel_research tool)"
+    },
+    {
+     "file": "agent/src/agent/grounding/figures.py",
+     "kind": "hook",
+     "literal": "_APPROX_SUFFIXES = ("
+    },
+    {
+     "file": "agent/src/agent/grounding/figures.py",
+     "kind": "hook",
+     "literal": "_NON_CURRENCY_WORDS = ("
+    },
+    {
+     "file": "agent/src/agent/grounding/policies.py",
+     "kind": "hook",
+     "literal": "\"price_like\": role != \"count\""
+    },
+    {
+     "file": "agent/src/agent/grounding/release.py",
+     "kind": "hook",
+     "literal": "price_cut"
+    },
+    {
+     "file": "agent/alphakeel_research/packfile.py",
+     "kind": "hook",
+     "literal": "CACHE_MAX_BYTES_ENV = \"ALPHAKEEL_PACK_CACHE_MAX_BYTES\""
     }
    ]
   }

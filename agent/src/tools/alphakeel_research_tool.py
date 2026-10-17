@@ -605,11 +605,16 @@ def _summary(result: dict) -> str:
                 elif op == "between" and hi and lo:
                     lo_v, hi_v = (val if isinstance(val, (list, tuple)) and len(val) == 2 else (None, None))
                     parts.append(f"{name} sampled p05..p95 {min(lo).normalize():f}..{max(hi).normalize():f} vs between {lo_v}..{hi_v}")
+    reg = result.get("service_registration")
+    k = reg.get("ledger_trials_for_scope") if isinstance(reg, dict) else None
+    n = (result.get("trials") or {}).get("count") if isinstance(result.get("trials"), dict) else None
+    if isinstance(k, int) and not isinstance(k, bool):
+        parts.append(f"trials: session {n if n is not None else '?'}, service ledger {k} (1.6 uses the larger)")
     return f"{result.get('evidence_status')}: " + "; ".join(parts)
 
 
 def _finish_ir_backtest(out: dict, planned: dict, run_dir: Any, session_id: str | None, warnings: list[str],
-                        supersedes: str | None = None) -> None:
+                        supersedes: str | None = None, unimplemented_rules: list[str] | None = None) -> None:
     """A finished ``ir_backtest`` envelope: ``evidence_status`` first and a ``summary`` in ``result``, ``evidence_dir``
     and ``ignored_args`` on the envelope, the run appended to the conversation's private ledger."""
     result = out.get("result")
@@ -632,7 +637,7 @@ def _finish_ir_backtest(out: dict, planned: dict, run_dir: Any, session_id: str 
         try:
             from src.tools import alphakeel_research_ledger as ledger
 
-            ledger.record(session_id, run_dir, result, rel, supersedes=supersedes)
+            ledger.record(session_id, run_dir, result, rel, supersedes=supersedes, unimplemented_rules=unimplemented_rules)
         except Exception as e:  # noqa: BLE001 - the ledger never fails the backtest
             warnings.append(f"trial ledger: {e.__class__.__name__}: {str(e)[:300]}")
 
@@ -664,7 +669,13 @@ class AlphakeelResearchTool(BaseTool):
         "The local ir_backtest fills the maker leg as taker, a conservative cost bound; maker fills are modelled only in "
         "AlphaKeel's conservative runs. One maker leg puts the round trip at about 0.17%, versus 0.20% all taker. Files for "
         "intents/strategy/profile are paths on disk. Returns ids, digests and summaries only; a pass never certifies "
-        "strategy logic. Relative file paths in args resolve against the run directory. Needs ALPHAKEEL_RESEARCH_URL and a service token in the environment."
+        "strategy logic. Relative file paths in args resolve against the run directory. "
+        "Backtest realism: the ir_backtest touch is synthesised from 1m close prices with a spread of 0 and charges taker fees only, so costs are understated; "
+        "funding uses the latest settled rate instead of the forecast a live scan uses (the run card's `approximations` lists them all). "
+        "The IR can only use its fixed feature set (ir.FEATURES; see the feature list returned by ir_validate): Alpha Zoo factors cannot go into an IR; "
+        "to use a factor, use the general backtest tool instead. "
+        "If a rule the user asked for cannot be expressed in the IR, you must list it in args.unimplemented_rules for ir_backtest; "
+        "one name is only for one IR: if you change the IR's content, change its name. Needs ALPHAKEEL_RESEARCH_URL and a service token in the environment."
     )
     parameters = {
         "type": "object",
@@ -709,8 +720,14 @@ class AlphakeelResearchTool(BaseTool):
                     },
                     "pack": {"type": "string"},
                     "accept_partial": {"type": "boolean"},
+                    "unimplemented_rules": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": "ir_backtest: rules the user asked for that the IR cannot express and this backtest therefore did "
+                                       "not implement, one entry per rule (用户要求但 IR 无法表达、因而本次回测没有实现的规则，逐条写出). "
+                                       "Only for the ledger; not sent to the CLI.",
+                    },
                 },
-                "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, selection (declared, or {pit_membership: {top_n, table_sha256?}}: dataset packs and ir_backtest), pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode; IR: ir, out, run, fees, capital_base, pack_dir, verbose, research_credential; ir_backtest: ir (required), start_ms, end_ms (optional), fees (optional), accept_partial, selection, capital_base, pack_dir, verbose, supersedes_contract (reason, at least 10 characters, when this IR is a different strategy from the session's research contract) -- instruments, step_minutes, trials, trials_evidence are derived and ignored if given; robustness (export: directory with robustness.json); ir_robustness: run, ir, instruments, pack_dir, is_start_ms, is_end_ms, oos_start_ms, oos_end_ms, oos_pack_dir, filter ({kind: excluded_bases, bases: [...]} or a JSON file), permutations, seed, permutation_seed, workers, step_minutes, prior_trials, wf_folds, wf_test_days, wf_min_train_days; ir_crosscheck: ir, run, timeout_s.",
+                "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, selection (declared, or {pit_membership: {top_n, table_sha256?}}: dataset packs and ir_backtest), pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode; IR: ir, out, run, fees, capital_base, pack_dir, verbose, research_credential; ir_backtest: ir (required), start_ms, end_ms (optional), fees (optional), accept_partial, selection, capital_base, pack_dir, verbose, supersedes_contract (reason, at least 10 characters, when this IR is a different strategy from the session's research contract), unimplemented_rules (list of strings, ledger only) -- instruments, step_minutes, trials, trials_evidence are derived and ignored if given; robustness (export: directory with robustness.json); ir_robustness: run, ir, instruments, pack_dir, is_start_ms, is_end_ms, oos_start_ms, oos_end_ms, oos_pack_dir, filter ({kind: excluded_bases, bases: [...]} or a JSON file), permutations, seed, permutation_seed, workers, step_minutes, prior_trials, wf_folds, wf_test_days, wf_min_train_days; ir_crosscheck: ir, run, timeout_s.",
             },
         },
         "required": ["action"],
@@ -804,5 +821,7 @@ class AlphakeelResearchTool(BaseTool):
             out["next"] = _MARKET_BLOCKED_NEXT
         if planned is not None:
             _finish_ir_backtest(out, planned, session_run_dir, _session_id(self), warnings,
-                                supersedes=args.get("supersedes_contract") if isinstance(args.get("supersedes_contract"), str) else None)
+                                supersedes=args.get("supersedes_contract") if isinstance(args.get("supersedes_contract"), str) else None,
+                                unimplemented_rules=[x for x in args.get("unimplemented_rules") if isinstance(x, str)]
+                                if isinstance(args.get("unimplemented_rules"), list) else None)
         return _dump(out, warnings)

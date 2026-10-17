@@ -80,10 +80,14 @@ def contract_of_ir(card: dict) -> dict:
     """The contract an IR run card measured (``instruments`` rows with ``market`` and ``base``)."""
     insts = [i for i in card.get("instruments") or [] if isinstance(i, dict)]
     classes = [str(i.get("market") or "").lower() for i in insts]
-    return {"engine": "ir", "direction": "long_short",
-            "instrument_class": _combine(c if c in ("perp", "spot") else "unknown" for c in classes) if classes else "unknown",
-            "assets": sorted({str(i["base"]).upper() for i in insts if i.get("base")}),
-            "interval": _interval_of(card.get("interval"))}
+    out = {"engine": "ir", "direction": "long_short",
+           "instrument_class": _combine(c if c in ("perp", "spot") else "unknown" for c in classes) if classes else "unknown",
+           "assets": sorted({str(i["base"]).upper() for i in insts if i.get("base")}),
+           "interval": "1m" if card.get("view") else _interval_of(card.get("interval"))}  # the IR backtest reads 1m klines
+    w = card.get("window")
+    if isinstance(w, dict) and w.get("start_day") and w.get("end_day"):
+        out["window"] = f"{w['start_day']}..{w['end_day']}"
+    return out
 
 
 def contract_diff(old: dict, new: dict) -> list[str]:
@@ -97,4 +101,7 @@ def contract_diff(old: dict, new: dict) -> list[str]:
     old_i, new_i = _interval_of(old.get("interval")), _interval_of(new.get("interval"))
     if UNKNOWN not in (old_i, new_i) and old_i != new_i:
         fields.append("interval")
+    old_w, new_w = old.get("window"), new.get("window")
+    if old_w and new_w and old_w != new_w:
+        fields.append("window")
     return fields

@@ -693,6 +693,14 @@ class _PolicyMixin:
             "reason": reason,
             "claim": figure.text,
             "message": f"{figure.text} {message}.",
+            # A count is never a price; an observed or proposed figure may be one even
+            # without a currency mark ("现价 9.999"), so it still earns a price fetch.
+            "price_like": role != "count"
+            and bool(
+                figure.currency
+                or getattr(figure, "column", None)
+                or role in ("observed", "proposed")
+            ),
         }
         issue.update(extra)
         return issue

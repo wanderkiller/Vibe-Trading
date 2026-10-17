@@ -17,6 +17,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import time
 import uuid
 from dataclasses import dataclass, replace
@@ -31,6 +32,9 @@ if TYPE_CHECKING:  # the HTTP client is only needed to download; strategies read
     from .client import Client
 
 CHUNK = 8 << 20  # bounded download size per request
+CACHE_MAX_BYTES_ENV = "ALPHAKEEL_PACK_CACHE_MAX_BYTES"
+CACHE_MAX_BYTES_DEFAULT = 8 * 1024**3
+CACHE_EVICT_MIN_AGE_S = 2 * 3600  # a unit used within this time is never evicted (a run may be reading it)
 
 try:  # optional: without it the service decompresses (encoding=identity) and the client verifies the content digest
     import zstandard as _zstd
@@ -232,8 +236,16 @@ class Instrument:
 class PackCache:
     """Local cache of verified pack content. A partially downloaded or unverified file is never a cache hit."""
 
-    def __init__(self, root: str | os.PathLike):
+    def __init__(self, root: str | os.PathLike, max_bytes: int | None = None):
         self.root = Path(root)
+        if max_bytes is None:
+            try:
+                max_bytes = int(os.environ.get(CACHE_MAX_BYTES_ENV, ""))
+                if max_bytes < 0:
+                    raise ValueError
+            except ValueError:
+                max_bytes = CACHE_MAX_BYTES_DEFAULT
+        self.max_bytes = max_bytes
         (self.root / "content").mkdir(parents=True, exist_ok=True)
         (self.root / "locks").mkdir(parents=True, exist_ok=True)
         # a writer killed mid-write (tool timeout: SIGKILL) leaves its unique temporary file behind; an hour-old one is
@@ -243,6 +255,46 @@ class PackCache:
             with contextlib.suppress(OSError):
                 if part.stat().st_mtime < stale:
                     part.unlink()
+        with contextlib.suppress(Exception):
+            self.evict()
+
+    def evict(self, now: float | None = None) -> int:
+        """Delete the least recently used cache units until the cache is within ``max_bytes``; returns the bytes deleted.
+
+        Units are verified ``content/`` files (never ``*.part``) and the first-level directories of ``spill/`` (derived
+        caches, one unit each). Everything can be re-downloaded or recomputed and is verified again on use. A unit whose
+        mtime is younger than :data:`CACHE_EVICT_MIN_AGE_S` is kept. ``locks/`` is never touched."""
+        now = time.time() if now is None else now
+        units: list[tuple[float, int, Path]] = []
+        with contextlib.suppress(OSError):
+            for f in (self.root / "content").iterdir():
+                with contextlib.suppress(OSError):
+                    if f.is_file() and not f.name.endswith(".part"):
+                        st = f.stat()
+                        units.append((st.st_mtime, st.st_size, f))
+        with contextlib.suppress(OSError):
+            for d in (self.root / "spill").iterdir():
+                with contextlib.suppress(OSError):
+                    if d.is_dir():
+                        size = sum(x.stat().st_size for x in d.rglob("*") if x.is_file())
+                        units.append((d.stat().st_mtime, size, d))
+        total = sum(u[1] for u in units)
+        freed = 0
+        for mtime, size, path in sorted(units, key=lambda u: u[0]):
+            if total <= self.max_bytes:
+                break
+            if now - mtime < CACHE_EVICT_MIN_AGE_S:
+                continue
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+            except OSError:
+                continue
+            total -= size
+            freed += size
+        return freed
 
     def content_path(self, content_sha: str) -> Path:
         return self.root / "content" / content_sha
@@ -262,6 +314,8 @@ class PackCache:
         csha = obj["content_sha256"]
         dst = self.content_path(csha)
         if self.has(csha):
+            with contextlib.suppress(OSError):
+                os.utime(dst)  # recently used: evict() removes the least recently used first
             return dst
         use_zstd = obj["codec"] == "jsonl+zstd" and _zstd is not None
         identity = obj["codec"] == "jsonl+zstd" and not use_zstd

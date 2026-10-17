@@ -1161,6 +1161,26 @@ class _EvidenceMixin:
                 )
                 remaining -= 1
                 return
+            if tool_name == "alphakeel_research" and isinstance(value, str):
+                # Research results spell numbers as decimal strings ("0.0005").
+                coerced = _coerce_csv_number(value)
+                if coerced is not None:
+                    self._evidence.append(
+                        EvidenceRecord(
+                            call_id=call_id,
+                            tool=tool_name,
+                            symbol=symbol,
+                            source=source,
+                            timestamp=timestamp,
+                            field=path or "value",
+                            value=coerced,
+                            status="observed",
+                            currency=_infer_currency(symbol or ""),
+                            venue=_infer_venue(symbol or ""),
+                        )
+                    )
+                    remaining -= 1
+                return
             if isinstance(value, dict):
                 local_timestamp = next(
                     (
@@ -1261,6 +1281,7 @@ class _EvidenceMixin:
             record
             for record in self._evidence
             if record.status == "observed"
+            and record.tool != "alphakeel_research"
             and record.field in _PRICE_FIELDS
             and record.value is not None
         ]

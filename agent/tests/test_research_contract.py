@@ -85,3 +85,18 @@ def test_contract_diff_interval() -> None:
     assert contract_diff(old, daily) == [] and contract_diff(old, minute) == []
     assert contract_of_ir({"interval": "4H", "instruments": []})["interval"] == "4H"
     assert contract_of_ir({"instruments": []})["interval"] == "unknown"
+
+
+def test_contract_of_ir_reads_1m_from_the_view_and_the_window_from_the_card() -> None:
+    card = {**_ir("BTC"), "view": {"kind": "dataset"}, "window": {"start_day": "2026-01-01", "end_day": "2026-06-29"}}
+    c = contract_of_ir(card)
+    assert c["interval"] == "1m" and c["window"] == "2026-01-01..2026-06-29"
+    assert "window" not in contract_of_ir(_ir("BTC"))
+
+
+def test_contract_diff_window() -> None:
+    a = {**contract_of_ir(_ir("BTC")), "window": "2026-01-01..2026-06-29"}
+    b = {**a, "window": "2026-02-01..2026-06-29"}
+    assert contract_diff(a, b) == ["window"]
+    assert contract_diff(a, a) == []
+    assert contract_diff(a, contract_of_ir(_ir("BTC"))) == []  # one side has no window: not a change

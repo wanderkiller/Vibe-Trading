@@ -132,7 +132,7 @@ def row_estimate(n_instruments: int, window_minutes: int) -> int:
     return n_instruments * (window_minutes + 1440 + math.ceil(window_minutes / 60))
 
 
-def check_rows(n_instruments: int, start_ms: int, end_ms: int, max_rows: Any) -> None:
+def check_rows(n_instruments: int, start_ms: int, end_ms: int, max_rows: Any, n_venues: int | None = None) -> None:
     """Refuse before freezing a pack the service would refuse (:func:`row_estimate` over ``max_rows``)."""
     if isinstance(max_rows, bool) or not isinstance(max_rows, int):
         return
@@ -140,8 +140,11 @@ def check_rows(n_instruments: int, start_ms: int, end_ms: int, max_rows: Any) ->
     if estimate > max_rows:
         # the longest whole-day window with row_estimate <= max_rows: n * (1464 * D + 1440) <= max_rows
         days = max((max_rows // n_instruments - 1440) // 1464, 0)
+        minutes = (end_ms - start_ms) // MINUTE_MS
+        k = max_rows // (minutes + 1440 + math.ceil(minutes / 60))  # the most instruments with row_estimate <= max_rows
+        alt = f"at most {k} instruments" + (f" ({k // 2} bases on 2 venues)" if n_venues == 2 and k % 2 == 0 else "")
         raise ValueError(f"the pack would hold ~{estimate} rows (limit {max_rows}): with {n_instruments} instruments the window "
-                         f"can be at most {days} days")
+                         f"can be at most {days} days; or, for this window, {alt}")
 
 
 def _fee_table(v: Any) -> dict | None:
@@ -195,8 +198,8 @@ def plan(args: dict[str, Any], ir_doc: dict, who: dict) -> dict[str, Any]:
     a = parse_args(args)
     start, end = window(a, (who or {}).get("holdout_cutoff_ms"))
     insts = instruments(ir_doc)
-    check_rows(len(insts), start, end, ((who or {}).get("datasets") or {}).get("max_rows"))
     venues = list(dict.fromkeys(d["venue"] for d in insts))
+    check_rows(len(insts), start, end, ((who or {}).get("datasets") or {}).get("max_rows"), len(venues))
     step = step_minutes(start, end)
     fee_table, source = fees(a, venues, ir_doc)
     # one definition for this path and the CLI's (step <= 2, a spot maker leg, a fee row without maker.perp)

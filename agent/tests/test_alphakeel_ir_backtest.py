@@ -1531,3 +1531,50 @@ def test_the_zero_trade_summary_ranks_only_in_universe_rejections():
     assert "top rejections entry:funding_hourly_net 40, cooldown 2 (plus 900 outside the universe)" in text
     only_outside = _summary({"counts": {"closed": 0}, "diagnostics": {"rejections": {"universe:shape": 900}, "entry_features": {}}})
     assert "0 trades: all 900 rejections outside the universe" in only_outside
+
+
+def test_check_rows_names_the_instrument_count_that_fits():
+    import math
+
+    from src.tools import alphakeel_ir_request as req
+
+    minute = 60_000
+    window = 100 * 1440
+    k = 12_000_000 // (window + 1440 + math.ceil(window / 60))
+    assert req.row_estimate(k, window) <= 12_000_000 < req.row_estimate(k + 1, window)
+    with pytest.raises(ValueError, match=rf"can be at most \d+ days; or, for this window, at most {k} instruments$"):
+        req.check_rows(k + 1, 0, window * minute, 12_000_000)
+    with pytest.raises(ValueError) as ei:
+        req.check_rows(k + 1, 0, window * minute, 12_000_000, 2)
+    assert str(ei.value).endswith(f"at most {k} instruments ({k // 2} bases on 2 venues)" if k % 2 == 0 else f"at most {k} instruments")
+
+
+def test_spill_reuse_refreshes_directory_mtime(tmp_path):
+    import os
+
+    pd = export_dir(tmp_path, golden_built())
+    insts = [Inst("okx", "perp", "BTC-USDT-SWAP"), Inst("binance", "perp", "BTCUSDT")]
+    pack = Pack.from_directory(pd)
+    pack.client = object()
+    ir_backtest.spill_klines(pack, insts, START, END, tmp_path / "w1")
+    sdir = next(d for d in (pd / "spill").iterdir() if d.is_dir())
+    os.utime(sdir, (1_000_000, 1_000_000))
+    ir_backtest.spill_klines(pack, insts, START, END, tmp_path / "w2")
+    assert sdir.stat().st_mtime > 1_000_000
+
+
+def test_ir_backtest_writes_ledger_trials_for_scope_only_when_the_service_sends_it(tmp_path):
+    from tests.test_alphakeel_validation_v2 import FEES, FakeService, golden_ir
+
+    pd = export_dir(tmp_path, golden_built())
+    kw = dict(start_ms=START, end_ms=END, pack_dir=pd, register=True, trials=1, fees=FEES)
+    old = ir_backtest.backtest(FakeService(), golden_ir(), [BN, OK], out_dir=tmp_path / "o", **kw)
+    assert "ledger_trials_for_scope" not in old["service_registration"]
+
+    class New(FakeService):
+        def record_trial(self, body, *, key=None):
+            return {**super().record_trial(body, key=key), "ledger_trials_for_scope": 7}
+
+    new = ir_backtest.backtest(New(), golden_ir(), [BN, OK], out_dir=tmp_path / "n", **kw)
+    assert new["service_registration"]["ledger_trials_for_scope"] == 7
+    assert json.loads((tmp_path / "n" / "run_card.json").read_text())["service_registration"]["ledger_trials_for_scope"] == 7

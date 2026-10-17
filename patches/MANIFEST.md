@@ -1278,8 +1278,9 @@ card lines follow the local engine ledger (local-only).
 **Purpose.** In a live session "10 个币" / "扩到 20 个币" declared as `count` were read as currency (`_is_currency_word`
 accepted any short CJK run holding "币"), judged against BTC prices and cut to "（略※）". Separately a
 `2026-02-19 | count | window start date | ref` row was `figures_block_malformed`, and release dropped the whole block,
-so every correctly declared number in it was cut too. Now a CJK run opening with a classifier (`_CJK_CLASSIFIERS`) or
-"币种"/"币对" is not a currency word (人民币, 港币, 美元, 元 unchanged); an ISO-date value cell is skipped by
+so every correctly declared number in it was cut too. Now a classifier (`_CJK_CLASSIFIERS`) followed by "币…", or
+"币种"/"币对", is not a currency word, while a classifier followed by a real currency word ("3 个美元") still is (人民币,
+港币, 美元, 元 unchanged); an ISO-date value cell is skipped by
 `parse_figures_block`; release cuts only the unreadable lines (`strip_malformed_lines`) and falls back to the whole block
 only if a malformed line remains. Prose dates were already exempt (`_DATE_RE` hard spans in `scan_figures`). Upstreamable
 as a bug fix.
@@ -1292,3 +1293,20 @@ as a bug fix.
 
 **Commits.** (this commit).
 
+## `research-cleanup` — money words around classifiers and approximations, price-only recovery, citable AlphaKeel decimals, bounded pack cache
+
+**Purpose.** Findings of the 2026-10-17 replay audit. Grounding: "3 个 美元" (a space after the classifier), "3 美元左右"
+/ "3 日元以上" (an approximation suffix in `_APPROX_SUFFIXES`) are money; "次元" is not (`_NON_CURRENCY_WORDS`); a declared
+value "10 个币" is a plain number. AlphaKeel research results carry decimals as strings; they are now observed evidence
+(never price records), so a fee of 0.0005 can be cited. A figure issue says whether it is `price_like` (a count never is);
+grounding recovery fetches market data only for price-like gaps, and the release note names the OHLC range and the
+entry-price hint only when a price figure was cut (`price_cut`). The Alpha Zoo tool says its factors cannot enter an
+AlphaKeel IR. The local pack cache is bounded (`ALPHAKEEL_PACK_CACHE_MAX_BYTES`, default 8 GiB; oldest first, nothing
+touched in the last 2 h), since every object is re-downloadable and digest-checked. Local research modules (screen,
+ledger, research contract, IR backtest) changed alongside; they are not upstream files.
+
+**Files.**
+- `agent/src/tools/alpha_zoo_tool.py`
+- `agent/tests/test_alphakeel_packfile.py`
+
+**Commits.** (this commit).
