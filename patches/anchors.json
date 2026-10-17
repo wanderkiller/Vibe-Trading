@@ -2062,7 +2062,9 @@
     "agent/tests/test_memory_scope.py",
     "agent/tests/test_grounding_verdict_words.py",
     "agent/tests/test_order_code_guard.py",
-    "agent/tests/test_system_prompt_cache_stability.py"
+    "agent/tests/test_system_prompt_cache_stability.py",
+    "agent/tests/test_agent_grounding.py",
+    "agent/tests/test_agent_output_discipline.py"
    ],
    "anchors": [
     {

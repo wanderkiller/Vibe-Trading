@@ -524,7 +524,7 @@ def test_proposed_outside_the_range_passes_with_a_derivation(tmp_path: Path) -> 
 def test_cited_needs_a_source_and_may_not_pose_as_a_print(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     ledger.ingest_tool_result(
-        tool_name="web_search", arguments={}, result='{"results": []}', call_id="web-1", success=True
+        tool_name="web_search", arguments={}, result='{"results": [{"text": "Sharpe 1.8"}]}', call_id="web-1", success=True
     )  # a cited figure needs a retrieval this session made
 
     with_source = ledger.validate_final_answer(

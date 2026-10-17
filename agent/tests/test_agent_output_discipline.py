@@ -301,7 +301,12 @@ class TestTheGateDoesNotKillCorrectAnswers:
         could not tell "the paper reports" from "the backtest reports" without
         naming every subject by hand. The model declares the role instead.
         """
-        cited = _ledger(tmp_path).validate_final_answer(
+        cited_ledger = _ledger(tmp_path)
+        cited_ledger.ingest_tool_result(
+            tool_name="web_search", arguments={}, result='{"results": [{"text": "YTD +12%"}]}',
+            call_id="web-1", success=True,
+        )  # a cited figure needs a retrieved value
+        cited = cited_ledger.validate_final_answer(
             f"{_GROUNDED_ANSWER}\n据券商研报，600519.SH 年内涨约 12%。"
             "\n\n```figures\n212.5 | observed | close | q1\n"
             "12% | cited | 券商研报 2026-08\n```"

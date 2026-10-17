@@ -184,7 +184,7 @@ def test_a_source_only_the_note_names_is_no_citation(tmp_path: Path) -> None:
     """The block is stripped before release, so the reader must see the source."""
     ledger = _ledger(tmp_path, MARKET_A)
     ledger.ingest_tool_result(
-        tool_name="web_search", arguments={}, result='{"results": []}', call_id="web-1", success=True
+        tool_name="web_search", arguments={}, result='{"results": [{"text": "NAV 9.99 and Sharpe 1.8"}]}', call_id="web-1", success=True
     )  # a cited figure needs a retrieval this session made
     row = "9.99 | cited | 新浪财经"
 

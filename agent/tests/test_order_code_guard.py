@@ -31,11 +31,33 @@ _ORDER_SNIPPETS = [
     "post('/v5/order/create', body)",
     "await trading_place_order(args)",
     "broker.submit_order(order)",
+    "ex.createOrder(s, 'market', 'buy', 1)",
+    "ex.CREATE_ORDER('BTC/USDT', 'market', 'buy', 1)",
+    "getattr(ex, 'create_order')(s, 'market', 'buy', 1)",
+    "client.futures_create_order(symbol='BTCUSDT')",
+    "ex.create_market_buy_order(s, 1)",
+    "ex.create_post_only_order(s, 1)",
+    "o = ex.order_market_buy(symbol=s, quantity=1)",
+    "o = client.order_limit_sell(symbol=s)",
+    "ex.placeOrder(s)",
+    "getattr(ex, 'place_order')",
+    "ex.submitOrder(s)",
+    "ex.fapiPrivatePostOrder({})",
+    "ex.private_post_order({})",
+    "ex.privatePostTradeOrder({})",
+    "requests.post('https://x/sapi/v1/margin/order')",
+    "requests.post('https://x/papi/v1/um/order')",
+    "requests.post('https://x/dapi/v1/order')",
+    "requests.post('https://x/api/v3/order/test')",
 ]
 _ALLOWED = [
     "import ccxt\nex = ccxt.okx()\nbars = ex.fetch_ohlcv('BTC/USDT:USDT', '1h', limit=500)\n",
     "class SignalEngine:\n    def generate(self, data_map):\n        return {c: df['close'].pct_change().rolling(20).mean().gt(0).astype(float) for c, df in data_map.items()}\n",
     "# no orders here: this only backtests\nreorder = sorted(items)\n",
+    "df.sort_values(order)",
+    "reorder_columns(df)",
+    "order_book_depth = 5",
+    "url = base + '/api/v3/depth'",
 ]
 
 
@@ -71,3 +93,12 @@ def test_edit_file_refuses_and_leaves_the_file_unchanged(tmp_path: Path) -> None
     assert target.read_text(encoding="utf-8") == "DRY_RUN = True\n"
     ok = json.loads(EditFileTool().execute(path="signal_engine.py", old_text="True", new_text="False", run_dir=str(tmp_path)))
     assert ok["status"] == "ok" and target.read_text(encoding="utf-8") == "DRY_RUN = False\n"
+
+
+def test_edit_file_checks_the_whole_replaced_content(tmp_path: Path) -> None:
+    """An edit may complete order code out of pieces already in the file; new_text alone looks harmless."""
+    target = tmp_path / "signal_engine.py"
+    target.write_text("ex.foo(s)\n", encoding="utf-8")
+    body = json.loads(EditFileTool().execute(path="signal_engine.py", old_text="foo", new_text="create_order", run_dir=str(tmp_path)))
+    assert body["status"] == "error" and body["error_code"] == "order_code_refused"
+    assert target.read_text(encoding="utf-8") == "ex.foo(s)\n"

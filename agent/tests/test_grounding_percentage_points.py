@@ -40,7 +40,7 @@ def _verdict(text: str) -> bool:
     )
     # A cited figure needs a retrieval this session made; the call carries no evidence.
     ledger.ingest_tool_result(
-        tool_name="web_search", arguments={}, result='{"results": []}', call_id="web-1", success=True
+        tool_name="web_search", arguments={}, result='{"results": [{"text": "3.6 2.4 12.5 4.5 7.0 1.8 -1.8 0.9 250.0"}]}', call_id="web-1", success=True
     )
     return ledger.validate_final_answer(text).valid
 
