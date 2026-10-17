@@ -482,7 +482,7 @@ _TEXT = {
     True: {"title": "**研究结果（系统根据试验账本生成，非模型撰写）**", "fees": "费率口径：", "per_fill": "每笔",
            "default": "公开基础档 taker（工具默认）", "request": "请求给定费率",
            "summary": "本会话 IR {n} 个版本 / {m} 次回测：通过初筛 {p}，未通过 {f}，证据不足 {i}",
-           "head": "| 版本 | 窗口 | 成交 | 净收益 USDT | 手续费 USDT | 资金费 USDT | 最大回撤 | 判定 |",
+           "head": "| 版本 | 窗口 | 成交 | 净收益 USDT | 价差盈亏 USDT | 手续费 USDT | 资金费 USDT | 最大回撤 | 判定 |",
            "passed": "通过初筛，1.4–1.13 未评估", "failed": "未通过初筛（{ids}）", "insufficient": "证据不足（{ids}）",
            "more": "另有 {n} 次回测见账本", "tampered": "，已改动 {n}", "tampered_row": "run card 已改动或缺失",
            "not_evaluated": "1.4–1.13（成本压力、DSR、PBO、邻域、走步等）未评估：需要 ir_robustness。",
@@ -491,13 +491,14 @@ _TEXT = {
             "fees": "Fee basis: ", "per_fill": "per fill", "default": "public base-tier taker (tool default)",
             "request": "fees given in the request",
             "summary": "This session's IR: {n} versions / {m} backtests: passed screen {p}, failed screen {f}, insufficient {i}",
-            "head": "| Version | Window | Trades | Net USDT | Fees USDT | Funding USDT | Max drawdown | Status |",
+            "head": "| Version | Window | Trades | Net USDT | Price PnL USDT | Fees USDT | Funding USDT | Max drawdown | Status |",
             "passed": "passed screen; 1.4–1.13 not evaluated", "failed": "failed screen ({ids})", "insufficient": "insufficient ({ids})",
             "more": "{n} more backtests in the ledger", "tampered": ", modified {n}", "tampered_row": "run card modified or missing",
             "not_evaluated": "1.4–1.13 (cost stress, DSR, PBO, neighbours, walk-forward, ...) not evaluated: needs ir_robustness.",
             "ledger": "Ledger: {file}"},
 }
 _SCREEN_GROUPS = {"insufficient": ("1.1", "1.2"), "failed_screen": ("1.3", "1.16")}
+_CLASS_ORDER = ("passed_screen", "failed_screen", "insufficient")
 
 
 def _dec(v: Any) -> Decimal | None:
@@ -574,7 +575,12 @@ def _ir_section(session_id: str, zh: bool) -> list[str]:
 
     Header N (distinct ``strategy_id``) and M (backtests) count every private ledger row, as ``trials.count`` does. A row
     whose run card was changed or is missing keeps its line (name and ``strategy_id`` from the ledger, ``—`` for every
-    figure, the status says so), sorts last, is always shown and counts in no screen class."""
+    figure, the status says so), sorts last, is always shown and counts in no screen class.
+
+    Rows sort by screen class (passed, failed, insufficient, other), then net descending. Every row whose sample is large
+    enough to be screened (passed or failed, i.e. 1.1/1.2 held) is always shown, so a large-sample loss is never cut in
+    favour of small-sample winners (2026-10-17 research session 90b12bd25f7a: the 288-trade run fell off a top-10-by-net
+    card). ``价差盈亏`` is ``amounts.price_pnl_closed``, the gross the fees are weighed against."""
     rows_all = ledger_rows(session_id)
     if not rows_all:
         return []
@@ -591,12 +597,13 @@ def _ir_section(session_id: str, zh: bool) -> list[str]:
     def key(i: int):
         c = entries[i][1]
         if c is None:
-            return (1, Decimal(0))
+            return (len(_CLASS_ORDER) + 1, Decimal(0))
         d = _dec((c.get("amounts") or {}).get("equity_end"))
-        return (0, -(Decimal("-Infinity") if d is None else d))
+        rank = _CLASS_ORDER.index(_status(c)) if _status(c) in _CLASS_ORDER else len(_CLASS_ORDER)
+        return (rank, -(Decimal("-Infinity") if d is None else d))
 
     order = sorted(range(len(entries)), key=key)
-    always = {i for i, (_, c) in enumerate(entries) if c is None or _status(c) == "passed_screen"}
+    always = {i for i, (_, c) in enumerate(entries) if c is None or _status(c) in ("passed_screen", "failed_screen")}
     shown = set(order[:CARD_MAX_ROWS]) | always
     rows = []
     for i in order:
@@ -605,16 +612,17 @@ def _ir_section(session_id: str, zh: bool) -> list[str]:
         row, c = entries[i]
         if c is None:
             name = f"{row.get('name') or '—'} ({str(row.get('strategy_id') or '')[:8]})"
-            rows.append(f"| {name} | — | — | — | — | — | — | {t['tampered_row']} |")
+            rows.append(f"| {name} | — | — | — | — | — | — | — | {t['tampered_row']} |")
             continue
         name = f"{c.get('name') or '—'} ({str(c.get('strategy_id') or '')[:8]})"
         rows.append(f"| {name} | {_window(c.get('window'))} | {(c.get('counts') or {}).get('closed', '—')} | "
                     f"{fmt_amount((c.get('amounts') or {}).get('equity_end'))} | "
+                    f"{fmt_amount((c.get('amounts') or {}).get('price_pnl_closed'))} | "
                     f"{fmt_amount((c.get('amounts') or {}).get('fees'))} | {fmt_amount((c.get('amounts') or {}).get('funding'))} | "
                     f"{fmt_fraction((c.get('max_drawdown') or {}).get('fraction_of_capital'))} | {_verdict(c, t)} |")
     summary = t["summary"].format(n=len(versions), m=len(entries), p=counts["passed_screen"], f=counts["failed_screen"],
                                   i=counts["insufficient"]) + (t["tampered"].format(n=bad) if bad else "")
-    lines = ["---", t["title"], *_fee_lines(cards, t), summary, t["head"], "|---|---|---|---|---|---|---|---|", *rows]
+    lines = ["---", t["title"], *_fee_lines(cards, t), summary, t["head"], "|---|---|---|---|---|---|---|---|---|", *rows]
     if len(entries) > len(rows):
         lines.append(t["more"].format(n=len(entries) - len(rows)))
     lines += [t["not_evaluated"], t["ledger"].format(file=TRIALS_EVIDENCE_FILE)]

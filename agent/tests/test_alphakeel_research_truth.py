@@ -309,17 +309,17 @@ def test_result_card_rows_order_and_language(session) -> None:
     assert lines[3] == "本会话 IR 3 个版本 / 4 次回测：通过初筛 1，未通过 1，证据不足 2"
     rows = [ln for ln in lines if ln.startswith("| carry")]
     assert rows == [
-        "| carry-wide (ir-bbbbb) | 2026-01-01→06-29 | 40 | 50.00 | 300.43 | 190.11 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
-        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −1.00 | 300.43 | 190.11 | 0.27% | 证据不足（1.2） |",
-        "| carry-tight (ir-ccccc) | 2026-01-01→06-29 | 40 | −10.00 | 300.43 | 190.11 | 0.27% | 未通过初筛（1.3） |",
-        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −138.19 | 300.43 | 190.11 | 0.27% | 证据不足（1.2） |",
+        "| carry-wide (ir-bbbbb) | 2026-01-01→06-29 | 40 | 50.00 | −27.87 | 300.43 | 190.11 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
+        "| carry-tight (ir-ccccc) | 2026-01-01→06-29 | 40 | −10.00 | −27.87 | 300.43 | 190.11 | 0.27% | 未通过初筛（1.3） |",
+        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −1.00 | −27.87 | 300.43 | 190.11 | 0.27% | 证据不足（1.2） |",
+        f"| carry-high-hurdle ({s8}) | 2026-01-01→06-29 | 15 | −138.19 | −27.87 | 300.43 | 190.11 | 0.27% | 证据不足（1.2） |",
     ]
     assert "1.4–1.13（成本压力、DSR、PBO、邻域、走步等）未评估：需要 ir_robustness。" in lines
     assert lines[-1] == "账本：ir_trials_evidence.jsonl"  # no hypothesis id handed to the model
     assert "hyp_" not in zh
     en = render_card(SESSION_ID, False)
     assert "This session's IR: 3 versions / 4 backtests: passed screen 1, failed screen 1, insufficient 2" in en
-    assert "| carry-tight (ir-ccccc) | 2026-01-01→06-29 | 40 | −10.00 | 300.43 | 190.11 | 0.27% | failed screen (1.3) |" in en
+    assert "| carry-tight (ir-ccccc) | 2026-01-01→06-29 | 40 | −10.00 | −27.87 | 300.43 | 190.11 | 0.27% | failed screen (1.3) |" in en
     assert en.splitlines()[-1] == "Ledger: ir_trials_evidence.jsonl"
 
 
@@ -375,14 +375,14 @@ def test_p1_2_the_card_shows_only_verified_private_ledger_rows(session) -> None:
     s8 = session["sid"][:8]
     assert "500.00" not in card and "−138.19" not in card
     table = [ln for ln in lines if ln.startswith("| real-")]
-    assert table == ["| real-b (ir-bbbbb) | 2026-01-01→06-29 | 40 | 12.50 | 300.43 | 190.11 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
-                     f"| real-a ({s8}) | — | — | — | — | — | — | run card 已改动或缺失 |"]
+    assert table == ["| real-b (ir-bbbbb) | 2026-01-01→06-29 | 40 | 12.50 | −27.87 | 300.43 | 190.11 | 0.27% | 通过初筛，1.4–1.13 未评估 |",
+                     f"| real-a ({s8}) | — | — | — | — | — | — | — | run card 已改动或缺失 |"]
     # N / M count every private ledger row (= trials.count); the changed row is in no screen class
     assert "本会话 IR 2 个版本 / 2 次回测：通过初筛 1，未通过 0，证据不足 0，已改动 1" in lines
     assert not any("未显示" in ln for ln in lines)
     en = L.render_card(SESSION_ID, False)
     assert "This session's IR: 2 versions / 2 backtests: passed screen 1, failed screen 0, insufficient 0, modified 1" in en
-    assert f"| real-a ({s8}) | — | — | — | — | — | — | run card modified or missing |" in en
+    assert f"| real-a ({s8}) | — | — | — | — | — | — | — | run card modified or missing |" in en
 
 
 def test_p1_3_fees_missing_a_venue_is_refused() -> None:
@@ -479,7 +479,7 @@ def test_r2_untouched_header_counts_with_a_changed_card(session) -> None:
     lines = L.render_card(SESSION_ID, True).splitlines()
     assert lines[3] == "本会话 IR 2 个版本 / 2 次回测：通过初筛 0，未通过 1，证据不足 0，已改动 1"
     table = [ln for ln in lines if ln.startswith("| v")]
-    assert table[-1] == "| vb (ir-bbbbb) | — | — | — | — | — | — | run card 已改动或缺失 |"
+    assert table[-1] == "| vb (ir-bbbbb) | — | — | — | — | — | — | — | run card 已改动或缺失 |"
 
 
 def test_r2_build_registry_survives_a_failing_alphakeel_import(monkeypatch, caplog) -> None:
@@ -565,9 +565,24 @@ def test_card_has_fee_and_funding_columns(session) -> None:
 
     _run_tool(session, "a_ir", _card("ir-aaaaaaaaaa", "va", "-5", 40))
     zh, en = render_card(SESSION_ID, True).splitlines(), render_card(SESSION_ID, False).splitlines()
-    assert "| 版本 | 窗口 | 成交 | 净收益 USDT | 手续费 USDT | 资金费 USDT | 最大回撤 | 判定 |" in zh
-    assert "| Version | Window | Trades | Net USDT | Fees USDT | Funding USDT | Max drawdown | Status |" in en
-    assert "| va (ir-aaaaa) | 2026-01-01→06-29 | 40 | −5.00 | 300.43 | 190.11 | 0.27% | 未通过初筛（1.3） |" in zh
+    assert "| 版本 | 窗口 | 成交 | 净收益 USDT | 价差盈亏 USDT | 手续费 USDT | 资金费 USDT | 最大回撤 | 判定 |" in zh
+    assert "| Version | Window | Trades | Net USDT | Price PnL USDT | Fees USDT | Funding USDT | Max drawdown | Status |" in en
+    assert "| va (ir-aaaaa) | 2026-01-01→06-29 | 40 | −5.00 | −27.87 | 300.43 | 190.11 | 0.27% | 未通过初筛（1.3） |" in zh
+
+
+def test_a_large_sample_loss_is_not_cut_for_small_sample_winners(session) -> None:
+    """Regression (2026-10-17, research session 90b12bd25f7a): the card showed the top 10 rows by net, so a 288-trade
+    failed run fell off behind small-sample positive-net ones. Every screenable row (passed / failed) is always shown."""
+    from src.tools.alphakeel_research_ledger import CARD_MAX_ROWS, render_card
+
+    _run_tool(session, "a_big", _card("ir-big0000000", "big-loss", "-604.73", 288))
+    for k in range(CARD_MAX_ROWS + 2):
+        _run_tool(session, f"b_{k:02d}", _card(f"ir-small{k:04d}", f"small-{k}", str(10 + k), 15))
+    lines = render_card(SESSION_ID, True).splitlines()
+    rows = [ln for ln in lines if ln.startswith("| big-loss") or ln.startswith("| small-")]
+    assert rows[0].startswith("| big-loss (ir-big00) | 2026-01-01→06-29 | 288 | −604.73 | −27.87 |"), rows[0]
+    assert len(rows) == CARD_MAX_ROWS
+    assert "另有 3 次回测见账本" in lines
 
 
 def _real_child_env(monkeypatch) -> None:

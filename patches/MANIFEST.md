@@ -758,6 +758,9 @@ backtests" over every private ledger row (= `trials.count`); it never prints the
 run card changed or is missing keeps its line (ledger name, `—` figures, "run card modified or missing"), sorts last,
 is always shown and adds ", modified t" to the header; `out` may not be a directory that already holds a run card; the
 tool's import in `build_registry` is guarded (a failure logs a warning and skips the session injection).
+Card rows (2026-10-17, research session 90b12bd25f7a, where a 288-trade failed run fell off a top-10-by-net card): rows sort
+by screen class (passed, failed, insufficient), then net descending; every passed or failed row (1.1/1.2 held) is always
+shown; a `价差盈亏 USDT` / `Price PnL USDT` column (`amounts.price_pnl_closed`) shows the gross the fees are weighed against.
 Replay fixes (2026-10-14): the tool ran `cli.main` under `contextlib.redirect_stdout`, which is process-wide, so two
 conversations at once read each other's output (replay 4cada46ec0b4: `{"output": ""}`, one run in both ledgers). Every
 action now runs `python -m alphakeel_research` in a child process (as upstream's backtest tool / `src/core/runner.py`;
