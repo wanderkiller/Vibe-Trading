@@ -302,6 +302,7 @@ def _screen(run_dir: Path, *, trials: int, variant_sharpes: Sequence[float], pro
         "data_auditable": audit.get("auditable"),
         "non_auditable_sources": list(audit.get("non_auditable_sources") or []),
     }
+    facts["zoo_factors_used"], facts["zoo_names_in_code_not_used"] = _zoo_names(run_dir)
     funding = mval("funding_paid")
     if funding is not None:
         facts["funding_paid"] = str(Decimal(str(funding)))
@@ -315,6 +316,37 @@ def _screen(run_dir: Path, *, trials: int, variant_sharpes: Sequence[float], pro
     if include_returns:
         out["daily_returns"] = [float(r) for r in returns]
     return out
+
+
+def _zoo_names(run_dir: Path) -> tuple[list[str], list[str]]:
+    """``(zoo_factors_used, zoo_names_in_code_not_used)`` of the run's ``code/signal_engine.py``.
+
+    Used: the string-literal first arguments of ``zoo_factor(...)`` calls (``backtest.zoo_signal``). Not used: factor-library
+    names the code text mentions (comments included) that no such call backs, i.e. rules the model wrote by hand under a
+    library name. An unreadable or unparsable file gives two empty lists.
+    """
+    import ast
+
+    from src.agent.grounding.factor_names import scan_factor_refs
+
+    try:
+        text = (run_dir / "code" / "signal_engine.py").read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return [], []
+    used: set[str] = set()
+    try:
+        for node in ast.walk(ast.parse(text)):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
+            first = node.args[0]
+            if name == "zoo_factor" and isinstance(first, ast.Constant) and isinstance(first.value, str):
+                used.add(first.value)
+    except (SyntaxError, ValueError):
+        pass
+    named = {ref.canonical for ref in scan_factor_refs(text)}
+    return sorted(used), sorted(named - used)
 
 
 def _pair(r: tuple) -> tuple[Any, str]:

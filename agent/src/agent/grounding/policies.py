@@ -32,12 +32,14 @@ from src.agent.grounding.evidence import (
     _timestamp_matches_claim_date,
     tail_risk_identity,
 )
+from src.agent.grounding.factor_names import known_factor_ids, scan_factor_refs
 from src.agent.grounding.figures import (
     ROUNDED_BAND,
     Declaration,
     Figure,
     FiguresBlock,
     _lines_with_offsets,
+    parse_figures_block,
     segment_bounds,
 )
 
@@ -2028,6 +2030,18 @@ class _PolicyMixin:
                     "instrument",
                 )
             ]
+        if self._retrieval_calls == 0:
+            return [
+                self._figure_issue(
+                    "numeric_claim_conflict",
+                    figure,
+                    "cited",
+                    symbol,
+                    "citation_not_retrieved",
+                    "is declared cited, but this session retrieved no document, page, "
+                    "news or paper; retrieve the source, or drop the figure",
+                )
+            ]
         folded = line.casefold()
         if not any(token in folded for token in _note_tokens(declaration.note)):
             return [
@@ -2042,6 +2056,55 @@ class _PolicyMixin:
                 )
             ]
         return []
+
+    def _validate_factor_names(self, content: str) -> list[dict[str, Any]]:
+        """Reject a factor-library name the session's factor tools never returned.
+
+        A name that is not in the library at all, or is in it but no factor tool
+        returned it (and no backtest ran it through ``zoo_factor``), labels a rule
+        the model wrote by hand, or recalled from memory, as a library factor. The
+        figures block is stripped before release, so names inside it are not read.
+        """
+        block = parse_figures_block(content)
+        known = known_factor_ids()
+        issues: list[dict[str, Any]] = []
+        lines = _lines_with_offsets(content)
+        for ref in scan_factor_refs(content):
+            if any(start <= ref.span[0] and ref.span[1] <= end for start, end in block.spans):
+                continue
+            if ref.canonical in known and ref.canonical in self._factor_ids:
+                continue
+            line, offset = next(
+                ((text, start) for text, start in reversed(lines) if start <= ref.span[0]),
+                ("", 0),
+            )
+            if ref.canonical not in known:
+                reason = "not_in_factor_library"
+                message = (
+                    f"{ref.raw} is not a factor in alpha_zoo; describe the rule in your own "
+                    "words, without a factor-library name."
+                )
+                code = "factor_unknown"
+            else:
+                reason = "factor_never_returned"
+                message = (
+                    f"{ref.raw} was not returned by any factor tool in this session; call "
+                    "alpha_zoo for it, or describe the rule in your own words without the name."
+                )
+                code = "factor_unsourced"
+            issues.append(
+                {
+                    "code": code,
+                    "symbol": None,
+                    "value": None,
+                    "role": None,
+                    "reason": reason,
+                    "claim": line.strip()[:200],
+                    "span": [offset, offset + len(line)],
+                    "message": message,
+                }
+            )
+        return issues
 
     def _validate_unsourced_symbols(
         self,

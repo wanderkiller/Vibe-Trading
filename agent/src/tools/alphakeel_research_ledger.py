@@ -743,6 +743,8 @@ _ENGINE_TEXT = {
            "passed": "通过初筛，{ne} 未评估", "failed": "未通过初筛（{ids}）", "insufficient": "证据不足（{ids}）",
            "unavailable": "初筛不可用", "tampered": "，已改动 {n}", "tampered_row": "快照已改动或缺失", "code_new": "新",
            "more": "另有 {n} 次回测见账本",
+           "zoo_unused": "- #{seq}：代码里写了 {ids} 的名字，但没有调用因子库实现（zoo_factor）；这些规则是手写的，不是因子库因子",
+           "zoo_used": "- #{seq} 调用因子库：{ids}",
            "no_live": "通用引擎结果不能直接上实盘：须交接 Strategy IR，通过 ir_robustness 与 AlphaKeel G1/G2。",
            "non_auditable": "数据不可审计（{srcs}）：实时拉取的数据无法逐位复现，不能作为 AlphaKeel 证据。",
            "holdout": "⚠ 本会话读取过 AlphaKeel hold-out 区间的数据（截至 {day}，hold-out 起点 {cutoff_day}）：本会话的研究不能交接 AlphaKeel（G1 1.14）。",
@@ -753,6 +755,8 @@ _ENGINE_TEXT = {
             "passed": "passed screen; {ne} not evaluated", "failed": "failed screen ({ids})", "insufficient": "insufficient ({ids})",
             "unavailable": "screen unavailable", "tampered": ", modified {n}", "tampered_row": "snapshot modified or missing", "code_new": "new",
             "more": "{n} more backtests in the ledger",
+            "zoo_unused": "- #{seq}: the code names {ids} but does not call the factor-library implementation (zoo_factor); these rules are hand-written, not library factors",
+            "zoo_used": "- #{seq} uses library factors: {ids}",
             "no_live": "Engine results cannot go live directly: hand over a Strategy IR, pass ir_robustness and AlphaKeel G1/G2.",
             "non_auditable": "Data not auditable ({srcs}): live-pulled data cannot be re-read bit for bit and is not AlphaKeel evidence.",
             "holdout": "⚠ This session read data inside AlphaKeel's hold-out window (up to {day}, hold-out starts {cutoff_day}): its research cannot be handed to AlphaKeel (G1 1.14).",
@@ -868,6 +872,14 @@ def _engine_section(session_id: str, zh: bool, first: bool) -> list[str]:
     lines = (["---"] if first else []) + [t["title"], summary, t["head"], "|---|---|---|---|---|---|---|---|---|", *rows]
     if len(entries) > len(rows):
         lines.append(t["more"].format(n=len(entries) - len(rows)))
+    for i in sorted(shown):
+        row, s = entries[i]
+        facts = (s or {}).get("facts") or {}
+        seq = row.get("seq", i + 1)
+        for key, text in (("zoo_names_in_code_not_used", "zoo_unused"), ("zoo_factors_used", "zoo_used")):
+            ids = facts.get(key)
+            if isinstance(ids, list) and ids:
+                lines.append(t[text].format(seq=seq, ids=", ".join(str(x) for x in ids)))
     lines.append(t["no_live"])
     non = sorted({str(x) for s in screens for x in (s.get("facts") or {}).get("non_auditable_sources") or []})
     if non:

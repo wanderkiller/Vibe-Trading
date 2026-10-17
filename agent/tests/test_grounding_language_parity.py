@@ -37,6 +37,10 @@ def _has_issues(text: str) -> bool:
         user_message="analyze",
         history=None,
     )
+    # A cited figure needs a retrieval this session made; the call carries no evidence.
+    ledger.ingest_tool_result(
+        tool_name="web_search", arguments={}, result='{"results": []}', call_id="web-1", success=True
+    )
     return bool(ledger.validate_final_answer(text).issues)
 
 

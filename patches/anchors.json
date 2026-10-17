@@ -1888,7 +1888,22 @@
     "agent/tests/test_engine_screen.py",
     "agent/tests/test_research_contract.py",
     "agent/tests/test_composite_engine_fallback.py",
-    "agent/tests/test_alphakeel_research_truth.py"
+    "agent/tests/test_alphakeel_research_truth.py",
+    "agent/backtest/zoo_signal.py",
+    "agent/src/agent/grounding/factor_names.py",
+    "agent/src/agent/grounding/ledger.py",
+    "agent/src/agent/grounding/policies.py",
+    "agent/src/agent/grounding/release.py",
+    "agent/backtest/engine_screen.py",
+    "agent/tests/test_factor_names.py",
+    "agent/tests/test_grounding_factor_citation.py",
+    "agent/tests/test_backtest_runner_security.py",
+    "agent/tests/test_grounding_figures_contract.py",
+    "agent/tests/test_grounding_language_parity.py",
+    "agent/tests/test_grounding_percentage_points.py",
+    "agent/tests/test_grounding_release.py",
+    "agent/tests/test_grounding_role_hardening.py",
+    "agent/tests/test_grounding_shape_hardening.py"
    ],
    "anchors": [
     {
@@ -1945,6 +1960,76 @@
      "file": "agent/src/skills/pair-trading/SKILL.md",
      "kind": "hook",
      "literal": "\"codes\": [\"BTC-USDT-PERP\", \"ETH-USDT-PERP\"]"
+    },
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "hook",
+     "literal": "- A factor-library alpha is used only through `from backtest.zoo_signal import zoo_factor`"
+    },
+    {
+     "file": "agent/src/agent/grounding/release.py",
+     "kind": "upstream",
+     "literal": "_REDACTABLE_CODES = frozenset("
+    },
+    {
+     "file": "agent/src/agent/grounding/release.py",
+     "kind": "hook",
+     "literal": "_FACTOR_NAME_CODES = frozenset("
+    },
+    {
+     "file": "agent/src/agent/grounding/release.py",
+     "kind": "hook",
+     "literal": "\"citation_not_retrieved\":"
+    },
+    {
+     "file": "agent/src/agent/grounding/policies.py",
+     "kind": "upstream",
+     "literal": "def _check_cited("
+    },
+    {
+     "file": "agent/src/agent/grounding/policies.py",
+     "kind": "hook",
+     "literal": "\"citation_not_retrieved\","
+    },
+    {
+     "file": "agent/src/agent/grounding/policies.py",
+     "kind": "hook",
+     "literal": "def _validate_factor_names(self, content: str)"
+    },
+    {
+     "file": "agent/src/agent/grounding/ledger.py",
+     "kind": "upstream",
+     "literal": "def persist(self) -> None:"
+    },
+    {
+     "file": "agent/src/agent/grounding/ledger.py",
+     "kind": "hook",
+     "literal": "issues.extend(self._validate_factor_names(content))"
+    },
+    {
+     "file": "agent/src/agent/grounding/ledger.py",
+     "kind": "hook",
+     "literal": "\"retrieval_calls\": self._retrieval_calls,"
+    },
+    {
+     "file": "agent/backtest/engine_screen.py",
+     "kind": "hook",
+     "literal": "facts[\"zoo_factors_used\"], facts[\"zoo_names_in_code_not_used\"] = _zoo_names(run_dir)"
+    },
+    {
+     "file": "agent/src/tools/alphakeel_research_ledger.py",
+     "kind": "hook",
+     "literal": "\"zoo_unused\":"
+    },
+    {
+     "file": "agent/backtest/runner.py",
+     "kind": "upstream",
+     "literal": "def _build_price_panel("
+    },
+    {
+     "file": "agent/src/factors/registry.py",
+     "kind": "upstream",
+     "literal": "def get_default_registry() -> Registry:"
     }
    ]
   }

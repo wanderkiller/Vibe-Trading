@@ -1368,6 +1368,9 @@ def test_redacted_release_cuts_a_metric_cell_in_a_table(tmp_path: Path) -> None:
 def test_redacted_release_never_cuts_inside_another_number(tmp_path: Path) -> None:
     """A bare table cell "1.10" must not be located inside "21.10 亿元"."""
     ledger = _ledger(tmp_path)
+    ledger.ingest_tool_result(
+        tool_name="web_search", arguments={}, result='{"results": []}', call_id="web-1", success=True
+    )  # a cited figure needs a retrieval this session made
     draft = (
         "562500.SS（Yahoo，CNY）最新收盘价 1.171 元。成交额约 21.10 亿元。"
         "\n\n| 日期 | 收盘价 |\n|---|---|\n| 2026-06-24 | 1.10 |\n"

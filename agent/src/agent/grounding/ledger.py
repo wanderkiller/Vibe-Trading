@@ -26,6 +26,7 @@ from src.agent.grounding.evidence import (
     _json_object,
     _price_field_for_path,
 )
+from src.agent.grounding.factor_names import ids_in_text, known_factor_ids
 from src.agent.grounding.figures import Figure, parse_figures_block, scan_figures, strip_figures_block
 from src.agent.grounding.policies import ValidationResult, _PolicyMixin
 from src.agent.grounding.registry import GROUNDING_CHECKS
@@ -49,6 +50,15 @@ _ANALYSIS_TOOLS = frozenset(
      "alphakeel_research"}
 )
 
+# Tools whose result names the factor-library alphas the session really handled
+# (``backtest`` is read through its screen's ``zoo_factors_used``).
+_FACTOR_TOOLS = frozenset({"alpha_zoo", "alpha_bench", "alpha_compare", "factor_analysis"})
+# Tools whose success means a document, page, news item or paper was retrieved:
+# the only sources a figure declared ``cited`` can stand on.
+_RETRIEVAL_TOOLS = frozenset(
+    {"web_search", "read_url", "read_document", "get_stock_news", "research_papers",
+     "get_research_reports", "get_sec_filings", "sentiment", "load_skill"}
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +193,11 @@ class GroundingLedger(
         # tools whose contract is a bare US ticker. "AAPL.US" in the answer then
         # names an instrument the run really handled.
         self._session_symbol_roots: set[str] = set()
+        # Factor-library ids a factor tool returned (or a backtest ran through
+        # ``zoo_factor``) and the count of successful retrieval calls; both carry
+        # over from earlier turns of the conversation.
+        self._factor_ids: set[str] = set()
+        self._retrieval_calls = 0
 
         # call id -> tool of the analysis calls carried from earlier turns (``_calls_of_tool``).
         self._prior_call_tools: dict[str, str] = {}
@@ -199,6 +214,7 @@ class GroundingLedger(
         """
         carried_evidence: list[EvidenceRecord] = []
         carried_metrics: list[dict[str, Any]] = []
+        known_factors = known_factor_ids()
         for path in prior_ledgers:
             path = Path(path)
             prefix = f"{_PRIOR_PREFIX}{path.stem}:"
@@ -211,6 +227,12 @@ class GroundingLedger(
                 logger.debug("prior grounding ledger %s has an unsupported schema", path)
                 continue
             carried_calls: set[str] = set()
+            self._factor_ids.update(
+                str(x) for x in data.get("factor_ids") or [] if isinstance(x, str) and x in known_factors
+            )
+            retrievals = data.get("retrieval_calls")
+            if isinstance(retrievals, int) and not isinstance(retrievals, bool) and retrievals > 0:
+                self._retrieval_calls += retrievals
             for raw in data.get("evidence") or []:
                 if not isinstance(raw, dict) or raw.get("status") != "observed":
                     continue
@@ -404,6 +426,7 @@ class GroundingLedger(
             return
 
         self._track_session_symbols(arguments, result)
+        self._track_factor_and_retrieval(tool_name, payload, result)
         self._note_model_write(tool_name, arguments, payload)
         if tool_name in _ANALYSIS_TOOLS:
             self._ingest_analysis_result(tool_name, arguments, payload, call_id)
@@ -418,6 +441,21 @@ class GroundingLedger(
         elif payload is not None:
             self._ingest_generic_numeric(tool_name, arguments, payload, call_id)
         self.persist()
+
+    def _track_factor_and_retrieval(
+        self, tool_name: str, payload: Mapping[str, Any] | None, result: str
+    ) -> None:
+        """Note which factor-library ids a succeeding call returned and count retrievals."""
+        if tool_name in _FACTOR_TOOLS:
+            self._factor_ids.update(ids_in_text(result))
+        elif tool_name == "backtest" and payload is not None:
+            screen = payload.get("research_screen")
+            facts = screen.get("facts") if isinstance(screen, Mapping) else None
+            used = facts.get("zoo_factors_used") if isinstance(facts, Mapping) else None
+            if isinstance(used, list):
+                self._factor_ids.update(str(x) for x in used if isinstance(x, str))
+        if tool_name in _RETRIEVAL_TOOLS:
+            self._retrieval_calls += 1
 
     def validate_final_answer(self, content: str) -> ValidationResult:
         """Validate identity assertions and numeric price claims.
@@ -470,6 +508,7 @@ class GroundingLedger(
         issues.extend(self._validate_identity(content))
         issues.extend(self._validate_unsourced_symbols(content, figures, block))
         issues.extend(self._validate_figures(content, block, figures))
+        issues.extend(self._validate_factor_names(content))
         issues = self._dedupe_issues(issues)
         result = ValidationResult(
             valid=not issues,
@@ -505,6 +544,8 @@ class GroundingLedger(
             "identity": self.identity_summary(),
             "session_symbols": sorted(self._session_symbols),
             "session_symbol_roots": sorted(self._session_symbol_roots),
+            "factor_ids": sorted(self._factor_ids),
+            "retrieval_calls": self._retrieval_calls,
             "evidence": [asdict(record) for record in self._evidence],
             "tool_failures": list(self._tool_failures),
             "analysis_completed": list(self._analysis_completed),

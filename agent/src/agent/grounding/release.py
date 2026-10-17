@@ -48,6 +48,11 @@ _REPAIRABLE_PROVENANCE_CODES = frozenset(
     {"data_source_not_surfaced", "currency_not_surfaced"}
 )
 
+# A factor-library name cannot be cut like a figure (the sentence would lose its
+# subject), so these codes are not redactable: the draft is corrected or the run
+# fails closed on ``safe_fallback``.
+_FACTOR_NAME_CODES = frozenset({"factor_unknown", "factor_unsourced"})
+
 _MAX_REDACTION_PASSES = 3
 
 # The omission mark replaces the number and its glued unit so the sentence still
@@ -91,6 +96,9 @@ _CORRECTION_REASONS = {
     "role_in_price_column": "it sits in a price column, which holds only observed prints",
     "proposed_not_a_price": "a proposed level is a price, not a percentage; state the price it implies",
     "symbol_mismatch": "it is declared for one instrument but the sentence writes it about another",
+    "citation_not_retrieved": "this session retrieved no document, page, news or paper, so there is no source to cite; retrieve one, or drop the figure",
+    "not_in_factor_library": "it is not a factor in alpha_zoo; describe the rule in your own words, without a factor-library name",
+    "factor_never_returned": "no factor tool returned it in this session; call alpha_zoo for it, or describe the rule in your own words without the name",
     "citation_not_visible": "its source is not named on the figure's own line, and the note is stripped before the user reads the answer",
 }
 
@@ -250,6 +258,13 @@ class _ReleaseMixin:
                 "report it as not retrieved instead.",
             ]
         )
+        if any(str(issue.get("code")) in _FACTOR_NAME_CODES for issue in validation.issues):
+            lines.append(
+                "A factor-library name (GTJA-191 / Alpha101 / Kakushadze / gtja191_NNN ...) is "
+                "only for a factor a factor tool returned in this session and a signal engine "
+                "ran through `zoo_factor`; a rule you wrote yourself is described in plain "
+                "words, without the name."
+            )
         if self._backtest_scopes:
             runs = ", ".join(f"`{scope}`" for scope in sorted(set(self._backtest_scopes.values())) if scope)
             lines.append(
@@ -382,6 +397,19 @@ class _ReleaseMixin:
             for validation in self._validations
             for code in (issue.get("code") for issue in validation.get("issues", []))
         }
+        if issue_codes & _FACTOR_NAME_CODES:
+            if is_zh:
+                return (
+                    "我的回答没有通过因子名核验：草稿把某条规则标成了因子库因子，"
+                    "但本会话没有任何因子工具返回过它，按规则没有发布。"
+                    "可以重试，并让我用自己的话描述这条规则，不使用因子库名称。"
+                )
+            return (
+                "My answer did not pass the factor-name check: the draft labelled a rule as a "
+                "factor-library factor that no factor tool returned in this session, so it was "
+                "not released. Retry, and ask me to describe the rule in my own words, without "
+                "a factor-library name."
+            )
         if issue_codes & _REDACTABLE_CODES and not self._analysis_completed:
             if is_zh:
                 return (

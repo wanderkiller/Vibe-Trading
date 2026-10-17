@@ -413,6 +413,9 @@ def test_an_empty_interior_field_keeps_its_place(tmp_path: Path) -> None:
     assert (trailing.note, trailing.ref) == ("close", "")
 
     ledger = _ledger(tmp_path)
+    ledger.ingest_tool_result(
+        tool_name="web_search", arguments={}, result='{"results": []}', call_id="web-1", success=True
+    )  # a cited figure needs a retrieval this session made
     prose = HDR + " Fama-French 2024 论文报告夏普 1.8。"
     refused = ledger.validate_final_answer(prose + _block(HDR_ROW, "1.8 | cited |  | c1"))
     passed = ledger.validate_final_answer(prose + _block(HDR_ROW, "1.8 | cited | Fama-French 2024 | c1"))
@@ -525,6 +528,9 @@ def test_a_point_mark_must_be_glued_and_whole(text: str) -> None:
 
 def test_a_basis_point_figure_is_the_percent_it_scales_to(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
+    ledger.ingest_tool_result(
+        tool_name="web_search", arguments={}, result='{"results": []}', call_id="web-1", success=True
+    )  # a cited figure needs a retrieval this session made
 
     refused = ledger.validate_final_answer(HDR + " 据研报，溢价扩大 52pp。")
     as_percent = ledger.validate_final_answer(HDR + " 据研报溢价 5200bp。" + _block(HDR_ROW, "52% | cited | 研报 2026"))

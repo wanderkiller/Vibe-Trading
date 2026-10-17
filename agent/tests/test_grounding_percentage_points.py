@@ -38,6 +38,10 @@ def _verdict(text: str) -> bool:
         run_dir=pathlib.Path(tempfile.mkdtemp()),
         user_message="compare the gross margins",
     )
+    # A cited figure needs a retrieval this session made; the call carries no evidence.
+    ledger.ingest_tool_result(
+        tool_name="web_search", arguments={}, result='{"results": []}', call_id="web-1", success=True
+    )
     return ledger.validate_final_answer(text).valid
 
 

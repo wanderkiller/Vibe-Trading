@@ -817,3 +817,30 @@ def test_an_ir_run_sets_the_contract_and_a_later_generic_run_is_a_flagged_change
     ir_row = L.ledger_rows(SESSION)[-1]
     assert ir_row["contract_change"]["declared"] is True and ir_row["contract_change"]["strategy_id"] == "ir-strategy-0002"
     assert any(ln.startswith("- #ir-strat") and "已声明：back to the cross-venue carry" in ln for ln in _contract_card(SESSION).splitlines())
+
+
+def test_a_library_name_in_the_code_without_a_zoo_factor_call_is_listed_and_a_call_is_recorded(tmp_path) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    named = screen_engine_run(_make_run(tmp_path, "named", code="# GTJA-191 Alpha 010 filter\nx = 1\n"), trials=1)
+    assert named["facts"]["zoo_names_in_code_not_used"] == ["gtja191_010"] and named["facts"]["zoo_factors_used"] == []
+    code = ("from backtest.zoo_signal import zoo_factor\n\nclass SignalEngine:\n    def generate(self, data_map):\n"
+            "        return zoo_factor(\"gtja191_010\", data_map)  # GTJA-191 Alpha 010\n")
+    used = screen_engine_run(_make_run(tmp_path, "used", code=code), trials=1)
+    assert used["facts"]["zoo_factors_used"] == ["gtja191_010"] and used["facts"]["zoo_names_in_code_not_used"] == []
+    plain = screen_engine_run(_make_run(tmp_path, "plain", code="y = 2\n"), trials=1)
+    assert plain["facts"]["zoo_factors_used"] == [] and plain["facts"]["zoo_names_in_code_not_used"] == []
+    # a non-literal first argument is not a recorded use
+    dyn = screen_engine_run(_make_run(tmp_path, "dyn", code="zoo_factor(name, data_map)  # alpha101_017\n"), trials=1)
+    assert dyn["facts"]["zoo_factors_used"] == [] and dyn["facts"]["zoo_names_in_code_not_used"] == ["alpha101_017"]
+
+    L.record_engine_run(SESSION, tmp_path / "named")
+    L.record_engine_run(SESSION, tmp_path / "used")
+    zh, en = L.render_card(SESSION, True), L.render_card(SESSION, False)
+    assert ("- #1：代码里写了 gtja191_010 的名字，但没有调用因子库实现（zoo_factor）；这些规则是手写的，不是因子库因子"
+            in zh.splitlines())
+    assert "- #2 调用因子库：gtja191_010" in zh.splitlines()
+    assert ("- #1: the code names gtja191_010 but does not call the factor-library implementation (zoo_factor); "
+            "these rules are hand-written, not library factors") in en.splitlines()
+    assert "- #2 uses library factors: gtja191_010" in en.splitlines()
+    assert zh.index("- #1：") < zh.index("通用引擎结果不能直接上实盘")

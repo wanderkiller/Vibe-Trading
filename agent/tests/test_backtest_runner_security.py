@@ -722,3 +722,23 @@ def test_signal_engine_still_rejects_decorators(tmp_path, decorator_line) -> Non
 
     with pytest.raises(ValueError, match="Decorators are not allowed"):
         _load_module_from_file(signal_file, _module_name())
+
+
+def test_signal_engine_may_import_the_zoo_factor_helper(tmp_path) -> None:
+    """``backtest.zoo_signal`` is the one way a signal engine uses a factor-library alpha."""
+    signal_file = tmp_path / "signal_engine.py"
+    signal_file.write_text(
+        "\n".join(
+            [
+                '"""Generated signal engine."""',
+                "from backtest.zoo_signal import zoo_factor",
+                "import backtest.zoo_signal",
+                "class SignalEngine:",
+                "    def generate(self, data_map):",
+                '        return zoo_factor("gtja191_010", data_map)',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    module = _load_module_from_file(signal_file, _module_name())
+    assert hasattr(module, "SignalEngine")

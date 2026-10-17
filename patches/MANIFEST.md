@@ -43,7 +43,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `upstream-test-fixes` | _market_hooks (two patterns), alpha_bench_tool (one `getattr`) | upstreamable: two upstream tests are red on upstream main without them |
 | `research-integrity` | validation, backtest_tool, grounding ledger + policies, loop, context, 9 locale labels | partly upstreamable (Monte Carlo, cross-turn grounding, tool-name refs); the rest local-only |
 | `ir-execution` | none (leaf package, its tool and tests only) | local-only (follows the leaf package) |
-| `research-integrity-r2` | crypto + composite engine (one refusal each), read_file_tool (one namespace), engine card column, research contract (ledger, tool arg, card), agent/context (two bullets), two skill notes | spot-short refusal and the `trials/` namespace are upstreamable in principle; the ledger lineage, card column and research contract are local-only |
+| `research-integrity-r2` | crypto + composite engine (one refusal each), read_file_tool (one namespace), engine card column, research contract (ledger, tool arg, card), agent/context (three bullets), two skill notes, factor-name and cited-retrieval gates (grounding ledger, policies, release), `zoo_factor` helper and engine-screen facts | spot-short refusal and the `trials/` namespace are upstreamable in principle; the ledger lineage, card column, research contract, factor-name gate, `zoo_factor` and the retrieval rule for cited figures are local-only |
 
 ---
 
@@ -993,6 +993,20 @@ tool result carries `contract_drift` with a message, the ledger rows carry `cont
 ledger only and is never sent to the AlphaKeel CLI nor listed in `ignored_args`; the screen verdict logic, hold-out logic and
 the IR evaluator are unchanged. One more prompt bullet tells the agent to say so and declare the change.
 
+(4) In the same session the model attached factor-library names to hand-written rules ("GTJA-191 Alpha 010" computed as
+downside/total volatility, not the zoo's `RANK(MAX(...))`; "Kakushadze Alpha 017/053" while `alpha_zoo(zoo="kakushadze101")`
+returned 0 items) and declared a figure `cited` ("彭博社") although no retrieval tool had run. Now `backtest/zoo_signal.py`
+`zoo_factor(alpha_id, data_map)` is the only way a signal engine uses a library alpha (it builds the panel with the runner's
+`_build_price_panel` and calls `Registry.compute`; the runner's import check already allows it, a test pins that).
+`grounding/factor_names.py` (pure) finds factor names in text (literal registry ids, "GTJA-191 Alpha 010", "Kakushadze Alpha
+17", "Alpha#53") and the engine screen records `facts.zoo_factors_used` (string-literal first arguments of `zoo_factor(...)`)
+and `facts.zoo_names_in_code_not_used` (names the code mentions, comments included, without such a call); the engine card says
+which rows are hand-written. The grounding ledger tracks the library ids factor tools returned (or a backtest ran through
+`zoo_factor`) and the number of successful retrieval calls, persists both (`factor_ids`, `retrieval_calls`) and carries them
+across turns; the final answer gets `factor_unknown` (id not in the library) / `factor_unsourced` (id never returned) issues,
+which are not redactable (a name cannot be cut like a figure; the run corrects or fails closed on `safe_fallback`), and a figure
+declared `cited` with no retrieval this session gets `citation_not_retrieved`. One more prompt bullet states both rules.
+
 **Files.**
 - `agent/backtest/engines/crypto.py`
 - `agent/backtest/engines/composite.py`
@@ -1010,11 +1024,26 @@ the IR evaluator are unchanged. One more prompt bullet tells the agent to say so
 - `agent/tests/test_research_contract.py`
 - `agent/tests/test_composite_engine_fallback.py`
 - `agent/tests/test_alphakeel_research_truth.py`
+- `agent/backtest/zoo_signal.py`
+- `agent/backtest/engine_screen.py`
+- `agent/src/agent/grounding/factor_names.py`
+- `agent/src/agent/grounding/ledger.py`
+- `agent/src/agent/grounding/policies.py`
+- `agent/src/agent/grounding/release.py`
+- `agent/tests/test_factor_names.py`
+- `agent/tests/test_grounding_factor_citation.py`
+- `agent/tests/test_backtest_runner_security.py`
+- `agent/tests/test_grounding_figures_contract.py`
+- `agent/tests/test_grounding_language_parity.py`
+- `agent/tests/test_grounding_percentage_points.py`
+- `agent/tests/test_grounding_release.py`
+- `agent/tests/test_grounding_role_hardening.py`
+- `agent/tests/test_grounding_shape_hardening.py`
 
 **Commits.** (this commit)
 
 **Upstreamable.** The spot-short refusals and the `trials/` namespace are generic; the ledger lineage fields, card column,
-research contract and prompt bullets are local-only (follow the engine ledger).
+research contract, factor-name gate, `zoo_factor` helper and prompt bullets are local-only (follow the engine ledger).
 
 **Anchors.**
 - upstream `agent/src/tools/read_file_tool.py`: `if file_path.startswith("skills/"):`
@@ -1028,3 +1057,17 @@ research contract and prompt bullets are local-only (follow the engine ledger).
 - hook `agent/src/tools/alphakeel_research_tool.py`: `ledger.record(session_id, run_dir, result, rel, supersedes=supersedes)`
 - hook `agent/src/skills/strategy-generate/SKILL.md`: `Crypto spot codes are long-only in backtests`
 - hook `agent/src/skills/pair-trading/SKILL.md`: `"codes": ["BTC-USDT-PERP", "ETH-USDT-PERP"]`
+- hook `agent/src/agent/context.py`: `- A factor-library alpha is used only through `from backtest.zoo_signal import zoo_factor``
+- upstream `agent/src/agent/grounding/release.py`: `_REDACTABLE_CODES = frozenset(`
+- hook `agent/src/agent/grounding/release.py`: `_FACTOR_NAME_CODES = frozenset(`
+- hook `agent/src/agent/grounding/release.py`: `"citation_not_retrieved":`
+- upstream `agent/src/agent/grounding/policies.py`: `def _check_cited(`
+- hook `agent/src/agent/grounding/policies.py`: `"citation_not_retrieved",`
+- hook `agent/src/agent/grounding/policies.py`: `def _validate_factor_names(self, content: str)`
+- upstream `agent/src/agent/grounding/ledger.py`: `def persist(self) -> None:`
+- hook `agent/src/agent/grounding/ledger.py`: `issues.extend(self._validate_factor_names(content))`
+- hook `agent/src/agent/grounding/ledger.py`: `"retrieval_calls": self._retrieval_calls,`
+- hook `agent/backtest/engine_screen.py`: `facts["zoo_factors_used"], facts["zoo_names_in_code_not_used"] = _zoo_names(run_dir)`
+- hook `agent/src/tools/alphakeel_research_ledger.py`: `"zoo_unused":`
+- upstream `agent/backtest/runner.py`: `def _build_price_panel(`
+- upstream `agent/src/factors/registry.py`: `def get_default_registry() -> Registry:`
