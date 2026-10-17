@@ -323,10 +323,62 @@ def _shape_parameters(ps: Any, k: _Sink) -> None:
         _shape_parameter(name, p, k)
 
 
+MAKER_MODELS = ("M1", "M2")
+MAKER_TIMEOUT_MIN_S = 120
+MAKER_TIMEOUT_MAX_S = 3600
+MAKER_PARTICIPATION_MAX = Decimal("0.25")
+MAKER_PARTICIPATION_DEFAULT = "0.05"
+_LEGS = ("long", "short")
+
+
+def _s_taker(v: Any, path: str) -> None:
+    if v != "taker":
+        raise _shape('must be "taker"', path)
+
+
+def _shape_maker(v: Any, path: str, k: _Sink) -> None:
+    _shape_fields(v, path, ("model", "timeout_s"), ("participation", "chase"), (
+        ("model", _s_enum, (MAKER_MODELS,)), ("timeout_s", _s_u32, ()), ("participation", _s_dec, ()),
+        ("chase", _s_taker, ())), k)
+
+
+def _shape_leg(v: Any, path: str, k: _Sink) -> None:
+    if v == "taker":
+        return
+    if not isinstance(v, dict):
+        k.ok(_s_leg_kind, v, path)
+        return
+    if not k.ok(_obj, v, path, ("maker",)):
+        return
+    _shape_maker(v["maker"], f"{path}.maker", k)
+
+
+def _s_leg_kind(v: Any, path: str) -> None:
+    raise _shape('must be "taker" or {"maker": {...}}', path)
+
+
+def _shape_entry_execution(v: Any, path: str, k: _Sink) -> None:
+    if not k.ok(_obj, v, path, (), _LEGS) and not isinstance(v, dict):
+        return
+    for leg in _LEGS:
+        if leg in v:
+            _shape_leg(v[leg], f"{path}.{leg}", k)
+
+
+def _shape_execution(v: Any, k: _Sink) -> None:
+    """README §1 ``execution`` (optional): ``{entry?: {long?, short?}, exit?: "taker"}``; a leg is "taker" or {"maker": ...}."""
+    if not k.ok(_obj, v, "execution", (), ("entry", "exit")) and not isinstance(v, dict):
+        return
+    if "entry" in v:
+        _shape_entry_execution(v["entry"], "execution.entry", k)
+    if "exit" in v:
+        k.ok(_s_taker, v["exit"], "execution.exit")
+
+
 def _shape_doc(doc: Any, k: _Sink) -> dict[str, bool]:
     """§3.1 for the whole document; returns which top-level values passed (collect mode checks each independently)."""
     passed: dict[str, bool] = {}
-    if not k.ok(_obj, doc, "", _TOP_REQUIRED, ("strategy_id",)) and not isinstance(doc, dict):
+    if not k.ok(_obj, doc, "", _TOP_REQUIRED, ("strategy_id", "execution")) and not isinstance(doc, dict):
         return passed
     for key in ("schema", "strategy_id", "name", "kind"):
         if key in doc:
@@ -336,6 +388,8 @@ def _shape_doc(doc: Any, k: _Sink) -> dict[str, bool]:
             passed[key] = k.clean(_shape_section, key, doc[key])
     if "parameters" in doc:
         passed["parameters"] = k.clean(_shape_parameters, doc["parameters"])
+    if "execution" in doc:
+        passed["execution"] = k.clean(_shape_execution, doc["execution"])
     return passed
 
 
@@ -424,6 +478,45 @@ def _check_parameters(doc: dict, k: _Sink) -> None:
     definition = _definition(doc)
     for name in sorted(doc["parameters"]):
         k.ok(_check_parameter, definition, name, doc["parameters"][name])
+
+
+def maker_leg(doc: Any) -> tuple[str, dict] | None:
+    """The maker entry leg of an IR document: ``("long" | "short", spec)`` with ``participation`` and ``chase`` defaults
+    filled, or None when every leg is taker (``execution`` absent, ``{}`` or all ``"taker"``). Expects a valid shape."""
+    if isinstance(doc, Ir):
+        doc = doc.doc
+    ex = doc.get("execution") if isinstance(doc, dict) else None
+    entry = ex.get("entry") if isinstance(ex, dict) else None
+    if not isinstance(entry, dict):
+        return None
+    for leg in _LEGS:
+        v = entry.get(leg)
+        if isinstance(v, dict) and isinstance(v.get("maker"), dict):
+            spec = dict(v["maker"])
+            spec.setdefault("participation", MAKER_PARTICIPATION_DEFAULT)
+            spec.setdefault("chase", "taker")
+            return leg, spec
+    return None
+
+
+def _check_execution(doc: dict, k: _Sink) -> None:
+    """README §3 rule 5b: at most one maker leg; timeout_s in [120, 3600]; participation in (0, 0.25]."""
+    entry = (doc.get("execution") or {}).get("entry") or {}
+    makers = [leg for leg in _LEGS if isinstance(entry.get(leg), dict)]
+    if len(makers) > 1:
+        k.ok(_raise, _invalid("execution.entry", "at most one leg can be maker"))
+        return
+    for leg in makers:
+        m = entry[leg]["maker"]
+        p = f"execution.entry.{leg}.maker"
+        if not (MAKER_TIMEOUT_MIN_S <= m["timeout_s"] <= MAKER_TIMEOUT_MAX_S):
+            k.ok(_raise, _invalid(f"{p}.timeout_s", f"must be in {MAKER_TIMEOUT_MIN_S}..={MAKER_TIMEOUT_MAX_S}"))
+        if "participation" in m and not (0 < _D(m["participation"]) <= MAKER_PARTICIPATION_MAX):
+            k.ok(_raise, _invalid(f"{p}.participation", f"must be in (0, {MAKER_PARTICIPATION_MAX}]"))
+
+
+def _raise(e: IrError) -> None:
+    raise e
 
 
 def _check_provenance(p: Any, k: _Sink) -> None:
@@ -549,6 +642,8 @@ def _run_checks(doc: Any, k: _Sink) -> None:
             k.ok(fn, doc[key])
     if shape_ok:
         _check_parameters(doc, k)
+    if passed.get("execution"):
+        _check_execution(doc, k)
     if isinstance(doc, dict) and "provenance" in doc:
         _check_provenance(doc["provenance"], k)
     if shape_ok and "strategy_id" in doc:
@@ -612,6 +707,15 @@ def _definition(doc: dict) -> dict:
     d = {k: copy.deepcopy(v) for k, v in doc.items() if k not in ("provenance", "strategy_id")}
     if isinstance(d.get("universe"), dict) and "quote_ccys" not in d["universe"]:
         d["universe"]["quote_ccys"] = ["USDT"]
+    if "execution" in d:
+        m = maker_leg(doc)
+        if m is None:
+            del d["execution"]  # all taker: the same definition (and id) as no execution (README §2)
+        else:
+            leg, spec = m
+            ent = {name: "taker" for name in _LEGS}
+            ent[leg] = {"maker": spec}
+            d["execution"] = {"entry": ent, "exit": "taker"}
     return d
 
 

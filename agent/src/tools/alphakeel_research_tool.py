@@ -631,7 +631,11 @@ class AlphakeelResearchTool(BaseTool):
         "anchored walk-forward, OOS, filter permutation test; args.run = the ir_backtest run directory), 'ir_crosscheck' (the same "
         "backtest run by AlphaKeel's engine, compared trade by trade), 'ir_export' (strategy.json with strategy_id "
         "and provenance for AlphaKeel's registry, from an ir_backtest run; carries the robustness evidence). You cannot export into "
-        "AlphaKeel's hand-off directory: hand-off is the user's button on the run page. Files for "
+        "AlphaKeel's hand-off directory: hand-off is the user's button on the run page. The IR may carry an optional "
+        "'execution' with one post-only maker entry leg, e.g. {\"entry\": {\"short\": {\"maker\": {\"model\": \"M1\", "
+        "\"timeout_s\": 600}}}}. Fees then need maker rates (fees.<venue>.maker.perp); the default is the public maker rate of 0.02%. "
+        "The local ir_backtest fills the maker leg as taker, a conservative cost bound; maker fills are modelled only in "
+        "AlphaKeel's conservative runs. One maker leg puts the round trip at about 0.17%, versus 0.20% all taker. Files for "
         "intents/strategy/profile are paths on disk. Returns ids, digests and summaries only; a pass never certifies "
         "strategy logic. Relative file paths in args resolve against the run directory. Needs ALPHAKEEL_RESEARCH_URL and a service token in the environment."
     )

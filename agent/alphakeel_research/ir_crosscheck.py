@@ -61,7 +61,8 @@ def view_of(card: dict) -> dict:
     return {
         "view": card["view"], "start_ms": card["window"]["start_ms"], "end_ms": card["window"]["end_ms"],
         "step_minutes": card["step_minutes"],
-        "fees": {v: {"perp": fees[v]["perp"]} for v in venues},
+        "fees": {v: {"perp": fees[v]["perp"], **({"maker": {"perp": fees[v]["maker"]["perp"]}} if fees[v].get("maker") else {})}
+                 for v in venues},
         "instruments": [{k: i[k] for k in ("venue", "market", "symbol", "base", "quote")} for i in card["instruments"]],
     }
 

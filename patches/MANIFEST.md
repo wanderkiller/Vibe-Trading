@@ -42,6 +42,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `research-truth` | tools/__init__ (one session-injected class), grounding/ledger (one tool name), grounding/evidence (one branch, five amount fields), agent/context (one placeholder, one lookup), agent/loop (one helper, two call sites), test_context_attribution_layers (one placeholder) | local-only (follows the leaf package) |
 | `upstream-test-fixes` | _market_hooks (two patterns), alpha_bench_tool (one `getattr`) | upstreamable: two upstream tests are red on upstream main without them |
 | `research-integrity` | validation, backtest_tool, grounding ledger + policies, loop, context, 9 locale labels | partly upstreamable (Monte Carlo, cross-turn grounding, tool-name refs); the rest local-only |
+| `ir-execution` | none (leaf package, its tool and tests only) | local-only (follows the leaf package) |
 
 ---
 
@@ -903,3 +904,44 @@ still has them); the engine screen, ledger, hold-out guard and card are local-on
 - preimage `agent/src/agent/context.py`: `**Layer 4 — Monte Carlo Permutation Test**`
 - upstream `frontend/src/i18n/locales/en.json`: `"pValueSharpe"`
 - hook `frontend/src/i18n/locales/en.json`: `Sign-flip p-value (Sharpe)`
+
+## `ir-execution` — Strategy IR `execution` section (one maker entry leg)
+
+**Purpose.** AlphaKeel added an optional top-level `execution` to Strategy IR v1 (README §1, §2, §3 rule 5b, §5b): one
+post-only maker entry leg (`{"entry": {"short": {"maker": {"model": "M1", "timeout_s": 600}}}}`), taker exit. The leaf
+package now parses and validates it (shape errors `ir.shape`, range errors `ir.invalid` with the vector paths),
+writes the defaults into the definition when a maker leg exists and drops `execution` otherwise (a taker-only IR keeps
+its `strategy_id`), and exposes `ir.maker_leg(doc)`. Fee tables: a maker IR's default table adds
+`maker.perp` 0.0002 per venue, a request table must give `maker.perp` for every venue, `scale_fees` scales the nested
+maker rates, `view_of` and the result card's fee line carry them only when present. The local simulator does not model
+maker fills (taker fill at the touch, a conservative cost bound): the run card's `approximations` gets a
+`maker_not_modelled` entry, and `plan()` refuses a maker leg when `step_minutes <= 2`. Taker-only IRs, fee tables and
+run cards are byte-identical to before. The contract files are AlphaKeel's export of 2026-10-17. All code lives in
+`leaf-package` and `research-truth` files, so the anchors only pin the new entry points.
+
+**Files.**
+- `agent/alphakeel_research/contract/PIN`
+- `agent/alphakeel_research/contract/openapi.json`
+- `agent/alphakeel_research/contract/strategy-ir/README.md`
+- `agent/alphakeel_research/contract/strategy-ir/schema.json`
+- `agent/alphakeel_research/contract/strategy-ir/vectors/canonical.json`
+- `agent/alphakeel_research/contract/validation/protocol.json`
+- `agent/alphakeel_research/ir.py`
+- `agent/alphakeel_research/ir_backtest.py`
+- `agent/alphakeel_research/ir_crosscheck.py`
+- `agent/alphakeel_research/robustness.py`
+- `agent/src/tools/alphakeel_ir_request.py`
+- `agent/src/tools/alphakeel_research_ledger.py`
+- `agent/src/tools/alphakeel_research_tool.py`
+- `agent/tests/test_alphakeel_ir.py`
+- `agent/tests/test_alphakeel_ir_backtest.py`
+- `agent/tests/test_ir_validate_all.py`
+
+**Commits.** (this commit)
+
+**Upstreamable.** No, local-only (follows the leaf package).
+
+**Anchors.**
+- hook `agent/alphakeel_research/ir.py`: `def maker_leg(doc: Any)`
+- hook `agent/alphakeel_research/ir_backtest.py`: `def approximations_of(`
+- hook `agent/src/tools/alphakeel_ir_request.py`: `DEFAULT_PUBLIC_MAKER =`

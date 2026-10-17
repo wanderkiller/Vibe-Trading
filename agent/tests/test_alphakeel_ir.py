@@ -62,6 +62,13 @@ def test_feature_vectors(case):
 
 @pytest.mark.parametrize("case", _cases("canonical.json"), ids=lambda c: c["name"])
 def test_canonical_vectors(case):
+    if "error" in case:  # a document that must be refused, with the code (and the path of ir.invalid) of the vector
+        with pytest.raises(ir.IrError) as e:
+            ir.load(json.dumps(case["doc"]))
+        assert e.value.code == case["error"]
+        if "error_path" in case:
+            assert e.value.field == case["error_path"]
+        return
     loaded = ir.load(json.dumps(case["doc"]))
     assert loaded.canonical_definition() == case["definition_canonical"]
     assert loaded.strategy_id == case["strategy_id"] == ir.strategy_id(case["doc"])
@@ -70,6 +77,8 @@ def test_canonical_vectors(case):
 def test_canonical_vector_relations():
     cases = _cases("canonical.json")  # same_id_as / different_id_from are case indexes
     for c in cases:
+        if "error" in c:
+            continue
         if "same_id_as" in c:
             assert ir.strategy_id(c["doc"]) == ir.strategy_id(cases[c["same_id_as"]]["doc"]), c["name"]
         if "different_id_from" in c:
@@ -87,7 +96,7 @@ def test_decision_vectors(case):
 # --- (b) schema ----------------------------------------------------------------------------------------------------------
 
 def _ir_documents() -> list[tuple[str, dict]]:
-    docs = [(f"canonical:{c['name']}", c["doc"]) for c in _cases("canonical.json")]
+    docs = [(f"canonical:{c['name']}", c["doc"]) for c in _cases("canonical.json") if "error" not in c]
     docs += [(f"decisions:{c['name']}", c["ir"]) for c in _cases("decisions.json")]
     docs.append(("example", json.loads(EXAMPLE.read_text())))
     return docs

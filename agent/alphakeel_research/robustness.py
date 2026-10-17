@@ -251,7 +251,12 @@ def scale_fees(fees: dict | None, multiplier: str) -> dict:
     """Every rate of the fee table times ``multiplier`` (Decimal)."""
     base = ir_views.require_fees(fees)
     m = Decimal(multiplier)
-    return {v: {mk: IR.fmt(Decimal(str(r)) * m) for mk, r in row.items() if r not in (None, "")}
+    def scaled(r: Any) -> Any:
+        if isinstance(r, dict):  # the "maker" sub-table {perp|spot: rate}
+            return {mk: scaled(x) for mk, x in r.items() if x not in (None, "")}
+        return IR.fmt(Decimal(str(r)) * m)
+
+    return {v: {mk: scaled(r) for mk, r in row.items() if r not in (None, "")}
             for v, row in sorted(base.items()) if isinstance(row, dict)}
 
 

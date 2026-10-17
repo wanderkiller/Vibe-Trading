@@ -2199,7 +2199,8 @@
       },
       "ExecutionProfileFeesMaker": {
         "enum": [
-          "same_as_taker"
+          "same_as_taker",
+          "per_venue_market_maker"
         ],
         "type": "string"
       },
@@ -2442,7 +2443,8 @@
       },
       "ExecutionProfileMatchingModel": {
         "enum": [
-          "top_of_book_ioc"
+          "top_of_book_ioc",
+          "top_of_book_ioc_with_post_only_entry"
         ],
         "type": "string"
       },
@@ -3847,7 +3849,7 @@
             ]
           },
           "approximations": {
-            "description": "Optional (2026-10-11), `ir_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_with_conservative_feedback` (until 2026-10-13 `decisions_from_top_of_book_ledger`), `top_of_book_full_fill`),\neach starting with its identifier and a colon.",
+            "description": "Optional (2026-10-11), `ir_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_with_conservative_feedback` (until 2026-10-13 `decisions_from_top_of_book_ledger`), `top_of_book_full_fill`;\nsince 2026-10-17 `maker_fill_model_M1` / `maker_fill_model_M2`, `maker_hedge_pricing` for an IR with a maker entry leg on a\nconservative run and `maker_not_modelled` on a one-level run of such an IR), each starting with its identifier and a colon.",
             "items": {
               "$ref": "#/components/schemas/Text"
             },
@@ -3959,7 +3961,7 @@
             "type": "array"
           },
           "run_assumptions": {
-            "description": "Optional (2026-10-11), `ir_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`, and since protocol 2.3 `fees_perp_taker` (venue ->\nperp taker the run actually used), `leverage_perp`, `funding_mode`; since 2026-10-12 `decision_grade_waivers`). The AlphaKeel verdict reads it (items 1.14 and the\nbinding of the robustness evidence). Only runs of the service's own engine carry it: a registered external run\n(`POST /runs/external`) that includes `run_assumptions`, `fill_model`, `capital_cost`, `optimistic` or `execution` is refused.",
+            "description": "Optional (2026-10-11), `ir_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`, and since protocol 2.3 `fees_perp_taker` (venue ->\nperp taker the run actually used), `leverage_perp`, `funding_mode`; since 2026-10-12 `decision_grade_waivers`; since 2026-10-17\n`fees_spot_taker` (venue -> spot taker, spot_perp IRs only) and `maker` (conservative runs of an IR whose `execution` posts an\nentry leg maker: `{model, leg, timeout_s, participation, chase, exit, fees_maker: {venue: {perp|spot: rate}}, fills: {candidates,\nposted, posted_qty, maker_qty, chased, chased_qty}}`)). The AlphaKeel verdict reads it (items 1.14 and the\nbinding of the robustness evidence). Only runs of the service's own engine carry it: a registered external run\n(`POST /runs/external`) that includes `run_assumptions`, `fill_model`, `capital_cost`, `optimistic` or `execution` is refused.",
             "type": "object"
           },
           "run_id": {

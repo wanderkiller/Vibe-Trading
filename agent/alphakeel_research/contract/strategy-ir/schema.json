@@ -266,6 +266,9 @@
     }
    }
   },
+  "execution": {
+   "$ref": "#/$defs/execution"
+  },
   "provenance": {
    "type": "object",
    "required": [
@@ -410,6 +413,81 @@
      "value": {
       "type": "string"
      }
+    }
+   }
+  },
+  "maker_entry": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "model",
+    "timeout_s"
+   ],
+   "properties": {
+    "model": {
+     "enum": [
+      "M1",
+      "M2"
+     ],
+     "description": "M1: a 1m trade bar trades at least one tick through the limit; M2: the whole bar is beyond it (README section 5b)"
+    },
+    "timeout_s": {
+     "type": "integer",
+     "minimum": 120,
+     "maximum": 3600
+    },
+    "participation": {
+     "$ref": "#/$defs/decimal",
+     "description": "(0, 0.25]; default \"0.05\" (written out in the definition)"
+    },
+    "chase": {
+     "enum": [
+      "taker"
+     ],
+     "description": "the unfilled rest after the timeout is chased taker; default \"taker\""
+    }
+   }
+  },
+  "leg_entry": {
+   "oneOf": [
+    {
+     "const": "taker"
+    },
+    {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "maker"
+     ],
+     "properties": {
+      "maker": {
+       "$ref": "#/$defs/maker_entry"
+      }
+     }
+    }
+   ]
+  },
+  "execution": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "Optional (2026-10-17). Absent, {} or every leg \"taker\" = all taker and not part of the definition (same strategy_id). At most one entry leg may be maker (README section 3); exits are taker.",
+   "properties": {
+    "entry": {
+     "type": "object",
+     "additionalProperties": false,
+     "properties": {
+      "long": {
+       "$ref": "#/$defs/leg_entry"
+      },
+      "short": {
+       "$ref": "#/$defs/leg_entry"
+      }
+     },
+     "description": "each leg defaults to \"taker\""
+    },
+    "exit": {
+     "const": "taker",
+     "description": "default \"taker\""
     }
    }
   }

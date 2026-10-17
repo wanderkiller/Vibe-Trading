@@ -60,6 +60,7 @@
 | `sizing.max_open` | 整数 1–50 | 同时持仓上限。 |
 | `sizing.leverage` | 十进制串 > 0 或 `null` | 必填（可为 null = 运行环境的值）。 |
 | `parameters` | 对象 | 参数名 → `{value, robust: [lo, hi], path}`，供人审阅；见 §3。可为 `{}`。 |
+| `execution` | 对象，可选（2026-10-17） | 进场与平仓的成交方式，见 §5b：`{"entry": {"long": <腿>, "short": <腿>}, "exit": "taker"}`，`<腿>` = `"taker"` 或 `{"maker": {"model": "M1" \| "M2", "timeout_s": 120–3600, "participation"?: 十进制串 (0, 0.25]（缺省 `"0.05"`）, "chase"?: "taker"}}`；每个键都可省略（腿缺省 `"taker"`、`exit` 缺省 `"taker"`）。最多一条腿挂 maker。没有 maker 腿（省略、`{}`、全部 `"taker"`）= 全部 taker，**不进定义**（§2），id 与不写这个段相同。它只描述成交，不改变决策（§4、§5 不读它），其中的数值不是 G1 1.19 的入场/出场字面量。 |
 | `provenance` | 对象 | 自由内容（工具、run_id、研究窗口、试验数、数据审计、研究凭证……）；只检查形状：`tool`（非空字符串）与 `window.start`、`window.end`（字符串）必填。不进 id。可选 `fixed_literals`：路径（写法同 `parameters.*.path`）→ 十进制串，列出入场/出场里**刻意固定**、没有声明成参数的数值字面量；AlphaKeel 判决 G1 1.19 要求每个入场/出场数值字面量要么是声明参数的位置、要么列在这里且值与 IR 一致（0、1、24、60、1000、3600 豁免），值不一致或路径不指向字面量即 FAIL。可选 `research_credential`（研究方的研究服务凭证 id，`/whoami` 的 `credential`）：协议 2.5 起 G1 1.14 要求它是研究服务认识的研究凭证。可选 `data_exposure_end_ms`（整数毫秒）：研究读过的全部数据（含不经研究服务的直接拉取，VT 的 `data_audit` 记录）的最晚终点；协议 2.5 起计入 1.14 的研究视界。 |
 
 条件：`{"feature": <特征名>, "op": ">=" | "<=" | ">" | "<" | "between", "value": <十进制串> | [<lo>, <hi>]}`。
@@ -72,12 +73,15 @@ JSON 整数只用于计数、小时、分钟（`horizon_hours`、`candidate_limi
 
 ## 2. 规范形式与 `strategy_id`
 
-- `definition` = 文档去掉 `provenance` 与 `strategy_id` 两个顶层键；若 `universe.quote_ccys` 缺省则补 `["USDT"]`。
+- `definition` = 文档去掉 `provenance` 与 `strategy_id` 两个顶层键；若 `universe.quote_ccys` 缺省则补 `["USDT"]`；
+  `execution` 没有 maker 腿时去掉，有 maker 腿时补全缺省值（`entry.long`/`entry.short` 缺省 `"taker"`、`exit` 缺省 `"taker"`、
+  maker 腿的 `participation` 缺省 `"0.05"`、`chase` 缺省 `"taker"`，都写出）。
 - `canonical` = 键按码点排序、无空白、UTF-8 原样输出、只允许整数的 JSON（与研究契约 docs/37 §2 同一函数：
   Rust `alphakeel_util::canon::canonical_bytes`，Python `json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`）。
 - `strategy_id = "ir-" + sha256_hex(canonical(definition))[:24]`。
 
-推论（`vectors/canonical.json` 逐条验证）：改 `provenance` 不改 id；键顺序不改 id；改任何数值、假设、名称、列表顺序都改 id。
+推论（`vectors/canonical.json` 逐条验证）：改 `provenance` 不改 id；键顺序不改 id；改任何数值、假设、名称、列表顺序都改 id；
+加一个全部 taker 的 `execution` 不改 id，挂 maker（及其模型、超时、参与率）改 id。
 
 ## 3. 校验（两侧一致）
 
@@ -88,11 +92,15 @@ JSON 整数只用于计数、小时、分钟（`horizon_hours`、`candidate_limi
 5. `parameters`：v1 **不支持占位符**。每个参数用 `path` 指向它描述的字面量，路径语法 `seg(.seg)*`，`seg = name([index])*`，
    第一段只能是 `entry`、`exit`、`sizing`、`assumptions`（例：`entry.conditions[0].value`、`entry.conditions[1].value[0]`、
    `exit.max_hold_hours`、`sizing.notional_per_leg`）。路径必须指向十进制串或整数，且数值等于 `value`；`robust` 满足 `lo ≤ value ≤ hi`。
+5b. `execution`（给出时）：最多一条腿是 `{"maker": …}`（两条都是 → `ir.invalid`，路径 `execution.entry`）；maker 腿的
+   `timeout_s` ∈ [120, 3600]、`participation` ∈ (0, 0.25]（越界 → `ir.invalid`，路径 `execution.entry.<long|short>.maker.<键>`）。
+   未知模型（如 `M0`）、`chase` 不是 `"taker"`、`exit` 不是 `"taker"`、腿既不是 `"taker"` 也不是 `{"maker": …}`、未知键 → 第 1 条（`ir.shape`）。
+   `parameters.*.path` 不能指向 `execution`（第 5 条，`ir.parameter_path`）。
 6. `provenance` 形状。
 7. 文档带 `strategy_id` 时必须等于 §2 的计算值。
 8. `provenance` 内部不参与 id，可以含浮点数；其它任何位置出现浮点数都拒绝（金额/比例必须是十进制串）。
 
-**错误码（两侧相同，报告第一个失败的规则）**：`ir.shape`（第 1 条）、`ir.schema`、`ir.kind`（第 2 条）、`ir.invalid`（第 3、4、6 条，附路径）、
+**错误码（两侧相同，报告第一个失败的规则）**：`ir.shape`（第 1 条）、`ir.schema`、`ir.kind`（第 2 条）、`ir.invalid`（第 3、4、5b、6 条，附路径）、
 `ir.parameter_path`、`ir.parameter_mismatch`（第 5 条）、`ir.strategy_id_mismatch`（第 7 条）。Rust `IrError::code()` 与 Python
 `IrError.code` 返回同一字符串。
 
@@ -289,6 +297,21 @@ Decision { exits: [{position_id, reason}],
   同一 `pair` 两腿相加得到组合的 `net_now`；paper/回测的 Rust 决策器用 `Mark.net_incl_estimated`（同一公式按组合计）。任一腿缺可成交
   报价 → 该组合 `net_now` 未知（null）。
 
+## 5b. 执行段 `execution`（2026-10-17）
+
+决策（§4、§5）与执行段无关：进场条件、排名、`fees` 等特征仍按 taker 成本算，同一帧上带不带 `execution` 的两个 IR 做出同样的决策
+（`vectors/decisions.json` 不变）。执行段只决定意图怎么成交：
+
+- **maker 腿**：开仓配对里该腿挂 GTC post-only，价格 = 决策帧的被动侧触及价（买 = 买一，卖 = 卖一）；`timeout_s` 内按 `model` 判定成交
+  （M1：窗口内完整的 1m 成交价 K 线越过挂单价至少一个 tick；M2：整根 K 线都在挂单价另一侧），每根穿价 K 线最多成交
+  `participation × 成交额 ÷ 挂单价`；超时后剩余按 taker 追单（`chase = "taker"`），另一条腿在 maker 腿完成后 taker 对冲。
+  挂单越过对手价（post-only 会被拒）= 没挂上，两腿照常 taker。
+- **平仓**一律 taker。
+- 谁实现：研究服务的保守成交剖面（`ir_strategy` + 数据集视图，`profile.fill_model = "conservative"`，即 `ir_strategy` 的缺省）按上面建模，maker 费率由
+  数据集视图的 `fees.<venue>.maker.<perp|spot>` 声明（docs/37）；一档全额成交剖面（对账 L2、Python 模拟器）**不**建模 maker，
+  按全部 taker 成交并在 `approximations` 写明。Python 侧只解析与校验 `execution`，不模拟。paper 与跨所执行器在支持 maker 之前
+  拒绝加载带 maker 腿的 IR（`capability.unsupported`，docs/plans/2026-10-17-ir-spot-perp-maker.md §12）。
+
 ## 6. 向量
 
 `vectors/` 下三个文件，由 `tools/gen-strategy-ir-vectors.py` 按本文公式用 Python `Decimal` 独立生成（不引用任何一侧实现），
@@ -298,7 +321,8 @@ Decision { exits: [{position_id, reason}],
   覆盖正/负资金费、`funding_px` 与中间价回退、不同结算间隔、缺成交额、缺报价时间、未来报价时间、缺资金费率、无盘口、
   现货+永续、计价币不同、形态不符、第 8 位银行家舍入、不同持有期。
 - `canonical.json`：`doc → definition_canonical, strategy_id`；含 `same_id_as` / `different_id_from` 标注
-  （出处变化、键顺序、自述 id、`quote_ccys` 缺省、数值变化、假设变化、平台对列表及其顺序）。
+  （出处变化、键顺序、自述 id、`quote_ccys` 缺省、数值变化、假设变化、平台对列表及其顺序、`execution` 全部 taker / 空对象 / 缺省值补全 /
+  maker 模型与腿）。带 `error` 的条目是必须拒绝的文档：`doc → error`（错误码），`error_path` 给出时是 `ir.invalid` 的路径（§3 第 5b 条）。
 - `decisions.json`：`{ir, frame, state, now_ms} → expected`（Decision）。覆盖按排名进场、`candidate_limit`、`max_open`、冷却、
   `one_per_base`（已持仓与同时刻重复）、特征不可用、每一种退出原因、持仓组合不在帧里、宇宙过滤（形态/平台对/基础币白名单/排除币/计价币/非法组合）、
   `between` 与布尔特征、现货+永续进场。

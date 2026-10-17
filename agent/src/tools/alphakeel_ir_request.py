@@ -15,6 +15,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from alphakeel_research import ir as IR
+
 DAY_MS = 86_400_000
 MINUTE_MS = 60_000
 #: default research window: the ``DEFAULT_WINDOW_DAYS`` days before the credential's hold-out cutoff (UTC day aligned)
@@ -24,6 +26,9 @@ DEFAULT_WINDOW_DAYS = 180
 #: again. Used only when the request gives no ``fees`` (the leaf package keeps "no default fee": the default lives here,
 #: with its source label in the run card).
 DEFAULT_PUBLIC_TAKER = {"binance": {"perp": "0.0005"}, "okx": {"perp": "0.0005"}, "bybit": {"perp": "0.00055"}}
+#: Each venue's public non-VIP perp maker fee (user decision 2026-10-17); added to the default table only when the IR
+#: carries a maker entry leg (``execution``, Strategy IR README §5b).
+DEFAULT_PUBLIC_MAKER = {"binance": {"perp": "0.0002"}, "okx": {"perp": "0.0002"}, "bybit": {"perp": "0.0002"}}
 DEFAULT_FEES_SOURCE = "public base-tier taker (tool default, user decision 2026-10-14)"
 REQUEST_FEES_SOURCE = "request"
 
@@ -159,17 +164,31 @@ def _fee_table(v: Any) -> dict | None:
     return None
 
 
-def fees(a: IrBacktestArgs, venues: list[str]) -> tuple[Any, str]:
-    """The fee table and its source label: the request's (every derived venue needs a perp rate), else
-    :data:`DEFAULT_PUBLIC_TAKER` cut to the derived venues."""
+def fees(a: IrBacktestArgs, venues: list[str], ir_doc: dict | None = None) -> tuple[Any, str]:
+    """The fee table and its source label: the request's (every derived venue needs a perp rate, and a maker rate when the
+    IR has a maker entry leg), else :data:`DEFAULT_PUBLIC_TAKER` (plus :data:`DEFAULT_PUBLIC_MAKER` for a maker IR) cut to
+    the derived venues."""
+    maker = ir_doc is not None and IR.maker_leg(ir_doc) is not None
     if a.fees in (None, "", {}):
-        return {v: dict(DEFAULT_PUBLIC_TAKER[v]) for v in venues if v in DEFAULT_PUBLIC_TAKER}, DEFAULT_FEES_SOURCE
+        table = {v: dict(DEFAULT_PUBLIC_TAKER[v]) for v in venues if v in DEFAULT_PUBLIC_TAKER}
+        if maker:
+            for v, row in table.items():
+                if v in DEFAULT_PUBLIC_MAKER:
+                    row["maker"] = dict(DEFAULT_PUBLIC_MAKER[v])
+        return table, DEFAULT_FEES_SOURCE
     table = _fee_table(a.fees)
     if table is not None:
         missing = [v for v in venues if not (isinstance(table.get(v), dict) and table[v].get("perp") not in (None, ""))]
         if missing:
             raise ValueError(f"fees has no perp rate for {', '.join(missing)}: give a rate for every venue in universe.pairs, "
                              "or omit fees to use the public base-tier default")
+        if maker:
+            no_maker = [v for v in venues if not (isinstance(table[v].get("maker"), dict)
+                                                  and table[v]["maker"].get("perp") not in (None, ""))]
+            if no_maker:
+                raise ValueError(f"fees has no maker.perp rate for {', '.join(no_maker)}: the IR has a maker entry leg "
+                                 "(execution), so give a maker rate for every venue in universe.pairs, "
+                                 "or omit fees to use the public base-tier default")
     return a.fees, REQUEST_FEES_SOURCE
 
 
@@ -184,7 +203,10 @@ def plan(args: dict[str, Any], ir_doc: dict, who: dict) -> dict[str, Any]:
     insts = instruments(ir_doc)
     check_rows(len(insts), start, end, ((who or {}).get("datasets") or {}).get("max_rows"))
     venues = list(dict.fromkeys(d["venue"] for d in insts))
-    fee_table, source = fees(a, venues)
+    if IR.maker_leg(ir_doc) is not None and step_minutes(start, end) <= 2:
+        raise ValueError("AlphaKeel refuses a maker entry leg with step_minutes <= 2: give a shorter window (a coarser step) "
+                         "or drop the maker leg")
+    fee_table, source = fees(a, venues, ir_doc)
     out: dict[str, Any] = {"ir": a.ir, "start_ms": start, "end_ms": end, "instruments": insts,
                            "step_minutes": step_minutes(start, end), "fees": fee_table, "fees_source": source,
                            "accept_partial": a.accept_partial, "verbose": a.verbose}

@@ -1792,6 +1792,45 @@
      "literal": "Sign-flip p-value (Sharpe)"
     }
    ]
+  },
+  {
+   "id": "ir-execution",
+   "title": "Strategy IR execution section (one maker entry leg)",
+   "files": [
+    "agent/alphakeel_research/contract/PIN",
+    "agent/alphakeel_research/contract/openapi.json",
+    "agent/alphakeel_research/contract/strategy-ir/README.md",
+    "agent/alphakeel_research/contract/strategy-ir/schema.json",
+    "agent/alphakeel_research/contract/strategy-ir/vectors/canonical.json",
+    "agent/alphakeel_research/contract/validation/protocol.json",
+    "agent/alphakeel_research/ir.py",
+    "agent/alphakeel_research/ir_backtest.py",
+    "agent/alphakeel_research/ir_crosscheck.py",
+    "agent/alphakeel_research/robustness.py",
+    "agent/src/tools/alphakeel_ir_request.py",
+    "agent/src/tools/alphakeel_research_ledger.py",
+    "agent/src/tools/alphakeel_research_tool.py",
+    "agent/tests/test_alphakeel_ir.py",
+    "agent/tests/test_alphakeel_ir_backtest.py",
+    "agent/tests/test_ir_validate_all.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/alphakeel_research/ir.py",
+     "kind": "hook",
+     "literal": "def maker_leg(doc: Any)"
+    },
+    {
+     "file": "agent/alphakeel_research/ir_backtest.py",
+     "kind": "hook",
+     "literal": "def approximations_of("
+    },
+    {
+     "file": "agent/src/tools/alphakeel_ir_request.py",
+     "kind": "hook",
+     "literal": "DEFAULT_PUBLIC_MAKER ="
+    }
+   ]
   }
  ]
 }

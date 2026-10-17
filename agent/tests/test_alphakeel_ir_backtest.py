@@ -1256,3 +1256,107 @@ def test_argv_reports_every_missing_required_argument_at_once() -> None:
         _argv("policy", {})
     with pytest.raises(ValueError, match=r"^ir_backtest needs start_ms, end_ms, instruments$"):
         _argv("ir_backtest", {"ir": "s.json", "instruments": []})
+
+
+# --- Strategy IR `execution` (one maker entry leg): fee tables, view_of, stress, run card -----------------------------------
+
+MAKER_EXECUTION = {"entry": {"short": {"maker": {"model": "M1", "timeout_s": 600}}}}
+
+
+def _request_ir(execution=None) -> dict:
+    doc = golden_ir()
+    doc["universe"].update({"pairs": [["binance", "okx"]], "bases": ["BTC"]})
+    if execution is not None:
+        doc["execution"] = copy.deepcopy(execution)
+    assert ir.load(doc)
+    return doc
+
+
+def _plan(doc, **args):
+    from src.tools import alphakeel_ir_request as req
+
+    return req.plan({"ir": "s.json", **args}, doc, {"holdout_cutoff_ms": 1_782_000_000_000, "datasets": {"max_rows": 3_000_000}})
+
+
+def _card_of(fees: dict) -> dict:
+    return {"view": "v", "window": {"start_ms": 1, "end_ms": 2}, "step_minutes": 15, "instruments": [dict(BN), dict(OK)],
+            "assumptions": {"fees": fees}}
+
+
+def test_taker_only_ir_keeps_the_default_fee_table_and_view():
+    from alphakeel_research import ir_crosscheck
+    from src.tools import alphakeel_ir_request as req
+
+    want = {"binance": {"perp": "0.0005"}, "okx": {"perp": "0.0005"}}
+    for execution in (None, {}, {"entry": {"long": "taker", "short": "taker"}, "exit": "taker"}):
+        p = _plan(_request_ir(execution))
+        assert p["fees"] == want and p["fees_source"] == req.DEFAULT_FEES_SOURCE
+        assert ir_crosscheck.view_of(_card_of(p["fees"]))["fees"] == want
+
+
+def test_maker_ir_gets_default_maker_rates_and_view_of_carries_them():
+    from alphakeel_research import ir_crosscheck
+
+    p = _plan(_request_ir(MAKER_EXECUTION))
+    assert p["fees"] == {"binance": {"perp": "0.0005", "maker": {"perp": "0.0002"}},
+                         "okx": {"perp": "0.0005", "maker": {"perp": "0.0002"}}}
+    assert ir_crosscheck.view_of(_card_of(p["fees"]))["fees"] == p["fees"]
+    # a taker venue row without a maker entry stays {"perp": ...}
+    assert ir_crosscheck.view_of(_card_of({"binance": {"perp": "0.0005"}, "okx": {"perp": "0.0005"}}))["fees"]["okx"] == {"perp": "0.0005"}
+
+
+def test_request_fee_table_without_maker_perp_is_refused_for_a_maker_ir():
+    doc = _request_ir(MAKER_EXECUTION)
+    taker = {v: {"perp": "0.0004"} for v in ("binance", "okx")}
+    with pytest.raises(ValueError, match=r"no maker\.perp rate for binance, okx"):
+        _plan(doc, fees=taker)
+    with pytest.raises(ValueError, match=r"no maker\.perp rate for okx"):
+        _plan(doc, fees={"binance": {"perp": "0.0004", "maker": {"perp": "0.0001"}}, "okx": {"perp": "0.0004"}})
+    given = {v: {"perp": "0.0004", "maker": {"perp": "0.0001"}} for v in ("binance", "okx")}
+    assert _plan(doc, fees=given)["fees"] == given
+    assert _plan(_request_ir(), fees=taker)["fees"] == taker  # a taker-only IR needs no maker rate
+
+
+def test_maker_entry_leg_is_refused_on_a_two_minute_step():
+    from src.tools import alphakeel_ir_request as req
+
+    end = 1_782_000_000_000 - 1_782_000_000_000 % 86_400_000
+    with pytest.raises(ValueError, match="step_minutes <= 2"):
+        _plan(_request_ir(MAKER_EXECUTION), start_ms=end - 30 * 86_400_000)
+    assert req.step_minutes(end - 30 * 86_400_000, end) == 2
+    assert _plan(_request_ir(), start_ms=end - 30 * 86_400_000)["step_minutes"] == 2
+
+
+def test_scale_fees_scales_the_maker_rates_too():
+    from alphakeel_research import robustness
+
+    got = robustness.scale_fees({"binance": {"perp": "0.0005", "maker": {"perp": "0.0002"}}, "okx": {"perp": "0.0004"}}, "2")
+    assert got == {"binance": {"perp": "0.001", "maker": {"perp": "0.0004"}}, "okx": {"perp": "0.0008"}}
+
+
+def test_run_card_lists_maker_not_modelled_only_for_a_maker_ir():
+    assert ir_backtest.approximations_of(_request_ir()) == ir_backtest.APPROXIMATIONS
+    got = ir_backtest.approximations_of(_request_ir(MAKER_EXECUTION))
+    assert got[:-1] == ir_backtest.APPROXIMATIONS and got[-1].startswith("maker_not_modelled: the local simulator fills the maker "
+                                                                         "entry leg as taker (taker fee at the touch); maker fills "
+                                                                         "are modelled only by AlphaKeel's conservative profile")
+    assert ir_backtest.APPROXIMATIONS[-1] != got[-1]  # the constant is not mutated
+
+
+def test_ir_backtest_end_to_end_run_card_of_a_maker_ir(tmp_path):
+    pd = export_dir(tmp_path, golden_built())
+    doc = golden_ir()
+    doc["execution"] = MAKER_EXECUTION
+    (tmp_path / "ir.json").write_text(json.dumps(doc))
+    (tmp_path / "inst.json").write_text(json.dumps([OK, BN]))
+    (tmp_path / "trials.csv").write_text("trial,min_net\n1,0\n2,0.0001\n3,0.0002\n")
+    fees = {v: {"perp": "0.0005", "maker": {"perp": "0.0002"}} for v in ir.VENUES}
+    (tmp_path / "fees.json").write_text(json.dumps(fees))
+    out = tmp_path / "run"
+    rc = cli.main(["ir", "backtest", "--fees", str(tmp_path / "fees.json"), "--no-register", "--ir", str(tmp_path / "ir.json"),
+                   "--start-ms", str(START), "--end-ms", str(END), "--instruments", str(tmp_path / "inst.json"), "--pack-dir", str(pd),
+                   "--trials", "3", "--trials-evidence", str(tmp_path / "trials.csv"), "--out", str(out)])
+    assert rc == 0
+    card = json.loads((out / "run_card.json").read_text())
+    assert card["approximations"][-1].startswith("maker_not_modelled:")
+    assert card["assumptions"]["fees"]["okx"] == {"perp": "0.0005", "maker": {"perp": "0.0002"}}

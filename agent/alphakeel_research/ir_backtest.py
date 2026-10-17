@@ -61,6 +61,9 @@ MINUTE_MS = 60_000
 WARMUP_MS = DAY_MS
 UNIT = Decimal("0.00000001")
 
+MAKER_NOT_MODELLED = ("maker_not_modelled: the local simulator fills the maker entry leg as taker (taker fee at the touch); "
+                      "maker fills are modelled only by AlphaKeel's conservative profile")
+
 APPROXIMATIONS = [
     "touch: bid = ask = close of the last 1m trade bar closed at the decision time (close_time_ms <= now); spread 0",
     "bbo = true is synthetic (no order book in the dataset); price_estimated is false by construction",
@@ -80,6 +83,13 @@ APPROXIMATIONS = [
     f"a leg whose last closed bar is older than {ir_views.DATASET_MAX_BAR_AGE_MS // MINUTE_MS} minutes is not in the frame",
     "base / quote_ccy from the pack's instruments table, or from the declared instrument when the dataset pack leaves them null",
 ]
+
+
+def approximations_of(ir_doc: dict) -> list[str]:
+    """The run card's approximations: :data:`APPROXIMATIONS`, plus :data:`MAKER_NOT_MODELLED` when the IR has a maker leg."""
+    return [*APPROXIMATIONS, MAKER_NOT_MODELLED] if IR.maker_leg(ir_doc) is not None else list(APPROXIMATIONS)
+
+
 SIM_CONVENTIONS = {
     "fills": "complete and immediate at the frame's touch (long open buys the ask, short open sells the bid, closes the other side)",
     "fee": "q8(qty * price * taker_fee) per fill, taker_fee from the view's fee table",
@@ -936,7 +946,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         "purpose": "research evidence (long-history dataset backtest); not reconciliation input",
         "pack": psum, "window": {"start_ms": start_ms, "end_ms": end_ms, "start_day": utc_day(start_ms), "end_day": utc_day(end_ms - 1)},
         "data_window": {"start_ms": lo, "end_ms": end_ms, "start_day": utc_day(lo), "end_day": utc_day(end_ms - 1), "warmup_ms": start_ms - lo},
-        "step_minutes": step_minutes, "view": ir_views.DATASET_VIEW, "approximations": APPROXIMATIONS, "simulator": SIM_CONVENTIONS,
+        "step_minutes": step_minutes, "view": ir_views.DATASET_VIEW, "approximations": approximations_of(loaded.doc), "simulator": SIM_CONVENTIONS,
         "assumptions": {"funding_estimate_of_ir": loaded.doc["assumptions"]["funding_estimate"],
                         "fees": fees, "fees_source": fees_source,
                         "capital_base": _s(capital_base), "capital_base_source": capital_source},

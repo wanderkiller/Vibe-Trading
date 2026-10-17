@@ -556,13 +556,20 @@ def _verdict(card: dict, t: dict) -> str:
     return str(status or "—")
 
 
+def _maker_note(row: dict) -> str:
+    """`` (maker 0.02%)`` when the venue's fee row carries a maker perp rate, else nothing."""
+    maker = row.get("maker")
+    rate = maker.get("perp") if isinstance(maker, dict) else None
+    return f" (maker {_pct(rate)})" if _dec(rate) is not None else ""
+
+
 def _fee_lines(cards: list[dict], t: dict) -> list[str]:
     """One line per distinct fee basis: its source and every venue's rate, from the run cards."""
     seen: list[tuple[str, str]] = []
     for card in cards:
         a = card.get("assumptions") or {}
         src, fees = str(a.get("fees_source") or ""), a.get("fees")
-        rates = " / ".join(f"{v} {_pct(m['perp'])}" for v, m in sorted(fees.items())
+        rates = " / ".join(f"{v} {_pct(m['perp'])}{_maker_note(m)}" for v, m in sorted(fees.items())
                            if isinstance(m, dict) and _dec(m.get("perp")) is not None) if isinstance(fees, dict) else ""
         label = t["default"] if src.startswith("public base-tier taker") else (t["request"] if src == "request" else src)
         if (label, rates) not in seen:

@@ -84,11 +84,16 @@ def test_first_problem_is_the_first_error_path_result() -> None:
         first = ir.problems(doc)[0]
         assert ir.validate(doc) == [f"{first['code']}: {first['message']}"] and first["code"] == code, name
     for case in _cases("canonical.json"):
-        assert ir.problems(case["doc"]) == [], case["name"]
+        got = ir.problems(case["doc"])
+        if "error" in case:  # a document the vectors refuse: problems() leads with the vector's code (and path)
+            assert got and got[0]["code"] == case["error"], case["name"]
+            assert got[0]["field"] == case.get("error_path", got[0]["field"]), case["name"]
+            assert ir.validate(case["doc"]) == [f"{got[0]['code']}: {got[0]['message']}"], case["name"]
+        else:
+            assert got == [], case["name"]
 
 
 def _forbid_cli(monkeypatch) -> None:
-    from alphakeel_research import cli
 
     def called(argv):
         raise AssertionError(f"AlphaKeel was called: {argv}")
@@ -126,7 +131,6 @@ def test_max_loss_fraction_warns_and_reaches_the_envelope(monkeypatch, tmp_path)
     assert "max_loss 0.01 on notional_per_leg 10000 closes at a loss of 0.01 USDT (0.0001% of one leg)" in w
     assert ir.unit_warnings(_with_loss("100", "10000")) == []
 
-    from alphakeel_research import cli
     from src.tools.alphakeel_research_tool import AlphakeelResearchTool
 
     seen = []
@@ -191,7 +195,6 @@ def _bt_ir(tmp_path, monkeypatch) -> Path:
 
 def test_ir_backtest_without_fees_uses_the_public_default(monkeypatch, tmp_path) -> None:
     """research-truth B2 (user decision 2026-10-14): no fees = each venue's public base-tier taker, labelled as such."""
-    from alphakeel_research import cli
     from src.tools.alphakeel_ir_request import DEFAULT_FEES_SOURCE, DEFAULT_PUBLIC_TAKER
 
     seen: dict = {}
@@ -211,7 +214,6 @@ def test_ir_backtest_without_fees_uses_the_public_default(monkeypatch, tmp_path)
 
 
 def test_fees_object_reaches_the_cli_as_a_file(monkeypatch, tmp_path) -> None:
-    from alphakeel_research import cli
 
     fees = {"binance": {"perp": "0.0005"}, "okx": {"perp": "0.0005"}}
     seen: dict = {}
@@ -261,7 +263,6 @@ def test_relative_paths_resolve_against_the_run_dir(monkeypatch, tmp_path) -> No
 # --- review round 2: objects serialized as strings, ~ in paths -----------------------------------------------------------
 
 def test_fees_as_a_json_string_reaches_the_cli_as_a_file(monkeypatch, tmp_path) -> None:
-    from alphakeel_research import cli
 
     fees = {"binance": {"perp": "0.0005"}, "okx": {"perp": "0.0005"}}
     seen: dict = {}
