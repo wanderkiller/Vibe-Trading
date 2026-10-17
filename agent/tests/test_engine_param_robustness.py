@@ -277,7 +277,7 @@ def _fake_runner(calls: list):
             (logs / "runner_stdout.txt").write_text("sweep" if sweep else "main")
             if sweep:
                 assert not (Path(run_path) / "robustness" / "stale").exists()  # cleared before the sweep starts
-                _write_sweep(Path(run_path))
+                _write_sweep(Path(run_path), failed=("a_vol",))  # failed after writing its result
             return RunResult(success=True, exit_code=0, stdout="", stderr="", artifacts={})
 
     return FakeRunner
@@ -303,6 +303,7 @@ def test_the_tool_runs_the_sweep_only_for_a_declared_strategy(tmp_path, monkeypa
     assert calls[1] == [str(rd), "--robustness"]
     sweep = out["robustness"]
     assert sweep["status"] == "ok" and sweep["runs"] == 6 and sweep["recorded"] == 6 and sweep["trials"] == 5
+    assert sweep["failed"] == [{"label": "a_vol", "error": "boom", "counted_as_trial": True}]
     assert any("parameter neighbourhood" in ln for ln in sweep["lines"])
     assert out["research_screen"]["trials"] == 5 and out["research_screen"]["facts"]["trials"] == 5
     assert (rd / "logs" / "runner_stdout.txt").read_text() == "main"

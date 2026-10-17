@@ -474,8 +474,9 @@ def _robustness_sweep(run_path: Path, config: dict, entry_script: Path, agent_ro
         runs = doc["runs"]
         out: dict[str, Any] = {
             "status": "ok" if error is None else "partial",
-            "runs": len(runs), "recorded": sum(1 for r in runs if r.get("status") == "ok"),
-            "failed": [{"label": r.get("label"), "error": r.get("error") or r.get("status")} for r in runs if r.get("status") != "ok"],
+            "runs": len(runs), "recorded": sum(1 for r in runs if isinstance(r.get("seq"), int)),
+            "failed": [{"label": r.get("label"), "error": r.get("error") or r.get("status"),
+                        "counted_as_trial": isinstance(r.get("seq"), int)} for r in runs if r.get("status") != "ok"],
             "skipped": doc.get("skipped") or [], "trials": ledger.trial_count(session_id),
             "lines": ledger.robustness_lines(session_id, False), "note": ROBUSTNESS_NOTE,
         }
