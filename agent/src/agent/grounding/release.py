@@ -565,6 +565,7 @@ class _ReleaseMixin:
         # surviving figures were checked against.
         if self._identity_required and not self._price_records() and not self._analysis_completed:
             return None
+        self.release_card_notes = ()
         text = _strip_release_markers(content)
         # Stripping shifts offsets and the cuts anchor on issue spans, so the
         # verdict is retaken on the stripped text.

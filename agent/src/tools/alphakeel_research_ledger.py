@@ -1132,7 +1132,7 @@ def _note_lines(notes: Any, zh: bool) -> list[str]:
     for note in notes or ():
         if not (isinstance(note, (list, tuple)) and len(note) == 2) or note[0] not in ("verdict", "citation", "factor"):
             continue
-        text = _safe_reason(note[1])
+        text = _safe_reason(note[1]).replace("~", "\uff5e").replace("\\", "\uff3c")
         if text and text not in by_kind.setdefault(str(note[0]), []):
             by_kind[str(note[0])].append(text)
     lines = []

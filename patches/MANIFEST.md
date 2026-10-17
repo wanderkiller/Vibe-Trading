@@ -1139,7 +1139,8 @@ appends an answer-check section (zh "本会话没有任何版本通过初筛；�
 session's retrieved sources, the factor names not used or retrieved; texts through `_safe_reason`, at most 12 per line) and renders
 that section alone when the session has no ledger rows. Their misses are P2 by policy. Also: 并非 / 绝非 negate; "and" cancels a
 negation only before a new subject; brackets, slashes and spaced or doubled dashes end the clause a negation reaches into; the en
-window is 40 characters; "it's verified", 已经过验证 / 已经验证 / 已获验证 are claims; 号 after 月 is a date, not a factor id. The
+window is 40 characters; "it's verified", 已经过验证 / 已经验证 / 已获验证 are claims; 号 after 月 is a date, not a factor id (this
+also applies to the engine screen's `zoo_names_in_code_not_used`, which reads names with the same scanner). The
 numeric-claim logic, identity checks, IR code and engines are unchanged.
 (3) The agent wrote exchange order code ("改 dry_run=False 即可实盘"), although this repository never places orders.
 `tools/order_code_guard.py` (best effort, a tripwire and not a security boundary) holds the case-insensitive pattern list (`*create*order(s)` followed by no lower-case letter, so `create_order_ws`, `createOrderWithTakeProfit` match, `order_market_buy|sell*` / `order_limit_buy|sell*`,
