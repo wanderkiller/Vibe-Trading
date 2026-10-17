@@ -941,10 +941,20 @@ def _int_or_q(v: Any) -> Any:
 
 
 def _battery_matches(doc: dict, card: dict) -> bool:
-    """Whether a battery ran on the backtest of ``card``: the same IS window, pack and fee table, the fees taken from a run
-    card (not an override) and no universe filter. A grade from other inputs never lands on this row (review P1-1)."""
+    """Whether a battery ran on the backtest of ``card``: the same IS window, pack, fee table, instruments (any order),
+    step and capital base, the fees taken from a run card (not an override) and no universe filter. A grade from other
+    inputs never lands on this row (review P1-1, round 2)."""
     inputs = doc.get("inputs")
     if not isinstance(inputs, dict):
+        return False
+
+    def same_set(a: Any, b: Any) -> bool:
+        return (isinstance(a, list) and isinstance(b, list) and bool(a)
+                and sorted(json.dumps(x, sort_keys=True) for x in a) == sorted(json.dumps(x, sort_keys=True) for x in b))
+
+    capital, card_capital = _dec(inputs.get("capital_base")), _dec((card.get("assumptions") or {}).get("capital_base"))
+    if not (same_set(inputs.get("instruments"), card.get("instruments")) and capital is not None and capital == card_capital
+            and isinstance(inputs.get("step_minutes"), int) and inputs.get("step_minutes") == card.get("step_minutes")):
         return False
     window = card.get("window") or {}
     return (inputs.get("is_window") == {"start_ms": window.get("start_ms"), "end_ms": window.get("end_ms")}

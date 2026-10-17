@@ -1049,7 +1049,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         "schema": SCHEMA, "strategy_id": sid, "name": base_doc["name"],
         "inputs": {"is_window": {"start_ms": windows["is"][0], "end_ms": windows["is"][1]}, "pack_id": pack.id,
                    "oos_window": oos_doc["window"] if oos_doc else None, "oos_pack_id": packs["oos"].id if oos_doc else None,
-                   "fees": fees, "fees_source": fees_source or "request", "filter": filter_spec, "permutations": permutations, "seed": seed, "permutation_seed": perm_seed,
+                   "fees": fees, "fees_source": fees_source or "request", "filter": filter_spec, "instruments": instruments, "permutations": permutations, "seed": seed, "permutation_seed": perm_seed,
                    "step_minutes": step_minutes, "capital_base": _s(capital), "workers": workers,
                    "execution": R.serial_reason or ("process pool (spawn)" if workers > 1 else "in process"), "segments": segments, "walk_forward": wf_cfg},
         "trials": {"count": n_trials, "distinct_candidate_variants": len(candidates), "prior_trials_declared": declared_prior, "prior_trials_used": prior_trials, "prior_trials_floor": prior_trials_floor,

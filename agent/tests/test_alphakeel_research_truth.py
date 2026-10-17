@@ -152,6 +152,8 @@ def _card(sid: str, name: str, net: str, closed: int, days: int = 180, fees_sour
         "assumptions": {"fees": DEFAULT_PUBLIC_TAKER, "fees_source": fees_source or DEFAULT_FEES_SOURCE, "capital_base": "20000"},
         "metrics": {"days": days}, "alphakeel_metrics": {"sharpe_annualised": -1.25},
         "data_audit": {"coverage_partial": False}, "trials": None, "pack": {"pack_id": "pk-test"},
+        "step_minutes": 15, "instruments": [{"venue": "binance", "market": "perp", "symbol": "BTCUSDT", "base": "BTC", "quote": "USDT"},
+                                            {"venue": "okx", "market": "perp", "symbol": "BTC-USDT-SWAP", "base": "BTC", "quote": "USDT"}],
     }
     card["screen"] = screen(card)
     return card
@@ -367,7 +369,9 @@ def test_result_card_shows_the_ir_robustness_grade(session, tmp_path) -> None:
     from src.tools.alphakeel_ir_request import DEFAULT_PUBLIC_TAKER
 
     inputs = {"is_window": {"start_ms": 0, "end_ms": 120 * DAY_MS}, "pack_id": "pk-test", "fees": DEFAULT_PUBLIC_TAKER,
-              "fees_source": "run_card:/x/run_card.json", "filter": None}
+              "fees_source": "run_card:/x/run_card.json", "filter": None, "step_minutes": 15, "capital_base": "20000.00",
+              "instruments": [{"venue": "okx", "market": "perp", "symbol": "BTC-USDT-SWAP", "base": "BTC", "quote": "USDT"},
+                              {"venue": "binance", "market": "perp", "symbol": "BTCUSDT", "base": "BTC", "quote": "USDT"}]}
     doc = {"strategy_id": "ir-bbbbbbbbbb", "name": "carry-wide", "oos": None, "inputs": inputs,
            "rating": {"grade": "C", "passed": 3, "applicable": 8,
                       "caps": [{"id": "no_oos", "max_grade": "C"}, {"id": "synthetic_view", "max_grade": "B"}]}}
@@ -386,6 +390,9 @@ def test_result_card_shows_the_ir_robustness_grade(session, tmp_path) -> None:
     # a battery on overridden fees, or on another window, grades nothing (review P1-1)
     assert battery("zero-fees", {**doc, "rating": {**doc["rating"], "grade": "A"},
                                  "inputs": {**inputs, "fees": {"binance": {"perp": "0"}}, "fees_source": "request"}}) == []
+    # nor one on a subset of the instruments, another step or another capital base (review round 2)
+    for k, (key, value) in enumerate((("instruments", inputs["instruments"][:1]), ("step_minutes", 60), ("capital_base", "1000"))):
+        assert battery(f"other-{k}", {**doc, "rating": {**doc["rating"], "grade": "A"}, "inputs": {**inputs, key: value}}) == []
     lines = render_card(SESSION_ID, True).splitlines()
     assert ("稳健性（ir_robustness）：carry-wide (ir-bbbbb) 的检验输入（窗口、pack、费率或过滤）与已记录的回测不一致，"
             "评级不显示") in lines
