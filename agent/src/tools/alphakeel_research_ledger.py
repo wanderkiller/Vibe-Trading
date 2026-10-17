@@ -211,6 +211,22 @@ def _write_json_atomic(path: Path, doc: dict) -> None:
     _fsync_dir(path.parent)
 
 
+_REASON_MAX = 200
+_REASON_ESCAPES = str.maketrans({"|": "｜", "*": "＊", "#": "＃", "`": "｀", "<": "＜", ">": "＞"})
+
+
+def _collapse(text: Any) -> str:
+    return " ".join(text.split()) if isinstance(text, str) else ""
+
+
+def _safe_reason(text: Any) -> str:
+    """A free-text reason as one line of plain text for the system-generated card: whitespace (newlines too) collapsed to single
+    spaces, the markdown characters ``| * # ` < >`` replaced by their full-width forms, cut to 200 characters with ``…``.
+    Idempotent, so the card applies it again to reasons stored before it existed."""
+    out = _collapse(text).translate(_REASON_ESCAPES)
+    return out if len(out) <= _REASON_MAX else out[: _REASON_MAX - 1] + "…"
+
+
 def update_contract(session_id: str, contract: dict, *, seq: int | None = None, strategy_id: str | None = None,
                     reason: str | None = None) -> dict | None:
     """Compare what a backtest measured (``contract``) with the session's active research contract.
@@ -228,10 +244,13 @@ def update_contract(session_id: str, contract: dict, *, seq: int | None = None, 
             return None
         fields = contract_diff(current["active"], contract)
         if not fields:
+            known = contract.get("interval")  # a contract file from before ``interval`` learns it, no change is recorded
+            if known not in (None, "unknown") and current["active"].get("interval") in (None, "unknown"):
+                _write_json_atomic(path, {"active": {**current["active"], "interval": known}, "history": current["history"]})
             return None
-        text = reason.strip() if isinstance(reason, str) else ""
+        text = _safe_reason(reason)
         entry = {"seq": seq, "strategy_id": strategy_id, "from": current["active"], "to": contract, "fields": fields,
-                 "declared": len(text) >= 10, "reason": text or None, "ts": int(time.time() * 1000)}
+                 "declared": len(_collapse(reason)) >= 10, "reason": text or None, "ts": int(time.time() * 1000)}
         _write_json_atomic(path, {"active": contract, "history": [*current["history"], entry]})
         return entry
 
@@ -429,6 +448,15 @@ def _supersedes_of(run_dir: Path) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _interval_of(run_dir: Path) -> str:
+    """``interval`` (a string) of the run's ``config.json``; ``1D`` when absent, as ``backtest/runner.py`` defaults it."""
+    try:
+        value = json.loads((run_dir / "config.json").read_text(encoding="utf-8")).get("interval", "1D")
+    except (OSError, ValueError, AttributeError):
+        return "1D"
+    return value if isinstance(value, str) and value.strip() else "1D"
+
+
 def _drift_message(change: dict) -> str:
     fields = ", ".join(change.get("fields") or [])
     if change.get("declared"):
@@ -479,10 +507,14 @@ def record_engine_run(session_id: str, run_dir: Path) -> dict:
     sharpe = (screen.get("facts") or {}).get("sharpe_daily")
     from backtest.research_contract import contract_of_engine
 
-    try:  # the contract never fails the backtest; a change is on the row, on the card and in the returned dict
-        change = update_contract(session_id, contract_of_engine(screen.get("facts") or {}), seq=seq, reason=_supersedes_of(run_dir))
-    except Exception:  # noqa: BLE001
-        change = None
+    facts = screen.get("facts") or {}
+    change = None
+    if screen.get("evidence_status") != "unavailable" and facts.get("codes"):  # a run that measured nothing is not a contract
+        try:  # the contract never fails the backtest; a change is on the row, on the card and in the returned dict
+            change = update_contract(session_id, contract_of_engine(facts, interval=_interval_of(run_dir)), seq=seq,
+                                     reason=_supersedes_of(run_dir))
+        except Exception:  # noqa: BLE001
+            change = None
     code_snap, config_snap = snap / "code" / "signal_engine.py", snap / "config.json"
     row = {"seq": seq, "trial_key": key, "input_key": input_key, "run_dir": str(run_dir), "snapshot_dir": str(snap),
            "code_sha256": _sha256(code_snap) if code_snap.is_file() else None,
@@ -770,6 +802,8 @@ _ENGINE_TEXT = {
            "pbo": "- 回测过拟合概率 PBO={pbo:.2f}（CSCV，S={S}，{n} 种切分）。",
            "split": "- #{seq}：前 75% / 后 25% 的 Sharpe {is_s} / {oos_s}；平稳自助法 Sharpe 95% 区间 [{lo}, {hi}]。",
            "mt_skipped": "（{n} 个旧版本没有日期，未计入）",
+           "mt_mismatch": "（{n} 个版本的收益快照与记录不符，未计入）",
+           "mt_short": "（{n} 个版本回测不足 60 天，未计入多重比较）",
            "no_live": "通用引擎结果不能直接上实盘：须交接 Strategy IR，通过 ir_robustness 与 AlphaKeel G1/G2。",
            "non_auditable": "数据不可审计（{srcs}）：实时拉取的数据无法逐位复现，不能作为 AlphaKeel 证据。",
            "holdout": "⚠ 本会话读取过 AlphaKeel hold-out 区间的数据（截至 {day}，hold-out 起点 {cutoff_day}）：本会话的研究不能交接 AlphaKeel（G1 1.14）。",
@@ -787,6 +821,8 @@ _ENGINE_TEXT = {
             "pbo": "- Probability of backtest overfitting PBO={pbo:.2f} (CSCV, S={S}, {n} splits).",
             "split": "- #{seq}: Sharpe first 75% / last 25% {is_s} / {oos_s}; stationary-bootstrap 95% Sharpe interval [{lo}, {hi}].",
             "mt_skipped": "({n} older versions have no dates and are not included)",
+            "mt_mismatch": "({n} versions' return snapshots do not match the record and are excluded)",
+            "mt_short": "({n} versions have fewer than 60 days and are not in the multiple-comparison test)",
             "no_live": "Engine results cannot go live directly: hand over a Strategy IR, pass ir_robustness and AlphaKeel G1/G2.",
             "non_auditable": "Data not auditable ({srcs}): live-pulled data cannot be re-read bit for bit and is not AlphaKeel evidence.",
             "holdout": "⚠ This session read data inside AlphaKeel's hold-out window (up to {day}, hold-out starts {cutoff_day}): its research cannot be handed to AlphaKeel (G1 1.14).",
@@ -883,11 +919,11 @@ MT_PBO_S = 16
 
 def _periods_per_year(row: dict) -> int:
     """365 when every code of the row's verified screen is crypto, else 252."""
-    from backtest.data_audit import is_crypto_code
+    from backtest.research_contract import _is_crypto
 
     codes = ((verified_engine_screen(row) or {}).get("facts") or {}).get("codes")
     codes = [c for c in codes if isinstance(c, str) and c] if isinstance(codes, list) else []
-    return 365 if codes and all(is_crypto_code(c) for c in codes) else 252
+    return 365 if codes and all(_is_crypto(c) for c in codes) else 252
 
 
 def _fmt2(v: Any) -> str:
@@ -912,16 +948,21 @@ def _multiple_testing_lines_unsafe(session_id: str, t: dict) -> list[str]:
 
     rows = sorted(_latest_engine_rows(session_id).values(), key=lambda r: r.get("seq") if isinstance(r.get("seq"), int) else 0)
     usable: list[tuple[dict, list[str], list[float]]] = []
-    skipped = 0
+    skipped = mismatch = short = 0
     for row in rows:
         dates, returns = verified_engine_dates(row), verified_engine_returns(row)
-        if dates is None or returns is None or len(dates) != len(returns) or len(set(dates)) != len(dates):
+        if dates is None and not row.get("returns_dates_sha256"):  # recorded before the dates were snapshotted
             skipped += 1
             continue
+        if dates is None or returns is None or len(dates) != len(returns) or len(set(dates)) != len(dates):
+            mismatch += 1
+            continue
         usable.append((row, dates, returns))
+    long_enough = [u for u in usable if len(u[2]) >= MT_MIN_DAYS]  # a short or empty run would empty the date intersection
+    short = len(usable) - len(long_enough)
     lines: list[str] = []
-    capped = len(usable) > MT_MAX_VERSIONS
-    versions = usable[-MT_MAX_VERSIONS:]
+    capped = len(long_enough) > MT_MAX_VERSIONS
+    versions = long_enough[-MT_MAX_VERSIONS:]
     if len(versions) >= MT_MIN_VERSIONS:
         common = sorted(set.intersection(*(set(d) for _, d, _ in versions)))
         if len(common) >= MT_MIN_DAYS:
@@ -945,8 +986,9 @@ def _multiple_testing_lines_unsafe(session_id: str, t: dict) -> list[str]:
             lines.append(t["split"].format(seq=row.get("seq"), is_s=_fmt2(split["is_sharpe"]), oos_s=_fmt2(split["oos_sharpe"]),
                                            lo=_fmt2(ci.get("ci_lower")), hi=_fmt2(ci.get("ci_upper"))))
             break
-    if skipped:
-        lines.append(t["mt_skipped"].format(n=skipped))
+    for key, n in (("mt_skipped", skipped), ("mt_mismatch", mismatch), ("mt_short", short)):
+        if n:
+            lines.append(t[key].format(n=n))
     return lines
 
 
@@ -1015,19 +1057,19 @@ def _engine_section(session_id: str, zh: bool, first: bool) -> list[str]:
 _CONTRACT_TEXT = {
     True: {"title": "**研究合同变更（系统根据回测实测生成）**", "line": "- #{ref}：{fields} 由 {old} 变为 {new}；{status}",
            "declared": "已声明：{reason}", "undeclared": "未声明——这一版与之前的结果不是同一策略，不能直接比较",
-           "mark": "（未声明换向）", "sep": "、"},
+           "mark": "（未声明变更）", "sep": "、", "labels": {"interval": "周期"}},
     False: {"title": "**Research contract changes (measured by the system)**", "line": "- #{ref}: {fields} changed from {old} to {new}; {status}",
             "declared": "declared: {reason}", "undeclared": "undeclared — this version is not the same strategy as the earlier results and cannot be compared with them",
-            "mark": " (undeclared strategy change)", "sep": ", "},
+            "mark": " (undeclared strategy change)", "sep": ", ", "labels": {"interval": "bar interval"}},
 }
 
 
-def _contract_values(contract: Any, fields: list[str]) -> str:
+def _contract_values(contract: Any, fields: list[str], labels: dict | None = None) -> str:
     contract = contract if isinstance(contract, dict) else {}
     parts = []
     for f in fields:
         v = contract.get(f)
-        parts.append(f"{f}={','.join(str(x) for x in v) if isinstance(v, list) else v if v is not None else '—'}")
+        parts.append(f"{(labels or {}).get(f, f)}={','.join(str(x) for x in v) if isinstance(v, list) else v if v is not None else '—'}")
     return ", ".join(parts)
 
 
@@ -1045,9 +1087,10 @@ def _contract_section(session_id: str, zh: bool) -> list[str]:
     for h in history:
         fields = [str(f) for f in h.get("fields") or []]
         ref = h.get("seq") if h.get("seq") is not None else str(h.get("strategy_id") or "?")[:8]
-        status = t["declared"].format(reason=h.get("reason")) if h.get("declared") else t["undeclared"]
-        lines.append(t["line"].format(ref=ref, fields=t["sep"].join(fields), old=_contract_values(h.get("from"), fields),
-                                      new=_contract_values(h.get("to"), fields), status=status))
+        status = t["declared"].format(reason=_safe_reason(h.get("reason"))) if h.get("declared") else t["undeclared"]
+        names = t["sep"].join(t["labels"].get(f, f) for f in fields)
+        lines.append(t["line"].format(ref=ref, fields=names, old=_contract_values(h.get("from"), fields, t["labels"]),
+                                      new=_contract_values(h.get("to"), fields, t["labels"]), status=status))
     return lines
 
 

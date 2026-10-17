@@ -192,6 +192,9 @@ def _research_screen(run_path: Path) -> dict[str, Any]:
     }
     if screen.get("warning"):
         out["warning"] = screen["warning"]
+    for key in ("contract_change", "contract_drift", "trial_files"):  # the strategy-change message must reach the model
+        if screen.get(key) is not None:
+            out[key] = screen[key]
     return {k: v for k, v in out.items() if v is not None}
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -13,7 +14,7 @@ from src.tools.path_utils import safe_run_dir as _safe_run_dir
 from src.tools.path_utils import allowed_file_roots
 from src.tools.redaction import redact_internal_paths
 from src.providers.session_context import current_llm_session_id
-from src.tools.alphakeel_research_ledger import engine_snapshot_dir
+from src.tools.alphakeel_research_ledger import engine_rows, engine_snapshot_dir
 
 _OUTPUT_LIMIT = 50_000
 
@@ -63,11 +64,22 @@ def _read_trial(file_path: str, limit: Any) -> tuple[Path | None, str | None]:
         return None, _trial_error("no_session", "trials/ reads the current session's engine runs; no session is bound.")
     seq = int(match.group(1))
     path = engine_snapshot_dir(session_id, seq) / match.group(2)
-    if not path.is_file():
+    # a snapshot is readable only when this session's engine ledger has the row it belongs to
+    row = next((r for r in reversed(engine_rows(session_id)) if r.get("seq") == seq), None)
+    if row is None or not path.is_file():
         runs = engine_snapshot_dir(session_id, seq).parent
         existing = sorted(p.name for p in runs.iterdir() if p.is_dir() and p.name.isdigit()) if runs.is_dir() else []
         listing = ", ".join(existing) if existing else "none"
         return None, _trial_error("not_found", f"{file_path} was not found. Existing trials of this session: {listing}.")
+    expected = {"code/signal_engine.py": row.get("code_sha256"), "config.json": row.get("config_sha256")}.get(match.group(2))
+    if isinstance(expected, str) and expected:
+        try:
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()  # the ledger hashes the file bytes the same way
+        except OSError:
+            actual = None
+        if actual != expected:
+            return None, _trial_error("snapshot_mismatch", f"{file_path} no longer matches the ledger row of trial {seq:04d}; "
+                                      "the snapshot was modified after it was recorded and is not readable.")
     return path, None
 
 

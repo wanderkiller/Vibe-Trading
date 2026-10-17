@@ -29,11 +29,15 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return run
 
 
-def _snapshot(seq: int, code: str = "# strategy\nline2\n") -> Path:
+def _snapshot(seq: int, code: str = "# strategy\nline2\n", *, row: bool = True) -> Path:
     snap = L.engine_snapshot_dir(SESSION, seq)
     (snap / "code").mkdir(parents=True)
     (snap / "code" / "signal_engine.py").write_text(code, encoding="utf-8")
     (snap / "config.json").write_text(json.dumps({"codes": ["BTC-USDT-PERP"]}), encoding="utf-8")
+    if row:  # the engine ledger row record_engine_run appends, with the same file hashes
+        L._append_durable(L._session_dir(SESSION) / L.ENGINE_LEDGER_FILE, {
+            "seq": seq, "trial_key": f"key{seq}", "snapshot_dir": str(snap),
+            "code_sha256": L._sha256(snap / "code" / "signal_engine.py"), "config_sha256": L._sha256(snap / "config.json")})
     return snap
 
 
@@ -96,3 +100,21 @@ def test_a_run_dir_file_named_trials_does_not_shadow_the_namespace(env, bound) -
     _snapshot(1)
     assert _read(env, "trials/0001/code/signal_engine.py")["content"] == "# strategy\nline2\n"
     assert _read(env, "trials/0001/config.json")["content"] != "{}"
+
+
+def test_a_tampered_snapshot_is_a_snapshot_mismatch(env, bound) -> None:
+    snap = _snapshot(1)
+    (snap / "code" / "signal_engine.py").write_text("# forged\n", encoding="utf-8")
+    out = _read(env, "trials/0001/code/signal_engine.py")
+    assert out["status"] == "error" and out["error_code"] == "snapshot_mismatch"
+    assert _read(env, "trials/0001/config.json")["status"] == "ok"  # only the changed file is refused
+    (snap / "config.json").write_text("{}", encoding="utf-8")
+    assert _read(env, "trials/0001/config.json")["error_code"] == "snapshot_mismatch"
+
+
+def test_a_snapshot_without_a_ledger_row_is_not_found(env, bound) -> None:
+    _snapshot(1, row=False)
+    out = _read(env, "trials/0001/code/signal_engine.py")
+    assert out["status"] == "error" and out["error_code"] == "not_found"
+    _snapshot(2)
+    assert _read(env, "trials/0002/config.json")["status"] == "ok"

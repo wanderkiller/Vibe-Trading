@@ -985,9 +985,9 @@ legacy rows); one prompt bullet tells the agent to start from `trials/NNNN/` fil
 (3) In session f9941f6d027f the agent silently moved from an IR cross-venue funding carry to long-only spot trend to an
 ETH/BTC pair and kept calling it one research; the rules against it existed only in the prompt. Now the code derives a
 research contract from what each backtest measured (`agent/backtest/research_contract.py`, pure functions: engine,
-direction, instrument class spot/perp/cash/mixed, base assets) and keeps it per session in `research_contract.json`
+direction, instrument class spot/perp/cash/mixed, base assets, bar interval) and keeps it per session in `research_contract.json`
 (`alphakeel_research_ledger.update_contract`, atomic under the ledger's flock). A run that differs in engine, direction,
-instrument class or (disjoint) assets is never refused; it appends a history entry (declared when `config.json`
+instrument class, assets (any difference of the two non-empty sets) or bar interval (`config.json` `interval`, default `1D`; `unknown` or a contract file from before the field is not a change) is never refused; it appends a history entry (declared when `config.json`
 `supersedes_contract`, or `args.supersedes_contract` of `ir_backtest`, holds a reason of at least 10 characters), the engine
 tool result carries `contract_drift` with a message, the ledger rows carry `contract_change`, and the result card gets a
 "research contract changes" section plus a mark on the verdict of an undeclared row. `supersedes_contract` is read by the
@@ -1012,7 +1012,7 @@ declared `cited` with no retrieval this session gets `citation_not_retrieved`. O
 from luck, and item 1.2 (minimum trades) counted closed legs, so a two-leg pair trade counted twice. Now (a) the engine
 screen counts round trips for 1.2: `_round_trips` rebuilds each symbol's position lifecycle from `artifacts/fills.jsonl`
 (first `open` to the fill that brings it flat, `close`; `increase` / `reduce` stay inside) and counts distinct
-(open, close) timestamp pairs, falling back to `metrics.csv` `trade_count` when the file is missing or unreadable; the facts
+(symbol, open, close) triples (lifecycles on different symbols never collapse), falling back to `metrics.csv` `trade_count` when the file is missing or unreadable; the facts
 gain `closed_legs`, `round_trips`, `round_trips_source`, and the card column is "round trips"; no verdict rule changes except
 this observed value. (b) `backtest/multiple_testing.py` (numpy only, seeded) holds the stationary bootstrap, Hansen (2005)
 SPA against zero, CSCV PBO, a bootstrap Sharpe interval and the 75/25 split Sharpe. (c) The engine screen also returns
@@ -1020,8 +1020,18 @@ SPA against zero, CSCV PBO, a bootstrap Sharpe interval and the 75/25 split Shar
 `verified_engine_dates`); rows without dates are skipped and counted. (d) At render time `_multiple_testing_lines` takes the
 latest row of each distinct trial key (at most the 20 most recent), aligns them on their common dates and prints the SPA
 line (3 or more versions and 60 or more common days), the PBO line (8 or more), the latest row's split and interval line, and
-a note on skipped legacy rows; reference information only, seeds fixed so the card is stable. One more prompt bullet tells
+three separate notes (legacy rows without dates; rows whose return snapshots do not match the record; versions under 60 days,
+which are left out of the date intersection so one short run cannot hide the SPA and PBO lines); reference information only, seeds fixed so the card is stable. One more prompt bullet tells
 the agent to quote the SPA line and to say "cannot be told apart from luck" when p is 0.05 or more.
+
+(6) Review fixes. Annualisation uses `research_contract._is_crypto` (venue-prefixed codes are crypto, 365). The tool result
+of `backtest` carries `contract_drift` and `trial_files` (the `_research_screen` whitelist dropped them). A free-text
+`supersedes_contract` reason is stored as one line (whitespace collapsed, `| * # ` < >` replaced by their full-width forms,
+200 characters at most) and re-sanitised on render, so it cannot add rows to the system-generated card. A run whose screen is
+unavailable or has no codes does not touch the contract. `read_file trials/NNNN/...` requires the seq to have a row in the
+session's engine ledger and compares `code/signal_engine.py` and `config.json` with the row's `code_sha256` / `config_sha256`
+(`snapshot_mismatch` on a difference, `not_found` without a row). The funding model is not part of the contract and is not
+measured.
 
 **Files.**
 - `agent/backtest/engines/crypto.py`

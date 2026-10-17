@@ -59,11 +59,21 @@ def instrument_class(codes: Iterable[str]) -> str:
     return _combine(_class_of(c) for c in codes)
 
 
-def contract_of_engine(facts: dict) -> dict:
-    """The contract a generic engine run measured (``facts`` of its screen: ``direction``, ``codes``)."""
+UNKNOWN = "unknown"
+
+
+def _interval_of(value: object) -> str:
+    text = value.strip() if isinstance(value, str) else ""
+    return text or UNKNOWN
+
+
+def contract_of_engine(facts: dict, interval: str | None = None) -> dict:
+    """The contract a generic engine run measured (``facts`` of its screen: ``direction``, ``codes``; ``interval`` = the
+    bar size of the run's config, ``unknown`` when not given)."""
     codes = facts.get("codes") or []
     return {"engine": "generic", "direction": facts.get("direction") or "unknown",
-            "instrument_class": instrument_class(codes), "assets": sorted({base_asset(c) for c in codes})}
+            "instrument_class": instrument_class(codes), "assets": sorted({base_asset(c) for c in codes}),
+            "interval": _interval_of(interval)}
 
 
 def contract_of_ir(card: dict) -> dict:
@@ -72,14 +82,19 @@ def contract_of_ir(card: dict) -> dict:
     classes = [str(i.get("market") or "").lower() for i in insts]
     return {"engine": "ir", "direction": "long_short",
             "instrument_class": _combine(c if c in ("perp", "spot") else "unknown" for c in classes) if classes else "unknown",
-            "assets": sorted({str(i["base"]).upper() for i in insts if i.get("base")})}
+            "assets": sorted({str(i["base"]).upper() for i in insts if i.get("base")}),
+            "interval": _interval_of(card.get("interval"))}
 
 
 def contract_diff(old: dict, new: dict) -> list[str]:
     """The fields that changed: ``engine``, ``direction``, ``instrument_class`` when different, ``assets`` when the two
-    asset sets are disjoint (an overlap is the same research universe)."""
+    non-empty asset sets differ, ``interval`` when both sides name a bar size and the names differ (``unknown`` or a
+    contract file written before the field existed is not a change)."""
     fields = [f for f in ("engine", "direction", "instrument_class") if old.get(f) != new.get(f)]
     a, b = set(old.get("assets") or []), set(new.get("assets") or [])
-    if not (a & b) and (a or b):
+    if a and b and a != b:
         fields.append("assets")
+    old_i, new_i = _interval_of(old.get("interval")), _interval_of(new.get("interval"))
+    if UNKNOWN not in (old_i, new_i) and old_i != new_i:
+        fields.append("interval")
     return fields

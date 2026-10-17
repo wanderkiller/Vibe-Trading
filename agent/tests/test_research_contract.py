@@ -43,11 +43,13 @@ def _ir(*bases: str, market: str = "perp") -> dict:
 
 def test_contract_of_ir_and_engine() -> None:
     assert contract_of_ir(_ir("SOL", "BTC", "ETH", "BTC")) == {
-        "engine": "ir", "direction": "long_short", "instrument_class": "perp", "assets": ["BTC", "ETH", "SOL"]}
+        "engine": "ir", "direction": "long_short", "instrument_class": "perp", "assets": ["BTC", "ETH", "SOL"],
+        "interval": "unknown"}
     mixed = {"instruments": [*_ir("BTC")["instruments"], *_ir("BTC", market="spot")["instruments"]]}
     assert contract_of_ir(mixed)["instrument_class"] == "mixed"
     assert contract_of_engine({"direction": "long_only", "codes": ["ETH-USDT", "BTC-USDT"]}) == {
-        "engine": "generic", "direction": "long_only", "instrument_class": "spot", "assets": ["BTC", "ETH"]}
+        "engine": "generic", "direction": "long_only", "instrument_class": "spot", "assets": ["BTC", "ETH"],
+        "interval": "unknown"}
     assert contract_of_engine({})["direction"] == "unknown"
 
 
@@ -56,11 +58,30 @@ def test_contract_diff_for_the_f9941f6d027f_sequence() -> None:
     trend = contract_of_engine({"direction": "long_only", "codes": ["BTC-USDT", "ETH-USDT", "SOL-USDT"]})
     pairs = contract_of_engine({"direction": "long_short", "codes": ["ETH-USDT", "BTC-USDT"]})
     assert contract_diff(carry, trend) == ["engine", "direction", "instrument_class"]
-    assert contract_diff(trend, pairs) == ["direction"]
+    assert contract_diff(trend, pairs) == ["direction", "assets"]  # {BTC, ETH, SOL} -> {BTC, ETH}
     assert contract_diff(trend, trend) == []
 
 
-def test_contract_diff_assets_only_when_disjoint() -> None:
+def test_contract_diff_assets_when_the_sets_differ() -> None:
     a = contract_of_engine({"direction": "long_only", "codes": ["BTC-USDT"]})
-    assert contract_diff(a, contract_of_engine({"direction": "long_only", "codes": ["BTC-USDT", "ETH-USDT"]})) == []
+    assert contract_diff(a, contract_of_engine({"direction": "long_only", "codes": ["BTC-USDT", "ETH-USDT"]})) == ["assets"]
     assert contract_diff(a, contract_of_engine({"direction": "long_only", "codes": ["SOL-USDT"]})) == ["assets"]
+    assert contract_diff(a, contract_of_engine({"direction": "long_only", "codes": ["BTC-USDT-PERP"]})) == ["instrument_class"]
+
+
+def test_contract_diff_flags_any_difference_of_non_empty_asset_sets() -> None:
+    btc = contract_of_engine({"direction": "long_only", "codes": ["BTC-USDT"]})
+    both = contract_of_engine({"direction": "long_only", "codes": ["BTC-USDT", "ETH-USDT"]})
+    assert contract_diff(btc, both) == ["assets"] and contract_diff(both, btc) == ["assets"]
+    assert contract_diff(btc, {**btc, "assets": []}) == []  # no assets named: nothing to compare
+
+
+def test_contract_diff_interval() -> None:
+    facts = {"direction": "long_only", "codes": ["BTC-USDT"]}
+    daily, minute = contract_of_engine(facts, interval="1D"), contract_of_engine(facts, interval="1m")
+    assert daily["interval"] == "1D" and contract_diff(daily, minute) == ["interval"]
+    assert contract_diff(daily, contract_of_engine(facts)) == []  # unknown on either side is not a change
+    old = {k: v for k, v in daily.items() if k != "interval"}  # a contract file from before the field
+    assert contract_diff(old, daily) == [] and contract_diff(old, minute) == []
+    assert contract_of_ir({"interval": "4H", "instruments": []})["interval"] == "4H"
+    assert contract_of_ir({"instruments": []})["interval"] == "unknown"
