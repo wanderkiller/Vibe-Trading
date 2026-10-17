@@ -1499,3 +1499,13 @@ def test_diagnostics_count_the_rejections_and_the_entry_feature_distribution_of_
     assert any(r["share_holding"] == "0.0000" and r["samples"] > 0 for r in f["by_base"].values())
     plain = ir_backtest.run(doc, pack, [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "p", step_minutes=2, fees=FEES)
     assert "diagnostics" not in plain
+
+
+def test_diagnostics_never_sample_a_pair_outside_the_quote_ccy_universe():
+    doc = ir.load(golden_ir()).doc
+    diag = ir_backtest._Diagnostics(doc, 1)
+    usdc = {"id": "p1", "base": "BTC", "long": {"quote_ccy": "USDC"}}  # never reaches compute_features
+    # _admit computes the features before the quote_ccy check, so such a pair may be rejected as invalid:*
+    diag.observe([usdc], [{"pair_id": "p1", "reason": "invalid:missing_price"}], START, sample=True)
+    assert diag.rejections == {"invalid:missing_price": 1}
+    assert all(not by_base for by_base in diag.samples.values())

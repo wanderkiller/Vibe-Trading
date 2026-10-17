@@ -760,9 +760,12 @@ class _Diagnostics:
         if not sample:
             return
         outside = {r["pair_id"] for r in rejected if str(r["reason"]).startswith("universe:")}
+        quote_ccys = self.doc["universe"]["quote_ccys"]
         for p in pairs:
-            if p["id"] in outside:
-                continue  # outside the IR universe: counted in the rejections only, never sampled
+            # outside the IR universe: counted in the rejections only, never sampled (quote_ccy is checked
+            # here too: _admit tests it after the features, so an invalid pair's reason may hide it)
+            if p["id"] in outside or p["long"]["quote_ccy"] not in quote_ccys:
+                continue
             base = base_of[p["id"]]
             try:
                 f = IR.compute_features(p, self.assumptions, t)
