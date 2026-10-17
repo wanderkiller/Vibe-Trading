@@ -53,6 +53,10 @@ _REPAIRABLE_PROVENANCE_CODES = frozenset(
 # fails closed on ``safe_fallback``.
 _FACTOR_NAME_CODES = frozenset({"factor_unknown", "factor_unsourced"})
 
+# A verdict word ("validated", "可上实盘") is likewise a claim, not a figure: no redaction, the draft is corrected
+# without it or the run fails closed on ``safe_fallback``.
+_VERDICT_CODES = frozenset({"verdict_unsupported"})
+
 _MAX_REDACTION_PASSES = 3
 
 # The omission mark replaces the number and its glued unit so the sentence still
@@ -99,6 +103,7 @@ _CORRECTION_REASONS = {
     "citation_not_retrieved": "this session retrieved no document, page, news or paper, so there is no source to cite; retrieve one, or drop the figure",
     "not_in_factor_library": "it is not a factor in alpha_zoo; describe the rule in your own words, without a factor-library name",
     "factor_never_returned": "no factor tool returned it in this session; call alpha_zoo for it, or describe the rule in your own words without the name",
+    "no_passed_trial": "no backtest of this session passed the screen, so a verdict word is not allowed; describe the result and leave the verdict to the result card",
     "citation_not_visible": "its source is not named on the figure's own line, and the note is stripped before the user reads the answer",
 }
 
@@ -265,6 +270,12 @@ class _ReleaseMixin:
                 "ran through `zoo_factor`; a rule you wrote yourself is described in plain "
                 "words, without the name."
             )
+        if any(str(issue.get("code")) in _VERDICT_CODES for issue in validation.issues):
+            lines.append(
+                "No backtest of this session passed the screen: do not call the result validated, proven, "
+                "risk-controlled, risk-free, a robust positive return or ready for live. State the measured "
+                "numbers and the sample size; the system result card carries the verdict."
+            )
         if self._backtest_scopes:
             runs = ", ".join(f"`{scope}`" for scope in sorted(set(self._backtest_scopes.values())) if scope)
             lines.append(
@@ -409,6 +420,18 @@ class _ReleaseMixin:
                 "factor-library factor that no factor tool returned in this session, so it was "
                 "not released. Retry, and ask me to describe the rule in my own words, without "
                 "a factor-library name."
+            )
+        if issue_codes & _VERDICT_CODES:
+            if is_zh:
+                return (
+                    "我的回答没有通过结论用语核验：草稿用了“已验证”“可上实盘”“风险得到控制”一类的结论，"
+                    "但本会话没有任何回测通过初筛，按规则没有发布。可以重试，并让我只描述测得的数字，结论交给系统结果卡。"
+                )
+            return (
+                "My answer did not pass the verdict-wording check: the draft called the result validated, "
+                "ready for live or risk-controlled, but no backtest of this session passed the screen, so it "
+                "was not released. Retry, and ask me to describe only the measured numbers; the system result "
+                "card carries the verdict."
             )
         if issue_codes & _REDACTABLE_CODES and not self._analysis_completed:
             if is_zh:

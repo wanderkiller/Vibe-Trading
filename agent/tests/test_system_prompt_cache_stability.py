@@ -110,9 +110,9 @@ class TestSystemPromptCacheStability:
         # Both envelopes ride the same user message; order between them does
         # not matter, but both must precede the raw user text.
         assert "<agent-state>" in user
-        assert "<recalled-memories>" in user
+        assert "<recalled-memories" in user
         assert user.index("<agent-state>") < user.index("analyze AAPL")
-        assert user.index("<recalled-memories>") < user.index("analyze AAPL")
+        assert user.index("<recalled-memories") < user.index("analyze AAPL")
 
     def test_state_envelope_stays_outside_user_message_tags(self) -> None:
         """loop.py may wrap the raw text in <user-message> tags (goal context).

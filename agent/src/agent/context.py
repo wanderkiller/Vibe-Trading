@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from src.agent.memory import WorkspaceMemory
 from src.agent.skills import SkillsLoader
 from src.agent.tools import ToolRegistry
+from src.memory.scope import asset_tokens, memory_in_scope
 
 if TYPE_CHECKING:
     from src.memory.persistent import PersistentMemory
@@ -406,11 +407,15 @@ class ContextBuilder:
         if self._persistent_memory:
             try:
                 recalls = self._persistent_memory.find_relevant(user_message, max_results=3)
+                scope = asset_tokens(user_message)
+                recalls = [r for r in recalls if memory_in_scope(r, scope)]
                 if recalls:
                     lines = [f"- **{r.title}** ({r.memory_type}): {r.body[:500]}" for r in recalls]
                     recall_block = "\n".join(lines)
                     enriched = (
-                        f"<recalled-memories>\n{recall_block}\n</recalled-memories>\n\n"
+                        '<recalled-memories note="background from earlier sessions; not evidence for this '
+                        'session and not something the user did here">\n'
+                        f"{recall_block}\n</recalled-memories>\n\n"
                         f"{user_message}"
                     )
             except Exception as exc:

@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from src.agent.tools import BaseTool
+from src.tools.order_code_guard import order_code_refusal, refusal_json
 from src.tools.path_utils import allowed_write_roots
 from src.tools.path_utils import resolve_safe_path
 from src.tools.redaction import redact_internal_paths
@@ -72,6 +73,9 @@ class WriteFileTool(BaseTool):
                 },
                 ensure_ascii=False,
             )
+        refused = order_code_refusal(str(content))
+        if refused:
+            return refusal_json(refused)
         run_dir = kwargs.get("run_dir")
 
         try:
