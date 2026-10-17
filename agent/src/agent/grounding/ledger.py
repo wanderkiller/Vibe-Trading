@@ -9,7 +9,7 @@ import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Mapping, Sequence
-from urllib.parse import urlsplit
+from urllib.parse import quote, quote_plus, unquote_plus, urlsplit
 
 from src.agent.resolution_context import ResolutionContext
 
@@ -71,16 +71,24 @@ _MAX_RETRIEVAL_RECORDS = 60
 # Keys of a retrieval result that echo the call or describe the envelope, not a document body.
 _ECHO_KEYS = frozenset(
     {"query", "q", "mode", "text", "input", "prompt", "backends", "backend", "length", "status", "error", "arguments",
-     "params", "args", "limit", "page", "symbol", "ticker", "codes", "lang"}
+     "params", "args", "limit", "page", "symbol", "ticker", "codes", "lang", "search_query", "phrase_query_returned_nothing"}
 )
 _SOURCE_KEYS = frozenset({"title", "source", "publisher", "site"})
 _HOST_KEYS = frozenset({"url", "link", "domain"})
 _BARE_NUMBER_RE = re.compile(r"[-+]?\d+(?:\.\d+)?")
 
 
+# A calendar date or clock time is no figure: its parts ("2024-12-05", "12月5日", "10:30") would back "12%" or "5".
+_DATE_RE = re.compile(
+    r"(?<!\d)(?:19|20)\d{2}[-/年]\d{1,2}(?:[-/月]\d{1,2}[日号]?)?|\d{1,2}月\d{1,2}[日号]|\d{1,2}:\d{2}(?::\d{2})?"
+)
+
+
 def _numbers_in(text: str) -> list[tuple[float, bool]]:
-    """Numeric literals of ``text`` as ``(absolute value, is_pct)`` in order (thousands commas stripped)."""
+    """Numeric literals of ``text`` as ``(absolute value, is_pct)`` in order (thousands commas stripped; dates and clock
+    times skipped)."""
     out: list[tuple[float, bool]] = []
+    text = _DATE_RE.sub(" ", text)
     for match in _NUMBER_LITERAL_RE.finditer(text):
         try:
             out.append((float(match.group(1).replace(",", "")), match.group(2) is not None))
@@ -111,6 +119,10 @@ def _strip_arguments(text: str, arguments: Mapping[str, Any]) -> str:
     """
     values: list[str] = []
     _argument_strings(arguments, values)
+    # A result also echoes a value trimmed or URL-encoded ("a b 12.5 " as "a+b+12.5").
+    for value in list(values):
+        values.extend((value.strip(), quote_plus(value.strip()), quote(value.strip()), unquote_plus(value.strip())))
+    values = [value for value in values if value.strip()]
     for value in sorted(set(values), key=len, reverse=True):
         if _BARE_NUMBER_RE.fullmatch(value.strip()):
             text = re.sub(r"(?<![\d.,])" + re.escape(value.strip()) + r"(?!\d|[.,]\d)", " ", text)
@@ -148,7 +160,9 @@ def _walk_body(
         if lowered in _SOURCE_KEYS and node.strip():
             sources.setdefault(node.strip().casefold()[:_MAX_SOURCE_LEN], None)
         elif lowered in _HOST_KEYS and node.strip():
+            # A url is an address, not a body: its numbers back nothing (it may be the call's own url, rewritten).
             sources.setdefault(_host(node), None)
+            return
         for number in _numbers_in(_strip_arguments(node, arguments)):
             numbers.setdefault(number, None)
     elif isinstance(node, (int, float)) and not isinstance(node, bool):
@@ -325,6 +339,10 @@ class GroundingLedger(
         # output. Files the model wrote itself never qualify.
         self._engine_tables: dict[str, tuple[str, str]] = {}
         self._model_written: set[str] = set()
+        # Card notes of the validation running now (see ``ValidationResult.card_notes``), and those of the text
+        # ``redacted_release`` released.
+        self._card_notes: list[tuple[str, str]] = []
+        self.release_card_notes: tuple[tuple[str, str], ...] = ()
         # Backtest call -> its run directory, and each directory's latest call.
         self._backtest_scopes: dict[str, str] = {}
         self._scope_latest: dict[str, str] = {}
@@ -615,6 +633,9 @@ class GroundingLedger(
             used = facts.get("zoo_factors_used") if isinstance(facts, Mapping) else None
             if isinstance(used, list):
                 self._factor_ids.update(str(x) for x in used if isinstance(x, str))
+        # A document the model wrote itself is no source.
+        if tool_name == "read_document" and self._is_model_written(Path(str(arguments.get("file_path") or ""))):
+            return
         if tool_name in _RETRIEVAL_TOOLS:
             self._upsert_retrieval_record(retrieval_record(call_id, tool_name, arguments, result))
 
@@ -681,17 +702,20 @@ class GroundingLedger(
         block = parse_figures_block(content)
         figures = scan_figures(content, block)
         issues: list[dict[str, Any]] = []
+        # Free-text heuristics (cited figures, factor names, verdict words) add card notes, never issues.
+        self._card_notes = []
         issues.extend(self._validate_identity(content))
         issues.extend(self._validate_unsourced_symbols(content, figures, block))
         issues.extend(self._validate_figures(content, block, figures))
-        issues.extend(self._validate_factor_names(content))
-        issues.extend(self._validate_verdict_words(content))
+        self._card_notes.extend(self._validate_factor_names(content))
+        self._card_notes.extend(self._validate_verdict_words(content))
         issues = self._dedupe_issues(issues)
         result = ValidationResult(
             valid=not issues,
             issues=issues,
             released_text=strip_figures_block(content, block),
             passed_figures=_passed_figures(figures, issues),
+            card_notes=tuple(dict.fromkeys(self._card_notes)),
         )
         if not record:
             return result
@@ -702,6 +726,7 @@ class GroundingLedger(
                 "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
                 "valid": result.valid,
                 "issues": issues,
+                "card_notes": [list(note) for note in result.card_notes],
                 # Names let a run card say which declared checks fired without
                 # re-running the gate; inline rules carry codes only until migrated.
                 "fired_checks": GROUNDING_CHECKS.names_for_codes(

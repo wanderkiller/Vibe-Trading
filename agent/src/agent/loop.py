@@ -266,16 +266,17 @@ def _prior_ledgers(session_id: str | None, current_copy: Path | None, limit: int
         return []
 
 
-def _ir_result_card(session_id: str, user_message: str) -> str | None:
+def _ir_result_card(session_id: str, user_message: str, notes: Any = ()) -> str | None:
     """The AlphaKeel IR result card of this conversation (research-truth §5), or None (no session id: no card).
 
-    System text built from the trial ledger, appended after grounding has checked
-    the answer; it never blocks the answer: any failure is logged and skipped.
+    System text built from the trial ledger and the grounding gate's card ``notes``
+    on the answer, appended after grounding has checked the answer; it never blocks
+    the answer: any failure is logged and skipped.
     """
     try:
         from src.tools.alphakeel_research_ledger import render_card
 
-        return render_card(session_id, bool(_CJK_RE.search(user_message or "")))
+        return render_card(session_id, bool(_CJK_RE.search(user_message or "")), notes)
     except Exception as exc:  # noqa: BLE001
         logger.warning("AlphaKeel IR result card skipped: %s", exc)
         return None
@@ -1270,6 +1271,9 @@ class AgentLoop:
         # keeps tools available; ordinary correction turns do not.
         grounding_correction_text_only = False
         pending_grounding_draft = ""
+        # The grounding gate's card notes on the released answer text (verdict words, cited figures, factor names):
+        # stated on the result card, never a reason to withhold the answer.
+        grounding_card_notes: tuple[tuple[str, str], ...] = ()
         llm_usage_summary = _new_llm_usage_summary(self.llm)
         last_response_model: str | None = None
         goal_continuations = 0
@@ -1815,6 +1819,7 @@ class AgentLoop:
                             # The figures block is the model's declaration to
                             # the gate, not answer text.
                             final_content = validation.released_text
+                            grounding_card_notes = validation.card_notes
                         if not validation.valid:
                             if not forced_grounding_release:
                                 trace.write_text_entry(
@@ -1935,6 +1940,7 @@ class AgentLoop:
                                     }
                                 )
                                 final_content = released
+                                grounding_card_notes = self._grounding.release_card_notes
                                 self._emit(
                                     "grounding_status",
                                     {
@@ -1948,6 +1954,7 @@ class AgentLoop:
                                 )
                             else:
                                 final_content = self._grounding.safe_fallback()
+                                grounding_card_notes = ()
                                 # Captured HERE, beside the redacted branch's
                                 # own count. Left unset, the reason was built
                                 # lazily at the end of the run from a
@@ -2056,7 +2063,7 @@ class AgentLoop:
                             goal_continuations += 1
                             continue
 
-                    card = _ir_result_card(session_id, user_message)  # research-truth: card at the answer
+                    card = _ir_result_card(session_id, user_message, grounding_card_notes)  # research-truth: card at the answer
                     if card:
                         final_content += "\n\n" + card
                         self._emit("text_delta", {"delta": "\n\n" + card, "iter": current_iter})

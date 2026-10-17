@@ -1,9 +1,10 @@
 """Factor-library names in text: which ids a piece of prose or code claims to use.
 
-Pure. A name counts as a factor reference when it is a literal registry id
+Pure, and a heuristic. A name counts as a factor reference when it is a literal registry id
 (``gtja191_010``) or a paper-style spelling of one (``GTJA-191 Alpha 010``,
 ``Kakushadze Alpha 17``, ``Alpha#53``). The grounding gate compares the result
-with what the session's factor tools returned; the engine screen compares it
+with what the session's factor tools returned and lists the names they never
+returned on the result card (nothing is blocked); the engine screen compares it
 with the ``zoo_factor`` calls in a signal engine.
 """
 
@@ -88,7 +89,8 @@ def _is_marked_id(text: str, between: str, num_end: int) -> bool:
     """Whether the number ending at ``num_end``, preceded by ``between``, is written as a factor id."""
     marker = _ID_MARKER.search(between)
     if marker is None:
-        return _ID_SUFFIX.match(text, num_end) is not None
+        # "10月12号" is a date, not factor 12.
+        return _ID_SUFFIX.match(text, num_end) is not None and not between.rstrip().endswith("月")
     if marker.group(0).strip() == "第":
         return True
     return _COUNT_UNIT.match(text, num_end) is None

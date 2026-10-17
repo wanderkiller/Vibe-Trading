@@ -122,12 +122,18 @@ class ValidationResult:
     ``passed_figures`` names the measured figures the gate checked and let
     through, as written, so the correction prompt can tell the model what to
     keep, not only what to fix.
+
+    ``card_notes`` are the findings of the free-text heuristics (verdict words,
+    cited figures no retrieval backs, factor names no factor tool returned) as
+    ``(kind, text as written)`` pairs. They never make a draft invalid: the
+    system result card states them next to the answer.
     """
 
     valid: bool
     issues: list[dict[str, Any]] = field(default_factory=list)
     released_text: str = ""
     passed_figures: tuple[str, ...] = ()
+    card_notes: tuple[tuple[str, str], ...] = ()
 
 
 def _close(value: float, target: float) -> bool:
@@ -2000,7 +2006,7 @@ class _PolicyMixin:
         The tolerance is half of the figure's last written digit and signs are ignored. A source number backs
         itself, its hundredth when it was a percent ("4.2%" backs 0.042), and its hundred-fold when it is a decimal
         fraction below one and the figure is a percent ("0.125" backs 12.5%); a plain integer is never divided.
-        Records whose sources name something of the declaration's note are preferred; with none, all records count.
+        Every retrieval record of the session counts, whatever source the note names.
         """
         digits = figure.digits or ""
         if "." in digits:
@@ -2019,10 +2025,7 @@ class _PolicyMixin:
                 targets.append((written, tol))
         except ValueError:
             pass
-        records = list(self._retrieval_records)
-        tokens = _note_tokens(declaration.note)
-        named = [r for r in records if any(t in source for source in r["sources"] for t in tokens)]
-        for record in named or records:
+        for record in self._retrieval_records:
             for value, is_pct in record["numbers"]:
                 for target, bound in targets:
                     if abs(target - value) <= bound:
@@ -2071,30 +2074,11 @@ class _PolicyMixin:
                     "instrument",
                 )
             ]
-        if self._retrieval_calls == 0:
-            return [
-                self._figure_issue(
-                    "numeric_claim_conflict",
-                    figure,
-                    "cited",
-                    symbol,
-                    "citation_not_retrieved",
-                    "is declared cited, but this session retrieved no document, page, "
-                    "news or paper; retrieve the source, or drop the figure",
-                )
-            ]
-        if not self._retrieved_value_backs(figure, declaration):
-            return [
-                self._figure_issue(
-                    "numeric_claim_conflict",
-                    figure,
-                    "cited",
-                    symbol,
-                    "citation_value_not_retrieved",
-                    "is declared cited, but its value appears in no document, page, news or paper "
-                    "retrieved in this session; retrieve the source, or drop the figure",
-                )
-            ]
+        # Whether a retrieval of this session returned the value is a heuristic (numbers matched in free text): a
+        # figure none backs is listed on the result card ("citation_not_retrieved" when nothing was retrieved,
+        # "citation_value_not_retrieved" otherwise), never refused.
+        if self._retrieval_calls == 0 or not self._retrieved_value_backs(figure, declaration):
+            self._card_notes.append(("citation", figure.text))
         folded = line.casefold()
         if not any(token in folded for token in _note_tokens(declaration.note)):
             return [
@@ -2110,60 +2094,33 @@ class _PolicyMixin:
             ]
         return []
 
-    def _validate_factor_names(self, content: str) -> list[dict[str, Any]]:
-        """Reject a factor-library name the session's factor tools never returned.
+    def _validate_factor_names(self, content: str) -> list[tuple[str, str]]:
+        """Card notes for the factor-library names the session's factor tools never returned.
 
-        A name that is not in the library at all, or is in it but no factor tool
-        returned it (and no backtest ran it through ``zoo_factor``), labels a rule
-        the model wrote by hand, or recalled from memory, as a library factor. The
-        figures block is stripped before release, so names inside it are not read.
+        A name that is not in the library at all ("factor_unknown"), or is in it but no factor tool returned it and
+        no backtest ran it through ``zoo_factor`` ("factor_unsourced" / "factor_never_returned"), may label a rule the
+        model wrote by hand, or recalled from memory, as a library factor. Name spotting is a heuristic, so the names
+        are listed on the result card and the draft is not refused. The figures block is stripped before release, so
+        names inside it are not read.
         """
         block = parse_figures_block(content)
         known = known_factor_ids()
-        issues: list[dict[str, Any]] = []
-        lines = _lines_with_offsets(content)
+        notes: list[tuple[str, str]] = []
         for ref in scan_factor_refs(content):
             if any(start <= ref.span[0] and ref.span[1] <= end for start, end in block.spans):
                 continue
             if ref.canonical in known and ref.canonical in self._factor_ids:
                 continue
-            line, offset = next(
-                ((text, start) for text, start in reversed(lines) if start <= ref.span[0]),
-                ("", 0),
-            )
-            if ref.canonical not in known:
-                reason = "not_in_factor_library"
-                message = (
-                    f"{ref.raw} is not a factor in alpha_zoo; describe the rule in your own "
-                    "words, without a factor-library name."
-                )
-                code = "factor_unknown"
-            else:
-                reason = "factor_never_returned"
-                message = (
-                    f"{ref.raw} was not returned by any factor tool in this session; call "
-                    "alpha_zoo for it, or describe the rule in your own words without the name."
-                )
-                code = "factor_unsourced"
-            issues.append(
-                {
-                    "code": code,
-                    "symbol": None,
-                    "value": None,
-                    "role": None,
-                    "reason": reason,
-                    "claim": line.strip()[:200],
-                    "span": [offset, offset + len(line)],
-                    "message": message,
-                }
-            )
-        return issues
+            notes.append(("factor", ref.raw))
+        return notes
 
-    def _validate_verdict_words(self, content: str) -> list[dict[str, Any]]:
-        """Reject a research verdict word ("已验证", "可上实盘", "risk-free" ...) when no backtest of the session passed the screen.
+    def _validate_verdict_words(self, content: str) -> list[tuple[str, str]]:
+        """Card notes for the research verdict words ("已验证", "可上实盘", "risk-free" ...) of a session no backtest of
+        which passed the screen.
 
-        The verdict of a result is carried by the system result card; the model's own sentence may only repeat it
-        after a trial passed the screen. Negated phrases, the figures block and the card are not read.
+        The verdict of a result is carried by the system result card. Phrase spotting is a heuristic, so a verdict
+        word without a passed trial ("verdict_unsupported", reason "no_passed_trial") is stated on the card as not a
+        system verdict, and the draft is not refused. Negated phrases, the figures block and the card are not read.
         """
         claims = scan_verdict_claims(content)
         if not claims:
@@ -2172,29 +2129,7 @@ class _PolicyMixin:
 
         if session_has_passed_trial(current_llm_session_id()):
             return []
-        lines = _lines_with_offsets(content)
-        issues: list[dict[str, Any]] = []
-        for phrase, span in claims:
-            line, offset = next(
-                ((text, start) for text, start in reversed(lines) if start <= span[0]),
-                ("", 0),
-            )
-            issues.append(
-                {
-                    "code": "verdict_unsupported",
-                    "symbol": None,
-                    "value": None,
-                    "role": None,
-                    "reason": "no_passed_trial",
-                    "claim": line.strip()[:200],
-                    "span": [offset, offset + len(line)],
-                    "message": (
-                        f'"{phrase}" states a research verdict, but no backtest of this session passed '
-                        "the screen; describe the result without that verdict (the result card carries the verdict)."
-                    ),
-                }
-            )
-        return issues
+        return [("verdict", phrase) for phrase, _span in claims]
 
     def _validate_unsourced_symbols(
         self,
