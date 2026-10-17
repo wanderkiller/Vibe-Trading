@@ -46,11 +46,11 @@ def test_evict_never_deletes_units_younger_than_the_guard_even_over_the_limit(tm
 def test_constructor_evicts_with_env_limit_and_bad_env_falls_back(tmp_path, monkeypatch):
     _put(tmp_path / "content" / "old", 100, time.time() - 10 * 3600)
     monkeypatch.setenv(packfile.CACHE_MAX_BYTES_ENV, "10")
-    PackCache(tmp_path)
+    PackCache(tmp_path, evict=True)
     assert not (tmp_path / "content" / "old").exists()
     _put(tmp_path / "content" / "old", 100, time.time() - 10 * 3600)
     monkeypatch.setenv(packfile.CACHE_MAX_BYTES_ENV, "garbage")
-    c = PackCache(tmp_path)
+    c = PackCache(tmp_path, evict=True)
     assert c.max_bytes == packfile.CACHE_MAX_BYTES_DEFAULT and (tmp_path / "content" / "old").exists()
 
 
@@ -63,3 +63,36 @@ def test_ensure_hit_refreshes_mtime(tmp_path):
     os.utime(c.content_path(csha), (OLD, OLD))
     assert c.ensure(None, "p", {"content_sha256": csha}) == c.content_path(csha)
     assert c.content_path(csha).stat().st_mtime > time.time() - 600
+
+
+def test_from_directory_never_evicts_an_exported_pack(tmp_path, monkeypatch):
+    # an exported pack directory is read-only evidence (maybe the only copy): opening it must not run eviction
+    monkeypatch.setattr(packfile, "verify_lock", lambda lock: None)
+    monkeypatch.setenv(packfile.CACHE_MAX_BYTES_ENV, "1")
+    (tmp_path / "lock.json").write_text('{"pack_id": "p", "objects": []}', encoding="utf-8")
+    f = tmp_path / "content" / "old"
+    _put(f, 100, time.time() - 3 * 3600)
+    packfile.Pack.from_directory(tmp_path)
+    assert f.exists()
+
+
+def test_network_cache_construction_still_evicts(tmp_path):
+    f = tmp_path / "content" / "old"
+    _put(f, 100, time.time() - 3 * 3600)
+    PackCache(tmp_path, max_bytes=1, evict=True)
+    assert not f.exists()
+
+
+def test_exported_pack_read_hit_refreshes_mtime(tmp_path, monkeypatch):
+    monkeypatch.setattr(packfile, "verify_lock", lambda lock: None)
+    old = time.time() - 10 * 3600
+    data = b"hello\n"
+    csha = hashlib.sha256(data).hexdigest()
+    (tmp_path / "lock.json").write_text('{"pack_id": "p", "objects": []}', encoding="utf-8")
+    p = tmp_path / "content" / csha
+    _put(p, 0, old)
+    p.write_bytes(data)
+    os.utime(p, (old, old))
+    pack = packfile.Pack.from_directory(tmp_path)
+    pack._path({"name": "x", "content_sha256": csha})
+    assert p.stat().st_mtime > old + 3600

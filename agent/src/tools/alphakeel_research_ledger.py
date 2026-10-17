@@ -247,15 +247,19 @@ def update_contract(session_id: str, contract: dict, *, seq: int | None = None, 
             _write_json_atomic(path, {"active": contract, "history": []})
             return None
         fields = contract_diff(current["active"], contract)
+        active = current["active"]
+        if not fields:  # a contract file from before a field existed learns it, no change is recorded
+            learned = {k: contract[k] for k in ("interval", "window_days")
+                       if contract.get(k) not in (None, "unknown") and active.get(k) in (None, "unknown")}
+            active = {**active, **learned}
         if not fields and len(_collapse(reason)) >= 10:  # a declaration with no change is kept in the history, not a change
             entry = {"seq": seq, "strategy_id": strategy_id, "fields": [], "declared": True, "reason": _safe_reason(reason),
                      "ts": int(time.time() * 1000)}
-            _write_json_atomic(path, {"active": current["active"], "history": [*current["history"], entry]})
+            _write_json_atomic(path, {"active": active, "history": [*current["history"], entry]})
             return None
         if not fields:
-            known = contract.get("interval")  # a contract file from before ``interval`` learns it, no change is recorded
-            if known not in (None, "unknown") and current["active"].get("interval") in (None, "unknown"):
-                _write_json_atomic(path, {"active": {**current["active"], "interval": known}, "history": current["history"]})
+            if active != current["active"]:
+                _write_json_atomic(path, {"active": active, "history": current["history"]})
             return None
         text = _safe_reason(reason)
         entry = {"seq": seq, "strategy_id": strategy_id, "from": current["active"], "to": contract, "fields": fields,
@@ -362,24 +366,27 @@ def record(session_id: str, run_dir: str | Path, result: dict, evidence_dir: str
     link the run to the conversation's hypothesis (``HypothesisRegistry.link_backtest``)."""
     card_path = Path(str(result["run_card"])).resolve()
     card = json.loads(card_path.read_text(encoding="utf-8"))
-    prior = ledger_rows(session_id)
-    row = {"strategy_id": card["strategy_id"], "name": card.get("name"), "run_card_path": str(card_path),
-           "run_card_sha256": _sha256(card_path), "evidence_dir": evidence_dir, "run_dir": str(run_dir),
-           "ts": int(time.time() * 1000),
-           "unimplemented_rules": [str(x).strip() for x in unimplemented_rules or [] if str(x).strip()]}
-    same_name = list(dict.fromkeys(r["strategy_id"] for r in prior if r.get("name") == card.get("name")
-                                   and r.get("strategy_id") != card["strategy_id"]))
-    if same_name and card.get("name"):
-        row["same_name_as"] = same_name
-    from backtest.research_contract import contract_of_ir
+    # one record at a time per conversation (its own lock, not the ledger file's: _append_durable takes that one), so the
+    # contract seq and the same-name check see every earlier row
+    with _flock(_session_dir(session_id) / "ir_record"):
+        prior = ledger_rows(session_id)
+        row = {"strategy_id": card["strategy_id"], "name": card.get("name"), "run_card_path": str(card_path),
+               "run_card_sha256": _sha256(card_path), "evidence_dir": evidence_dir, "run_dir": str(run_dir),
+               "ts": int(time.time() * 1000),
+               "unimplemented_rules": [str(x).strip() for x in unimplemented_rules or [] if str(x).strip()]}
+        same_name = list(dict.fromkeys(r["strategy_id"] for r in prior if r.get("name") == card.get("name")
+                                       and r.get("strategy_id") != card["strategy_id"]))
+        if same_name and card.get("name"):
+            row["same_name_as"] = same_name
+        from backtest.research_contract import contract_of_ir
 
-    try:  # the contract never fails the backtest; a change is on the row and on the card
-        row["contract_change"] = update_contract(session_id, contract_of_ir(card), seq=len(prior) + 1,
-                                                strategy_id=card["strategy_id"], reason=supersedes)
-    except Exception:  # noqa: BLE001
-        row["contract_change"] = None
-    # the row is a trial for the DSR floor: durable before the call returns
-    _append_durable(_session_dir(session_id) / LEDGER_FILE, row)
+        try:  # the contract never fails the backtest; a change is on the row and on the card
+            row["contract_change"] = update_contract(session_id, contract_of_ir(card), seq=len(prior) + 1,
+                                                    strategy_id=card["strategy_id"], reason=supersedes)
+        except Exception:  # noqa: BLE001
+            row["contract_change"] = None
+        # the row is a trial for the DSR floor: durable before the call returns
+        _append_durable(_session_dir(session_id) / LEDGER_FILE, row)
     hid = session_hypothesis(session_id, card.get("name") or "")
     scr = card.get("screen") or {}
     metrics = {"strategy_id": card["strategy_id"], "name": card.get("name"), "window": card.get("window"),
@@ -743,6 +750,8 @@ _TEXT = {
            "ledger": "账本：{file}",
            "also_failed": "；另未通过：{ids}", "na_zero": "不适用（0 笔）",
            "trials": "试验数：本会话 {n}；研究服务账本同 kind 同谱系 {k}（1.6 取较大值）",
+           "trials_n": "试验数：本会话 {n}", "trials_n_missing": "试验数：本会话试验数未取得",
+           "trials_k": "；研究服务账本同 kind 同谱系 {k}（1.6 取较大值）", "trials_k_missing": "；研究服务账本计数未取得（未登记或旧服务）",
            "trials_missing": "试验数：本会话 {n}；研究服务账本计数未取得（未登记或旧服务）",
            "unimpl": "；未实现规则：{rules}", "same_name": "；同名不同内容（与 {ids} 不同）",
            "approx": "回测近似：价差为 0（成本偏低）；资金费率用最近已结算值代替预测值"},
@@ -757,6 +766,9 @@ _TEXT = {
             "ledger": "Ledger: {file}",
             "also_failed": "; also failed: {ids}", "na_zero": "n/a (0 trades)",
             "trials": "Trials: this session {n}; research-service ledger, same kind and lineage {k} (1.6 uses the larger)",
+            "trials_n": "Trials: this session {n}", "trials_n_missing": "Trials: this session's trial count not available",
+            "trials_k": "; research-service ledger, same kind and lineage {k} (1.6 uses the larger)",
+            "trials_k_missing": "; research-service ledger count not available (unregistered or old service)",
             "trials_missing": "Trials: this session {n}; research-service ledger count not available (unregistered or old service)",
             "unimpl": "; unimplemented rules: {rules}", "same_name": "; same name, different content (differs from {ids})",
             "approx": "Backtest approximations: spread is 0 (costs understated); funding uses the latest settled rate instead of the forecast"},
@@ -860,6 +872,14 @@ def _row_notes(row: dict, t: dict) -> str:
     return out
 
 
+def _run_card_trials(entries: list) -> int | None:
+    """``trials.count`` of the latest ledger row's verified run card (int), else None: the figure 1.6 and the tool summary use."""
+    card = entries[-1][1] if entries else None
+    tri = card.get("trials") if isinstance(card, dict) else None
+    v = tri.get("count") if isinstance(tri, dict) else None
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
 def _service_trials(entries: list) -> int | None:
     """``service_registration.ledger_trials_for_scope`` of the latest ledger row's verified run card (int), else None."""
     card = entries[-1][1] if entries else None
@@ -921,7 +941,9 @@ def _ir_section(session_id: str, zh: bool) -> list[str]:
     summary = t["summary"].format(n=len(versions), m=len(entries), p=counts["passed_screen"], f=counts["failed_screen"],
                                   i=counts["insufficient"]) + (t["tampered"].format(n=bad) if bad else "")
     k = _service_trials(entries)
-    trials = t["trials_missing"].format(n=len(versions)) if k is None else t["trials"].format(n=len(versions), k=k)
+    n = _run_card_trials(entries)
+    head = t["trials_n"].format(n=n) if n is not None else t["trials_n_missing"]
+    trials = head + (t["trials_k_missing"] if k is None else t["trials_k"].format(k=k))
     approx = [t["approx"]] if any(c.get("approximations") for c in cards) else []
     lines = ["---", t["title"], *_fee_lines(cards, t), summary, trials, *approx, t["head"], "|---|---|---|---|---|---|---|---|---|", *rows]
     if len(entries) > len(rows):
@@ -1005,11 +1027,11 @@ _ENGINE_TEXT = {
 _ENGINE_GROUPS = {"insufficient": ("1.1", "1.2"), "failed_screen": ("1.3", "1.6", "1.8", "1.16")}
 
 
-def _item_observed(screen: dict, item_id: str) -> Any:
+def _item_observed(screen: dict, item_id: str, zh: bool = True) -> Any:
     for i in screen.get("items") or []:
         if isinstance(i, dict) and i.get("id") == item_id:
             if i.get("result") == "N/A":
-                return "不适用（0 笔）"  # no trades: the figure is not a finding
+                return _TEXT[bool(zh)]["na_zero"]  # no trades: the figure is not a finding
             return i.get("observed")
     return None
 
@@ -1363,12 +1385,12 @@ def _engine_section(session_id: str, zh: bool, first: bool) -> list[str]:
 
 
 _CONTRACT_TEXT = {
-    True: {"title": "**研究合同变更（系统根据回测实测生成）**", "line": "- #{ref}：{fields} 由 {old} 变为 {new}；{status}",
+    True: {"title": "**研究合同变更（系统根据回测实测生成）**", "line": "- {ref}：{fields} 由 {old} 变为 {new}；{status}",
            "declared": "已声明：{reason}", "undeclared": "未声明——这一版与之前的结果不是同一策略，不能直接比较",
-           "mark": "（未声明变更）", "sep": "、", "labels": {"interval": "周期"}},
-    False: {"title": "**Research contract changes (measured by the system)**", "line": "- #{ref}: {fields} changed from {old} to {new}; {status}",
+           "mark": "（未声明变更）", "sep": "、", "labels": {"interval": "周期", "window_days": "窗口天数"}},
+    False: {"title": "**Research contract changes (measured by the system)**", "line": "- {ref}: {fields} changed from {old} to {new}; {status}",
             "declared": "declared: {reason}", "undeclared": "undeclared — this version is not the same strategy as the earlier results and cannot be compared with them",
-            "mark": " (undeclared strategy change)", "sep": ", ", "labels": {"interval": "bar interval"}},
+            "mark": " (undeclared strategy change)", "sep": ", ", "labels": {"interval": "bar interval", "window_days": "window days"}},
 }
 
 
@@ -1397,6 +1419,8 @@ def _contract_section(session_id: str, zh: bool) -> list[str]:
         if not fields:  # a declaration without a change: kept in the history, not a contract-change line
             continue
         ref = h.get("seq") if h.get("seq") is not None else str(h.get("strategy_id") or "?")[:8]
+        # IR rows and engine rows count their seq separately: an IR contract's reference says so
+        ref = f"{'IR' if (h.get('to') or {}).get('engine') == 'ir' else ''}#{ref}"
         status = t["declared"].format(reason=_safe_reason(h.get("reason"))) if h.get("declared") else t["undeclared"]
         names = t["sep"].join(t["labels"].get(f, f) for f in fields)
         lines.append(t["line"].format(ref=ref, fields=names, old=_contract_values(h.get("from"), fields, t["labels"]),

@@ -6,6 +6,7 @@ result card shows every change of it; a change is allowed (runs are never refuse
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Iterable
 
 _QUOTES = ("USDT", "USDC", "BUSD", "FDUSD", "USD")
@@ -86,7 +87,10 @@ def contract_of_ir(card: dict) -> dict:
            "interval": "1m" if card.get("view") else _interval_of(card.get("interval"))}  # the IR backtest reads 1m klines
     w = card.get("window")
     if isinstance(w, dict) and w.get("start_day") and w.get("end_day"):
-        out["window"] = f"{w['start_day']}..{w['end_day']}"
+        try:  # the length, not the dates: the default window moves with the hold-out cutoff every day
+            out["window_days"] = (date.fromisoformat(str(w["end_day"])) - date.fromisoformat(str(w["start_day"]))).days
+        except ValueError:
+            pass
     return out
 
 
@@ -101,7 +105,7 @@ def contract_diff(old: dict, new: dict) -> list[str]:
     old_i, new_i = _interval_of(old.get("interval")), _interval_of(new.get("interval"))
     if UNKNOWN not in (old_i, new_i) and old_i != new_i:
         fields.append("interval")
-    old_w, new_w = old.get("window"), new.get("window")
-    if old_w and new_w and old_w != new_w:
-        fields.append("window")
+    old_w, new_w = old.get("window_days"), new.get("window_days")
+    if old_w is not None and new_w is not None and old_w != new_w:
+        fields.append("window_days")
     return fields

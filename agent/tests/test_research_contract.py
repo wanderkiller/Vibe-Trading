@@ -87,16 +87,20 @@ def test_contract_diff_interval() -> None:
     assert contract_of_ir({"instruments": []})["interval"] == "unknown"
 
 
-def test_contract_of_ir_reads_1m_from_the_view_and_the_window_from_the_card() -> None:
+def test_contract_of_ir_reads_1m_from_the_view_and_the_window_days_from_the_card() -> None:
     card = {**_ir("BTC"), "view": {"kind": "dataset"}, "window": {"start_day": "2026-01-01", "end_day": "2026-06-29"}}
     c = contract_of_ir(card)
-    assert c["interval"] == "1m" and c["window"] == "2026-01-01..2026-06-29"
-    assert "window" not in contract_of_ir(_ir("BTC"))
+    assert c["interval"] == "1m" and c["window_days"] == 179 and "window" not in c
+    assert "window_days" not in contract_of_ir(_ir("BTC"))
 
 
-def test_contract_diff_window() -> None:
-    a = {**contract_of_ir(_ir("BTC")), "window": "2026-01-01..2026-06-29"}
-    b = {**a, "window": "2026-02-01..2026-06-29"}
-    assert contract_diff(a, b) == ["window"]
-    assert contract_diff(a, a) == []
+def test_contract_diff_window_days_ignores_a_drifting_start_and_end() -> None:
+    def card(start: str, end: str) -> dict:
+        return {**_ir("BTC"), "window": {"start_day": start, "end_day": end}}
+
+    a, same_len = contract_of_ir(card("2026-01-01", "2026-06-30")), contract_of_ir(card("2026-01-02", "2026-07-01"))
+    shorter = contract_of_ir(card("2026-04-01", "2026-06-30"))
+    assert contract_diff(a, same_len) == []  # the default window moved with the hold-out cutoff: same strategy
+    assert contract_diff(contract_of_ir(card("2026-01-01", "2026-06-30")), contract_of_ir(card("2026-01-01", "2026-06-29"))) == ["window_days"]
+    assert contract_diff(a, shorter) == ["window_days"]
     assert contract_diff(a, contract_of_ir(_ir("BTC"))) == []  # one side has no window: not a change

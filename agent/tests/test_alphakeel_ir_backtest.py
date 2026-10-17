@@ -661,6 +661,9 @@ def test_ir_export_round_trips_with_the_same_strategy_id_and_full_provenance(tmp
 def test_ir_export_folds_the_conversations_other_reads_into_the_exposure_end(tmp_path, capsys):
     """G1 1.14: data the conversation read in other processes (``--data-exposure-end-ms``, set by the tool from the
     session's exposure file) raises provenance.data_exposure_end_ms."""
+    from backtest.data_audit import reset_provenance
+
+    reset_provenance()  # a read by an earlier test in this process would also count (process-wide exposure)
     run = _run(tmp_path, "--trials", "1")
     later = 1_790_000_000_000
     exp = tmp_path / "export"

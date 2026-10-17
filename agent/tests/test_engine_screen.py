@@ -816,7 +816,63 @@ def test_an_ir_run_sets_the_contract_and_a_later_generic_run_is_a_flagged_change
              supersedes="back to the cross-venue carry as asked")
     ir_row = L.ledger_rows(SESSION)[-1]
     assert ir_row["contract_change"]["declared"] is True and ir_row["contract_change"]["strategy_id"] == "ir-strategy-0002"
-    assert any(ln.startswith("- #2") and "已声明：back to the cross-venue carry" in ln for ln in _contract_card(SESSION).splitlines())
+    assert any(ln.startswith("- IR#2") and "已声明：back to the cross-venue carry" in ln for ln in _contract_card(SESSION).splitlines())
+
+
+def _ir_card_with_window(tmp_path: Path, strategy_id: str, days: int, *, trials: int | None = None) -> dict:
+    out = _ir_run_card(tmp_path, strategy_id, ("BTC",))
+    doc = json.loads(Path(out["run_card"]).read_text())
+    doc["window"] = {"start_ms": 0, "end_ms": days * DAY_MS, "start_day": "2026-01-01", "end_day": f"2026-01-{1 + days:02d}" if days < 30 else "2026-06-30"}
+    if trials is not None:
+        doc["trials"] = {"count": trials}
+    Path(out["run_card"]).write_text(json.dumps(doc))
+    return out
+
+
+def test_an_ir_contract_line_is_labelled_ir_and_shows_window_days(tmp_path, monkeypatch) -> None:
+    from src.hypotheses.registry import HypothesisRegistry
+    from src.tools import alphakeel_research_ledger as L
+
+    monkeypatch.setattr(L, "_registry", lambda: HypothesisRegistry(tmp_path / "hypotheses.json"))
+    L.record(SESSION, tmp_path, _ir_card_with_window(tmp_path, "ir-strategy-0001", 28), None)
+    L.record(SESSION, tmp_path, _ir_card_with_window(tmp_path, "ir-strategy-0002", 10), None)
+    assert L.contract_history(SESSION)[0]["fields"] == ["window_days"]
+    zh = _contract_card(SESSION).splitlines()
+    assert any(ln.startswith("- IR#2：窗口天数 由 窗口天数=28 变为 窗口天数=10") for ln in zh)
+    assert any(ln.startswith("- IR#2: window days changed from window days=28 to window days=10") for ln in _contract_card(SESSION, False).splitlines())
+
+
+def test_the_old_active_contract_learns_window_days_without_a_change(tmp_path) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    old = {"engine": "ir", "direction": "long_short", "instrument_class": "perp", "assets": ["BTC"], "interval": "1m"}
+    assert L.update_contract(SESSION, old, seq=1, strategy_id="a") is None
+    assert L.update_contract(SESSION, {**old, "window_days": 179}, seq=2, strategy_id="b") is None
+    path = tmp_path / "sessions" / SESSION / L.CONTRACT_FILE
+    assert json.loads(path.read_text())["active"]["window_days"] == 179 and L.contract_history(SESSION) == []
+    entry = L.update_contract(SESSION, {**old, "window_days": 89}, seq=3, strategy_id="c")
+    assert entry["fields"] == ["window_days"]
+    # a declaration with no change learns it too
+    other = "learn-declared"
+    assert L.update_contract(other, old, seq=1, strategy_id="a") is None
+    assert L.update_contract(other, {**old, "window_days": 179}, seq=2, strategy_id="b", reason="same strategy, longer text") is None
+    stored = json.loads((tmp_path / "sessions" / other / L.CONTRACT_FILE).read_text())
+    assert stored["active"]["window_days"] == 179 and stored["history"][0]["declared"] is True and stored["history"][0]["fields"] == []
+
+
+def test_the_card_trial_count_is_the_run_card_trials_count_not_the_ir_version_count(tmp_path, monkeypatch) -> None:
+    from src.hypotheses.registry import HypothesisRegistry
+    from src.tools import alphakeel_research_ledger as L
+
+    monkeypatch.setattr(L, "_registry", lambda: HypothesisRegistry(tmp_path / "hypotheses.json"))
+    L.record_engine_run(SESSION, _make_run(tmp_path, "g1", weight=0.5, seed=1))
+    L.record(SESSION, tmp_path, _ir_card_with_window(tmp_path, "ir-strategy-0001", 28, trials=2), None)
+    zh = "\n".join(L._ir_section(SESSION, True))
+    assert "试验数：本会话 2；" in zh and "Trials: this session 2; " in "\n".join(L._ir_section(SESSION, False))
+    other = "no-trials-session"
+    L.record(other, tmp_path, _ir_card_with_window(tmp_path, "ir-strategy-0009", 28), None)
+    assert "试验数：本会话试验数未取得；" in "\n".join(L._ir_section(other, True))
+    assert "Trials: this session's trial count not available; " in "\n".join(L._ir_section(other, False))
 
 
 def test_a_library_name_in_the_code_without_a_zoo_factor_call_is_listed_and_a_call_is_recorded(tmp_path) -> None:

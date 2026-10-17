@@ -424,6 +424,20 @@ def _leaf_name(path: str) -> str:
     return re.sub(r"\[\d+\]$", "", leaf).strip().casefold()
 
 
+_STRICT_DECIMAL_RE = re.compile(r"-?\d+(\.\d+)?")
+_IDENTIFIER_LEAVES = frozenset(
+    {"run_id", "request_id", "trial_id", "pack_id", "strategy_id", "hash", "digest", "key"}
+)
+
+
+def _is_identifier_leaf(path: str) -> bool:
+    """Whether a result path ends in an identifier-like key (run_id, sha256, ...)."""
+    leaf = re.sub(r"\[[^\]]*\]", "", path).rsplit(".", 1)[-1].casefold()
+    return (
+        leaf in _IDENTIFIER_LEAVES or leaf.endswith("_id") or leaf.startswith("sha")
+    )
+
+
 def _price_field_for_path(path: str) -> str | None:
     """Map a generic evidence JSON path to a canonical price field.
 
@@ -1163,7 +1177,12 @@ class _EvidenceMixin:
                 return
             if tool_name == "alphakeel_research" and isinstance(value, str):
                 # Research results spell numbers as decimal strings ("0.0005").
-                coerced = _coerce_csv_number(value)
+                coerced = (
+                    float(value)
+                    if _STRICT_DECIMAL_RE.fullmatch(value)
+                    and not _is_identifier_leaf(path)
+                    else None
+                )
                 if coerced is not None:
                     self._evidence.append(
                         EvidenceRecord(
@@ -1302,7 +1321,11 @@ class _EvidenceMixin:
                 continue
             if record.status != "observed" or record.value is None:
                 continue
-            field_name = _price_field_for_path(record.field)
+            if record.tool == "alphakeel_research":
+                # Research output is not a quote: a "last"/"close" leaf is not a price.
+                field_name = None
+            else:
+                field_name = _price_field_for_path(record.field)
             if field_name is None:
                 if _is_registered_price_indicator(record.tool, record.field):
                     records.append(replace(record, field="indicator"))

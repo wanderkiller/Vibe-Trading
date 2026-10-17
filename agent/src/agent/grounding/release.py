@@ -692,9 +692,11 @@ class _ReleaseMixin:
         figures = scan_figures(text, parse_figures_block(text))
         located = {(figure.start, figure.end): figure for figure in figures}
         cuts: dict[tuple[int, int], Figure] = {}
+        price_cut = False
         for issue in issues:
             if issue.get("code") not in _REDACTABLE_CODES:
                 continue
+            price_cut = price_cut or bool(issue.get("price_like"))
             span = self._issue_span(text, issue)
             if span is None:
                 return None, [], False
@@ -710,7 +712,6 @@ class _ReleaseMixin:
                 cuts[span] = located[span]
             else:
                 return None, [], False
-        price_cut = any(figure.currency or figure.column for figure in cuts.values())
         rewritten, removed = self._apply_cuts(text, cuts.values())
         return rewritten, removed, price_cut
 

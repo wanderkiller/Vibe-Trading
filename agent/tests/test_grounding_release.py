@@ -2560,3 +2560,68 @@ def test_alphakeel_decimal_strings_are_citable_but_not_prices(tmp_path: Path) ->
     assert ledger._observed_range_summary(True) is None
     draft = "Perp 手续费假设 0.0005。\n" + _block("0.0005 | observed | fee | ak1")
     assert ledger.validate_final_answer(draft).valid is True
+
+
+# ---------------------------------------------------------------------------
+# Review round: research quotes, derived price gaps, price-cut notice, id strings
+# ---------------------------------------------------------------------------
+
+
+def _ak(ledger: GroundingLedger, payload: dict, args: dict | None = None) -> None:
+    ledger.ingest_tool_result(
+        tool_name="alphakeel_research",
+        arguments=args or {"action": "ir_backtest"},
+        result=json.dumps(payload),
+        call_id="ak1",
+        success=True,
+    )
+
+
+def test_r1_research_quote_leaf_is_not_market_evidence(tmp_path: Path) -> None:
+    """An alphakeel 'last' string must not ground a spot price when no quote exists."""
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="BTC 现在多少钱")
+    _ak(ledger, {"quote": {"last": "65000.5"}})
+    assert not ledger.validate_final_answer("BTC 现价 65000.5 美元。").valid
+
+
+def test_r1_research_close_with_symbol_is_not_market_evidence(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path, market=False, indicators=False)
+    _ak(ledger, {"quote": {"close": "1.300"}}, {"action": "ir_backtest", "symbol": SYMBOL})
+    assert not ledger.validate_final_answer(f"{SYMBOL} 现价 1.300 元。").valid
+
+
+def test_r2_derived_price_without_currency_earns_a_price_fetch(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path, market=False, indicators=False)
+    draft = "562500.SS 止损位 1.05。" + _block("1.05 | derived | 1.20 * 0.875 | -")
+    result = ledger.validate_final_answer(draft)
+    assert ledger.recovery_action(result) == "get_market_data"
+
+
+def test_r3_price_cut_notice_follows_price_like_issue_without_currency(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    draft = HDR + " 建议买入价 1.30，分批建仓。" + _block(HDR_ROW, "1.30 | observed | entry | -")
+    result = ledger.validate_final_answer(draft)
+    assert "如需买入价" in ledger.redacted_release(draft, result)
+
+
+def test_r3_count_only_cut_has_no_price_notice(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    text = HDR + " 回撤 12%。"
+    start = text.index("12%")
+    issue = {"code": "figure_undeclared", "value": "12%", "span": [start, start + 3]}
+    assert ledger._cut_flagged(text, [{**issue, "price_like": False}])[2] is False
+    assert ledger._cut_flagged(text, [{**issue, "price_like": True}])[2] is True
+
+
+def test_r4_research_string_ids_and_odd_numerals_are_not_evidence(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    _ak(
+        ledger,
+        {
+            "run_id": "20261017_090950",
+            "request_id": "12345678",
+            "result": {"x": "1_000", "y": "1e3", "z": "0.0005", "sha": "20261017"},
+        },
+    )
+    values = [r.value for r in ledger._evidence if r.tool == "alphakeel_research"]
+    assert values == [0.0005]

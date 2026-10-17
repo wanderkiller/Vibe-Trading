@@ -113,8 +113,8 @@ def test_request_errors() -> None:
 
 # --- B3: the label -----------------------------------------------------------------------------------------------------
 
-def _screen_card(net: str, closed: int, days: int, partial: bool = False) -> dict:
-    return {"metrics": {"days": days}, "counts": {"closed": closed}, "amounts": {"equity_end": net},
+def _screen_card(net: str, closed: int, days: int, partial: bool = False, opened: int | None = None) -> dict:
+    return {"metrics": {"days": days}, "counts": {"opened": closed if opened is None else opened, "closed": closed}, "amounts": {"equity_end": net},
             "data_audit": {"coverage_partial": partial}}
 
 
@@ -727,6 +727,18 @@ def test_screen_1_3_is_not_applicable_with_zero_closed_trades() -> None:
     assert screen(_screen_card("-5", 3, 120))["items"][2]["result"] == "FAIL"
 
 
+def test_screen_1_3_is_judged_when_positions_were_opened_but_none_closed() -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    held = screen(_screen_card("-50", 0, 120, opened=1))
+    item = next(i for i in held["items"] if i["id"] == "1.3")
+    assert item["result"] == "FAIL" and item["observed"] == "-50" and "note" not in item
+    assert next(i for i in held["items"] if i["id"] == "1.2")["result"] == "FAIL" and held["evidence_status"] == "insufficient"
+    assert next(i for i in screen(_screen_card("0", 0, 120, opened=0))["items"] if i["id"] == "1.3")["result"] == "N/A"
+    zero = screen(_screen_card("0", 0, 120, opened=0))
+    assert L._item_observed(zero, "1.3", zh=False) == "n/a (0 trades)" and L._item_observed(zero, "1.3", zh=True) == "不适用（0 笔）"
+
+
 def test_verdict_lists_fails_outside_the_primary_group_and_na_is_not_a_fail() -> None:
     from src.tools import alphakeel_research_ledger as L
 
@@ -767,7 +779,7 @@ def test_ledger_records_contract_seq_declaration_unimplemented_rules_and_same_na
     c3["window"] = {**c3["window"], "start_day": "2026-02-01"}
     _result_for(session, "20261014_092000_ir", c3)
     ch = L.ledger_rows(SESSION_ID)[2]["contract_change"]
-    assert ch["fields"] == ["window"] and ch["seq"] == 3
+    assert ch["fields"] == ["window_days"] and ch["seq"] == 3
     text = "\n".join(L._ir_section(SESSION_ID, True))
     assert "未实现规则：only trade on weekdays" in text and f"同名不同内容（与 {session['sid'][:8]} 不同）" in text
     assert "研究服务账本计数未取得（未登记或旧服务）" in text
@@ -777,6 +789,7 @@ def test_ir_section_trials_line_and_approximations(session) -> None:
     from src.tools import alphakeel_research_ledger as L
 
     card = _card(session["sid"], "carry", "-1", 40)
+    card["trials"] = {"count": 1}
     card["service_registration"] = {"ledger_trials_for_scope": 7}
     card["approximations"] = ["spread is 0"]
     _result_for(session, "20261014_090950_ir", card)

@@ -740,3 +740,45 @@ def test_a_counted_noun_decoration_is_a_plain_declared_number(cell: str) -> None
     plain = parse_figures_block("```figures\n" + cell.split()[0] + " | count | n | -\n```")
     assert [d.value for d in block.declarations] == [d.value for d in plain.declarations]
     assert block.declarations[0].value == float(cell.split()[0])
+
+
+# ---------------------------------------------------------------------------
+# Review round: currency-word gaps
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "3 个　美元",
+        "3 個 美元",
+        "3 個美元",
+        "报价 3 美元左右的价格",
+        "报价 3 美元多点",
+        "报价 3 美元附近",
+        "3 个 USDT",
+    ],
+)
+def test_r5_currency_gaps_are_measured(text: str) -> None:
+    assert _shapes(text)["3"] == "measured"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["3 个 币", "3 枚 币", "3 个 币种", "有 3 个币", "报价 100 人民币元宵", "3 個幣"],
+)
+def test_r5_count_nouns_stay_unmeasured(text: str) -> None:
+    figure = "100" if "100" in text else "3"
+    assert _shapes(text)[figure] != "measured"
+
+
+def test_r5_extent_stops_at_the_currency_word() -> None:
+    text = "报价 3 美元附近"
+    figure = next(f for f in _figures(text) if f.text == "3")
+    assert figure.extent is not None
+    assert text[figure.extent[0] : figure.extent[1]] == "3 美元"
+
+
+@pytest.mark.parametrize("text", ["报价 3 块钱", "报价 3 元附近", "报价 3 元多点"])
+def test_single_character_money_words_with_a_common_tail_are_measured(text: str) -> None:
+    assert _shapes(text)["3"] == "measured"

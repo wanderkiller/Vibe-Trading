@@ -236,7 +236,7 @@ class Instrument:
 class PackCache:
     """Local cache of verified pack content. A partially downloaded or unverified file is never a cache hit."""
 
-    def __init__(self, root: str | os.PathLike, max_bytes: int | None = None):
+    def __init__(self, root: str | os.PathLike, max_bytes: int | None = None, *, evict: bool = False):
         self.root = Path(root)
         if max_bytes is None:
             try:
@@ -255,8 +255,9 @@ class PackCache:
             with contextlib.suppress(OSError):
                 if part.stat().st_mtime < stale:
                     part.unlink()
-        with contextlib.suppress(Exception):
-            self.evict()
+        if evict:  # network cache roots only: an exported pack directory is read-only evidence and is never evicted
+            with contextlib.suppress(Exception):
+                self.evict()
 
     def evict(self, now: float | None = None) -> int:
         """Delete the least recently used cache units until the cache is within ``max_bytes``; returns the bytes deleted.
@@ -390,7 +391,7 @@ class Pack:
     @classmethod
     def open(cls, client: "Client", pack_id: str, cache_dir: str | os.PathLike) -> "Pack":
         lock = client.pack_lock(pack_id)
-        return cls(lock, PackCache(cache_dir), client)
+        return cls(lock, PackCache(cache_dir, evict=True), client)
 
     @classmethod
     def from_directory(cls, directory: str | os.PathLike) -> "Pack":
@@ -421,6 +422,8 @@ class Pack:
             p = self.cache.content_path(obj["content_sha256"])
             if not self.cache.has(obj["content_sha256"]):
                 raise EvidenceError("data.pack_expired", f"object {obj['name']} is not in the exported pack")
+            with contextlib.suppress(OSError):
+                os.utime(p)  # recently used, as ensure() does
             return p
         return self.cache.ensure(self.client, self.id, obj)
 
