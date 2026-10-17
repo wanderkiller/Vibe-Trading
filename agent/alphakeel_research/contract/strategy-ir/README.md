@@ -96,8 +96,10 @@ JSON 整数只用于计数、小时、分钟（`horizon_hours`、`candidate_limi
    `timeout_s` ∈ [120, 3600]、`participation` ∈ (0, 0.25]（越界 → `ir.invalid`，路径 `execution.entry.<long|short>.maker.<键>`）。
    未知模型（如 `M0`）、`chase` 不是 `"taker"`、`exit` 不是 `"taker"`、腿既不是 `"taker"` 也不是 `{"maker": …}`、未知键 → 第 1 条（`ir.shape`）。
    形状严格按 schema：`execution`、`entry` 与 maker 设定必须是对象（`"execution": null`、数组都是 `ir.shape`；不想要就省略），
-   `model`、`chase`、`exit` 与 `"taker"` 腿必须是字符串（`{"M1": null}`、`{"taker": null}` 是 `ir.shape`），`{"maker": …}` 只有这一个键，
-   `timeout_s` 是 JSON 整数（`180.0` 是 `ir.shape`）。
+   `model`、`chase`、`exit` 与 `"taker"` 腿必须是字符串（`{"M1": null}`、`{"taker": null}` 是 `ir.shape`），`{"maker": …}` 只有这一个键。
+   两条 schema 表达不了、两侧实现另外要求的规则（同样是 `ir.shape`）：`timeout_s` 必须写成 JSON 整数字面量（`180.0` 拒绝；
+   draft 2020-12 的 `"type": "integer"` 按数值判断，会接受它）；`execution` 里任何一层对象都不能有重复键（JSON 解析器默认后者覆盖前者，
+   两侧都不这样做）。重复键写不进由 Python dict 生成的向量文件，Rust 侧由 `ir.rs` 的单元测试覆盖。
    `parameters.*.path` 不能指向 `execution`（第 5 条，`ir.parameter_path`）。
 6. `provenance` 形状。
 7. 文档带 `strategy_id` 时必须等于 §2 的计算值。
