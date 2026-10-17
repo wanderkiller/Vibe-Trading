@@ -582,7 +582,8 @@ def _summary(result: dict) -> str:
     return f"{result.get('evidence_status')}: " + "; ".join(parts)
 
 
-def _finish_ir_backtest(out: dict, planned: dict, run_dir: Any, session_id: str | None, warnings: list[str]) -> None:
+def _finish_ir_backtest(out: dict, planned: dict, run_dir: Any, session_id: str | None, warnings: list[str],
+                        supersedes: str | None = None) -> None:
     """A finished ``ir_backtest`` envelope: ``evidence_status`` first and a ``summary`` in ``result``, ``evidence_dir``
     and ``ignored_args`` on the envelope, the run appended to the conversation's private ledger."""
     result = out.get("result")
@@ -605,7 +606,7 @@ def _finish_ir_backtest(out: dict, planned: dict, run_dir: Any, session_id: str 
         try:
             from src.tools import alphakeel_research_ledger as ledger
 
-            ledger.record(session_id, run_dir, result, rel)
+            ledger.record(session_id, run_dir, result, rel, supersedes=supersedes)
         except Exception as e:  # noqa: BLE001 - the ledger never fails the backtest
             warnings.append(f"trial ledger: {e.__class__.__name__}: {str(e)[:300]}")
 
@@ -683,7 +684,7 @@ class AlphakeelResearchTool(BaseTool):
                     "pack": {"type": "string"},
                     "accept_partial": {"type": "boolean"},
                 },
-                "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, selection (declared, or {pit_membership: {top_n, table_sha256?}}: dataset packs and ir_backtest), pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode; IR: ir, out, run, fees, capital_base, pack_dir, verbose, research_credential; ir_backtest: ir (required), start_ms, end_ms (optional), fees (optional), accept_partial, selection, capital_base, pack_dir, verbose -- instruments, step_minutes, trials, trials_evidence are derived and ignored if given; robustness (export: directory with robustness.json); ir_robustness: run, ir, instruments, pack_dir, is_start_ms, is_end_ms, oos_start_ms, oos_end_ms, oos_pack_dir, filter ({kind: excluded_bases, bases: [...]} or a JSON file), permutations, seed, permutation_seed, workers, step_minutes, prior_trials, wf_folds, wf_test_days, wf_min_train_days; ir_crosscheck: ir, run, timeout_s.",
+                "description": "Arguments of the action (see the alphakeel_research CLI): start_ms, end_ms, venues, funding, instruments (list of {venue, market, symbol} or a JSON file path), market_tables, price_kinds, market_dataset, accept_partial, selection (declared, or {pit_membership: {top_n, table_sha256?}}: dataset packs and ir_backtest), pack, venue, market, symbol, table, price_kind, as_of_ms, intents, strategy, instruments, parameters, seed, profile, rules, params, a, b, mode; IR: ir, out, run, fees, capital_base, pack_dir, verbose, research_credential; ir_backtest: ir (required), start_ms, end_ms (optional), fees (optional), accept_partial, selection, capital_base, pack_dir, verbose, supersedes_contract (reason, at least 10 characters, when this IR is a different strategy from the session's research contract) -- instruments, step_minutes, trials, trials_evidence are derived and ignored if given; robustness (export: directory with robustness.json); ir_robustness: run, ir, instruments, pack_dir, is_start_ms, is_end_ms, oos_start_ms, oos_end_ms, oos_pack_dir, filter ({kind: excluded_bases, bases: [...]} or a JSON file), permutations, seed, permutation_seed, workers, step_minutes, prior_trials, wf_folds, wf_test_days, wf_min_train_days; ir_crosscheck: ir, run, timeout_s.",
             },
         },
         "required": ["action"],
@@ -776,5 +777,6 @@ class AlphakeelResearchTool(BaseTool):
         if rc != 0 and isinstance(e, dict) and _market_blocked(e.get("code"), e.get("message")):
             out["next"] = _MARKET_BLOCKED_NEXT
         if planned is not None:
-            _finish_ir_backtest(out, planned, session_run_dir, _session_id(self), warnings)
+            _finish_ir_backtest(out, planned, session_run_dir, _session_id(self), warnings,
+                                supersedes=args.get("supersedes_contract") if isinstance(args.get("supersedes_contract"), str) else None)
         return _dump(out, warnings)

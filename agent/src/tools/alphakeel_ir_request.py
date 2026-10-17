@@ -59,6 +59,7 @@ class IrBacktestArgs(BaseModel):
     pack_dir: str | None = None
     selection: dict | str | None = None
     verbose: bool = False
+    supersedes_contract: str | None = None  # research-contract declaration: read by the ledger, never sent to the CLI
 
 
 def parse_args(args: dict[str, Any]) -> IrBacktestArgs:

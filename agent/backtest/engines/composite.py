@@ -279,6 +279,13 @@ class CompositeEngine(BaseEngine):
     def _execute_bars(self, dates, data_map, close_df, target_pos, codes, close_val_df=None) -> None:
         if self._funding is not None:
             self._funding.prepare(data_map, self._crypto_codes(codes))  # refuses a perpetual without settlement data
+            # as CryptoEngine: a spot code with assumed funding cannot be sold short; fail before any bar
+            from backtest.engines.crypto import spot_short_refusal
+
+            for symbol in self._crypto_codes(codes):
+                if (self._funding.models.get(symbol) == "assumed_fixed_rate" and symbol in target_pos.columns
+                        and bool((target_pos[symbol] < -1e-9).any())):
+                    raise ValueError(spot_short_refusal(symbol))
         super()._execute_bars(dates, data_map, close_df, target_pos, codes, close_val_df=close_val_df)
 
     def before_rebalance_bar(self, timestamp: pd.Timestamp, data_map: Dict[str, pd.DataFrame], codes: List[str]) -> bool:

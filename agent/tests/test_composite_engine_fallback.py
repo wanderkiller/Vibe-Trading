@@ -127,3 +127,26 @@ def test_composite_metrics_carry_the_crypto_funding_summary(monkeypatch) -> None
     engine._write_artifacts(None, {}, None, None, None, None, None, metrics, ["BTC-USDT", "AAPL.US"])
     assert seen["funding_estimate"] is True and seen["funding_priced_at_close"] == 1 and seen["funding_settlements"] == 3
     assert seen["funding_models"] == {"BTC-USDT": "settlement_data"}
+
+
+def test_composite_refuses_a_spot_crypto_short_before_any_bar() -> None:
+    """A spot crypto code in a composite run is long-only as in CryptoEngine: the short fails the run, long-only runs."""
+    dates = pd.date_range("2025-01-01", periods=4, freq="8h")
+
+    def frame(price: float) -> pd.DataFrame:
+        return pd.DataFrame({"open": price, "high": price, "low": price, "close": price, "volume": 1.0}, index=dates)
+
+    codes = ["BTC-USDT", "AAPL.US"]
+    data_map = {"BTC-USDT": frame(60000.0), "AAPL.US": frame(150.0)}
+    close_df = pd.DataFrame({c: f["close"] for c, f in data_map.items()}, index=dates)
+
+    def run(btc: list[float]) -> CompositeEngine:
+        engine = CompositeEngine({"initial_cash": 100_000, "taker_rate": 0.0005}, codes)
+        targets = pd.DataFrame({"BTC-USDT": btc, "AAPL.US": [0.0] * 4}, index=dates)
+        engine._execute_bars(dates, data_map, close_df, targets, codes)
+        return engine
+
+    with pytest.raises(ValueError, match="is a spot code") as exc:
+        run([0.0, -0.5, -0.5, 0.0])
+    assert "BTC-USDT" in str(exc.value)
+    assert run([0.0, 0.5, 0.5, 0.0]) is not None

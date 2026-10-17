@@ -1871,17 +1871,24 @@
   },
   {
    "id": "research-integrity-r2",
-   "title": "Research integrity r2: spot shorts refused, trials/ read namespace and code lineage on the card",
+   "title": "Research integrity r2: spot shorts refused (crypto and composite), trials/ read namespace, code lineage and research contract on the card",
    "files": [
     "agent/backtest/engines/crypto.py",
+    "agent/backtest/engines/composite.py",
+    "agent/backtest/research_contract.py",
     "agent/src/tools/read_file_tool.py",
     "agent/src/tools/alphakeel_research_ledger.py",
+    "agent/src/tools/alphakeel_research_tool.py",
+    "agent/src/tools/alphakeel_ir_request.py",
     "agent/src/agent/context.py",
     "agent/src/skills/strategy-generate/SKILL.md",
     "agent/src/skills/pair-trading/SKILL.md",
     "agent/tests/test_crypto_engine.py",
     "agent/tests/test_read_file_trials.py",
-    "agent/tests/test_engine_screen.py"
+    "agent/tests/test_engine_screen.py",
+    "agent/tests/test_research_contract.py",
+    "agent/tests/test_composite_engine_fallback.py",
+    "agent/tests/test_alphakeel_research_truth.py"
    ],
    "anchors": [
     {
@@ -1908,6 +1915,26 @@
      "file": "agent/src/agent/context.py",
      "kind": "hook",
      "literal": "- To change an earlier generic backtest, start from its files"
+    },
+    {
+     "file": "agent/backtest/engines/composite.py",
+     "kind": "upstream",
+     "literal": "self._funding.prepare(data_map, self._crypto_codes(codes))"
+    },
+    {
+     "file": "agent/backtest/engines/composite.py",
+     "kind": "hook",
+     "literal": "raise ValueError(spot_short_refusal(symbol))"
+    },
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "hook",
+     "literal": "- The session has a research contract measured from its first backtest"
+    },
+    {
+     "file": "agent/src/tools/alphakeel_research_tool.py",
+     "kind": "hook",
+     "literal": "ledger.record(session_id, run_dir, result, rel, supersedes=supersedes)"
     },
     {
      "file": "agent/src/skills/strategy-generate/SKILL.md",

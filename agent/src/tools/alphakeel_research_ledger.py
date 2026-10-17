@@ -53,6 +53,7 @@ EXPOSURE_FILE = "data_exposure.jsonl"
 ENGINE_LEDGER_FILE = "engine_ledger.jsonl"
 ENGINE_RUNS_DIR = "engine_runs"
 RETURNS_FILE = "returns.json"
+CONTRACT_FILE = "research_contract.json"
 DEFAULT_HOLDOUT_DAYS = 60
 HOLDOUT_FILE = "alphakeel_holdout.json"
 HOLDOUT_CACHE_SECONDS = 6 * 3600
@@ -185,6 +186,61 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _read_contract_file(session_id: str) -> dict | None:
+    """``research_contract.json`` of the session as ``{"active": dict, "history": list}``; None when missing or unreadable."""
+    try:
+        data = json.loads((_session_dir(session_id) / CONTRACT_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("active"), dict):
+        return None
+    history = data.get("history")
+    return {"active": data["active"], "history": [h for h in history if isinstance(h, dict)] if isinstance(history, list) else []}
+
+
+def _write_json_atomic(path: Path, doc: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps(doc, sort_keys=True, ensure_ascii=False, indent=2))
+        f.flush()
+        with contextlib.suppress(OSError):
+            os.fsync(f.fileno())
+    os.replace(tmp, path)
+    _fsync_dir(path.parent)
+
+
+def update_contract(session_id: str, contract: dict, *, seq: int | None = None, strategy_id: str | None = None,
+                    reason: str | None = None) -> dict | None:
+    """Compare what a backtest measured (``contract``) with the session's active research contract.
+
+    No contract yet: ``contract`` becomes the active one, None. Same strategy (``contract_diff`` empty): None, the active
+    contract is kept. Otherwise a history entry is appended (``declared`` = a ``reason`` of at least 10 characters), the
+    contract becomes the active one and the entry is returned. A run is never refused; the card shows the change."""
+    from backtest.research_contract import contract_diff
+
+    path = _session_dir(session_id) / CONTRACT_FILE
+    with _flock(path):
+        current = _read_contract_file(session_id)
+        if current is None:
+            _write_json_atomic(path, {"active": contract, "history": []})
+            return None
+        fields = contract_diff(current["active"], contract)
+        if not fields:
+            return None
+        text = reason.strip() if isinstance(reason, str) else ""
+        entry = {"seq": seq, "strategy_id": strategy_id, "from": current["active"], "to": contract, "fields": fields,
+                 "declared": len(text) >= 10, "reason": text or None, "ts": int(time.time() * 1000)}
+        _write_json_atomic(path, {"active": contract, "history": [*current["history"], entry]})
+        return entry
+
+
+def contract_history(session_id: str) -> list[dict]:
+    """The session's recorded contract changes in order."""
+    current = _read_contract_file(session_id)
+    return current["history"] if current else []
+
+
 def ledger_rows(session_id: str) -> list[dict]:
     """The private ledger of ``session_id`` in append order."""
     path = _session_dir(session_id) / LEDGER_FILE
@@ -271,7 +327,8 @@ def trials_for(session_id: str, run_dir: str | Path, strategy_id: str, *, ir_doc
     return len(versions), str(path)
 
 
-def record(session_id: str, run_dir: str | Path, result: dict, evidence_dir: str | None) -> None:
+def record(session_id: str, run_dir: str | Path, result: dict, evidence_dir: str | None, *,
+           supersedes: str | None = None) -> None:
     """After a successful ``ir backtest`` (its CLI result: ``run_dir``, ``run_card``): append the private ledger row, then
     link the run to the conversation's hypothesis (``HypothesisRegistry.link_backtest``)."""
     card_path = Path(str(result["run_card"])).resolve()
@@ -279,6 +336,12 @@ def record(session_id: str, run_dir: str | Path, result: dict, evidence_dir: str
     row = {"strategy_id": card["strategy_id"], "name": card.get("name"), "run_card_path": str(card_path),
            "run_card_sha256": _sha256(card_path), "evidence_dir": evidence_dir, "run_dir": str(run_dir),
            "ts": int(time.time() * 1000)}
+    from backtest.research_contract import contract_of_ir
+
+    try:  # the contract never fails the backtest; a change is on the row and on the card
+        row["contract_change"] = update_contract(session_id, contract_of_ir(card), strategy_id=card["strategy_id"], reason=supersedes)
+    except Exception:  # noqa: BLE001
+        row["contract_change"] = None
     # the row is a trial for the DSR floor: durable before the call returns
     _append_durable(_session_dir(session_id) / LEDGER_FILE, row)
     hid = session_hypothesis(session_id, card.get("name") or "")
@@ -356,6 +419,24 @@ def _trial_key(run_dir: Path) -> str:
         return _input_key(run_dir)
 
 
+def _supersedes_of(run_dir: Path) -> str | None:
+    """``supersedes_contract`` (a string) of the run's ``config.json``, else None."""
+    try:
+        value = json.loads((run_dir / "config.json").read_text(encoding="utf-8")).get("supersedes_contract")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if isinstance(value, str) else None
+
+
+def _drift_message(change: dict) -> str:
+    fields = ", ".join(change.get("fields") or [])
+    if change.get("declared"):
+        return f"Declared strategy change ({fields}): {change.get('reason')}"
+    return (f"This run is a different strategy from the session's research contract (changed: {fields}). Tell the user the "
+            "strategy changed and why. To declare the change, set config.json \"supersedes_contract\": \"<reason, at least 10 "
+            "characters>\" and rerun.")
+
+
 def record_engine_run(session_id: str, run_dir: Path) -> dict:
     """After a successful generic ``backtest``: count the trial, screen the run, snapshot it and append the private row.
 
@@ -392,15 +473,25 @@ def record_engine_run(session_id: str, run_dir: Path) -> dict:
     screen_path = snap / "screen.json"
     screen_path.write_text(json.dumps(screen, sort_keys=True, ensure_ascii=False, indent=2), encoding="utf-8")
     sharpe = (screen.get("facts") or {}).get("sharpe_daily")
+    from backtest.research_contract import contract_of_engine
+
+    try:  # the contract never fails the backtest; a change is on the row, on the card and in the returned dict
+        change = update_contract(session_id, contract_of_engine(screen.get("facts") or {}), seq=seq, reason=_supersedes_of(run_dir))
+    except Exception:  # noqa: BLE001
+        change = None
     code_snap, config_snap = snap / "code" / "signal_engine.py", snap / "config.json"
     row = {"seq": seq, "trial_key": key, "input_key": input_key, "run_dir": str(run_dir), "snapshot_dir": str(snap),
            "code_sha256": _sha256(code_snap) if code_snap.is_file() else None,
            "config_sha256": _sha256(config_snap) if config_snap.is_file() else None,
            "screen_sha256": _sha256(screen_path), "returns_sha256": _sha256(returns_path),
-           "sharpe_daily": sharpe if isinstance(sharpe, (int, float)) else None, "ts": int(time.time() * 1000)}
+           "sharpe_daily": sharpe if isinstance(sharpe, (int, float)) else None, "ts": int(time.time() * 1000),
+           "contract_change": change}
     _append_durable(_session_dir(session_id) / ENGINE_LEDGER_FILE, row)
-    return {**screen, "trials": trials, "seq": seq,
-            "trial_files": [f"trials/{seq:04d}/code/signal_engine.py", f"trials/{seq:04d}/config.json"]}
+    out = {**screen, "trials": trials, "seq": seq,
+           "trial_files": [f"trials/{seq:04d}/code/signal_engine.py", f"trials/{seq:04d}/config.json"]}
+    if change is not None:
+        out["contract_drift"] = {**change, "message": _drift_message(change)}
+    return out
 
 
 def verified_engine_returns(row: dict) -> list[float] | None:
@@ -635,7 +726,7 @@ def _ir_section(session_id: str, zh: bool) -> list[str]:
                     f"{fmt_amount((c.get('amounts') or {}).get('equity_end'))} | "
                     f"{fmt_amount((c.get('amounts') or {}).get('price_pnl_closed'))} | "
                     f"{fmt_amount((c.get('amounts') or {}).get('fees'))} | {fmt_amount((c.get('amounts') or {}).get('funding'))} | "
-                    f"{fmt_fraction((c.get('max_drawdown') or {}).get('fraction_of_capital'))} | {_verdict(c, t)} |")
+                    f"{fmt_fraction((c.get('max_drawdown') or {}).get('fraction_of_capital'))} | {_verdict(c, t)}{_undeclared_mark(row, _CONTRACT_TEXT[bool(zh)])} |")
     summary = t["summary"].format(n=len(versions), m=len(entries), p=counts["passed_screen"], f=counts["failed_screen"],
                                   i=counts["insufficient"]) + (t["tampered"].format(n=bad) if bad else "")
     lines = ["---", t["title"], *_fee_lines(cards, t), summary, t["head"], "|---|---|---|---|---|---|---|---|---|", *rows]
@@ -771,7 +862,7 @@ def _engine_section(session_id: str, zh: bool, first: bool) -> list[str]:
         rows.append(f"| {seq} | {code_marks[i]} | {label} / {facts.get('source') or '—'} | {_item_observed(s, '1.1') if _item_observed(s, '1.1') is not None else '—'} | "
                     f"{_item_observed(s, '1.2') if _item_observed(s, '1.2') is not None else '—'} | {_net_return(s)} | "
                     f"{fmt_amount(facts.get('dsr'))} ({facts.get('trials', '—')}) | {direction} / {fmt_fraction(facts.get('time_in_market'))} | "
-                    f"{_engine_verdict(s, t)} |")
+                    f"{_engine_verdict(s, t)}{_undeclared_mark(row, _CONTRACT_TEXT[bool(zh)])} |")
     summary = t["summary"].format(m=len(entries), n=len({r["trial_key"] for r in rows_all}), p=counts["passed_screen"],
                                   f=counts["failed_screen"], i=counts["insufficient"]) + (t["tampered"].format(n=bad) if bad else "")
     lines = (["---"] if first else []) + [t["title"], summary, t["head"], "|---|---|---|---|---|---|---|---|---|", *rows]
@@ -781,6 +872,45 @@ def _engine_section(session_id: str, zh: bool, first: bool) -> list[str]:
     non = sorted({str(x) for s in screens for x in (s.get("facts") or {}).get("non_auditable_sources") or []})
     if non:
         lines.append(t["non_auditable"].format(srcs=", ".join(non)))
+    return lines
+
+
+_CONTRACT_TEXT = {
+    True: {"title": "**研究合同变更（系统根据回测实测生成）**", "line": "- #{ref}：{fields} 由 {old} 变为 {new}；{status}",
+           "declared": "已声明：{reason}", "undeclared": "未声明——这一版与之前的结果不是同一策略，不能直接比较",
+           "mark": "（未声明换向）", "sep": "、"},
+    False: {"title": "**Research contract changes (measured by the system)**", "line": "- #{ref}: {fields} changed from {old} to {new}; {status}",
+            "declared": "declared: {reason}", "undeclared": "undeclared — this version is not the same strategy as the earlier results and cannot be compared with them",
+            "mark": " (undeclared strategy change)", "sep": ", "},
+}
+
+
+def _contract_values(contract: Any, fields: list[str]) -> str:
+    contract = contract if isinstance(contract, dict) else {}
+    parts = []
+    for f in fields:
+        v = contract.get(f)
+        parts.append(f"{f}={','.join(str(x) for x in v) if isinstance(v, list) else v if v is not None else '—'}")
+    return ", ".join(parts)
+
+
+def _undeclared_mark(row: dict, t: dict) -> str:
+    change = row.get("contract_change")
+    return t["mark"] if isinstance(change, dict) and change.get("declared") is False else ""
+
+
+def _contract_section(session_id: str, zh: bool) -> list[str]:
+    history = contract_history(session_id)
+    if not history:
+        return []
+    t = _CONTRACT_TEXT[bool(zh)]
+    lines = [t["title"]]
+    for h in history:
+        fields = [str(f) for f in h.get("fields") or []]
+        ref = h.get("seq") if h.get("seq") is not None else str(h.get("strategy_id") or "?")[:8]
+        status = t["declared"].format(reason=h.get("reason")) if h.get("declared") else t["undeclared"]
+        lines.append(t["line"].format(ref=ref, fields=t["sep"].join(fields), old=_contract_values(h.get("from"), fields),
+                                      new=_contract_values(h.get("to"), fields), status=status))
     return lines
 
 
@@ -802,7 +932,7 @@ def _holdout_warning(session_id: str, zh: bool) -> list[str]:
 
 def render_card(session_id: str | None, zh: bool) -> str | None:
     """The result card of the conversation: its IR backtests (``ir_ledger.jsonl``), then its generic engine backtests
-    (``engine_ledger.jsonl``), then a warning when it read hold-out data. None without a session id or when both
+    (``engine_ledger.jsonl``), then the research contract changes (``research_contract.json``), then a warning when it read hold-out data. None without a session id or when both
     ledgers are empty."""
     if not session_id:
         return None
@@ -810,4 +940,4 @@ def render_card(session_id: str | None, zh: bool) -> str | None:
     engine = _engine_section(session_id, zh, first=not ir)
     if not ir and not engine:
         return None
-    return "\n".join([*ir, *engine, *_holdout_warning(session_id, zh)])
+    return "\n".join([*ir, *engine, *_contract_section(session_id, zh), *_holdout_warning(session_id, zh)])

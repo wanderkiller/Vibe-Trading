@@ -172,7 +172,7 @@ def _write_run(runs: Path, dirname: str, card: dict) -> Path:
 def session(tmp_path, monkeypatch):
     """A session run dir, a temp hypothesis registry, the service check stubbed, and a fake ``ir backtest`` CLI that
     prints the result of the next queued run card."""
-    from alphakeel_research import cli, ir
+    from alphakeel_research import ir
     from src.hypotheses.registry import HypothesisRegistry
     from src.tools import alphakeel_ir_request, alphakeel_research_ledger
 
@@ -699,3 +699,17 @@ def test_a_timeout_kills_the_child_process_group(tmp_path, monkeypatch) -> None:
     while alive() and time.monotonic() < deadline:
         time.sleep(0.05)
     assert not alive(), f"grandchild {pid} still running"
+
+
+def test_supersedes_contract_goes_to_the_ledger_not_to_the_cli_and_is_not_ignored(session, monkeypatch) -> None:
+    from src.tools import alphakeel_research_ledger as ledger
+
+    seen = []
+    real = ledger.record
+    monkeypatch.setattr(ledger, "record", lambda *a, **k: (seen.append(k.get("supersedes")), real(*a, **k))[1])
+    out = _run_tool(session, "20261014_090950_ir", _card(session["sid"], "carry", "-1.0", 15),
+                    supersedes_contract="back to the carry the user asked for")
+    assert out["status"] == "ok", out
+    assert "ignored_args" not in out and "ignored_args_note" not in out
+    assert seen == ["back to the carry the user asked for"]
+    assert not any("supersedes" in str(x) or "the carry the user asked" in str(x) for x in session["argv"][0] if str(x).startswith("-") or " " in str(x))

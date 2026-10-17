@@ -744,3 +744,76 @@ def test_a_weekday_only_file_records_nothing(tmp_path, monkeypatch) -> None:
     out = _run_bound(_shape_run(tmp_path, monkeypatch, weekend=False))
     assert not [r for r in _exposure_rows(tmp_path) if r["via"] == "ohlcv-shape"]
     assert "crypto-shaped" not in out["research_screen"].get("warning", "")
+
+
+# --- research contract (backtest.research_contract; ledger.update_contract) ------------------------------------------------
+
+def _contract_card(session: str, zh: bool = True) -> str:
+    from src.tools import alphakeel_research_ledger as L
+
+    return L.render_card(session, zh) or ""
+
+
+def test_the_first_engine_run_sets_the_contract_and_a_changed_one_is_flagged_on_the_card(tmp_path) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    first = L.record_engine_run(SESSION, _make_run(tmp_path, "r1", weight=0.5, seed=1))
+    assert "contract_drift" not in first
+    stored = json.loads((tmp_path / "sessions" / SESSION / L.CONTRACT_FILE).read_text())
+    assert stored["history"] == [] and stored["active"]["direction"] == "long_only" and stored["active"]["assets"] == ["BTC"]
+    assert "研究合同变更" not in _contract_card(SESSION)
+
+    second = L.record_engine_run(SESSION, _make_run(tmp_path, "r2", weight=-0.5, seed=2))
+    drift = second["contract_drift"]
+    assert drift["fields"] == ["direction"] and drift["declared"] is False
+    assert "changed: direction" in drift["message"] and "supersedes_contract" in drift["message"]
+    card = _contract_card(SESSION)
+    line = next(ln for ln in card.splitlines() if "未声明" in ln and ln.startswith("- #2"))
+    assert "direction=long_only" in line and "direction=short_only" in line
+    rows = {ln.split("|")[1].strip(): ln for ln in card.splitlines() if ln.startswith("| ")}
+    assert "（未声明换向）" in rows["2"].split("|")[-2] and "（未声明换向）" not in rows["1"]
+    assert "(undeclared strategy change)" in _contract_card(SESSION, False)
+
+    third = L.record_engine_run(SESSION, _make_run(tmp_path, "r3", weight=0.5, seed=3,
+                                                   config_extra={"supersedes_contract": "user asked for long-only trend"}))
+    assert third["contract_drift"]["declared"] is True
+    assert third["contract_drift"]["message"].startswith("Declared strategy change (direction): user asked")
+    card = _contract_card(SESSION)
+    assert any(ln.startswith("- #3") and "已声明：user asked for long-only trend" in ln for ln in card.splitlines())
+    assert "declared: user asked for long-only trend" in _contract_card(SESSION, False)
+
+    # a short reason is not a declaration; the same strategy again changes nothing
+    fourth = L.record_engine_run(SESSION, _make_run(tmp_path, "r4", weight=-0.5, seed=4, config_extra={"supersedes_contract": "short"}))
+    assert fourth["contract_drift"]["declared"] is False
+    assert "contract_drift" not in L.record_engine_run(SESSION, _make_run(tmp_path, "r5", weight=-0.5, seed=5))
+    assert len(L.contract_history(SESSION)) == 3
+
+
+def _ir_run_card(tmp_path: Path, strategy_id: str, bases: tuple[str, ...]) -> dict:
+    card = {"strategy_id": strategy_id, "name": "carry", "window": {"start_ms": 0, "end_ms": DAY_MS},
+            "counts": {"closed": 3}, "amounts": {"equity_end": "100", "fees": "1", "price_pnl_closed": "2", "funding": "0"},
+            "max_drawdown": {"fraction_of_capital": "0.01"}, "assumptions": {"fees_source": "request"},
+            "instruments": [{"venue": "binance", "market": "perp", "symbol": f"{b}USDT", "base": b} for b in bases]}
+    path = tmp_path / f"card-{strategy_id}.json"
+    path.write_text(json.dumps(card))
+    return {"run_card": str(path), "run_dir": str(tmp_path)}
+
+
+def test_an_ir_run_sets_the_contract_and_a_later_generic_run_is_a_flagged_change(tmp_path, monkeypatch) -> None:
+    from src.hypotheses.registry import HypothesisRegistry
+    from src.tools import alphakeel_research_ledger as L
+
+    monkeypatch.setattr(L, "_registry", lambda: HypothesisRegistry(tmp_path / "hypotheses.json"))
+    L.record(SESSION, tmp_path, _ir_run_card(tmp_path, "ir-strategy-0001", ("BTC", "ETH")), None)
+    assert L.contract_history(SESSION) == []
+    out = L.record_engine_run(SESSION, _make_run(tmp_path, "g1", weight=0.5, codes=("BTC-USDT",)))
+    assert out["contract_drift"]["fields"] == ["engine", "direction", "instrument_class"]
+    assert out["contract_drift"]["declared"] is False
+    card = _contract_card(SESSION)
+    assert any(ln.startswith("- #1") and "engine=ir" in ln and "engine=generic" in ln and "未声明" in ln for ln in card.splitlines())
+    # back to an IR strategy with a declared reason: recorded on the IR row and the card
+    L.record(SESSION, tmp_path, _ir_run_card(tmp_path, "ir-strategy-0002", ("BTC", "ETH")), None,
+             supersedes="back to the cross-venue carry as asked")
+    ir_row = L.ledger_rows(SESSION)[-1]
+    assert ir_row["contract_change"]["declared"] is True and ir_row["contract_change"]["strategy_id"] == "ir-strategy-0002"
+    assert any(ln.startswith("- #ir-strat") and "已声明：back to the cross-venue carry" in ln for ln in _contract_card(SESSION).splitlines())
