@@ -119,7 +119,7 @@ def test_the_audited_session_nine_backtests_in_one_run_dir_show_on_the_card(tmp_
     zh = L.render_card(SESSION, True)
     assert "通用引擎回测 9 次 / 9 个不同结果（按 metrics 去重）：" in zh
     assert "通用引擎结果不能直接上实盘：须交接 Strategy IR，通过 ir_robustness 与 AlphaKeel G1/G2。" in zh
-    assert "| # | 代码 | 标的 / 来源 | 窗口天数 | 成交 | 净收益率 | DSR（试验数） | 方向 / 在场时间 | 判定 |" in zh
+    assert "| # | 代码 | 标的 / 来源 | 窗口天数 | 往返笔数 | 净收益率 | DSR（试验数） | 方向 / 在场时间 | 判定 |" in zh
     assert "数据不可审计" not in zh  # no run card in the synthetic dirs: nothing claimed
     body = [ln for ln in zh.splitlines() if ln.startswith("| ") and "BTC-USDT / okx" in ln]
     assert len(body) == 9  # the latest 10 rows cover all 9
@@ -844,3 +844,163 @@ def test_a_library_name_in_the_code_without_a_zoo_factor_call_is_listed_and_a_ca
             "these rules are hand-written, not library factors") in en.splitlines()
     assert "- #2 uses library factors: gtja191_010" in en.splitlines()
     assert zh.index("- #1：") < zh.index("通用引擎结果不能直接上实盘")
+
+
+# ---- 1.2 counts round trips ---------------------------------------------------------------------------------------------
+
+def _fills(rd: Path, lines: list[tuple[str, str, str]]) -> None:
+    (rd / "artifacts" / "fills.jsonl").write_text(
+        "".join(json.dumps({"symbol": s, "timestamp": ts, "bar_idx": 0, "action": a}) + "\n" for s, ts, a in lines))
+
+
+def _set_trades(rd: Path, trades: int) -> None:
+    text = (rd / "artifacts" / "metrics.csv").read_text().splitlines()
+    head, vals = text[0], text[1].split(",")
+    vals[head.split(",").index("trade_count")] = str(trades)
+    (rd / "artifacts" / "metrics.csv").write_text(head + "\n" + ",".join(vals) + "\n")
+
+
+def test_a_pair_trade_counts_one_round_trip_for_its_two_legs(tmp_path) -> None:
+    rd = _make_run(tmp_path, "pair", trades=10, codes=("BTC-USDT", "ETH-USDT"))
+    fills = []
+    for n in range(5):  # five pair trades: both legs open on one bar and close together
+        fills += [("BTC-USDT", f"2024-02-0{n + 1}T00:00:00", "open"), ("ETH-USDT", f"2024-02-0{n + 1}T00:00:00", "open"),
+                  ("BTC-USDT", f"2024-02-0{n + 1}T12:00:00", "close"), ("ETH-USDT", f"2024-02-0{n + 1}T12:00:00", "close")]
+    _fills(rd, fills)
+    facts = screen_engine_run(rd, trials=1)["facts"]
+    assert (facts["closed_legs"], facts["round_trips"], facts["round_trips_source"]) == (10, 5, "fills")
+    items = {i["id"]: i for i in screen_engine_run(rd, trials=1)["items"]}
+    assert items["1.2"]["observed"] == 5 and items["1.2"]["result"] == "FAIL"  # 5 round trips, not 10 legs
+
+
+def test_a_single_symbol_run_has_as_many_round_trips_as_closed_trades(tmp_path) -> None:
+    rd = _make_run(tmp_path, "solo", trades=4)
+    _fills(rd, [("BTC-USDT", "2024-02-01T00:00:00", "open"), ("BTC-USDT", "2024-02-02T00:00:00", "close"),
+                ("BTC-USDT", "2024-02-03T00:00:00", "open"), ("BTC-USDT", "2024-02-04T00:00:00", "close"),
+                ("BTC-USDT", "2024-02-05T00:00:00", "open"), ("BTC-USDT", "2024-02-06T00:00:00", "close"),
+                ("BTC-USDT", "2024-02-07T00:00:00", "open"), ("BTC-USDT", "2024-02-08T00:00:00", "close")])
+    facts = screen_engine_run(rd, trials=1)["facts"]
+    assert (facts["closed_legs"], facts["round_trips"], facts["round_trips_source"]) == (4, 4, "fills")
+
+
+def test_scaling_and_a_liquidation_belong_to_one_lifecycle(tmp_path) -> None:
+    rd = _make_run(tmp_path, "scale", trades=3)
+    _fills(rd, [("BTC-USDT", "2024-02-01T00:00:00", "open"), ("BTC-USDT", "2024-02-02T00:00:00", "increase"),
+                ("BTC-USDT", "2024-02-03T00:00:00", "reduce"), ("BTC-USDT", "2024-02-04T00:00:00", "close"),
+                ("BTC-USDT", "2024-02-05T00:00:00", "open"), ("BTC-USDT", "2024-02-06T00:00:00", "close")])
+    assert screen_engine_run(rd, trials=1)["facts"]["round_trips"] == 2
+
+
+def test_missing_or_unreadable_fills_fall_back_to_the_metrics_trade_count(tmp_path) -> None:
+    rd = _make_run(tmp_path, "nofills", trades=40)
+    facts = screen_engine_run(rd, trials=1)["facts"]
+    assert (facts["closed_legs"], facts["round_trips"], facts["round_trips_source"]) == (40, 40, "metrics_trade_count")
+    (rd / "artifacts" / "fills.jsonl").write_text("{not json\n")
+    facts = screen_engine_run(rd, trials=1)["facts"]
+    assert (facts["round_trips"], facts["round_trips_source"]) == (40, "metrics_trade_count")
+
+
+def test_the_card_trades_column_shows_round_trips(tmp_path) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    rd = _make_run(tmp_path, "cardpair", trades=10, codes=("BTC-USDT", "ETH-USDT"))
+    _fills(rd, [(s, f"2024-02-0{n}T0{h}:00:00", a) for n in range(1, 6) for s in ("BTC-USDT", "ETH-USDT")
+                for h, a in ((0, "open"), (1, "close"))])
+    L.record_engine_run(SESSION, rd)
+    line = next(ln for ln in L.render_card(SESSION, True).splitlines() if ln.startswith("| 1 |"))
+    assert line.split("|")[5].strip() == "5"
+
+
+# ---- multiple comparison, OOS split and bootstrap interval on the card --------------------------------------------------
+
+def _versions(tmp_path, drifts: list[float]) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    rd = tmp_path / "mt"
+    for n, drift in enumerate(drifts):
+        _variant(rd, drift, 0.01, 40 + n)
+        L.record_engine_run(SESSION, rd)
+
+
+def test_three_dated_versions_get_the_spa_line_naming_the_best(tmp_path) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    _versions(tmp_path, [0.0, 0.0, 0.0])
+    zh, en = L.render_card(SESSION, True), L.render_card(SESSION, False)
+    spa_zh = next(ln for ln in zh.splitlines() if ln.startswith("- 多重比较（3 个不同版本，共同 400 天）：表现最好的是 #"))
+    assert "Hansen SPA p=" in spa_zh and "平稳自助法 2000 次，平均块长 7.4）" in spa_zh and spa_zh.endswith("参考信息，不改变判定。")
+    p = float(spa_zh.split("p=")[1][:5])
+    assert ("——无法和运气区分" in spa_zh) == (p >= 0.05)
+    best = int(spa_zh.split("#")[1].split("；")[0])
+    assert best in (1, 2, 3)
+    spa_en = next(ln for ln in en.splitlines() if ln.startswith("- Multiple comparison (3 distinct versions, 400 common days): the best is #"))
+    assert f"#{best};" in spa_en and ("cannot be told apart from luck" in spa_en) == (p >= 0.05)
+    assert "回测过拟合概率" not in zh  # PBO needs 8 versions
+    assert zh.index("- 多重比较") < zh.index("通用引擎结果不能直接上实盘")
+    assert zh == L.render_card(SESSION, True)  # fixed seeds: identical every time
+
+
+def test_a_strong_version_among_noise_is_not_called_luck_and_eight_versions_add_pbo(tmp_path) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    _versions(tmp_path, [0.0] * 4 + [0.004] + [0.0] * 3)
+    zh, en = L.render_card(SESSION, True), L.render_card(SESSION, False)
+    spa = next(ln for ln in zh.splitlines() if ln.startswith("- 多重比较（8 个不同版本"))
+    assert "#5；" in spa and "无法和运气区分" not in spa
+    pbo = next(ln for ln in zh.splitlines() if ln.startswith("- 回测过拟合概率 PBO="))
+    assert "（CSCV，S=16，12870 种切分）。" in pbo
+    assert any(ln.startswith("- Probability of backtest overfitting PBO=") and "(CSCV, S=16, 12870 splits)." in ln for ln in en.splitlines())
+
+
+def test_the_latest_row_gets_the_split_and_the_bootstrap_interval(tmp_path) -> None:
+    from backtest import multiple_testing as mt
+    from src.tools import alphakeel_research_ledger as L
+
+    _versions(tmp_path, [0.001, 0.002])
+    zh = L.render_card(SESSION, True)
+    assert "多重比较" not in zh  # two versions: no SPA line
+    line = next(ln for ln in zh.splitlines() if ln.startswith("- #2：前 75% / 后 25% 的 Sharpe "))
+    rets = L.verified_engine_returns(L.engine_rows(SESSION)[1])
+    split, ci = mt.split_sharpe(rets, periods_per_year=252), mt.block_bootstrap_sharpe_ci(rets, periods_per_year=252, seed=0)
+    assert f"Sharpe {split['is_sharpe']:.2f} / {split['oos_sharpe']:.2f}；" in line  # AAPL: 252 periods a year
+    assert f"[{ci['ci_lower']:.2f}, {ci['ci_upper']:.2f}]" in line
+    en = L.render_card(SESSION, False)
+    assert any(ln.startswith("- #2: Sharpe first 75% / last 25% ") and "95% Sharpe interval [" in ln for ln in en.splitlines())
+
+
+def test_crypto_versions_use_365_periods_a_year(tmp_path) -> None:
+    from backtest import multiple_testing as mt
+    from src.tools import alphakeel_research_ledger as L
+
+    L.record_engine_run(SESSION, _make_run(tmp_path, "crypto", days=200))
+    rets = L.verified_engine_returns(L.engine_rows(SESSION)[0])
+    ci = mt.block_bootstrap_sharpe_ci(rets, periods_per_year=365, seed=0)
+    assert f"[{ci['ci_lower']:.2f}, {ci['ci_upper']:.2f}]" in L.render_card(SESSION, True)
+
+
+def test_legacy_rows_without_dates_are_skipped_and_counted(tmp_path) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    _versions(tmp_path, [0.0, 0.0, 0.0])
+    ledger = tmp_path / "sessions" / SESSION / L.ENGINE_LEDGER_FILE
+    rows = [json.loads(ln) for ln in ledger.read_text().splitlines()]
+    rows[0].pop("returns_dates_sha256")  # a row recorded before the dates were snapshotted
+    ledger.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    assert L.verified_engine_dates(rows[0]) is None and len(L.verified_engine_dates(rows[1])) == 400
+    zh, en = L.render_card(SESSION, True), L.render_card(SESSION, False)
+    assert "（1 个旧版本没有日期，未计入）" in zh.splitlines() and "(1 older versions have no dates and are not included)" in en.splitlines()
+    assert "多重比较" not in zh  # only two dated versions are left
+    assert any(ln.startswith("- #3：前 75%") for ln in zh.splitlines())
+
+
+def test_dates_align_with_the_returns_and_are_snapshotted_with_a_hash(tmp_path) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    screen = screen_engine_run(_make_run(tmp_path, days=30), trials=1, include_returns=True)
+    assert len(screen["daily_dates"]) == len(screen["daily_returns"]) == 30
+    assert screen["daily_dates"][0] == "2024-01-01" and screen["daily_dates"][-1] == "2024-01-30"
+    L.record_engine_run(SESSION, _make_run(tmp_path, days=30))
+    row = L.engine_rows(SESSION)[0]
+    assert row["returns_dates_sha256"] and L.verified_engine_dates(row) == screen["daily_dates"]
+    Path(row["snapshot_dir"], L.RETURNS_DATES_FILE).write_text(json.dumps(["2024-01-01"]))
+    assert L.verified_engine_dates(row) is None  # a modified snapshot is not trusted

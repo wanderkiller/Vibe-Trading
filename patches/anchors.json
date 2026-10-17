@@ -1871,7 +1871,7 @@
   },
   {
    "id": "research-integrity-r2",
-   "title": "Research integrity r2: spot shorts refused (crypto and composite), trials/ read namespace, code lineage and research contract on the card",
+   "title": "Research integrity r2: spot shorts refused (crypto and composite), trials/ read namespace, code lineage and research contract on the card; 1.2 counts round trips; SPA, PBO, OOS split and bootstrap interval on the card",
    "files": [
     "agent/backtest/engines/crypto.py",
     "agent/backtest/engines/composite.py",
@@ -1903,7 +1903,9 @@
     "agent/tests/test_grounding_percentage_points.py",
     "agent/tests/test_grounding_release.py",
     "agent/tests/test_grounding_role_hardening.py",
-    "agent/tests/test_grounding_shape_hardening.py"
+    "agent/tests/test_grounding_shape_hardening.py",
+    "agent/backtest/multiple_testing.py",
+    "agent/tests/test_multiple_testing.py"
    ],
    "anchors": [
     {
@@ -2030,6 +2032,16 @@
      "file": "agent/src/factors/registry.py",
      "kind": "upstream",
      "literal": "def get_default_registry() -> Registry:"
+    },
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "hook",
+     "literal": "- When you compare versions or name the best one"
+    },
+    {
+     "file": "agent/src/tools/alphakeel_research_ledger.py",
+     "kind": "hook",
+     "literal": "def _multiple_testing_lines("
     }
    ]
   }

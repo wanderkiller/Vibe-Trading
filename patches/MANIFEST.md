@@ -43,7 +43,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `upstream-test-fixes` | _market_hooks (two patterns), alpha_bench_tool (one `getattr`) | upstreamable: two upstream tests are red on upstream main without them |
 | `research-integrity` | validation, backtest_tool, grounding ledger + policies, loop, context, 9 locale labels | partly upstreamable (Monte Carlo, cross-turn grounding, tool-name refs); the rest local-only |
 | `ir-execution` | none (leaf package, its tool and tests only) | local-only (follows the leaf package) |
-| `research-integrity-r2` | crypto + composite engine (one refusal each), read_file_tool (one namespace), engine card column, research contract (ledger, tool arg, card), agent/context (three bullets), two skill notes, factor-name and cited-retrieval gates (grounding ledger, policies, release), `zoo_factor` helper and engine-screen facts | spot-short refusal and the `trials/` namespace are upstreamable in principle; the ledger lineage, card column, research contract, factor-name gate, `zoo_factor` and the retrieval rule for cited figures are local-only |
+| `research-integrity-r2` | crypto + composite engine (one refusal each), read_file_tool (one namespace), engine card column, research contract (ledger, tool arg, card), agent/context (four bullets), two skill notes, factor-name and cited-retrieval gates (grounding ledger, policies, release), `zoo_factor` helper and engine-screen facts, round-trip count for item 1.2, multiple-testing lines on the engine card (`backtest/multiple_testing.py`) | spot-short refusal and the `trials/` namespace are upstreamable in principle; the ledger lineage, card column, research contract, factor-name gate, `zoo_factor` and the retrieval rule for cited figures and the multiple-testing card lines are local-only |
 
 ---
 
@@ -1007,6 +1007,21 @@ across turns; the final answer gets `factor_unknown` (id not in the library) / `
 which are not redactable (a name cannot be cut like a figure; the run corrects or fails closed on `safe_fallback`), and a figure
 declared `cited` with no retrieval this session gets `citation_not_retrieved`. One more prompt bullet states both rules.
 
+(5) A session compared eleven near-identical versions and named "the best" with nothing testing whether it is distinguishable
+from luck, and item 1.2 (minimum trades) counted closed legs, so a two-leg pair trade counted twice. Now (a) the engine
+screen counts round trips for 1.2: `_round_trips` rebuilds each symbol's position lifecycle from `artifacts/fills.jsonl`
+(first `open` to the fill that brings it flat, `close`; `increase` / `reduce` stay inside) and counts distinct
+(open, close) timestamp pairs, falling back to `metrics.csv` `trade_count` when the file is missing or unreadable; the facts
+gain `closed_legs`, `round_trips`, `round_trips_source`, and the card column is "round trips"; no verdict rule changes except
+this observed value. (b) `backtest/multiple_testing.py` (numpy only, seeded) holds the stationary bootstrap, Hansen (2005)
+SPA against zero, CSCV PBO, a bootstrap Sharpe interval and the 75/25 split Sharpe. (c) The engine screen also returns
+`daily_dates`; `record_engine_run` writes `engine_runs/NNNN/returns_dates.json` (`returns_dates_sha256` on the row,
+`verified_engine_dates`); rows without dates are skipped and counted. (d) At render time `_multiple_testing_lines` takes the
+latest row of each distinct trial key (at most the 20 most recent), aligns them on their common dates and prints the SPA
+line (3 or more versions and 60 or more common days), the PBO line (8 or more), the latest row's split and interval line, and
+a note on skipped legacy rows; reference information only, seeds fixed so the card is stable. One more prompt bullet tells
+the agent to quote the SPA line and to say "cannot be told apart from luck" when p is 0.05 or more.
+
 **Files.**
 - `agent/backtest/engines/crypto.py`
 - `agent/backtest/engines/composite.py`
@@ -1039,6 +1054,8 @@ declared `cited` with no retrieval this session gets `citation_not_retrieved`. O
 - `agent/tests/test_grounding_release.py`
 - `agent/tests/test_grounding_role_hardening.py`
 - `agent/tests/test_grounding_shape_hardening.py`
+- `agent/backtest/multiple_testing.py`
+- `agent/tests/test_multiple_testing.py`
 
 **Commits.** (this commit)
 
@@ -1071,3 +1088,5 @@ research contract, factor-name gate, `zoo_factor` helper and prompt bullets are 
 - hook `agent/src/tools/alphakeel_research_ledger.py`: `"zoo_unused":`
 - upstream `agent/backtest/runner.py`: `def _build_price_panel(`
 - upstream `agent/src/factors/registry.py`: `def get_default_registry() -> Registry:`
+- hook `agent/src/agent/context.py`: `- When you compare versions or name the best one`
+- hook `agent/src/tools/alphakeel_research_ledger.py`: `def _multiple_testing_lines(`

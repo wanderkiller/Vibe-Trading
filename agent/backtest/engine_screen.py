@@ -3,7 +3,7 @@
 ``screen_engine_run`` reads the run directory's artifacts only (config.json, artifacts/metrics.csv, equity.csv,
 positions.csv, optional run_card.json) and never raises: an unreadable artifact gives ``evidence_status`` ``unavailable``.
 Thresholds are the ``validated`` items of ``alphakeel_research.precheck.load_protocol()`` and the comparisons are
-``precheck._ge`` / ``_gt`` (as ``alphakeel_research.screen`` reads them). Evaluated: 1.1, 1.2, 1.3, 1.6, 1.8 and 1.16:
+``precheck._ge`` / ``_gt`` (as ``alphakeel_research.screen`` reads them). Evaluated: 1.1, 1.2 (round trips from ``fills.jsonl``, not closed legs), 1.3, 1.6, 1.8 and 1.16:
 the run card's ``data_audit.coverage_partial`` when it is a bool, else the screen's own ``coverage_partial`` (see
 ``_coverage_partial``). ``not_evaluated`` is every other protocol item; an engine result can
 never go live by itself.
@@ -133,6 +133,52 @@ def _coverage_partial(run_dir: Path, config: dict) -> bool | None:
     return False
 
 
+_FLAT_ACTIONS = frozenset({"close", "liquidation", "liquidate"})  # the engines write "close" (a liquidation is a close with reason)
+
+
+def _round_trips(run_dir: Path) -> tuple[int | None, str]:
+    """``(count, source)`` of the run's round trips. ``artifacts/fills.jsonl`` holds one fill per line (``symbol``,
+    ``timestamp``, ``action``: ``open`` / ``increase`` / ``reduce`` / ``close``); a position lifecycle runs from its ``open``
+    to the fill that brings the symbol flat (``close``, which also records a liquidation), and a round trip is one distinct
+    ``(open timestamp, closing timestamp)``, so the two legs of a pair opened and closed on the same bars count once.
+    Source ``fills``. A missing or unreadable fills file gives the ``metrics.csv`` ``trade_count`` (closed legs; None
+    when that is missing too) with source ``metrics_trade_count``."""
+    try:
+        keys: set[tuple[str, str]] = set()
+        opened: dict[str, str] = {}
+        with (run_dir / "artifacts" / "fills.jsonl").open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                fill = json.loads(line)
+                symbol, stamp, action = fill["symbol"], fill["timestamp"], fill["action"]
+                if not isinstance(symbol, str) or not isinstance(stamp, str) or not isinstance(action, str):
+                    raise ValueError("fill fields must be strings")
+                if action == "open":
+                    opened.setdefault(symbol, stamp)
+                elif action in _FLAT_ACTIONS and symbol in opened:
+                    keys.add((opened.pop(symbol), stamp))
+        return len(keys), "fills"
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        pass
+    try:
+        import pandas as pd
+
+        legs = _num(pd.read_csv(run_dir / "artifacts" / "metrics.csv").iloc[0]["trade_count"])
+    except (OSError, ValueError, KeyError, IndexError):
+        legs = None
+    return (None if legs is None else int(legs)), "metrics_trade_count"
+
+
+def _daily_dates(equity_index) -> list[str]:
+    """ISO UTC days of ``alphakeel_metrics.daily_returns`` for the same equity index (one per returned value)."""
+    import pandas as pd
+
+    idx = pd.DatetimeIndex(equity_index)
+    idx = idx.tz_convert("UTC") if idx.tz is not None else idx.tz_localize("UTC")
+    return [d.strftime("%Y-%m-%d") for d in sorted(set(idx.normalize()))]
+
+
 def _status_of(res: dict) -> str:
     if res.get("1.1") == "FAIL" or res.get("1.2") == "FAIL":
         return "insufficient"
@@ -246,7 +292,8 @@ def _screen(run_dir: Path, *, trials: int, variant_sharpes: Sequence[float], pro
     capital_ignored = "initial_capital" in config and "initial_cash" not in config
     window_days = (ts.max().normalize() - ts.min().normalize()).days + 1
     trade_count = mval("trade_count")
-    closed_trades = None if trade_count is None else int(trade_count)
+    closed_legs = None if trade_count is None else int(trade_count)
+    closed_trades, trips_source = _round_trips(run_dir)  # item 1.2 counts round trips, not closed legs
     final_value = mval("final_value")
     net = None if final_value is None else Decimal(str(final_value)) - capital
 
@@ -297,6 +344,9 @@ def _screen(run_dir: Path, *, trials: int, variant_sharpes: Sequence[float], pro
         "dsr": stats.get("dsr"),
         "psr_vs_zero": stats.get("psr_vs_zero"),
         "trials": int(trials),
+        "closed_legs": closed_legs,
+        "round_trips": closed_trades,
+        "round_trips_source": trips_source,
         "benchmark_return": mval("benchmark_return"),
         "excess_return": mval("excess_return"),
         "data_auditable": audit.get("auditable"),
@@ -315,6 +365,9 @@ def _screen(run_dir: Path, *, trials: int, variant_sharpes: Sequence[float], pro
                           f"{DEFAULT_INITIAL_CASH}; returns and net are computed against that base")
     if include_returns:
         out["daily_returns"] = [float(r) for r in returns]
+        dates = _daily_dates(eq.index)
+        if len(dates) == len(returns):
+            out["daily_dates"] = dates
     return out
 
 
