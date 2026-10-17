@@ -26,7 +26,7 @@ from src.agent.grounding.evidence import (
     _REGISTERED_PRICE_INDICATORS,
     _is_registered_price_indicator,
 )
-from src.agent.grounding.figures import _lines_with_offsets
+from src.agent.grounding.figures import _lines_with_offsets, parse_figures_block
 from src.agent.grounding.release import _REDACTION_MARKER_EN, _REDACTION_MARKER_ZH
 from src.agent.loop import AgentLoop
 from src.agent.tools import BaseTool, ToolRegistry
@@ -400,6 +400,30 @@ def test_redacted_release_keeps_the_analysis_and_cuts_the_figure(tmp_path: Path)
     assert "※ 略去 1 处" in released
     assert "（略※）元" not in released and "建议买入价（略※）" in released
     assert "1.11–1.18 CNY" in released
+    assert ledger.validate_final_answer(released).valid is True
+
+
+def test_a_date_row_is_skipped_and_only_the_unreadable_line_is_cut(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    date_row = "2026-02-19 | count | window start date | ref"
+    count_row = "10 | count | contracts"
+    body = HDR + " 共 10 个合约。"
+
+    with_date = body + _block(HDR_ROW, count_row, date_row)
+    assert parse_figures_block(with_date).malformed == ()
+    assert _codes(ledger.validate_final_answer(with_date)) == []
+
+    broken_row = "7 | nonsense | broken role"
+    broken = body + _block(HDR_ROW, count_row, date_row, broken_row)
+    validation = ledger.validate_final_answer(broken)
+    assert "figures_block_malformed" in _codes(validation)
+
+    released = ledger.redacted_release(broken, validation)
+
+    assert released is not None
+    assert "broken role" not in released and "nonsense" not in released
+    assert "共 10 个合约" in released and "figures" not in released
+    assert _REDACTION_MARKER_ZH not in released
     assert ledger.validate_final_answer(released).valid is True
 
 
