@@ -159,6 +159,7 @@ Self-check after writing `signal_engine.py`:
 - `initial_cash`: default 1,000,000
 - `commission`: default 0.1%
 - `taker_rate`: **required for crypto** (`CryptoEngine`, which does not read `commission`): the modelled account's taker fee per fill, e.g. `0.0005`; there is no default and a crypto run without it is refused
+- Crypto spot codes are long-only in backtests (e.g. OKX `BTC-USDT`): a negative weight on a spot code is refused, because a spot short has no borrow or funding model. Any short leg must use `"source": "ccxt"` with `BASE-USDT-PERP` codes (e.g. `BTC-USDT-PERP`, real funding settlements) or an `alphakeel_b2` perp code (`venue:perp:SYMBOL`)
 - `validation`: optional statistical validation after backtest completes. Omit to skip. Example:
   ```json
   "validation": {

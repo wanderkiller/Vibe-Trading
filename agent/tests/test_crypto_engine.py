@@ -1282,3 +1282,54 @@ class TestStrictPerpetualLifecycle:
         ] == ["open", "increase", "reduce", "close"]
         assert first_summary["total_trading_fee"] == pytest.approx(9.975)
         assert first_metrics["perpetual_trading_fees"] == pytest.approx(9.975)
+
+
+# ---------------------------------------------------------------------------
+# A spot code is long-only: a short has no borrow or funding model
+# ---------------------------------------------------------------------------
+
+
+def _run_plain(engine: CryptoEngine, data_map: dict[str, pd.DataFrame], targets: dict[str, list[float]]) -> None:
+    dates = next(iter(data_map.values())).index
+    engine._execute_bars(dates, data_map, pd.DataFrame({c: f["close"] for c, f in data_map.items()}, index=dates),
+                         pd.DataFrame(targets, index=dates), list(data_map))
+
+
+class TestSpotShortRefusal:
+    def _dates(self) -> pd.DatetimeIndex:
+        return pd.date_range("2025-01-01", periods=4, freq="8h")
+
+    def _spot_frame(self, dates: pd.DatetimeIndex) -> pd.DataFrame:
+        return pd.DataFrame({"open": 60000.0, "high": 60000.0, "low": 60000.0, "close": 60000.0, "volume": 1.0}, index=dates)
+
+    def test_a_negative_weight_on_a_spot_code_is_refused(self) -> None:
+        dates = self._dates()
+        with pytest.raises(ValueError, match="is a spot code") as exc:
+            _run_plain(_make_engine(), {"BTC-USDT": self._spot_frame(dates)}, {"BTC-USDT": [0.0, -0.5, -0.5, 0.0]})
+        assert "BTC-USDT-PERP" in str(exc.value) and "venue:perp:SYMBOL" in str(exc.value)
+
+    def test_a_long_only_spot_run_still_works_with_the_assumed_rate(self) -> None:
+        dates = self._dates()
+        engine = _make_engine()
+        _run_plain(engine, {"BTC-USDT": self._spot_frame(dates)}, {"BTC-USDT": [0.5, 0.5, 0.5, 0.0]})
+        assert engine.trades
+        assert engine._funding.summary()["funding_models"] == {"BTC-USDT": "assumed_fixed_rate"}
+
+    def test_a_short_on_a_perp_code_with_settlements_runs(self) -> None:
+        dates = self._dates()
+        frame = _perp_frame(dates, [0.0001] * 4, list(dates))
+        engine = _make_engine()
+        _run_plain(engine, {"BTC-USDT-PERP": frame}, {"BTC-USDT-PERP": [0.0, -0.5, -0.5, 0.0]})
+        assert engine.trades and engine.trades[0].direction == -1
+        assert engine._funding.summary()["funding_models"] == {"BTC-USDT-PERP": "settlement_data"}
+
+    def test_can_execute_refuses_only_a_prepared_spot_short(self) -> None:
+        dates = self._dates()
+        engine = _make_engine()
+        engine._funding.prepare({"BTC-USDT": self._spot_frame(dates), "BTC-USDT-PERP": _perp_frame(dates, [0.0001] * 4, list(dates))},
+                                ["BTC-USDT", "BTC-USDT-PERP"])
+        assert engine.can_execute("BTC-USDT", 1, _make_bar()) is True
+        assert engine.can_execute("BTC-USDT", 0, _make_bar()) is True
+        assert engine.can_execute("BTC-USDT-PERP", -1, _make_bar()) is True
+        with pytest.raises(ValueError, match="is a spot code"):
+            engine.can_execute("BTC-USDT", -1, _make_bar())

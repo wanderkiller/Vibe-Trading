@@ -41,6 +41,15 @@ from backtest.perpetual_risk import (
 )
 
 
+def spot_short_refusal(symbol: str) -> str:
+    """Why a short on a spot code is refused (the funding model of a spot-priced proxy is an assumed fixed rate)."""
+    return (
+        f"{symbol} is a spot code: a short needs a perpetual with funding settlement data (source ccxt with "
+        "BASE-USDT-PERP, e.g. BTC-USDT-PERP, or source alphakeel_b2 with venue:perp:SYMBOL); a spot short has no borrow "
+        "or funding model and is refused"
+    )
+
+
 def taker_rate_of(config: dict) -> float:
     """The config's ``taker_rate``: required (no default fee), a finite rate in ``[0, 1)``."""
     raw = config.get("taker_rate")
@@ -68,8 +77,8 @@ class CryptoEngine(BaseEngine):
         AlphaKeel audit 2026-10-12 R2-D-4). The rate used is reported in the metrics (``taker_rate``)
       - slippage: default 0.0005
       - margin_mode: "isolated" (default) or "cross"
-      - funding_rate: assumed fixed rate per 8h settlement for **spot-priced proxies only** (default 0.0001); a
-        perpetual's funding comes from its settlement data or the run is refused
+      - funding_rate: assumed fixed rate per 8h settlement, applied to **long spot-priced proxies only** (default
+        0.0001); a spot short is refused, and a perpetual's funding comes from its settlement data or the run is refused
     """
 
     def __init__(self, config: dict):
@@ -128,7 +137,9 @@ class CryptoEngine(BaseEngine):
         return super().run_backtest(config, loader, signal_engine, run_dir, bars_per_year)
 
     def can_execute(self, symbol: str, direction: int, bar: pd.Series) -> bool:
-        """Crypto: 24/7, long/short/close all allowed."""
+        """Crypto: 24/7, long/short/close all allowed; a short on a spot code (assumed funding) is refused."""
+        if direction < 0 and not self.perpetual_strict and self._funding.models.get(symbol) == "assumed_fixed_rate":
+            raise ValueError(spot_short_refusal(symbol))
         return not (self.perpetual_strict and symbol in self._blocked_symbols)
 
     def round_size(self, raw_size: float, price: float) -> float:
@@ -505,6 +516,12 @@ class CryptoEngine(BaseEngine):
     def _execute_bars(self, dates, data_map, close_df, target_pos, codes, close_val_df=None) -> None:
         if not self.perpetual_strict:
             self._funding.prepare(data_map, codes)  # refuses a perpetual without settlement data
+            # The rebalance planner logs and skips an order whose can_execute raises, so the refusal is also made here,
+            # once, before any bar: a run that asks for a spot short fails instead of silently never opening it.
+            for symbol in codes:
+                if (self._funding.models.get(symbol) == "assumed_fixed_rate" and symbol in target_pos.columns
+                        and bool((target_pos[symbol] < -1e-9).any())):
+                    raise ValueError(spot_short_refusal(symbol))
         if self.perpetual_strict:
             try:
                 close_df = pd.DataFrame(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,8 @@ from src.tools.path_utils import safe_path as _safe_path
 from src.tools.path_utils import safe_run_dir as _safe_run_dir
 from src.tools.path_utils import allowed_file_roots
 from src.tools.redaction import redact_internal_paths
+from src.providers.session_context import current_llm_session_id
+from src.tools.alphakeel_research_ledger import engine_snapshot_dir
 
 _OUTPUT_LIMIT = 50_000
 
@@ -37,6 +40,35 @@ _READABLE = (
     "contracts and options are documented in the skills: load_skill(name) lists "
     "a skill's sections, and load_skill(name, section=...) returns one."
 )
+
+
+# `trials/NNNN/<rel>`: the files of the current conversation's generic-backtest run NNNN (the number on the result
+# card). Read-only snapshots outside every directory the model can write.
+_TRIAL_RE = re.compile(r"^trials/(\d{4})/(.+)$")
+_TRIAL_FILES = ("code/signal_engine.py", "config.json", "artifacts/metrics.csv", "screen.json")
+_TRIAL_FORMS = "trials/NNNN/" + " | trials/NNNN/".join(_TRIAL_FILES) + " (NNNN = the four-digit trial number on the result card)"
+
+
+def _trial_error(code: str, message: str) -> str:
+    return json.dumps({"status": "error", "error_code": code, "error": message}, ensure_ascii=False)
+
+
+def _read_trial(file_path: str, limit: Any) -> tuple[Path | None, str | None]:
+    """Resolve a ``trials/`` path to a snapshot file, or return an error JSON."""
+    match = _TRIAL_RE.fullmatch(file_path)
+    if match is None or match.group(2) not in _TRIAL_FILES:
+        return None, _trial_error("not_allowed", f"{file_path} is not a readable trial path. Allowed: {_TRIAL_FORMS}.")
+    session_id = current_llm_session_id()
+    if not session_id:
+        return None, _trial_error("no_session", "trials/ reads the current session's engine runs; no session is bound.")
+    seq = int(match.group(1))
+    path = engine_snapshot_dir(session_id, seq) / match.group(2)
+    if not path.is_file():
+        runs = engine_snapshot_dir(session_id, seq).parent
+        existing = sorted(p.name for p in runs.iterdir() if p.is_dir() and p.name.isdigit()) if runs.is_dir() else []
+        listing = ", ".join(existing) if existing else "none"
+        return None, _trial_error("not_found", f"{file_path} was not found. Existing trials of this session: {listing}.")
+    return path, None
 
 
 def _bundled_skills_dir() -> Path:
@@ -90,7 +122,8 @@ class ReadFileTool(BaseTool):
                 "type": "string",
                 "description": (
                     "File path relative to run_dir or skills/. "
-                    "The skills/ prefix always resolves to the bundled skills. "
+                    "The skills/ prefix always resolves to the bundled skills; "
+                    "trials/NNNN/code/signal_engine.py and trials/NNNN/config.json read an earlier generic backtest of this session. "
                     "A references/ or scripts/ path copied out of a SKILL.md "
                     "resolves against the skill that owns it."
                 ),
@@ -135,6 +168,20 @@ class ReadFileTool(BaseTool):
         for extra_root in allowed_file_roots():
             if extra_root not in allowed_roots:
                 allowed_roots.append(extra_root)
+
+        if file_path.startswith("trials/"):
+            trial_path, trial_error = _read_trial(file_path, limit)
+            if trial_error is not None:
+                return trial_error
+            try:
+                text = trial_path.read_text(encoding="utf-8")
+                if limit and limit > 0:
+                    text = "".join(text.splitlines(keepends=True)[:limit])
+                if len(text) > _OUTPUT_LIMIT:
+                    text = text[:_OUTPUT_LIMIT] + "\n... (truncated)"
+                return json.dumps({"status": "ok", "path": str(trial_path), "content": text}, ensure_ascii=False)
+            except Exception as exc:
+                return json.dumps({"status": "error", "error": redact_internal_paths(str(exc))}, ensure_ascii=False)
 
         resolved = None
         namespaced = False

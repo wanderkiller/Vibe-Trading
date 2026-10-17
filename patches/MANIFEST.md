@@ -43,6 +43,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `upstream-test-fixes` | _market_hooks (two patterns), alpha_bench_tool (one `getattr`) | upstreamable: two upstream tests are red on upstream main without them |
 | `research-integrity` | validation, backtest_tool, grounding ledger + policies, loop, context, 9 locale labels | partly upstreamable (Monte Carlo, cross-turn grounding, tool-name refs); the rest local-only |
 | `ir-execution` | none (leaf package, its tool and tests only) | local-only (follows the leaf package) |
+| `research-integrity-r2` | crypto engine (one refusal), read_file_tool (one namespace), engine card column, agent/context (one bullet), two skill notes | spot-short refusal and the `trials/` namespace are upstreamable in principle; the ledger lineage and card column are local-only |
 
 ---
 
@@ -963,3 +964,45 @@ export of 2026-10-17 (re-exported with `ir.shape` error vectors). All code lives
 - hook `agent/alphakeel_research/ir.py`: `def maker_leg(doc: Any)`
 - hook `agent/alphakeel_research/ir_backtest.py`: `def approximations_of(`
 - hook `agent/src/tools/alphakeel_ir_request.py`: `DEFAULT_PUBLIC_MAKER =`
+
+## `research-integrity-r2` — a spot short is refused; an earlier backtest's code is readable
+
+**Purpose.** A replay showed two defects. (1) `CryptoEngine` let a strategy short a spot code (OKX `BTC-USDT`) and charged
+an assumed fixed funding rate, so a pair or long/short result had a leg that cannot be traded as modelled. Now a negative
+target weight on a code whose funding model is `assumed_fixed_rate` (no settlement data) is refused with
+`spot_short_refusal(symbol)`: in `CryptoEngine.can_execute` and, because the rebalance planner logs and skips an order whose
+`can_execute` raises, once before the first bar in `CryptoEngine._execute_bars` (after `_funding.prepare`). A short on a perp
+code with settlement data (ccxt `BASE-USDT-PERP`, `alphakeel_b2` `venue:perp:SYMBOL`) runs as before; the composite engine's
+crypto sub-engine is not changed (its funding models live on the composite). The two skills say spot codes are long-only and
+the pair-trading crypto example uses `ccxt` perps. (2) In a later turn the agent could not read the previous turn's code
+(`read_file` is scoped to the current run dir), re-implemented it, and the same parameters gave -3.80 % instead of -13.67 %.
+`read_file` gains a `trials/NNNN/{code/signal_engine.py,config.json,artifacts/metrics.csv,screen.json}` namespace bound to
+`engine_snapshot_dir(current session, NNNN)` (never falls through to run_dir; errors `no_session`, `not_allowed`,
+`not_found` with the existing trial numbers); the engine ledger row gains `code_sha256` / `config_sha256`; `record_engine_run`
+returns `trial_files`; the engine card gains a `code` column (`= #k` for the code of an earlier row, `新`/`new`, `—` for
+legacy rows); one prompt bullet tells the agent to start from `trials/NNNN/` files or to say it re-implemented.
+
+**Files.**
+- `agent/backtest/engines/crypto.py`
+- `agent/src/tools/read_file_tool.py`
+- `agent/src/tools/alphakeel_research_ledger.py`
+- `agent/src/agent/context.py`
+- `agent/src/skills/strategy-generate/SKILL.md`
+- `agent/src/skills/pair-trading/SKILL.md`
+- `agent/tests/test_crypto_engine.py`
+- `agent/tests/test_read_file_trials.py`
+- `agent/tests/test_engine_screen.py`
+
+**Commits.** (this commit)
+
+**Upstreamable.** The spot-short refusal and the `trials/` namespace are generic; the ledger lineage fields, card column and
+prompt bullet are local-only (follow the engine ledger).
+
+**Anchors.**
+- upstream `agent/src/tools/read_file_tool.py`: `if file_path.startswith("skills/"):`
+- hook `agent/src/tools/read_file_tool.py`: `if file_path.startswith("trials/"):`
+- upstream `agent/backtest/engines/crypto.py`: `def can_execute(self, symbol: str, direction: int, bar: pd.Series) -> bool:`
+- hook `agent/backtest/engines/crypto.py`: `raise ValueError(spot_short_refusal(symbol))`
+- hook `agent/src/agent/context.py`: `- To change an earlier generic backtest, start from its files`
+- hook `agent/src/skills/strategy-generate/SKILL.md`: `Crypto spot codes are long-only in backtests`
+- hook `agent/src/skills/pair-trading/SKILL.md`: `"codes": ["BTC-USDT-PERP", "ETH-USDT-PERP"]`

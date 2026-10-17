@@ -119,7 +119,7 @@ def test_the_audited_session_nine_backtests_in_one_run_dir_show_on_the_card(tmp_
     zh = L.render_card(SESSION, True)
     assert "通用引擎回测 9 次 / 9 个不同结果（按 metrics 去重）：" in zh
     assert "通用引擎结果不能直接上实盘：须交接 Strategy IR，通过 ir_robustness 与 AlphaKeel G1/G2。" in zh
-    assert "| # | 标的 / 来源 | 窗口天数 | 成交 | 净收益率 | DSR（试验数） | 方向 / 在场时间 | 判定 |" in zh
+    assert "| # | 代码 | 标的 / 来源 | 窗口天数 | 成交 | 净收益率 | DSR（试验数） | 方向 / 在场时间 | 判定 |" in zh
     assert "数据不可审计" not in zh  # no run card in the synthetic dirs: nothing claimed
     body = [ln for ln in zh.splitlines() if ln.startswith("| ") and "BTC-USDT / okx" in ln]
     assert len(body) == 9  # the latest 10 rows cover all 9
@@ -130,6 +130,38 @@ def test_the_audited_session_nine_backtests_in_one_run_dir_show_on_the_card(tmp_
     victim = Path(L.engine_rows(SESSION)[0]["snapshot_dir"]) / "screen.json"
     victim.write_text(victim.read_text().replace("insufficient", "passed_screen"))
     assert "快照已改动或缺失" in L.render_card(SESSION, True)
+
+
+def test_the_card_marks_a_rerun_of_identical_code_and_new_code(tmp_path) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    first = L.record_engine_run(SESSION, _make_run(tmp_path, "a", code="# v1\n", seed=1))
+    L.record_engine_run(SESSION, _make_run(tmp_path, "b", code="# v1\n", seed=2))  # same code, other parameters/result
+    L.record_engine_run(SESSION, _make_run(tmp_path, "c", code="# v2\n", seed=3))
+    L.record_engine_run(SESSION, _make_run(tmp_path, "d", code="# v1\n", seed=4))
+    rows = L.engine_rows(SESSION)
+    import hashlib
+
+    assert rows[0]["code_sha256"] == hashlib.sha256(b"# v1\n").hexdigest() and rows[0]["code_sha256"] == rows[1]["code_sha256"]
+    assert rows[2]["code_sha256"] != rows[0]["code_sha256"]
+    assert rows[0]["config_sha256"] == hashlib.sha256((tmp_path / "a" / "config.json").read_bytes()).hexdigest()
+    assert first["trial_files"] == ["trials/0001/code/signal_engine.py", "trials/0001/config.json"]
+    zh = [ln.split("|")[1:3] for ln in L.render_card(SESSION, True).splitlines() if ln.startswith("| ") and "BTC-USDT / yfinance" in ln]
+    assert [(a.strip(), b.strip()) for a, b in zh] == [("1", "新"), ("2", "= #1"), ("3", "新"), ("4", "= #1")]
+    en = L.render_card(SESSION, False)
+    assert "| # | code | Symbols / source |" in en and "| 2 | = #1 |" in en and "| 1 | new |" in en
+
+
+def test_a_legacy_row_without_a_code_hash_shows_a_dash(tmp_path) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    L.record_engine_run(SESSION, _make_run(tmp_path))
+    ledger = tmp_path / "sessions" / SESSION / L.ENGINE_LEDGER_FILE
+    row = json.loads(ledger.read_text().splitlines()[0])
+    row.pop("code_sha256")
+    ledger.write_text(json.dumps(row) + "\n")
+    line = next(ln for ln in L.render_card(SESSION, True).splitlines() if ln.startswith("| 1 |"))
+    assert line.split("|")[2].strip() == "—"
 
 
 def test_ir_only_and_engine_only_cards_both_render(tmp_path) -> None:

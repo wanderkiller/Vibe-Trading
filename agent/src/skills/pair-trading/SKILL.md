@@ -48,11 +48,11 @@ Select two highly correlated instruments (such as stocks from the same industry 
 }
 ```
 
-Cryptocurrency version:
+Cryptocurrency version (crypto spot codes are long-only in backtests: a pair needs a short leg, so use perpetuals through `"source": "ccxt"` with `BASE-USDT-PERP` codes, which carry real funding settlements; an `alphakeel_b2` perp code `venue:perp:SYMBOL` also works. A spot code with a short leg is refused):
 ```json
 {
-  "source": "okx",
-  "codes": ["BTC-USDT", "ETH-USDT"],
+  "source": "ccxt",
+  "codes": ["BTC-USDT-PERP", "ETH-USDT-PERP"],
   "start_date": "2024-01-01",
   "end_date": "2024-12-31",
   "initial_cash": 1000000,

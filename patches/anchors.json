@@ -1868,6 +1868,58 @@
      "literal": "DEFAULT_PUBLIC_MAKER ="
     }
    ]
+  },
+  {
+   "id": "research-integrity-r2",
+   "title": "Research integrity r2: spot shorts refused, trials/ read namespace and code lineage on the card",
+   "files": [
+    "agent/backtest/engines/crypto.py",
+    "agent/src/tools/read_file_tool.py",
+    "agent/src/tools/alphakeel_research_ledger.py",
+    "agent/src/agent/context.py",
+    "agent/src/skills/strategy-generate/SKILL.md",
+    "agent/src/skills/pair-trading/SKILL.md",
+    "agent/tests/test_crypto_engine.py",
+    "agent/tests/test_read_file_trials.py",
+    "agent/tests/test_engine_screen.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/src/tools/read_file_tool.py",
+     "kind": "upstream",
+     "literal": "if file_path.startswith(\"skills/\"):"
+    },
+    {
+     "file": "agent/src/tools/read_file_tool.py",
+     "kind": "hook",
+     "literal": "if file_path.startswith(\"trials/\"):"
+    },
+    {
+     "file": "agent/backtest/engines/crypto.py",
+     "kind": "upstream",
+     "literal": "def can_execute(self, symbol: str, direction: int, bar: pd.Series) -> bool:"
+    },
+    {
+     "file": "agent/backtest/engines/crypto.py",
+     "kind": "hook",
+     "literal": "raise ValueError(spot_short_refusal(symbol))"
+    },
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "hook",
+     "literal": "- To change an earlier generic backtest, start from its files"
+    },
+    {
+     "file": "agent/src/skills/strategy-generate/SKILL.md",
+     "kind": "hook",
+     "literal": "Crypto spot codes are long-only in backtests"
+    },
+    {
+     "file": "agent/src/skills/pair-trading/SKILL.md",
+     "kind": "hook",
+     "literal": "\"codes\": [\"BTC-USDT-PERP\", \"ETH-USDT-PERP\"]"
+    }
+   ]
   }
  ]
 }
