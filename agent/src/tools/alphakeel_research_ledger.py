@@ -35,7 +35,9 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import os
+import re
 import time
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from pathlib import Path
@@ -55,6 +57,7 @@ ENGINE_RUNS_DIR = "engine_runs"
 RETURNS_FILE = "returns.json"
 RETURNS_DATES_FILE = "returns_dates.json"
 CONTRACT_FILE = "research_contract.json"
+ROBUSTNESS_FILE = "robustness.jsonl"
 DEFAULT_HOLDOUT_DAYS = 60
 HOLDOUT_FILE = "alphakeel_holdout.json"
 HOLDOUT_CACHE_SECONDS = 6 * 3600
@@ -400,9 +403,13 @@ def engine_rows(session_id: str) -> list[dict]:
 
 
 def _latest_engine_rows(session_id: str) -> dict[str, dict]:
-    """``trial_key`` -> its latest engine ledger row (append order: the latest row of a key wins)."""
+    """``trial_key`` -> its latest engine ledger row (append order: the latest row of a key wins, except that a system
+    sweep row never replaces a row the model ran with the same result)."""
     latest: dict[str, dict] = {}
     for r in engine_rows(session_id):
+        held = latest.get(r["trial_key"])
+        if r.get("sweep") and held is not None and not held.get("sweep"):
+            continue
         latest[r["trial_key"]] = r
     return latest
 
@@ -467,11 +474,13 @@ def _drift_message(change: dict) -> str:
             "characters>\" and rerun.")
 
 
-def record_engine_run(session_id: str, run_dir: Path) -> dict:
+def record_engine_run(session_id: str, run_dir: Path, *, sweep: dict | None = None) -> dict:
     """After a successful generic ``backtest``: count the trial, screen the run, snapshot it and append the private row.
 
     ``trials`` = ``trial_count`` (distinct engine ``trial_key`` values, this one included, + distinct IR ``strategy_id`` of
-    the conversation). Returns the screen dict plus ``trials`` and ``seq``."""
+    the conversation). Returns the screen dict plus ``trials`` and ``seq``. ``sweep`` (``{"parent_seq", "label"}``) marks
+    a system sweep run of ``record_robustness``: it is a trial like any other row, never touches the research contract,
+    is not a row of the card's table and never makes ``session_has_passed_trial`` true."""
     from backtest.engine_screen import screen_engine_run
 
     run_dir = Path(run_dir)
@@ -510,7 +519,7 @@ def record_engine_run(session_id: str, run_dir: Path) -> dict:
 
     facts = screen.get("facts") or {}
     change = None
-    if screen.get("evidence_status") != "unavailable" and facts.get("codes"):  # a run that measured nothing is not a contract
+    if sweep is None and screen.get("evidence_status") != "unavailable" and facts.get("codes"):  # a run that measured nothing is not a contract
         try:  # the contract never fails the backtest; a change is on the row, on the card and in the returned dict
             change = update_contract(session_id, contract_of_engine(facts, interval=_interval_of(run_dir)), seq=seq,
                                      reason=_supersedes_of(run_dir))
@@ -524,12 +533,85 @@ def record_engine_run(session_id: str, run_dir: Path) -> dict:
            "returns_dates_sha256": _sha256(dates_path),
            "sharpe_daily": sharpe if isinstance(sharpe, (int, float)) else None, "ts": int(time.time() * 1000),
            "contract_change": change}
+    if sweep is not None:
+        row["sweep"] = {"parent_seq": sweep.get("parent_seq"), "label": sweep.get("label")}
     _append_durable(_session_dir(session_id) / ENGINE_LEDGER_FILE, row)
     out = {**screen, "trials": trials, "seq": seq,
            "trial_files": [f"trials/{seq:04d}/code/signal_engine.py", f"trials/{seq:04d}/config.json"]}
     if change is not None:
         out["contract_drift"] = {**change, "message": _drift_message(change)}
     return out
+
+
+def _same_json(path: Path, doc: dict) -> bool:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) == doc
+    except (OSError, ValueError):
+        return False
+
+
+def record_robustness(session_id: str, run_dir: Path, parent_seq: int) -> dict | None:
+    """After the sweep pass of ``backtest/runner.py --robustness`` over ``run_dir`` (engine row ``parent_seq``): record
+    every sweep run as an engine row (``record_engine_run(..., sweep=...)``, so it counts as a trial) and append the
+    sweep to ``robustness.jsonl``: ``parent_seq``, ``runs`` (the plan ``robustness.variants`` recomputes from the run's
+    ``config.json``, each with ``status`` ``ok`` + ``seq``, ``failed`` + ``error`` or ``missing``) and ``skipped``. A run
+    counts as ok only when the manifest says so, its metrics exist and its ``config.json`` is the planned variant config.
+    None when the config declares nothing."""
+    from backtest import robustness as rb
+
+    run_dir = Path(run_dir)
+    config = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+    rb.validate(config)
+    if not rb.declared(config):
+        return None
+    planned, skipped = rb.variants(config)
+    manifest = _json_file(run_dir / "robustness" / "manifest.json")
+    entries = manifest.get("runs") if isinstance(manifest, dict) and isinstance(manifest.get("runs"), list) else []
+    by_label = {e.get("label"): e for e in entries if isinstance(e, dict)}
+    runs = []
+    for run in planned:
+        entry: dict[str, Any] = {**run, "status": "missing", "seq": None}
+        reported = by_label.get(run["label"])
+        vdir = run_dir / "robustness" / run["label"]
+        if isinstance(reported, dict) and reported.get("status") == "ok":
+            if not (vdir / "artifacts" / "metrics.csv").is_file():
+                entry.update(status="failed", error="no artifacts/metrics.csv")
+            elif not _same_json(vdir / "config.json", rb.variant_config(config, run)):
+                entry.update(status="failed", error="config.json is not the planned sweep config")
+            else:
+                rec = record_engine_run(session_id, vdir, sweep={"parent_seq": parent_seq, "label": run["label"]})
+                entry.update(status="ok", seq=rec.get("seq"))
+        elif isinstance(reported, dict):
+            entry.update(status="failed", error=_collapse(reported.get("error"))[:300])
+        runs.append(entry)
+    doc = {"parent_seq": parent_seq, "runs": runs, "skipped": skipped, "ts": int(time.time() * 1000)}
+    _append_durable(_session_dir(session_id) / ROBUSTNESS_FILE, doc)
+    return doc
+
+
+def robustness_records(session_id: str) -> list[dict]:
+    """The sweeps of ``robustness.jsonl`` in append order."""
+    out = []
+    try:
+        with open(_session_dir(session_id) / ROBUSTNESS_FILE, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    doc = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(doc, dict) and isinstance(doc.get("parent_seq"), int) and isinstance(doc.get("runs"), list):
+                    out.append(doc)
+    except OSError:
+        return []
+    return out
+
+
+def current_engine_screen(session_id: str, seq: Any) -> dict | None:
+    """The current screen (``_current_screen``) of engine row ``seq``; None without such a row."""
+    for row in engine_rows(session_id):
+        if row.get("seq") == seq:
+            return _current_screen(session_id, row, verified_engine_screen(row))
+    return None
 
 
 def verified_engine_returns(row: dict) -> list[float] | None:
@@ -805,6 +887,20 @@ _ENGINE_TEXT = {
            "mt_skipped": "（{n} 个旧版本没有日期，未计入）",
            "mt_mismatch": "（{n} 个版本的收益快照与记录不符，未计入）",
            "mt_short": "（{n} 个版本回测不足 60 天，未计入多重比较）",
+           "sweeps": "（其中 {n} 次是系统参数扫描 / 组件消融，计入试验数，不在下表）", "sep": "；", "mt_sweep_of": "（#{p} 的系统扫描）",
+           "rb_head": "- #{seq} 参数邻域（系统扫描 {n} 个邻点，每个参数 ±1 档或 ±20%）：本点 Sharpe {s}、往返 {rt}；{share}。参考信息，不改变判定。",
+           "rb_share": "{b}/{n} 个邻点的 Sharpe 低于本点的一半{flag}", "rb_share_na": "本点 Sharpe 不为正，不计算低于一半的比例",
+           "rb_spike": "——结果依赖精确的参数取值（参数尖峰）",
+           "rb_param": "  - {name}={base}：{parts}{note}", "rb_point": "Sharpe {s}（往返 {rt}）",
+           "rb_same": "结果与本点完全相同", "rb_failed": "回测失败", "rb_mismatch": "快照与记录不符",
+           "rb_unwired": "（两个邻点都与本点完全相同：代码可能没有读取 self.PARAMS[\"{name}\"]）",
+           "rb_zero_without_step": "  - {name}：取值为 0 且没有 step，未扫描",
+           "rb_out_of_range": "  - {name}：有邻点超出 min/max，未运行",
+           "rb_ablation": "- #{seq} 组件消融（系统逐个关闭）：{parts}{flag}。参考信息，不改变判定。",
+           "rb_delta": "{point}，变化 {d:+.2f}", "rb_below": "，低于本点一半",
+           "rb_all_needed": "——去掉任何一个组件 Sharpe 都低于一半：结果依赖全部组件的叠加，是过拟合迹象",
+           "rb_failed_note": "（{n} 次扫描回测失败，未计入）",
+           "rb_trials": "（以上 {n} 次扫描回测按不同结果计入本会话的试验数：DSR、SPA/PBO）",
            "no_live": "通用引擎结果不能直接上实盘：须交接 Strategy IR，通过 ir_robustness 与 AlphaKeel G1/G2。",
            "non_auditable": "数据不可审计（{srcs}）：实时拉取的数据无法逐位复现，不能作为 AlphaKeel 证据。",
            "holdout": "⚠ 本会话读取过 AlphaKeel hold-out 区间的数据（截至 {day}，hold-out 起点 {cutoff_day}）：本会话的研究不能交接 AlphaKeel（G1 1.14）。",
@@ -824,6 +920,20 @@ _ENGINE_TEXT = {
             "mt_skipped": "({n} older versions have no dates and are not included)",
             "mt_mismatch": "({n} versions' return snapshots do not match the record and are excluded)",
             "mt_short": "({n} versions have fewer than 60 days and are not in the multiple-comparison test)",
+            "sweeps": " ({n} of them are system parameter sweeps / component ablations: counted as trials, not in the table)", "sep": "; ", "mt_sweep_of": " (a system sweep of #{p})",
+            "rb_head": "- #{seq} parameter neighbourhood (system sweep of {n} neighbours, each parameter +/-1 step or +/-20%): chosen point Sharpe {s}, {rt} round trips; {share}. Reference only; it does not change the verdict.",
+            "rb_share": "{b}/{n} neighbours have a Sharpe below half the chosen point's{flag}", "rb_share_na": "the chosen Sharpe is not positive, so no below-half share",
+            "rb_spike": " -- the result depends on the exact parameter values (a parameter spike)",
+            "rb_param": "  - {name}={base}: {parts}{note}", "rb_point": "Sharpe {s} ({rt} round trips)",
+            "rb_same": "identical to the chosen point", "rb_failed": "backtest failed", "rb_mismatch": "snapshot does not match the record",
+            "rb_unwired": " (both neighbours are identical to the chosen point: the code may not read self.PARAMS[\"{name}\"])",
+            "rb_zero_without_step": "  - {name}: value 0 without a step, not swept",
+            "rb_out_of_range": "  - {name}: a neighbour is outside min/max and was not run",
+            "rb_ablation": "- #{seq} component ablation (system switches each off in turn): {parts}{flag}. Reference only; it does not change the verdict.",
+            "rb_delta": "{point}, change {d:+.2f}", "rb_below": ", below half the chosen point",
+            "rb_all_needed": " -- removing any one component halves the Sharpe: the result needs every component stacked, a sign of overfitting",
+            "rb_failed_note": "({n} sweep backtests failed and are not counted)",
+            "rb_trials": "(the {n} sweep backtests above count in this session's trials by distinct result: DSR, SPA/PBO)",
             "no_live": "Engine results cannot go live directly: hand over a Strategy IR, pass ir_robustness and AlphaKeel G1/G2.",
             "non_auditable": "Data not auditable ({srcs}): live-pulled data cannot be re-read bit for bit and is not AlphaKeel evidence.",
             "holdout": "⚠ This session read data inside AlphaKeel's hold-out window (up to {day}, hold-out starts {cutoff_day}): its research cannot be handed to AlphaKeel (G1 1.14).",
@@ -899,6 +1009,8 @@ def session_has_passed_trial(session_id: str | None) -> bool:
         if card is not None and _status(card) == "passed_screen":
             return True
     for row in engine_rows(session_id):
+        if row.get("sweep"):  # a system sweep run is not a version the model chose
+            continue
         screen = _current_screen(session_id, row, verified_engine_screen(row))
         if screen is not None and screen.get("evidence_status") == "passed_screen":
             return True
@@ -910,7 +1022,7 @@ def _net_return(screen: dict) -> str:
     return "—" if net is None or base is None or base <= 0 else fmt_fraction(net / base)
 
 
-MT_MAX_VERSIONS = 20
+MT_MAX_VERSIONS = 40  # sweep runs are versions too (robustness.py: at most 2 * 8 + 8 per backtest)
 MT_MIN_VERSIONS = 3
 MT_PBO_MIN_VERSIONS = 8
 MT_MIN_DAYS = 60
@@ -971,16 +1083,17 @@ def _multiple_testing_lines_unsafe(session_id: str, t: dict) -> list[str]:
             matrix = np.column_stack([[m[day] for day in common] for m in by_day])
             spa = mt.spa_test(matrix, n_boot=MT_N_BOOT, seed=0)
             best = versions[spa["best_index"]][0]
+            sweep_of = (best.get("sweep") or {}).get("parent_seq")
             lines.append(t["mt"].format(
                 k=len(versions), cap=t["mt_cap"].format(m=MT_MAX_VERSIONS) if capped else "", t=len(common),
-                seq=best.get("seq"), p=spa["p_consistent"], n=spa["n_boot"], b=spa["mean_block"],
+                seq=f"{best.get('seq')}{t['mt_sweep_of'].format(p=sweep_of) if sweep_of is not None else ''}", p=spa["p_consistent"], n=spa["n_boot"], b=spa["mean_block"],
                 luck=t["mt_luck"] if spa["p_consistent"] >= 0.05 else ""))
             if len(versions) >= MT_PBO_MIN_VERSIONS:
                 pbo = mt.pbo_cscv(matrix, S=MT_PBO_S)
                 if pbo is not None:
                     lines.append(t["pbo"].format(pbo=pbo["pbo"], S=pbo["S"], n=pbo["n_combinations"]))
     for row, _, returns in reversed(usable):
-        if len(returns) >= MT_MIN_DAYS:
+        if len(returns) >= MT_MIN_DAYS and not row.get("sweep"):  # the latest version the model chose
             ppy = _periods_per_year(row)
             split = mt.split_sharpe(returns, periods_per_year=ppy)
             ci = mt.block_bootstrap_sharpe_ci(returns, periods_per_year=ppy, n_boot=MT_N_BOOT, seed=0) or {}
@@ -993,12 +1106,133 @@ def _multiple_testing_lines_unsafe(session_id: str, t: dict) -> list[str]:
     return lines
 
 
+_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,39}")
+
+
+def _num_text(v: Any) -> str:
+    return f"{v:g}" if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else "?"
+
+
+def _sweep_point(row: dict | None, ppy: int) -> dict | None:
+    """``{"sharpe", "round_trips", "trial_key"}`` of an engine row from its verified returns and screen; None when either
+    does not verify."""
+    from backtest import multiple_testing as mt
+
+    if row is None:
+        return None
+    returns, screen = verified_engine_returns(row), verified_engine_screen(row)
+    if returns is None or screen is None:
+        return None
+    rt = _item_observed(screen, "1.2")
+    return {"sharpe": mt.annual_sharpe(returns, ppy), "round_trips": rt if isinstance(rt, int) and not isinstance(rt, bool) else None,
+            "trial_key": row.get("trial_key")}
+
+
+def robustness_lines(session_id: str, zh: bool) -> list[str]:
+    """Card lines of the latest sweep (``robustness.jsonl``) whose chosen point verifies: the parameter neighbourhood
+    (each neighbour's annualised Sharpe and round trips, the share of neighbours below half the chosen Sharpe) and the
+    component ablation (each component's Sharpe change). Computed at render time from the verified snapshots of the sweep
+    rows; nothing when the session has no sweep (no strategy declared the convention). Never raises."""
+    try:
+        return _robustness_lines_unsafe(session_id, _ENGINE_TEXT[bool(zh)])
+    except Exception:  # noqa: BLE001 - the card never fails on a statistic
+        return []
+
+
+def _robustness_lines_unsafe(session_id: str, t: dict) -> list[str]:
+    from backtest import robustness as rb
+
+    by_seq = {r.get("seq"): r for r in engine_rows(session_id)}
+    for doc in reversed(robustness_records(session_id)):
+        parent = by_seq.get(doc["parent_seq"])
+        if parent is None or parent.get("sweep"):
+            continue
+        ppy = _periods_per_year(parent)
+        chosen = _sweep_point(parent, ppy)
+        if chosen is None:
+            continue
+        break
+    else:
+        return []
+    seq = doc["parent_seq"]
+    params: dict[str, list[tuple[dict, dict | None]]] = {}
+    ablations: list[tuple[dict, dict | None]] = []
+    failed = 0
+    for run in doc["runs"]:
+        if not isinstance(run, dict):
+            continue
+        name = run.get("param") if run.get("kind") == "param" else run.get("component")
+        if not isinstance(name, str) or not _NAME_RE.fullmatch(name):
+            continue
+        point = None
+        if run.get("status") == "ok":
+            vrow = by_seq.get(run.get("seq"))
+            ok = isinstance(vrow, dict) and vrow.get("sweep") == {"parent_seq": seq, "label": run.get("label")}
+            point = _sweep_point(vrow, ppy) if ok else None
+            if point is None:
+                point = {"mismatch": True}
+        else:
+            failed += 1
+        (params.setdefault(name, []) if run.get("kind") == "param" else ablations).append((run, point))
+
+    def outcome(point: dict | None) -> str:
+        if point is None:
+            return t["rb_failed"]
+        if point.get("mismatch"):
+            return t["rb_mismatch"]
+        if point["trial_key"] == chosen["trial_key"]:
+            return t["rb_same"]
+        return t["rb_point"].format(s=_fmt2(point["sharpe"]), rt=point["round_trips"] if point["round_trips"] is not None else "—")
+
+    lines: list[str] = []
+    measured = lambda pts: [p for _, p in pts if p is not None and not p.get("mismatch")]  # noqa: E731
+    if params:
+        neighbours = [p for pts in params.values() for p in measured(pts)]
+        summary = rb.neighbourhood_summary(chosen["sharpe"], [p["sharpe"] for p in neighbours])
+        if summary["share"] is None:
+            share = t["rb_share_na"]
+        else:
+            share = t["rb_share"].format(b=summary["below_half"], n=summary["n"],
+                                         flag=t["rb_spike"] if summary["below_half"] else "")
+        lines.append(t["rb_head"].format(seq=seq, n=sum(len(v) for v in params.values()), s=_fmt2(chosen["sharpe"]),
+                                         rt=chosen["round_trips"] if chosen["round_trips"] is not None else "—", share=share))
+        for name, pts in params.items():
+            base = _num_text(pts[0][0].get("base"))
+            parts = [f"{_num_text(run.get('value'))} → {outcome(p)}" for run, p in pts]
+            unwired = len(pts) == 2 and all(p is not None and not p.get("mismatch") and p["trial_key"] == chosen["trial_key"] for _, p in pts)
+            lines.append(t["rb_param"].format(name=name, base=base, parts=t["sep"].join(parts),
+                                              note=t["rb_unwired"].format(name=name) if unwired else ""))
+    for item in doc.get("skipped") or []:
+        name = item.get("param") if isinstance(item, dict) else None
+        if isinstance(name, str) and _NAME_RE.fullmatch(name) and item.get("reason") in ("zero_without_step", "out_of_range"):
+            lines.append(t["rb_" + item["reason"]].format(name=name))
+    if ablations:
+        parts = []
+        collapsed = 0
+        for run, p in ablations:
+            text = outcome(p)
+            if p is not None and not p.get("mismatch") and p["trial_key"] != chosen["trial_key"]:
+                if p["sharpe"] is not None and chosen["sharpe"] is not None:
+                    text = t["rb_delta"].format(point=text, d=p["sharpe"] - chosen["sharpe"])
+                if chosen["sharpe"] is not None and chosen["sharpe"] > 0 and (p["sharpe"] is None or p["sharpe"] < chosen["sharpe"] / 2):
+                    text += t["rb_below"]
+                    collapsed += 1
+            parts.append(f"{run['component']} → {text}")
+        lines.append(t["rb_ablation"].format(seq=seq, parts=t["sep"].join(parts),
+                                             flag=t["rb_all_needed"] if len(ablations) >= 2 and collapsed == len(ablations) else ""))
+    if failed:
+        lines.append(t["rb_failed_note"].format(n=failed))
+    lines.append(t["rb_trials"].format(n=sum(1 for r in doc["runs"] if isinstance(r, dict) and r.get("status") == "ok")))
+    return lines
+
+
 def _engine_section(session_id: str, zh: bool, first: bool) -> list[str]:
     rows_all = engine_rows(session_id)
     if not rows_all:
         return []
     t = _ENGINE_TEXT[bool(zh)]
-    entries = [(row, _current_screen(session_id, row, verified_engine_screen(row))) for row in rows_all]
+    sweeps = sum(1 for row in rows_all if row.get("sweep"))
+    entries = [(row, _current_screen(session_id, row, verified_engine_screen(row))) for row in rows_all if not row.get("sweep")]
     screens = [s for _, s in entries if s is not None]
     bad = sum(1 for _, s in entries if s is None)
     counts = {"passed_screen": 0, "failed_screen": 0, "insufficient": 0}
@@ -1034,8 +1268,9 @@ def _engine_section(session_id: str, zh: bool, first: bool) -> list[str]:
                     f"{_item_observed(s, '1.2') if _item_observed(s, '1.2') is not None else '—'} | {_net_return(s)} | "
                     f"{fmt_amount(facts.get('dsr'))} ({facts.get('trials', '—')}) | {direction} / {fmt_fraction(facts.get('time_in_market'))} | "
                     f"{_engine_verdict(s, t)}{_undeclared_mark(row, _CONTRACT_TEXT[bool(zh)])} |")
-    summary = t["summary"].format(m=len(entries), n=len({r["trial_key"] for r in rows_all}), p=counts["passed_screen"],
-                                  f=counts["failed_screen"], i=counts["insufficient"]) + (t["tampered"].format(n=bad) if bad else "")
+    summary = t["summary"].format(m=len(rows_all), n=len({r["trial_key"] for r in rows_all}), p=counts["passed_screen"],
+                                  f=counts["failed_screen"], i=counts["insufficient"]) + (t["tampered"].format(n=bad) if bad else "") + (
+        t["sweeps"].format(n=sweeps) if sweeps else "")
     lines = (["---"] if first else []) + [t["title"], summary, t["head"], "|---|---|---|---|---|---|---|---|---|", *rows]
     if len(entries) > len(rows):
         lines.append(t["more"].format(n=len(entries) - len(rows)))
@@ -1048,6 +1283,7 @@ def _engine_section(session_id: str, zh: bool, first: bool) -> list[str]:
             if isinstance(ids, list) and ids:
                 lines.append(t[text].format(seq=seq, ids=", ".join(str(x) for x in ids)))
     lines.extend(_multiple_testing_lines(session_id, t))
+    lines.extend(robustness_lines(session_id, zh))
     lines.append(t["no_live"])
     non = sorted({str(x) for s in screens for x in (s.get("facts") or {}).get("non_auditable_sources") or []})
     if non:

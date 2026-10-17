@@ -45,6 +45,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `ir-execution` | none (leaf package, its tool and tests only) | local-only (follows the leaf package) |
 | `research-integrity-r2` | crypto + composite engine (one refusal each), read_file_tool (one namespace), engine card column, research contract (ledger, tool arg, card), agent/context (four bullets), two skill notes, factor-name and cited-retrieval gates (grounding ledger, policies, release), `zoo_factor` helper and engine-screen facts, round-trip count for item 1.2, multiple-testing lines on the engine card (`backtest/multiple_testing.py`) | spot-short refusal and the `trials/` namespace are upstreamable in principle; the ledger lineage, card column, research contract, factor-name gate, `zoo_factor` and the retrieval rule for cited figures and the multiple-testing card lines are local-only |
 | `research-integrity-r2-guards` | agent/context (recall filter, wrapper note), grounding ledger + policies + release (verdict-word gate), ledger `session_has_passed_trial`, write_file / edit_file (order-code refusal) | recall scope, verdict-word gate and the order-code refusal are local-only (they follow the research ledger and the hand-off boundary) |
+| `engine-robustness` | backtest runner (config check, `PARAMS`/`COMPONENTS` set before the engine is created, `--robustness` pass), backtest_tool (one sweep call), multiple_testing (`annual_sharpe`), research ledger (sweep rows, `robustness.jsonl`, card lines), strategy-generate SKILL.md (one bullet) | local-only (follows the engine ledger and the result card); the parameter convention and the sweep pass are upstreamable in principle |
 
 ---
 
@@ -1182,3 +1183,64 @@ research ledger (local-only).
 - upstream `agent/src/tools/edit_file_tool.py`: `new_content = content.replace(old_text, new_text, 1)`
 - hook `agent/src/tools/edit_file_tool.py`: `order_code_count(`
 - hook `agent/src/tools/alphakeel_research_ledger.py`: `def session_has_passed_trial(`
+
+## `engine-robustness` — parameter neighbourhood and component ablation of a generic-engine backtest
+
+**Purpose.** The research-integrity plan (P2-A items 2 and 3) asked for a parameter-neighbourhood check and an ablation of
+signal components; the generic engine had no way to know a strategy's parameters. (1) Convention (`agent/backtest/robustness.py`,
+pure): `config.json` `params` (`{name: number}`, the chosen point, at most 8), optional `param_ranges` (`{name: {step, min,
+max}}`), `components` (switchable signal components, at most 8) and `components_off`; names are identifiers of at most 40
+characters. `BacktestConfigSchema` checks the shapes only when a key is present (a config without them is unchanged). The runner
+sets `SignalEngine.PARAMS` (the class's own `PARAMS` dict updated with `params`) and `SignalEngine.COMPONENTS` (`{name: name
+not in components_off}`) before the engine is instantiated; nothing is set when nothing is declared. (2) Sweep: a neighbour is the
+chosen value +/- `step`, else +/- 20 % (an integer moves by at least 1 and stays an integer); a neighbour outside `[min, max]`
+or a zero without a step is not run and is listed as skipped. Each component that is on is switched off in turn. (3)
+`backtest_tool.run_backtest`, after the chosen run is recorded and only when the config declares something and a session id
+exists, runs `runner.py <run_dir> --robustness`: one data fetch, every variant on a fresh `SignalEngine` and engine into
+`<run_dir>/robustness/<label>/` (its `config.json` = `robustness.variant_config`, a copy of the code, artifacts), a failing
+variant is recorded and the next one runs, `robustness/manifest.json` is rewritten after each run (a sweep cut by the timeout
+keeps what finished). The chosen run's `logs/runner_*.txt` are restored; the sweep's go to `robustness/logs/`. (4) Trials:
+`record_robustness` recomputes the plan from the run's `config.json` and records every variant the manifest reports ok, whose
+metrics exist and whose `config.json` is the planned variant config, through `record_engine_run(..., sweep={parent_seq,
+label})`; so every sweep run is an engine row and its distinct `trial_key` counts in `trial_count`, `variant_sharpes_for`, the
+DSR rescreen, the IR trials evidence and the SPA/PBO versions (`MT_MAX_VERSIONS` 20 -> 40). A sweep row never updates the
+research contract, is not a row of the card's table (the summary counts it), never makes `session_has_passed_trial` true, never
+replaces a model row of the same result in `_latest_engine_rows`, is skipped for the split/interval line, and is labelled when it
+is the SPA's best. The sweep is appended to the session's `robustness.jsonl`. The tool result's `research_screen` is recomputed
+for the new trial count and carries `robustness` (counts, failures, the English card lines). (5) Card: `robustness_lines` (system
+lines after the multiple-comparison lines) takes the latest sweep whose chosen row verifies and prints, from the verified
+returns (annualised Sharpe, `multiple_testing.annual_sharpe`) and screens (round trips, item 1.2) of the sweep rows: the
+neighbourhood line (chosen Sharpe and round trips, the share of neighbours with a Sharpe below half the chosen one, a neighbour
+without a Sharpe counting as below, no share when the chosen Sharpe is not positive, a spike mark when any is below), one line per
+parameter (each neighbour's Sharpe and round trips, "identical to the chosen point" for the same `trial_key`, and a note when both
+are identical: the code may not read `self.PARAMS`), the skipped parameters, the ablation line (each component's Sharpe and
+change, "below half", and a mark when every one of two or more components halves the Sharpe), failures and snapshot mismatches,
+and the trial note. Nothing is printed when the session has no sweep. Reference information; no verdict changes.
+
+**Files.**
+- `agent/backtest/robustness.py`
+- `agent/backtest/runner.py`
+- `agent/backtest/multiple_testing.py`
+- `agent/src/tools/alphakeel_research_ledger.py`
+- `agent/src/tools/backtest_tool.py`
+- `agent/src/skills/strategy-generate/SKILL.md`
+- `agent/tests/test_engine_param_robustness.py`
+
+**Commits.** (this commit)
+
+**Upstreamable.** The parameter convention and the runner's sweep pass are generic in principle; the trial accounting and the
+card lines follow the local engine ledger (local-only).
+
+**Anchors.**
+- upstream `agent/backtest/runner.py`: `signal_engine = engine_cls()`
+- hook `agent/backtest/runner.py`: `_robustness.apply(engine_cls, config)`
+- hook `agent/backtest/runner.py`: `_robustness.validate(self.model_extra or {})`
+- preimage `agent/backtest/runner.py`: `main(Path(sys.argv[1]))`
+- hook `agent/backtest/runner.py`: `main(Path(sys.argv[1]), robustness="--robustness" in sys.argv[2:])`
+- upstream `agent/src/tools/backtest_tool.py`: `def _serialize_result(envelope: dict[str, Any]) -> str:`
+- hook `agent/src/tools/backtest_tool.py`: `sweep = _robustness_sweep(run_path, config, entry_script, agent_root, envelope["research_screen"])`
+- hook `agent/src/tools/alphakeel_research_ledger.py`: `def record_robustness(`
+- hook `agent/src/tools/alphakeel_research_ledger.py`: `lines.extend(robustness_lines(session_id, zh))`
+- hook `agent/src/tools/alphakeel_research_ledger.py`: `if r.get("sweep") and held is not None and not held.get("sweep"):`
+- hook `agent/backtest/multiple_testing.py`: `def annual_sharpe(`
+- hook `agent/src/skills/strategy-generate/SKILL.md`: `` `params` / `param_ranges` / `components`: declare the strategy's tunable parameters ``

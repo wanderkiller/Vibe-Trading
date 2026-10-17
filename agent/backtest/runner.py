@@ -52,6 +52,7 @@ from backtest.engines._market_hooks import (  # noqa: F401  (re-exported)
     strip_local_prefix,
 )
 from backtest.rebalance_mask import RebalanceMask, validate_rebalance_mask
+from backtest import robustness as _robustness
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +210,8 @@ class BacktestConfigSchema(BaseModel):
             raise ValueError(
                 f"start_date ({self.start_date}) must be <= end_date ({self.end_date})"
             )
+        # tunable-parameter convention (backtest/robustness.py): checked only when declared
+        _robustness.validate(self.model_extra or {})
         return self
 
 
@@ -1191,10 +1194,14 @@ def _maybe_inject_fundamentals_for_factor_panel(
 
 # --- Main entry ---
 
-def main(run_dir: Path) -> None:
+def main(run_dir: Path, *, robustness: bool = False) -> None:
     """Load config, fetch data, run the selected backtest engine.
 
-    With ``source="auto"``, routes each code through the appropriate loader.
+    With ``source="auto"``, routes each code through the appropriate loader. A config that declares ``params`` /
+    ``components`` (``backtest/robustness.py``) has them set on ``SignalEngine.PARAMS`` / ``COMPONENTS``. With
+    ``robustness`` the chosen point is not run again: each sweep run of ``robustness.variants`` runs on the same fetched
+    data into ``<run_dir>/robustness/<label>/`` (its ``config.json``, ``code/signal_engine.py`` and artifacts), and
+    ``<run_dir>/robustness/manifest.json`` lists every run with ``status`` ``ok`` or ``failed``.
 
     Args:
         run_dir: Run directory containing ``config.json`` and ``code/signal_engine.py``.
@@ -1244,6 +1251,7 @@ def main(run_dir: Path) -> None:
         print(json.dumps({"error": f"Invalid config: {errors}"}))
         sys.exit(1)
 
+    declared_config = copy.deepcopy(raw_config)
     config = raw_config
     source = config.get("source", "tushare")
     codes = config.get("codes", [])
@@ -1291,6 +1299,7 @@ def main(run_dir: Path) -> None:
 
     # Engine
     engine_type = config.get("engine", "daily")
+    _robustness.apply(engine_cls, config)
     signal_engine = engine_cls()
 
     # Annualization bars
@@ -1312,12 +1321,60 @@ def main(run_dir: Path) -> None:
     # aligned with the data consumed by the engine.
     loader = _AutoLoader(data_map)
 
+    if robustness:
+        _run_robustness(run_dir, declared_config, config, engine_cls, loader, effective_source, codes, bars_per_year)
+        return
+
     if engine_type == "options":
         from backtest.engines.options_portfolio import run_options_backtest
         run_options_backtest(config, loader, signal_engine, run_dir, bars_per_year=bars_per_year)
     else:
         market_engine = _create_market_engine(effective_source, config, codes)
         market_engine.run_backtest(config, loader, signal_engine, run_dir, bars_per_year=bars_per_year)
+
+
+def _run_robustness(run_dir: Path, declared_config: dict, config: dict, engine_cls, loader, effective_source: str,
+                    codes: List[str], bars_per_year) -> None:
+    """The sweep of ``main(..., robustness=True)``: one engine run per ``robustness.variants`` entry, each on a fresh
+    ``SignalEngine`` and engine and a copy of the run-time ``config``; a failing run is recorded and the next one runs."""
+    import shutil
+
+    root = run_dir / "robustness"
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir(parents=True)
+    runs, skipped = _robustness.variants(declared_config)
+    code = (run_dir / "code" / "signal_engine.py").read_bytes()
+    manifest: list[dict] = []
+    for run in runs:
+        vdir = root / run["label"]
+        (vdir / "code").mkdir(parents=True)
+        (vdir / "code" / "signal_engine.py").write_bytes(code)
+        (vdir / "config.json").write_text(
+            json.dumps(_robustness.variant_config(declared_config, run), ensure_ascii=False, indent=2), encoding="utf-8")
+        vconfig = _robustness.variant_config(config, run)
+        entry = {**run, "status": "ok"}
+        try:
+            _robustness.apply(engine_cls, vconfig)
+            signal_engine = engine_cls()
+            if vconfig.get("engine", "daily") == "options":
+                from backtest.engines.options_portfolio import run_options_backtest
+                run_options_backtest(vconfig, loader, signal_engine, vdir, bars_per_year=bars_per_year)
+            else:
+                _create_market_engine(effective_source, vconfig, codes).run_backtest(
+                    vconfig, loader, signal_engine, vdir, bars_per_year=bars_per_year)
+            if not (vdir / "artifacts" / "metrics.csv").is_file():
+                entry.update(status="failed", error="no artifacts/metrics.csv")
+        except SystemExit as exc:  # an engine reports a refusal by printing and exiting
+            entry.update(status="failed", error=f"exit {exc.code}")
+        except Exception as exc:  # noqa: BLE001 - one failing neighbour never stops the sweep
+            entry.update(status="failed", error=f"{type(exc).__name__}: {exc}"[:300])
+        manifest.append(entry)
+        # after every run, so a sweep cut short by the tool's timeout still reports the runs that finished
+        (root / "manifest.json").write_text(json.dumps({"runs": manifest, "skipped": skipped}, ensure_ascii=False, indent=2),
+                                            encoding="utf-8")
+    if not runs:
+        (root / "manifest.json").write_text(json.dumps({"runs": [], "skipped": skipped}), encoding="utf-8")
 
 
 #: Bar spacing, in seconds, of every interval the runner accepts
@@ -1974,6 +2031,6 @@ class _AutoLoader:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python -m backtest.runner <run_dir>")
+        print("Usage: python -m backtest.runner <run_dir> [--robustness]")
         sys.exit(1)
-    main(Path(sys.argv[1]))
+    main(Path(sys.argv[1]), robustness="--robustness" in sys.argv[2:])

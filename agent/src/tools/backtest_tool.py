@@ -390,11 +390,87 @@ def run_backtest(run_dir: str) -> str:
         if summary is not None:
             envelope["summary"] = summary
         envelope["research_screen"] = _research_screen(run_path)
+        sweep = _robustness_sweep(run_path, config, entry_script, agent_root, envelope["research_screen"])
+        if sweep is not None:
+            envelope["robustness"] = sweep
         shape_warnings = _data_shape_backstop(run_path, config)
         if shape_warnings:
             screen = envelope["research_screen"]
             screen["warning"] = "; ".join(w for w in (screen.get("warning"), *shape_warnings) if w)
     return _serialize_result(envelope)
+
+
+ROBUSTNESS_NOTE = ("every sweep run counts in this session's trials (DSR, SPA/PBO); research_screen is recomputed for the "
+                   "new trial count; quote the result card")
+_RUNNER_LOGS = ("runner_stdout.txt", "runner_stderr.txt")
+
+
+def _robustness_sweep(run_path: Path, config: dict, entry_script: Path, agent_root: Path,
+                      screen: dict[str, Any]) -> dict[str, Any] | None:
+    """When ``config`` declares ``params`` / ``components`` (``backtest/robustness.py``): run ``runner.py --robustness``
+    (the neighbourhood sweep and the ablation, on one data fetch), record every sweep run as a trial
+    (``record_robustness``), recompute ``screen`` (the chosen row) for the new trial count and return the card lines.
+    None when nothing is declared; never raises (the sweep never turns a successful run into an error). The chosen run's
+    ``logs/runner_*.txt`` are kept; the sweep's go to ``robustness/logs/``."""
+    from backtest import robustness as rb
+    from src.providers.session_context import current_llm_session_id
+
+    if not rb.declared(config) or screen.get("evidence_status") == "unavailable":
+        return None
+    session_id = current_llm_session_id()
+    seq = screen.get("seq")
+    if not session_id or not isinstance(seq, int) or isinstance(seq, bool):
+        return {"status": "skipped", "reason": "no session id or no recorded run: the sweep is not run"}
+    logs = run_path / "logs"
+    saved = {n: (logs / n).read_bytes() for n in _RUNNER_LOGS if (logs / n).is_file()}
+    error = None
+    emit_progress("simulate", message="parameter neighbourhood and component ablation sweep")
+    try:
+        result = Runner(timeout=_backtest_timeout_seconds()).execute(
+            entry_script, run_path, cwd=agent_root, cli_args=[str(run_path), "--robustness"])
+        if not result.success:
+            error = f"sweep exited with code {result.exit_code}"
+    except subprocess.TimeoutExpired:
+        error = "sweep timed out; the runs finished before the timeout are recorded"
+    except Exception as exc:  # noqa: BLE001
+        error = f"sweep failed: {exc}"
+    try:
+        sweep_logs = run_path / "robustness" / "logs"
+        sweep_logs.mkdir(parents=True, exist_ok=True)
+        for n in _RUNNER_LOGS:
+            if (logs / n).is_file():
+                (sweep_logs / n).write_bytes((logs / n).read_bytes())
+            if n in saved:
+                (logs / n).write_bytes(saved[n])
+    except OSError:
+        logging.getLogger(__name__).warning("sweep logs not moved for %s", run_path, exc_info=True)
+    try:
+        from src.tools import alphakeel_research_ledger as ledger
+
+        doc = ledger.record_robustness(session_id, run_path, seq)
+        if doc is None:
+            return None
+        current = ledger.current_engine_screen(session_id, seq)
+        if current is not None:
+            screen["evidence_status"] = current.get("evidence_status")
+            screen["items"] = [{"id": i.get("id"), "result": i.get("result"), "observed": i.get("observed")}
+                               for i in current.get("items") or []]
+            screen["facts"] = current.get("facts")
+            screen["trials"] = (current.get("facts") or {}).get("trials", screen.get("trials"))
+        runs = doc["runs"]
+        out: dict[str, Any] = {
+            "status": "ok" if error is None else "partial",
+            "runs": len(runs), "recorded": sum(1 for r in runs if r.get("status") == "ok"),
+            "failed": [{"label": r.get("label"), "error": r.get("error") or r.get("status")} for r in runs if r.get("status") != "ok"],
+            "skipped": doc.get("skipped") or [], "trials": ledger.trial_count(session_id),
+            "lines": ledger.robustness_lines(session_id, False), "note": ROBUSTNESS_NOTE,
+        }
+        if error:
+            out["error"] = error
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("sweep not recorded for %s", run_path, exc_info=True)
+        return {"status": "error", "error": str(exc)}
 
 
 def _serialize_result(envelope: dict[str, Any]) -> str:

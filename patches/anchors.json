@@ -2138,6 +2138,81 @@
      "literal": "def session_has_passed_trial("
     }
    ]
+  },
+  {
+   "id": "engine-robustness",
+   "title": "Generic-engine parameter neighbourhood and component ablation: a tunable-parameter convention, every sweep run a trial, system lines on the result card",
+   "files": [
+    "agent/backtest/robustness.py",
+    "agent/backtest/runner.py",
+    "agent/backtest/multiple_testing.py",
+    "agent/src/tools/alphakeel_research_ledger.py",
+    "agent/src/tools/backtest_tool.py",
+    "agent/src/skills/strategy-generate/SKILL.md",
+    "agent/tests/test_engine_param_robustness.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/backtest/runner.py",
+     "kind": "upstream",
+     "literal": "signal_engine = engine_cls()"
+    },
+    {
+     "file": "agent/backtest/runner.py",
+     "kind": "hook",
+     "literal": "_robustness.apply(engine_cls, config)"
+    },
+    {
+     "file": "agent/backtest/runner.py",
+     "kind": "hook",
+     "literal": "_robustness.validate(self.model_extra or {})"
+    },
+    {
+     "file": "agent/backtest/runner.py",
+     "kind": "preimage",
+     "literal": "main(Path(sys.argv[1]))"
+    },
+    {
+     "file": "agent/backtest/runner.py",
+     "kind": "hook",
+     "literal": "main(Path(sys.argv[1]), robustness=\"--robustness\" in sys.argv[2:])"
+    },
+    {
+     "file": "agent/src/tools/backtest_tool.py",
+     "kind": "upstream",
+     "literal": "def _serialize_result(envelope: dict[str, Any]) -> str:"
+    },
+    {
+     "file": "agent/src/tools/backtest_tool.py",
+     "kind": "hook",
+     "literal": "sweep = _robustness_sweep(run_path, config, entry_script, agent_root, envelope[\"research_screen\"])"
+    },
+    {
+     "file": "agent/src/tools/alphakeel_research_ledger.py",
+     "kind": "hook",
+     "literal": "def record_robustness("
+    },
+    {
+     "file": "agent/src/tools/alphakeel_research_ledger.py",
+     "kind": "hook",
+     "literal": "lines.extend(robustness_lines(session_id, zh))"
+    },
+    {
+     "file": "agent/src/tools/alphakeel_research_ledger.py",
+     "kind": "hook",
+     "literal": "if r.get(\"sweep\") and held is not None and not held.get(\"sweep\"):"
+    },
+    {
+     "file": "agent/backtest/multiple_testing.py",
+     "kind": "hook",
+     "literal": "def annual_sharpe("
+    },
+    {
+     "file": "agent/src/skills/strategy-generate/SKILL.md",
+     "kind": "hook",
+     "literal": "`params` / `param_ranges` / `components`: declare the strategy's tunable parameters"
+    }
+   ]
   }
  ]
 }

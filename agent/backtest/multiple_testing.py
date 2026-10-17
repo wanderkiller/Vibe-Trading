@@ -5,8 +5,8 @@
   lower / consistent / upper p-values.
 * ``pbo_cscv``: probability of backtest overfitting by combinatorially symmetric cross-validation (Bailey, Borwein,
   Lopez de Prado & Zhu 2015), Sharpe as the metric.
-* ``block_bootstrap_sharpe_ci`` and ``split_sharpe``: percentile CI of the annualised Sharpe and the in-sample /
-  out-of-sample Sharpe of one series.
+* ``annual_sharpe``, ``block_bootstrap_sharpe_ci`` and ``split_sharpe``: the annualised Sharpe of one series, its
+  percentile CI and its in-sample / out-of-sample Sharpe.
 
 Every function is deterministic for a fixed ``seed``. Nothing here reads files or the network.
 """
@@ -124,6 +124,11 @@ def _annual_sharpe(x: np.ndarray, periods_per_year: float) -> float | None:
     if not sd > 1e-14:
         return None
     return float(x.mean() / sd * math.sqrt(periods_per_year))
+
+
+def annual_sharpe(returns: Any, periods_per_year: float) -> float | None:
+    """Annualised Sharpe of a daily-return series; None with fewer than 2 returns or zero sample variance."""
+    return _annual_sharpe(np.asarray(returns, dtype=float).ravel(), periods_per_year)
 
 
 def block_bootstrap_sharpe_ci(returns: Any, *, periods_per_year: float, n_boot: int = 2000, mean_block: float | None = None,
