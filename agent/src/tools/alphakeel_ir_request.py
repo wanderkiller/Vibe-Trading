@@ -199,7 +199,9 @@ def plan(args: dict[str, Any], ir_doc: dict, who: dict) -> dict[str, Any]:
     step = step_minutes(start, end)
     fee_table, source = fees(a, venues, ir_doc)
     # one definition for this path and the CLI's (step <= 2, a spot maker leg, a fee row without maker.perp)
-    problem = IR.maker_request_problem(ir_doc, {v: fee_table.get(v) for v in venues} if isinstance(fee_table, dict) else fee_table, step)
+    # a request table given as a JSON string or file path is checked as the table it parses to
+    parsed = fee_table if isinstance(fee_table, dict) else _fee_table(fee_table)
+    problem = IR.maker_request_problem(ir_doc, {v: parsed.get(v) for v in venues} if isinstance(parsed, dict) else fee_table, step)
     if problem:
         raise ValueError(problem)
     out: dict[str, Any] = {"ir": a.ir, "start_ms": start, "end_ms": end, "instruments": insts,

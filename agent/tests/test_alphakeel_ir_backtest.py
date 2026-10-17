@@ -1318,6 +1318,19 @@ def test_request_fee_table_without_maker_perp_is_refused_for_a_maker_ir():
     assert _plan(_request_ir(), fees=taker)["fees"] == taker  # a taker-only IR needs no maker rate
 
 
+def test_a_fee_table_given_as_json_text_or_a_file_is_checked_for_maker_perp_too(tmp_path):
+    """Regression (3a review round 2): plan() passed a JSON-string / file-path fee table through unparsed, so a maker IR's
+    missing maker.perp was not caught before the trial ledger was written."""
+    doc = _request_ir(MAKER_EXECUTION)
+    taker = {v: {"perp": "0.0004"} for v in ("binance", "okx")}
+    with pytest.raises(ValueError, match=r"no maker\.perp rate for binance, okx"):
+        _plan(doc, fees=json.dumps(taker))
+    f = tmp_path / "fees.json"
+    f.write_text(json.dumps(taker))
+    with pytest.raises(ValueError, match=r"no maker\.perp rate for binance, okx"):
+        _plan(doc, fees=str(f))
+
+
 def test_maker_entry_leg_is_refused_on_a_two_minute_step():
     from src.tools import alphakeel_ir_request as req
 
