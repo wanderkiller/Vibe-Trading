@@ -1370,9 +1370,9 @@ def test_maker_entry_leg_is_refused_on_a_two_minute_step():
 
     end = 1_782_000_000_000 - 1_782_000_000_000 % 86_400_000
     with pytest.raises(ValueError, match="step_minutes <= 2"):
-        _plan(_request_ir(MAKER_EXECUTION), start_ms=end - 30 * 86_400_000)
+        _plan(_request_ir(MAKER_EXECUTION), start_ms=end - 30 * 86_400_000, end_ms=end)
     assert req.step_minutes(end - 30 * 86_400_000, end) == 2
-    assert _plan(_request_ir(), start_ms=end - 30 * 86_400_000)["step_minutes"] == 2
+    assert _plan(_request_ir(), start_ms=end - 30 * 86_400_000, end_ms=end)["step_minutes"] == 2
 
 
 def test_scale_fees_scales_the_maker_rates_too():
