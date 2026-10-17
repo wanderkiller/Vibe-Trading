@@ -623,6 +623,8 @@ def record_ir_robustness(session_id: str, result: dict) -> None:
     path = Path(str(result["json"])).resolve()
     raw = path.read_bytes()
     doc = json.loads(raw.decode("utf-8"))
+    if doc.get("strategy_id") != result.get("strategy_id") or (doc.get("rating") or {}).get("grade") != result.get("grade"):
+        raise ValueError("robustness.json is not the battery the CLI reported (strategy_id or grade differ)")
     _append_durable(_session_dir(session_id) / IR_ROBUSTNESS_FILE,
                     {"strategy_id": doc["strategy_id"], "name": doc.get("name"), "path": str(path),
                      "sha256": hashlib.sha256(raw).hexdigest(), "ts": int(time.time() * 1000)})
@@ -797,6 +799,7 @@ _TEXT = {
            "rob": "稳健性（ir_robustness，研究证据，非审批）：{name} 评级 {grade}，适用项通过 {passed}/{applicable}；OOS {oos}；封顶：{caps}",
            "rob_oos_run": "已运行", "rob_oos_none": "未运行", "rob_no_caps": "无",
            "rob_tampered": "稳健性（ir_robustness）：{name} 的 robustness.json 已改动或缺失，评级不显示",
+           "rob_mismatch": "稳健性（ir_robustness）：{name} 的检验输入（窗口、pack、费率或过滤）与已记录的回测不一致，评级不显示",
            "ledger": "账本：{file}",
            "also_failed": "；另未通过：{ids}", "na_zero": "不适用（0 笔）",
            "trials": "试验数：本会话 {n}；研究服务账本同 kind 同谱系 {k}（1.6 取较大值）",
@@ -818,6 +821,7 @@ _TEXT = {
             "rob": "Robustness (ir_robustness; research evidence, not an approval): {name} grade {grade}, {passed}/{applicable} applicable checks passed; OOS {oos}; caps: {caps}",
             "rob_oos_run": "run", "rob_oos_none": "not run", "rob_no_caps": "none",
             "rob_tampered": "Robustness (ir_robustness): robustness.json of {name} was modified or is missing; grade not shown",
+            "rob_mismatch": "Robustness (ir_robustness): the battery inputs of {name} (window, pack, fees or filter) are not those of a recorded backtest; grade not shown",
             "ledger": "Ledger: {file}",
             "also_failed": "; also failed: {ids}", "na_zero": "n/a (0 trades)",
             "trials": "Trials: this session {n}; research-service ledger, same kind and lineage {k} (1.6 uses the larger)",
@@ -936,29 +940,53 @@ def _int_or_q(v: Any) -> Any:
     return v if isinstance(v, int) and not isinstance(v, bool) else "?"
 
 
-def _robustness_section(session_id: str, t: dict) -> tuple[dict[str, str], list[str]]:
-    """``({strategy_id: grade}, card lines)`` from the latest ``ir_robustness.jsonl`` row of each strategy: grade, passed
-    applicable checks, OOS run or not and the caps, re-read from the sha256-checked ``robustness.json``; a row whose file
-    changed says so and gives no grade."""
-    latest: dict[str, dict] = {}
-    for row in ir_robustness_rows(session_id):
-        latest.pop(row["strategy_id"], None)
-        latest[row["strategy_id"]] = row
-    grades: dict[str, str] = {}
-    lines = []
-    for sid, row in latest.items():
-        doc = verified_ir_robustness(row)
-        name = f"{_safe_reason((doc or row).get('name') or '—')} ({sid[:8]})"
-        if doc is None:
-            lines.append(t["rob_tampered"].format(name=name))
+def _battery_matches(doc: dict, card: dict) -> bool:
+    """Whether a battery ran on the backtest of ``card``: the same IS window, pack and fee table, the fees taken from a run
+    card (not an override) and no universe filter. A grade from other inputs never lands on this row (review P1-1)."""
+    inputs = doc.get("inputs")
+    if not isinstance(inputs, dict):
+        return False
+    window = card.get("window") or {}
+    return (inputs.get("is_window") == {"start_ms": window.get("start_ms"), "end_ms": window.get("end_ms")}
+            and inputs.get("pack_id") is not None and inputs.get("pack_id") == (card.get("pack") or {}).get("pack_id")
+            and inputs.get("fees") is not None and inputs.get("fees") == (card.get("assumptions") or {}).get("fees")
+            and str(inputs.get("fees_source") or "").startswith("run_card:") and inputs.get("filter") is None)
+
+
+def _robustness_section(session_id: str, entries: list, t: dict) -> tuple[dict[int, str], list[str]]:
+    """``({entry index: grade}, card lines)``. A ledger entry with a verified run card gets the grade of the latest
+    ``ir_robustness.jsonl`` row of its strategy whose ``robustness.json`` verifies (sha256) and ran on that backtest
+    (``_battery_matches``); its line gives grade, passed applicable checks, OOS run or not and the caps. The latest row of
+    a strategy that grades nothing says why: its file changed, or its inputs are not those of a recorded backtest."""
+    rows = ir_robustness_rows(session_id)
+    docs = [verified_ir_robustness(row) for row in rows]
+    grades: dict[int, str] = {}
+    used: list[int] = []
+    for i, (_, card) in enumerate(entries):
+        if card is None:
             continue
-        r = doc["rating"]
-        grades[sid] = _grade(doc)
-        caps = [f"{c.get('id')} ≤{c.get('max_grade')}" for c in r.get("caps") or [] if isinstance(c, dict)]
-        lines.append(t["rob"].format(name=name, grade=grades[sid], passed=_int_or_q(r.get("passed")), applicable=_int_or_q(r.get("applicable")),
-                                     oos=t["rob_oos_run"] if doc.get("oos") else t["rob_oos_none"],
-                                     caps=_safe_reason(", ".join(caps)) if caps else t["rob_no_caps"]))
+        for k in range(len(rows) - 1, -1, -1):
+            if rows[k]["strategy_id"] == card.get("strategy_id") and docs[k] is not None and _battery_matches(docs[k], card):
+                grades[i] = _grade(docs[k])
+                if k not in used:
+                    used.append(k)
+                break
+    latest = {row["strategy_id"]: k for k, row in enumerate(rows)}
+    lines = []
+    for k in sorted(set(used) | set(latest.values())):
+        row, doc = rows[k], docs[k]
+        name = f"{_safe_reason((doc or row).get('name') or '—')} ({row['strategy_id'][:8]})"
+        if k in used:
+            r = doc["rating"]
+            caps = [f"{c.get('id')} ≤{c.get('max_grade')}" for c in r.get("caps") or [] if isinstance(c, dict)]
+            lines.append(t["rob"].format(name=name, grade=_grade(doc), passed=_int_or_q(r.get("passed")),
+                                         applicable=_int_or_q(r.get("applicable")),
+                                         oos=t["rob_oos_run"] if doc.get("oos") else t["rob_oos_none"],
+                                         caps=_safe_reason(", ".join(caps)) if caps else t["rob_no_caps"]))
+        elif latest.get(row["strategy_id"]) == k:
+            lines.append(t["rob_tampered" if doc is None else "rob_mismatch"].format(name=name))
     return grades, lines
+
 
 
 def _run_card_trials(entries: list) -> int | None:
@@ -1012,7 +1040,7 @@ def _ir_section(session_id: str, zh: bool) -> list[str]:
     order = sorted(range(len(entries)), key=key)
     always = {i for i, (_, c) in enumerate(entries) if c is None or _status(c) in ("passed_screen", "failed_screen")}
     shown = set(order[:CARD_MAX_ROWS]) | always
-    grades, rob_lines = _robustness_section(session_id, t)
+    grades, rob_lines = _robustness_section(session_id, entries, t)
     rows = []
     for i in order:
         if i not in shown:
@@ -1027,7 +1055,7 @@ def _ir_section(session_id: str, zh: bool) -> list[str]:
                     f"{fmt_amount((c.get('amounts') or {}).get('equity_end'))} | "
                     f"{fmt_amount((c.get('amounts') or {}).get('price_pnl_closed'))} | "
                     f"{fmt_amount((c.get('amounts') or {}).get('fees'))} | {fmt_amount((c.get('amounts') or {}).get('funding'))} | "
-                    f"{fmt_fraction((c.get('max_drawdown') or {}).get('fraction_of_capital'))} | {_verdict(c, t, grades.get(c.get('strategy_id')))}{_row_notes(row, t)}{_undeclared_mark(row, _CONTRACT_TEXT[bool(zh)])} |")
+                    f"{fmt_fraction((c.get('max_drawdown') or {}).get('fraction_of_capital'))} | {_verdict(c, t, grades.get(i))}{_row_notes(row, t)}{_undeclared_mark(row, _CONTRACT_TEXT[bool(zh)])} |")
     summary = t["summary"].format(n=len(versions), m=len(entries), p=counts["passed_screen"], f=counts["failed_screen"],
                                   i=counts["insufficient"]) + (t["tampered"].format(n=bad) if bad else "")
     k = _service_trials(entries)
@@ -1041,7 +1069,7 @@ def _ir_section(session_id: str, zh: bool) -> list[str]:
     lines += rob_lines
     if not rob_lines:
         lines.append(t["not_evaluated"])
-    elif versions - set(grades):
+    elif versions - {entries[i][1].get("strategy_id") for i in grades}:
         lines.append(t["not_evaluated_rest"])
     lines.append(t["ledger"].format(file=TRIALS_EVIDENCE_FILE))
     return lines

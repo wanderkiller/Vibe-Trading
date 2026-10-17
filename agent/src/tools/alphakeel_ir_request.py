@@ -90,6 +90,9 @@ def window(a: IrBacktestArgs, holdout_cutoff_ms: Any) -> tuple[int, int]:
         end = utc_day_floor(holdout_cutoff_ms) - DEFAULT_OOS_DAYS * DAY_MS
     start = a.start_ms if a.start_ms is not None else end - DEFAULT_WINDOW_DAYS * DAY_MS
     if not end > start:
+        if a.end_ms is None:
+            raise ValueError(f"ir_backtest: start_ms must be before the default end_ms {end} (the hold-out cutoff's UTC day "
+                             f"minus {DEFAULT_OOS_DAYS} days, kept for the out-of-sample run); pass end_ms to backtest later data")
         raise ValueError("ir_backtest: end_ms must be after start_ms")
     return start, end
 

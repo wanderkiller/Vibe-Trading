@@ -151,7 +151,7 @@ def _card(sid: str, name: str, net: str, closed: int, days: int = 180, fees_sour
         "max_drawdown": {"amount": "54.2", "fraction_of_capital": "0.00271"},
         "assumptions": {"fees": DEFAULT_PUBLIC_TAKER, "fees_source": fees_source or DEFAULT_FEES_SOURCE, "capital_base": "20000"},
         "metrics": {"days": days}, "alphakeel_metrics": {"sharpe_annualised": -1.25},
-        "data_audit": {"coverage_partial": False}, "trials": None,
+        "data_audit": {"coverage_partial": False}, "trials": None, "pack": {"pack_id": "pk-test"},
     }
     card["screen"] = screen(card)
     return card
@@ -268,6 +268,7 @@ def test_ir_backtest_result_leaves_are_observed_under_evidence_dir(session) -> N
     raw = _run_tool(session, "20261014_090950_ir", _card(session["sid"], "carry-high-hurdle", "-138.19", 15))
     raw["result"]["diagnostics"] = {"entry_features": {"net_conservative": {"by_base": {
         "ETH": {"p50": "-0.00250003", "p95": "-0.00238003", "samples": 3840}}}}}
+    raw["result"]["assumptions"] = {"fees": {"binance": {"perp": "0.00041"}}}  # an input echo is a count, not observed
     ledger = GroundingLedger(run_dir=session["session"], user_message="回测这个跨所资金费率策略")
     ledger.ingest_tool_result(tool_name="alphakeel_research", arguments={"action": "ir_backtest", "args": {"ir": "strategy.json"}},
                               result=json.dumps(raw), call_id="bt-1", success=True)
@@ -280,6 +281,14 @@ def test_ir_backtest_result_leaves_are_observed_under_evidence_dir(session) -> N
         r = declared(value)
         assert r.valid, json.dumps(r.issues, ensure_ascii=False, indent=1)
     assert not declared("-0.00300").valid
+    assert not declared("0.00041").valid
+
+
+def test_a_start_inside_the_reserved_oos_gap_says_why() -> None:
+    from src.tools import alphakeel_ir_request as req
+
+    with pytest.raises(ValueError, match="default end_ms .* minus 30 days"):
+        req.plan({"ir": "strategy.json", "start_ms": CUTOFF_MS - 10 * DAY_MS}, _ir_doc(), _who())
 
 
 def test_usdt_marked_ir_backtest_figures_are_observed_under_evidence_dir(session) -> None:
@@ -355,15 +364,34 @@ def test_result_card_shows_the_ir_robustness_grade(session, tmp_path) -> None:
     s8 = session["sid"][:8]
     _run_tool(session, "20261014_091500_ir", _card("ir-bbbbbbbbbb", "carry-wide", "50", 40, days=120))
     _run_tool(session, "20261014_090950_ir", _card(session["sid"], "carry-high-hurdle", "-138.19", 15))
-    doc = {"strategy_id": "ir-bbbbbbbbbb", "name": "carry-wide", "oos": None,
+    from src.tools.alphakeel_ir_request import DEFAULT_PUBLIC_TAKER
+
+    inputs = {"is_window": {"start_ms": 0, "end_ms": 120 * DAY_MS}, "pack_id": "pk-test", "fees": DEFAULT_PUBLIC_TAKER,
+              "fees_source": "run_card:/x/run_card.json", "filter": None}
+    doc = {"strategy_id": "ir-bbbbbbbbbb", "name": "carry-wide", "oos": None, "inputs": inputs,
            "rating": {"grade": "C", "passed": 3, "applicable": 8,
                       "caps": [{"id": "no_oos", "max_grade": "C"}, {"id": "synthetic_view", "max_grade": "B"}]}}
+
+    def battery(name: str, d: dict, grade: str | None = None) -> list[str]:
+        path = tmp_path / name / "robustness.json"
+        path.parent.mkdir()
+        path.write_text(json.dumps(d))
+        warnings: list[str] = []
+        _finish_ir_robustness({"status": "ok", "result": {"json": str(path), "strategy_id": d["strategy_id"],
+                                                          "grade": grade or d["rating"]["grade"]}}, SESSION_ID, warnings)
+        return warnings
+
+    # a battery the CLI did not report (another grade in the file) is not recorded
+    assert battery("forged", {**doc, "rating": {**doc["rating"], "grade": "A"}}, grade="F")
+    # a battery on overridden fees, or on another window, grades nothing (review P1-1)
+    assert battery("zero-fees", {**doc, "rating": {**doc["rating"], "grade": "A"},
+                                 "inputs": {**inputs, "fees": {"binance": {"perp": "0"}}, "fees_source": "request"}}) == []
+    lines = render_card(SESSION_ID, True).splitlines()
+    assert ("稳健性（ir_robustness）：carry-wide (ir-bbbbb) 的检验输入（窗口、pack、费率或过滤）与已记录的回测不一致，"
+            "评级不显示") in lines
+    assert not any("评级 A" in ln for ln in lines) and any(ln.endswith("| 通过初筛，1.4–1.13 未评估 |") for ln in lines)
+    assert battery("rob", doc) == []
     path = tmp_path / "rob" / "robustness.json"
-    path.parent.mkdir()
-    path.write_text(json.dumps(doc))
-    warnings: list[str] = []
-    _finish_ir_robustness({"status": "ok", "result": {"json": str(path)}}, SESSION_ID, warnings)
-    assert warnings == []
     lines = render_card(SESSION_ID, True).splitlines()
     assert "| carry-wide (ir-bbbbb) | 2026-01-01→06-29 | 40 | 50.00 | −27.87 | 300.43 | 190.11 | 0.27% | 通过初筛，稳健性评级 C |" in lines
     assert ("稳健性（ir_robustness，研究证据，非审批）：carry-wide (ir-bbbbb) 评级 C，适用项通过 3/8；OOS 未运行；"
