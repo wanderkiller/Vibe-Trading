@@ -749,6 +749,7 @@ class _Diagnostics:
         self.by_base: dict[str, dict[str, int]] = {}
         # feature -> base -> [values, unavailable, invalid]
         self.samples: dict[str, dict[str, list]] = {f: {} for f in self.features}
+        self.error: str | None = None  # a diagnostics failure stops the diagnostics, never the run
 
     def observe(self, pairs: list[dict], rejected: list[dict], t: int, *, sample: bool) -> None:
         base_of = {p["id"]: IR.ascii_upper(p["base"]) for p in pairs}
@@ -781,6 +782,14 @@ class _Diagnostics:
                     slot[1] += 1
                 else:
                     slot[0].append(v)
+
+    def safe_card(self) -> dict:
+        if self.error is None:
+            try:
+                return self.card()
+            except Exception as err:  # noqa: BLE001 - diagnostic only
+                self.error = f"{type(err).__name__}: {err}"
+        return {"error": self.error}
 
     def card(self) -> dict:
         def q(vals: list[Decimal], frac: float) -> Decimal:
@@ -939,8 +948,11 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                               "short": {"venue": tr.short.inst.venue, "symbol": tr.short.inst.symbol}, "opened_ms": tr.opened_ms,
                               "net_now": None if nn is None else _s(nn)})
             decision = IR.decide(ir_obj, {"pairs": pairs}, {"positions": views, "cooldowns": cooldowns}, t)
-            if diag is not None:
-                diag.observe(pairs, decision["rejected"], t, sample=(counts["instants"] - 1) % diag.stride == 0)
+            if diag is not None and diag.error is None:
+                try:
+                    diag.observe(pairs, decision["rejected"], t, sample=(counts["instants"] - 1) % diag.stride == 0)
+                except Exception as err:  # noqa: BLE001 - diagnostic only
+                    diag.error = f"{type(err).__name__}: {err}"
             rec = {"t": t, "pairs": len(pairs), "exits": [], "held": [], "entries": [], "rejected": len(decision["rejected"])}
             counts["exits_decided"] += len(decision["exits"])
             for x in decision["exits"]:
@@ -1069,7 +1081,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         "metrics": {"total_return_on_capital": _s(q8(final_eq / capital_base)), "days": len(days), "trades_closed": sim.closed,
                     "sharpe_daily_annualised": ak.get("sharpe_annualised") if isinstance(ak, dict) else None},
         "research_service": research_service or {"used": False},
-        **({"diagnostics": diag.card()} if diag is not None else {}),
+        **({"diagnostics": diag.safe_card()} if diag is not None else {}),
         # the exported pack directory the run used (`ir robustness --run` reopens it); None when the pack came from the service
         "pack_dir": str(Path((research_service or {})["pack_dir"]).resolve()) if (research_service or {}).get("pack_dir") else None,
     }

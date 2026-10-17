@@ -582,9 +582,14 @@ def _summary(result: dict) -> str:
     parts += [f"{closed} closed trades", f"window {days} d", f"fees {fees_source}"]
     diag = result.get("diagnostics")
     if closed == 0 and isinstance(diag, dict):
-        top = list((diag.get("rejections") or {}).items())[:3]
+        rej = diag.get("rejections") or {}
+        top = [(k, n) for k, n in rej.items() if not str(k).startswith("universe:")][:3]
+        outside = sum(n for k, n in rej.items() if str(k).startswith("universe:"))
         if top:
-            parts.append("0 trades: top rejections " + ", ".join(f"{k} {n}" for k, n in top))
+            parts.append("0 trades: top rejections " + ", ".join(f"{k} {n}" for k, n in top)
+                         + (f" (plus {outside} outside the universe)" if outside else ""))
+        if diag.get("error"):
+            parts.append(f"diagnostics failed: {diag['error']}")
         for name, f in (diag.get("entry_features") or {}).items():
             rows = list((f.get("by_base") or {}).values())
             hi = [Decimal(r["p95"]) for r in rows if r.get("p95") is not None]

@@ -1509,3 +1509,23 @@ def test_diagnostics_never_sample_a_pair_outside_the_quote_ccy_universe():
     diag.observe([usdc], [{"pair_id": "p1", "reason": "invalid:missing_price"}], START, sample=True)
     assert diag.rejections == {"invalid:missing_price": 1}
     assert all(not by_base for by_base in diag.samples.values())
+
+
+def test_a_diagnostics_failure_never_fails_the_run_and_never_changes_its_result(tmp_path, monkeypatch):
+    doc = golden_ir()
+    pack = Pack.from_directory(export_dir(tmp_path, golden_built()))
+    plain = ir_backtest.run(doc, pack, [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "p", step_minutes=2, fees=FEES)
+
+    def boom(*a, **k):
+        raise RuntimeError("diag broke")
+    monkeypatch.setattr(ir_backtest._Diagnostics, "observe", boom)
+    card = ir_backtest.run(doc, pack, [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "d", step_minutes=2, fees=FEES, diagnostics=True)
+    assert card["diagnostics"] == {"error": "RuntimeError: diag broke"}
+    assert card["counts"] == plain["counts"] and card["metrics"] == plain["metrics"]
+
+
+def test_the_zero_trade_summary_ranks_only_in_universe_rejections():
+    from src.tools.alphakeel_research_tool import _summary
+    text = _summary({"counts": {"closed": 0}, "diagnostics": {
+        "rejections": {"universe:shape": 900, "entry:funding_hourly_net": 40, "cooldown": 2}, "entry_features": {}}})
+    assert "top rejections entry:funding_hourly_net 40, cooldown 2 (plus 900 outside the universe)" in text

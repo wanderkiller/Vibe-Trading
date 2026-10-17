@@ -604,8 +604,12 @@ def _fenced_blocks(content: str) -> list[tuple[int, int, str, tuple[int, int]]]:
 
 def _is_currency_word(run: str) -> bool:
     """Whether a CJK run is short enough to be a currency word and holds a money mark."""
-    if run[:1] in _CJK_CLASSIFIERS or run.startswith(_COUNT_NOUN_PREFIXES):
+    if run.startswith(_COUNT_NOUN_PREFIXES):
         return False
+    if run[:1] in _CJK_CLASSIFIERS:
+        # "个币" counts coins; "个美元" is still money: judge what follows the classifier.
+        rest = run[1:]
+        return not rest.startswith("币") and _is_currency_word(rest)
     return len(run) <= _MAX_CURRENCY_WORD and any(char in _CURRENCY_CHARS for char in run)
 
 

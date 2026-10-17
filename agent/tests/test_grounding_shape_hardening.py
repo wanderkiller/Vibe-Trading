@@ -658,6 +658,9 @@ def test_a_counted_noun_with_the_money_character_is_not_a_currency_word() -> Non
     assert _shapes("覆盖 5 币种")["5"] != "measured"
     assert _shapes("报价 100 人民币")["100"] == "measured"
     assert _shapes("报价 100 港币")["100"] == "measured"
+    # a classifier before a real currency word still measures money
+    assert _shapes("每股涨了 3 个美元")["3"] == "measured"
+    assert _shapes("差 2 个港币")["2"] == "measured"
 
 
 def test_a_line_opening_with_a_figure_is_not_an_ordinal(tmp_path: Path) -> None:
