@@ -53,10 +53,11 @@ import argparse
 import json
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from . import canon, workflow
-from .client import Client
+from .client import Client, key_for
 from .errors import ApiError
 from .packfile import Inst, Pack
 
@@ -215,11 +216,14 @@ def _ir_research(a) -> int:
                 pack = Pack.open(fetch, src, a.cache)
                 if oos is not None and not a.oos_pack_dir:
                     # the OOS window is frozen by the service too (a hold-out overlap is refused there: the ApiError propagates)
+                    if oos[0] < window[1] and oos[1] > window[0]:
+                        raise ApiError("request.invalid", "the OOS window overlaps the IS window: it would not be out of sample", field="oos_window")
                     ir_doc = _load(ir_path)
                     insts = ir_backtest.universe_instruments(ir_doc, _load(inst_path))
                     req = ir_backtest.dataset_request(insts, oos[0], oos[1], accept_partial=False,
                                                       selection=pack.lock["request"].get("selection"))
-                    oos_pack = workflow.freeze_pack(fetch, req, cache_dir=a.cache)
+                    day_key = key_for("pack", {"request": req, "utc_day": ir_backtest.utc_day(int(time.time() * 1000))})
+                    oos_pack = workflow.freeze_pack(fetch, req, cache_dir=a.cache, key=day_key)
                     ir_backtest.check_pack(oos_pack, req)
             if a.run and pack.id != _run_card(a.run)["pack"]["pack_id"]:
                 raise ApiError("request.invalid", f"the pack is {pack.id}, the run used {_run_card(a.run)['pack']['pack_id']}", field="pack_dir")

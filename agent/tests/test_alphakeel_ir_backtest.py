@@ -1495,7 +1495,7 @@ def test_diagnostics_count_the_rejections_and_the_entry_feature_distribution_of_
     d = card["diagnostics"]
     assert d["rejections"]["entry:funding_hourly_net"] > 0 and d["sample_stride"] == 1
     f = d["entry_features"]["funding_hourly_net"]
-    assert f["threshold"] == {"op": ">=", "value": "1000"}
+    assert f["threshold"] == [{"op": ">=", "value": "1000"}]
     assert any(r["share_holding"] == "0.0000" and r["samples"] > 0 for r in f["by_base"].values())
     plain = ir_backtest.run(doc, pack, [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "p", step_minutes=2, fees=FEES)
     assert "diagnostics" not in plain

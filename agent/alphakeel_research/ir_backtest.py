@@ -740,9 +740,9 @@ class _Diagnostics:
         self.doc = doc
         self.assumptions = doc["assumptions"]
         e = doc["entry"]
-        self.conds = {}
+        self.conds: dict[str, list[dict]] = {}
         for c in e["conditions"]:
-            self.conds.setdefault(c["feature"], c)
+            self.conds.setdefault(c["feature"], []).append(c)
         self.features = list(dict.fromkeys([c["feature"] for c in e["conditions"]] + [e["rank_by"]]))
         self.stride = max(1, -(-max(0, total_instants) // 2000))
         self.rejections: dict[str, int] = {}
@@ -759,7 +759,10 @@ class _Diagnostics:
             b[why] = b.get(why, 0) + 1
         if not sample:
             return
+        outside = {r["pair_id"] for r in rejected if str(r["reason"]).startswith("universe:")}
         for p in pairs:
+            if p["id"] in outside:
+                continue  # outside the IR universe: counted in the rejections only, never sampled
             base = base_of[p["id"]]
             try:
                 f = IR.compute_features(p, self.assumptions, t)
@@ -782,7 +785,7 @@ class _Diagnostics:
 
         feats = {}
         for name in self.features:
-            cond = self.conds.get(name)
+            conds = self.conds.get(name, [])
             by_base = {}
             for base in sorted(self.samples[name]):
                 vals, unavailable, invalid = self.samples[name][base]
@@ -791,12 +794,12 @@ class _Diagnostics:
                        "p05": None, "p50": None, "p95": None, "max": None, "share_holding": None}
                 if vals:
                     row.update(p05=_s(q(vals, 0.05)), p50=_s(q(vals, 0.5)), p95=_s(q(vals, 0.95)), max=_s(vals[-1]))
-                    if cond is not None:
-                        share = Decimal(sum(1 for v in vals if IR._holds(cond, v))) / len(vals)
+                    if conds:
+                        share = Decimal(sum(1 for v in vals if all(IR._holds(c, v) for c in conds))) / len(vals)
                         row["share_holding"] = str(share.quantize(Decimal("0.0001"), rounding=ROUND_HALF_EVEN))
                 by_base[base] = row
-            feats[name] = {"threshold": None if cond is None else {"op": cond["op"], "value": cond["value"]}, "by_base": by_base}
-        return {"note": f"diagnostic only: the first failing check per pair and instant; feature values sampled every {self.stride} instants",
+            feats[name] = {"threshold": [{"op": c["op"], "value": c["value"]} for c in conds], "by_base": by_base}
+        return {"note": f"diagnostic only: the first failing check per pair and instant; feature values sampled every {self.stride} instants; feature samples cover pairs inside the IR universe only",
                 "sample_stride": self.stride,
                 "rejections": dict(sorted(self.rejections.items(), key=lambda kv: (-kv[1], kv[0]))),
                 "rejections_by_base": {b: dict(sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))) for b, d in sorted(self.by_base.items())},

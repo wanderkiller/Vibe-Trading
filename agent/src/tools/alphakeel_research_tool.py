@@ -586,10 +586,18 @@ def _summary(result: dict) -> str:
         if top:
             parts.append("0 trades: top rejections " + ", ".join(f"{k} {n}" for k, n in top))
         for name, f in (diag.get("entry_features") or {}).items():
-            thr = f.get("threshold")
-            p95s = [Decimal(r["p95"]) for r in (f.get("by_base") or {}).values() if r.get("p95") is not None]
-            if thr and p95s:
-                parts.append(f"{name} p95 {max(p95s).normalize():f} vs {thr['op']} {thr['value']}")
+            rows = list((f.get("by_base") or {}).values())
+            hi = [Decimal(r["p95"]) for r in rows if r.get("p95") is not None]
+            lo = [Decimal(r["p05"]) for r in rows if r.get("p05") is not None]
+            for c in f.get("threshold") or []:
+                op, val = c.get("op"), c.get("value")
+                if op in (">=", ">") and hi:
+                    parts.append(f"{name} sampled p95 (max over bases) {max(hi).normalize():f} vs {op} {val}")
+                elif op in ("<=", "<") and lo:
+                    parts.append(f"{name} sampled p05 (min over bases) {min(lo).normalize():f} vs {op} {val}")
+                elif op == "between" and hi and lo:
+                    lo_v, hi_v = (val if isinstance(val, (list, tuple)) and len(val) == 2 else (None, None))
+                    parts.append(f"{name} sampled p05..p95 {min(lo).normalize():f}..{max(hi).normalize():f} vs between {lo_v}..{hi_v}")
     return f"{result.get('evidence_status')}: " + "; ".join(parts)
 
 

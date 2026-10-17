@@ -567,3 +567,63 @@ def test_robustness_run_on_a_service_frozen_pack_fetches_it_and_otherwise_refuse
     capsys.readouterr()
     rc = cli.main(["ir", "robustness", "--run", str(run), "--no-register", "--permutations", "0", "--workers", "1"])
     assert rc != 0 and json.loads(capsys.readouterr().out)["error"]["code"] == "request.invalid"
+
+
+def test_robustness_oos_window_is_frozen_by_the_service_refused_on_holdout_and_never_on_overlap(tmp_path, monkeypatch, capsys):
+    insts, pd = _market(tmp_path)
+    pack = Pack.from_directory(pd)
+    d = _ir()
+    run = tmp_path / "run"
+    ir_backtest.run(d, pack, insts, start_ms=START, end_ms=START + H6, out_dir=run, step_minutes=2, fees=FEES, fees_source="fees.json")
+    (run / "ir.json").write_text(json.dumps(d))
+    (run / "instruments.json").write_text(json.dumps(insts))
+    card_path = run / "run_card.json"
+    card = json.loads(card_path.read_text())
+    card.update(pack_dir=None, research_service={"used": True})
+    card_path.write_text(json.dumps(card))
+
+    closed, frozen, checked, keys = [], [], [], []
+
+    class FakeClient:
+        def __init__(self, url=None):
+            pass
+
+        def check(self):
+            return {}
+
+        def close(self):
+            closed.append(1)
+
+    holdout = []
+
+    def fake_freeze(client, req, cache_dir=None, key=None):
+        frozen.append(req)
+        keys.append(key)
+        if holdout:
+            raise ApiError("data.holdout", "the window overlaps the hold-out")
+        return Pack.from_directory(pd)
+
+    monkeypatch.setattr(cli, "Client", FakeClient)
+    monkeypatch.setattr(Pack, "open", staticmethod(lambda client, pack_id, cache_dir: Pack.from_directory(pd)))
+    monkeypatch.setattr(cli.workflow, "freeze_pack", fake_freeze)
+    monkeypatch.setattr(ir_backtest, "check_pack", lambda p, req: checked.append(req))
+    base = ["ir", "robustness", "--run", str(run), "--no-register", "--permutations", "0", "--workers", "1", "--step-minutes", "2"]
+    oos = ["--oos-start-ms", str(START + H6), "--oos-end-ms", str(START + 2 * H6)]
+
+    # (a) an OOS window without --oos-pack-dir: frozen once by the service, checked against the OOS request
+    assert cli.main([*base, *oos, "--out", str(tmp_path / "a")]) == 0
+    capsys.readouterr()
+    assert len(frozen) == 1 and len(checked) == 1 and keys[0]
+    assert checked[0]["window"]["start_ms"] == START + H6 - ir_backtest.WARMUP_MS and checked[0]["window"]["end_ms"] == START + 2 * H6
+    assert len(closed) >= 1
+    # (b) a hold-out refusal fails the command
+    holdout.append(1)
+    n = len(closed)
+    assert cli.main([*base, *oos, "--out", str(tmp_path / "b")]) != 0
+    assert "data.holdout" in capsys.readouterr().out
+    assert len(frozen) == 2 and len(closed) > n
+    # (c) an OOS window overlapping the IS window never reaches the service
+    n, m = len(closed), len(frozen)
+    assert cli.main([*base, "--oos-start-ms", str(START + H6 // 2), "--oos-end-ms", str(START + 2 * H6), "--out", str(tmp_path / "c")]) != 0
+    assert "request.invalid" in capsys.readouterr().out
+    assert len(frozen) == m and len(closed) > n
