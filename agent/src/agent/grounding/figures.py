@@ -967,14 +967,14 @@ def _currency_word_extent(body: str) -> int:
     if run in _CJK_CLASSIFIERS:
         after = body[1:]
         gap = len(after) - len(after.lstrip(_GAP_CHARS))
+        letters = ""
+        for char in after[gap:]:
+            if not char.isascii() or not char.isalpha():
+                break
+            letters += char
+        if letters.upper() in _CURRENCY_CODES:  # "3个USDT" as well as "3 个 USDT"
+            return 1 + gap + len(letters)
         if gap:
-            letters = ""
-            for char in after[gap:]:
-                if not char.isascii() or not char.isalpha():
-                    break
-                letters += char
-            if letters.upper() in _CURRENCY_CODES:
-                return 1 + gap + len(letters)
             run = run + _cjk_run(after[gap:])
         else:
             gap = 0
@@ -1051,7 +1051,7 @@ def _currency_suffix_end(text: str, end: int) -> int:
     A compound unit (元/股, USD/share) is left whole, or its denominator would be
     left with nothing above it.
     """
-    body = text[end:].lstrip(" \t")
+    body = text[end:].lstrip(_GAP_CHARS)
     lead = len(text) - end - len(body)
     if not body:
         return end

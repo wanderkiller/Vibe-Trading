@@ -424,7 +424,7 @@ def _leaf_name(path: str) -> str:
     return re.sub(r"\[\d+\]$", "", leaf).strip().casefold()
 
 
-_STRICT_DECIMAL_RE = re.compile(r"-?\d+(\.\d+)?")
+_STRICT_DECIMAL_RE = re.compile(r"-?\d+(\.\d+)?(E[+-]\d+)?")  # str(Decimal) writes "1E-7" / "0E-8"
 _IDENTIFIER_LEAVES = frozenset(
     {"run_id", "request_id", "trial_id", "pack_id", "strategy_id", "hash", "digest", "key"}
 )
@@ -434,7 +434,9 @@ def _is_identifier_leaf(path: str) -> bool:
     """Whether a result path ends in an identifier-like key (run_id, sha256, ...)."""
     leaf = re.sub(r"\[[^\]]*\]", "", path).rsplit(".", 1)[-1].casefold()
     return (
-        leaf in _IDENTIFIER_LEAVES or leaf.endswith("_id") or leaf.startswith("sha")
+        leaf in _IDENTIFIER_LEAVES
+        or leaf.endswith("_id")
+        or re.fullmatch(r"sha\d*", leaf) is not None  # sha, sha1, sha256; not sharpe or shares
     )
 
 

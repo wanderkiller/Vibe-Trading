@@ -2625,3 +2625,26 @@ def test_r4_research_string_ids_and_odd_numerals_are_not_evidence(tmp_path: Path
     )
     values = [r.value for r in ledger._evidence if r.tool == "alphakeel_research"]
     assert values == [0.0005]
+
+
+def test_round2_research_sharpe_and_decimal_exponent_are_evidence_but_sha_is_not(tmp_path: Path) -> None:
+    from src.agent.grounding.evidence import _STRICT_DECIMAL_RE, _is_identifier_leaf
+
+    assert not _is_identifier_leaf("result.metrics.sharpe_annualised")
+    assert not _is_identifier_leaf("result.shares")
+    assert _is_identifier_leaf("result.sha256") and _is_identifier_leaf("result.sha")
+    assert _STRICT_DECIMAL_RE.fullmatch("1E-7") and _STRICT_DECIMAL_RE.fullmatch("0E-8")
+    assert not _STRICT_DECIMAL_RE.fullmatch("1_000")
+
+
+def test_round2_a_percentage_is_not_price_like() -> None:
+    from src.agent.grounding.figures import parse_figures_block, scan_figures
+    from src.agent.grounding.policies import _PolicyMixin
+
+    text = "近 30 日回撤 12%，止损位 1.05。"
+    figures = {f.text: f for f in scan_figures(text, parse_figures_block(text))}
+    pct = next(f for t, f in figures.items() if t.startswith("12"))
+    level = figures["1.05"]
+    assert _PolicyMixin._figure_issue("numeric_claim_unavailable", pct, "observed", None, "no_evidence", "m")["price_like"] is False
+    assert _PolicyMixin._figure_issue("numeric_claim_unavailable", level, "derived", None, "no_evidence", "m")["price_like"] is True
+    assert _PolicyMixin._figure_issue("numeric_claim_unavailable", level, "count", None, "no_evidence", "m")["price_like"] is False

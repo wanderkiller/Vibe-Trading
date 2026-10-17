@@ -712,6 +712,8 @@ class _ReleaseMixin:
                 cuts[span] = located[span]
             else:
                 return None, [], False
+        # an issue without the flag (unsourced_symbol_figures) still cuts a price when the figure carries a money mark
+        price_cut = price_cut or any(figure.currency or figure.column for figure in cuts.values())
         rewritten, removed = self._apply_cuts(text, cuts.values())
         return rewritten, removed, price_cut
 

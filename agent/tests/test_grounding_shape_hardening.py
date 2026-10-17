@@ -782,3 +782,8 @@ def test_r5_extent_stops_at_the_currency_word() -> None:
 @pytest.mark.parametrize("text", ["报价 3 块钱", "报价 3 元附近", "报价 3 元多点"])
 def test_single_character_money_words_with_a_common_tail_are_measured(text: str) -> None:
     assert _shapes(text)["3"] == "measured"
+
+
+@pytest.mark.parametrize("text", ["报价 3个USDT", "报价 3 个USD"])
+def test_a_classifier_glued_to_a_currency_code_is_money(text: str) -> None:
+    assert _shapes(text)["3"] == "measured"

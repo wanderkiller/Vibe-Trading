@@ -693,9 +693,9 @@ class _PolicyMixin:
             "reason": reason,
             "claim": figure.text,
             "message": f"{figure.text} {message}.",
-            # A count is never a price; any other figure may be one even without a
-            # currency mark ("现价 9.999", "止损位 1.05"), so it earns a price fetch.
-            "price_like": role != "count",
+            # A count or a percentage is never a price; any other figure may be one even
+            # without a currency mark ("现价 9.999", "止损位 1.05"), so it earns a price fetch.
+            "price_like": role != "count" and not figure.percent,
         }
         issue.update(extra)
         return issue
