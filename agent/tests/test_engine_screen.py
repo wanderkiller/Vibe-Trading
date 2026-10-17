@@ -258,6 +258,7 @@ def test_the_card_warns_when_the_session_read_holdout_data(tmp_path) -> None:
     L.record_engine_run(SESSION, _make_run(tmp_path))
     assert "hold-out" not in L.render_card(SESSION, False).split("Engine results")[-1]
     L.record_exposure(SESSION, "okx", CUTOFF_DAY_MS + 14 * DAY_MS, "backtest:run")
+    assert L.holdout_cutoff(SESSION)["source"] == "service"  # caches CUTOFF_MS: the card itself never asks the service
     zh, en = L.render_card(SESSION, True), L.render_card(SESSION, False)
     assert "⚠ 本会话读取过 AlphaKeel hold-out 区间的数据（截至 2026-08-30，hold-out 起点 2026-08-17）" in zh
     assert "cannot be handed to AlphaKeel (G1 1.14)" in en

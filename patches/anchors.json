@@ -1702,7 +1702,8 @@
     "agent/tests/test_grounding_prior_turns.py",
     "agent/tests/test_validation.py",
     "agent/tests/test_strategy_fidelity.py",
-    "agent/tests/test_alphakeel_research_truth.py"
+    "agent/tests/test_alphakeel_research_truth.py",
+    "agent/tests/test_backtest_summary.py"
    ],
    "anchors": [
     {

@@ -104,7 +104,8 @@ def summary_run_dir(tmp_path, monkeypatch) -> Path:
     (run_dir / "code").mkdir(parents=True)
     (run_dir / "artifacts").mkdir(parents=True)
     (run_dir / "config.json").write_text(
-        json.dumps({"source": "okx"}), encoding="utf-8"
+        # end_date before any AlphaKeel hold-out: a crypto config without one is refused before the engine runs
+        json.dumps({"source": "okx", "end_date": "2024-06-30"}), encoding="utf-8"
     )
     (run_dir / "code" / "signal_engine.py").write_text("", encoding="utf-8")
     (run_dir / "run_card.json").write_text(json.dumps(_run_card()), encoding="utf-8")
@@ -248,6 +249,9 @@ def test_legacy_success_envelope_fields_byte_identical(summary_run_dir):
 
     trimmed = dict(envelope)
     assert trimmed.pop("summary", None) is not None
+    # local addition (research-integrity): the engine screen; this fixture has no positions.csv, so it is unavailable
+    screen = trimmed.pop("research_screen")
+    assert screen["evidence_status"] == "unavailable" and screen["error"].startswith("unreadable artifact: FileNotFoundError")
     trimmed["artifacts"] = {
         name: path for name, path in trimmed["artifacts"].items() if name != "ohlcv"
     }

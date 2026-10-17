@@ -124,7 +124,7 @@ def _coverage_partial(run_dir: Path, config: dict) -> bool | None:
             if stamps.empty:
                 return True
             days = pd.to_datetime(stamps, utc=True).dt.tz_localize(None).dt.normalize()
-        except (OSError, ValueError, IndexError, pd.errors.PandasError):
+        except (OSError, ValueError, IndexError, KeyError):
             return True
         if start is not None and days.min() - start > tol:
             return True
@@ -219,7 +219,7 @@ def _screen(run_dir: Path, *, trials: int, variant_sharpes: Sequence[float], pro
         metrics = pd.read_csv(art / "metrics.csv")
         equity = pd.read_csv(art / "equity.csv")
         positions = pd.read_csv(art / "positions.csv")
-    except (OSError, ValueError, pd.errors.PandasError) as exc:
+    except (OSError, ValueError) as exc:  # pandas parser errors are ValueErrors
         return {"evidence_status": "unavailable", "error": f"unreadable artifact: {type(exc).__name__}: {exc}"}
     if not isinstance(config, dict):
         return {"evidence_status": "unavailable", "error": "config.json is not an object"}

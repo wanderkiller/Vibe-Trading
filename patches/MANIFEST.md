@@ -874,8 +874,10 @@ never read back), without prices, bash rows or engine-run figures (only immutabl
 - `agent/tests/test_validation.py`
 - `agent/tests/test_strategy_fidelity.py`
 - `agent/tests/test_alphakeel_research_truth.py`
+- `agent/tests/test_backtest_summary.py`
 
-**Commits.** (this commit).
+**Commits.** (this commit). `test_backtest_summary.py`: its fixture gets a pre-hold-out `end_date` and the golden
+envelope pops `research_screen`.
 
 **Upstreamable.** Monte Carlo, cross-turn grounding and the tool-name ref fix are upstream bugs (upstream main 596fcf3d
 still has them); the engine screen, ledger, hold-out guard and card are local-only (AlphaKeel protocol).
