@@ -1012,7 +1012,7 @@ declared `cited` with no retrieval this session gets `citation_not_retrieved`. O
 from luck, and item 1.2 (minimum trades) counted closed legs, so a two-leg pair trade counted twice. Now (a) the engine
 screen counts round trips for 1.2: `_round_trips` rebuilds each symbol's position lifecycle from `artifacts/fills.jsonl`
 (first `open` to the fill that brings it flat, `close`; `increase` / `reduce` stay inside) and counts distinct
-(symbol, open, close) triples (lifecycles on different symbols never collapse), falling back to `metrics.csv` `trade_count` when the file is missing or unreadable; the facts
+(open, close) timestamp pairs (legs opened and closed on the same bars are one bet, so 1.2 is never inflated), falling back to `metrics.csv` `trade_count` when the file is missing or unreadable; the facts
 gain `closed_legs`, `round_trips`, `round_trips_source`, and the card column is "round trips"; no verdict rule changes except
 this observed value. (b) `backtest/multiple_testing.py` (numpy only, seeded) holds the stationary bootstrap, Hansen (2005)
 SPA against zero, CSCV PBO, a bootstrap Sharpe interval and the 75/25 split Sharpe. (c) The engine screen also returns

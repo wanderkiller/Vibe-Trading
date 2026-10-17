@@ -860,7 +860,7 @@ def _set_trades(rd: Path, trades: int) -> None:
     (rd / "artifacts" / "metrics.csv").write_text(head + "\n" + ",".join(vals) + "\n")
 
 
-def test_a_pair_trade_counts_one_round_trip_per_symbol_lifecycle(tmp_path) -> None:
+def test_a_pair_trade_counts_one_round_trip_for_its_two_legs(tmp_path) -> None:
     rd = _make_run(tmp_path, "pair", trades=10, codes=("BTC-USDT", "ETH-USDT"))
     fills = []
     for n in range(5):  # five pair trades: both legs open on one bar and close together
@@ -868,16 +868,16 @@ def test_a_pair_trade_counts_one_round_trip_per_symbol_lifecycle(tmp_path) -> No
                   ("BTC-USDT", f"2024-02-0{n + 1}T12:00:00", "close"), ("ETH-USDT", f"2024-02-0{n + 1}T12:00:00", "close")]
     _fills(rd, fills)
     facts = screen_engine_run(rd, trials=1)["facts"]
-    assert (facts["closed_legs"], facts["round_trips"], facts["round_trips_source"]) == (10, 10, "fills")
+    assert (facts["closed_legs"], facts["round_trips"], facts["round_trips_source"]) == (10, 5, "fills")
     items = {i["id"]: i for i in screen_engine_run(rd, trials=1)["items"]}
-    assert items["1.2"]["observed"] == 10 and items["1.2"]["result"] == "FAIL"  # one per symbol lifecycle
+    assert items["1.2"]["observed"] == 5 and items["1.2"]["result"] == "FAIL"  # 5 round trips, not 10 legs
 
 
-def test_simultaneous_lifecycles_on_two_symbols_are_two_round_trips(tmp_path) -> None:
+def test_simultaneous_lifecycles_on_two_symbols_count_once(tmp_path) -> None:
     rd = _make_run(tmp_path, "twosym", trades=2, codes=("BTC-USDT", "ETH-USDT"))
     _fills(rd, [("BTC-USDT", "2024-02-01T00:00:00", "open"), ("ETH-USDT", "2024-02-01T00:00:00", "open"),
                 ("BTC-USDT", "2024-02-02T00:00:00", "close"), ("ETH-USDT", "2024-02-02T00:00:00", "close")])
-    assert screen_engine_run(rd, trials=1)["facts"]["round_trips"] == 2
+    assert screen_engine_run(rd, trials=1)["facts"]["round_trips"] == 1  # one bet: a screen never inflates 1.2
 
 
 def test_a_single_symbol_run_has_as_many_round_trips_as_closed_trades(tmp_path) -> None:
@@ -915,7 +915,7 @@ def test_the_card_trades_column_shows_round_trips(tmp_path) -> None:
                 for h, a in ((0, "open"), (1, "close"))])
     L.record_engine_run(SESSION, rd)
     line = next(ln for ln in L.render_card(SESSION, True).splitlines() if ln.startswith("| 1 |"))
-    assert line.split("|")[5].strip() == "10"  # one round trip per symbol lifecycle
+    assert line.split("|")[5].strip() == "5"
 
 
 # ---- multiple comparison, OOS split and bootstrap interval on the card --------------------------------------------------

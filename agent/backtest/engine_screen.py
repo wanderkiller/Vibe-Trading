@@ -140,12 +140,11 @@ def _round_trips(run_dir: Path) -> tuple[int | None, str]:
     """``(count, source)`` of the run's round trips. ``artifacts/fills.jsonl`` holds one fill per line (``symbol``,
     ``timestamp``, ``action``: ``open`` / ``increase`` / ``reduce`` / ``close``); a position lifecycle runs from its ``open``
     to the fill that brings the symbol flat (``close``, which also records a liquidation), and a round trip is one distinct
-    ``(symbol, open timestamp, closing timestamp)``: lifecycles on different symbols never collapse, even when opened and
-    closed on the same bars.
+    ``(open timestamp, closing timestamp)``, so the two legs of a pair opened and closed on the same bars count once.
     Source ``fills``. A missing or unreadable fills file gives the ``metrics.csv`` ``trade_count`` (closed legs; None
     when that is missing too) with source ``metrics_trade_count``."""
     try:
-        keys: set[tuple[str, str, str]] = set()
+        keys: set[tuple[str, str]] = set()
         opened: dict[str, str] = {}
         with (run_dir / "artifacts" / "fills.jsonl").open(encoding="utf-8") as handle:
             for line in handle:
@@ -158,7 +157,7 @@ def _round_trips(run_dir: Path) -> tuple[int | None, str]:
                 if action == "open":
                     opened.setdefault(symbol, stamp)
                 elif action in _FLAT_ACTIONS and symbol in opened:
-                    keys.add((symbol, opened.pop(symbol), stamp))
+                    keys.add((opened.pop(symbol), stamp))
         return len(keys), "fills"
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         pass
