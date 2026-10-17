@@ -2440,3 +2440,25 @@ def test_keep_list_does_not_endorse_rejections_hidden_by_the_feedback_cap(tmp_pa
     assert "Every other measured figure" not in prompt
     assert "only the figures listed above need work" not in prompt
     assert f"{len(result.issues) - 24} additional" in prompt
+
+
+def test_loop_releases_verdict_words_and_factor_names_with_card_notes(tmp_path: Path, monkeypatch) -> None:
+    """Free-text heuristics never cost a correction round: the first draft is released and the card states the notes."""
+    from src.tools import alphakeel_research_ledger as arl
+
+    monkeypatch.setattr(arl, "_ir_section", lambda sid, zh: [])
+    monkeypatch.setattr(arl, "_engine_section", lambda sid, zh, first: [])
+    monkeypatch.setattr(arl, "session_has_passed_trial", lambda sid: False)
+    draft = "均线空头排列，按 gtja191_010 的思路看，策略已验证。"
+    llm = _ScriptedLLM(_SCRIPT_HEAD + [_Response(content=draft)])
+
+    result, _events, _agent = _run(tmp_path, llm, max_iterations=8, session_id="verdict-session")
+
+    assert result["status"] == "success" and not result.get("degraded")
+    assert llm.calls == 3
+    assert result["content"] == (
+        draft
+        + "\n\n**答复核对（系统根据本会话记录生成）**\n"
+        "- 本会话没有任何版本通过初筛；答复中的「已验证」不是系统判定。\n"
+        "- 答复提到的因子名 「gtja191_010」 在本会话没有被使用或检索到。"
+    )

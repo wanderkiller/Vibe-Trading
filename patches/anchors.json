@@ -1689,12 +1689,12 @@
     {
      "file": "agent/src/agent/loop.py",
      "kind": "hook",
-     "literal": "def _ir_result_card(session_id: str, user_message: str) -> str | None:"
+     "literal": "def _ir_result_card(session_id: str, user_message: str, notes: Any = ()) -> str | None:"
     },
     {
      "file": "agent/src/agent/loop.py",
      "kind": "hook",
-     "literal": "card = _ir_result_card(session_id, user_message)  # research-truth: card at the answer"
+     "literal": "card = _ir_result_card(session_id, user_message, grounding_card_notes)  # research-truth: card at the answer"
     },
     {
      "file": "agent/src/agent/loop.py",
@@ -1976,12 +1976,12 @@
     {
      "file": "agent/src/agent/grounding/release.py",
      "kind": "hook",
-     "literal": "_FACTOR_NAME_CODES = frozenset("
+     "literal": "self.release_card_notes = check.card_notes"
     },
     {
      "file": "agent/src/agent/grounding/release.py",
      "kind": "hook",
-     "literal": "\"citation_not_retrieved\":"
+     "literal": "# Factor-library names, verdict words (\"validated\", \"可上实盘\") and cited figures no retrieval backs"
     },
     {
      "file": "agent/src/agent/grounding/policies.py",
@@ -1991,7 +1991,7 @@
     {
      "file": "agent/src/agent/grounding/policies.py",
      "kind": "hook",
-     "literal": "\"citation_not_retrieved\","
+     "literal": "self._card_notes.append((\"citation\", figure.text))"
     },
     {
      "file": "agent/src/agent/grounding/policies.py",
@@ -2006,7 +2006,7 @@
     {
      "file": "agent/src/agent/grounding/ledger.py",
      "kind": "hook",
-     "literal": "issues.extend(self._validate_factor_names(content))"
+     "literal": "self._card_notes.extend(self._validate_factor_names(content))"
     },
     {
      "file": "agent/src/agent/grounding/ledger.py",
@@ -2047,7 +2047,7 @@
   },
   {
    "id": "research-integrity-r2-guards",
-   "title": "Research integrity r2 guards: recalled project memories scoped by asset, verdict words need a passed screen, no order-placing code",
+   "title": "Research integrity r2 guards: recalled project memories scoped by asset, verdict words / cited figures / factor names stated on the result card, no order-placing code",
    "files": [
     "agent/src/memory/scope.py",
     "agent/src/agent/context.py",
@@ -2064,7 +2064,10 @@
     "agent/tests/test_order_code_guard.py",
     "agent/tests/test_system_prompt_cache_stability.py",
     "agent/tests/test_agent_grounding.py",
-    "agent/tests/test_agent_output_discipline.py"
+    "agent/tests/test_agent_output_discipline.py",
+    "agent/src/agent/loop.py",
+    "agent/tests/test_grounding_factor_citation.py",
+    "agent/tests/test_grounding_release.py"
    ],
    "anchors": [
     {
@@ -2110,7 +2113,7 @@
     {
      "file": "agent/src/agent/grounding/release.py",
      "kind": "hook",
-     "literal": "\"no_passed_trial\":"
+     "literal": "self.release_card_notes = check.card_notes"
     },
     {
      "file": "agent/src/tools/write_file_tool.py",
@@ -2130,12 +2133,22 @@
     {
      "file": "agent/src/tools/edit_file_tool.py",
      "kind": "hook",
-     "literal": "order_code_count("
+     "literal": "order_code_added("
     },
     {
      "file": "agent/src/tools/alphakeel_research_ledger.py",
      "kind": "hook",
      "literal": "def session_has_passed_trial("
+    },
+    {
+     "file": "agent/src/agent/loop.py",
+     "kind": "hook",
+     "literal": "card = _ir_result_card(session_id, user_message, grounding_card_notes)"
+    },
+    {
+     "file": "agent/src/tools/alphakeel_research_ledger.py",
+     "kind": "hook",
+     "literal": "def _note_lines("
     }
    ]
   }

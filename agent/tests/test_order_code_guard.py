@@ -1,4 +1,4 @@
-"""Order-placing code is refused by write_file and edit_file.
+"""Order-placing code is refused by write_file and edit_file (best effort: a pattern list, not a security boundary).
 
 Regression of session f9941f6d027f: the agent wrote exchange order code ("改 dry_run=False 即可实盘") although this repository
 never places orders. Every value here is synthetic.
@@ -54,6 +54,13 @@ _ORDER_SNIPPETS = [
     "ex.editOrder(id)",
     "ex.batchOrders([a, b])",
     "x = obj.fooPlaceOrder(s)",
+    "await ex.create_order_ws(s, 'market', 'buy', 1)",
+    "await ex.createOrderWs(s, 'market', 'buy', 1)",
+    "ex.create_order_with_take_profit_and_stop_loss(s, 'limit', 'buy', 1, 100, 110, 90)",
+    "ex.createOrderWithTakeProfitAndStopLoss(s)",
+    "client.place_order_sync(s)",
+    "client.placeOrderSync(s)",
+    "broker.submit_order_v2(order)",
 ]
 _ALLOWED = [
     "import ccxt\nex = ccxt.okx()\nbars = ex.fetch_ohlcv('BTC/USDT:USDT', '1h', limit=500)\n",
@@ -69,6 +76,7 @@ _ALLOWED = [
     "self.replace_order_ids()",
     "df.order_limit_days",
     "x = replace_order(a)",
+    "create_ordered_list(x)",
 ]
 
 
@@ -122,3 +130,14 @@ def test_edit_to_a_file_that_already_has_order_code_is_allowed_when_it_adds_none
     assert ok["status"] == "ok" and "LIMIT = 2" in target.read_text(encoding="utf-8")
     more = json.loads(EditFileTool().execute(path="legacy.py", old_text="LIMIT = 2", new_text="ex.create_order(t)", run_dir=str(tmp_path)))
     assert more["status"] == "error" and more["error_code"] == "order_code_refused"
+
+
+def test_edit_that_swaps_one_order_call_for_another_is_refused(tmp_path: Path) -> None:
+    """The matched snippets are compared as multisets: the same count of a different call is still an addition."""
+    target = tmp_path / "legacy.py"
+    target.write_text("ex.create_order(s)\n", encoding="utf-8")
+    body = json.loads(EditFileTool().execute(path="legacy.py", old_text="ex.create_order(s)", new_text="ex.place_order(s)", run_dir=str(tmp_path)))
+    assert body["status"] == "error" and body["error_code"] == "order_code_refused"
+    assert target.read_text(encoding="utf-8") == "ex.create_order(s)\n"
+    ok = json.loads(EditFileTool().execute(path="legacy.py", old_text="(s)", new_text="(t)", run_dir=str(tmp_path)))
+    assert ok["status"] == "ok"

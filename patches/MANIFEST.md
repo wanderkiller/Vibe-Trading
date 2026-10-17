@@ -829,8 +829,8 @@ robustness sub-runs.
 - hook `agent/src/agent/context.py`: `from src.tools.alphakeel_research_guard import routing_block as alphakeel_ir_routing_block`
 - hook `agent/src/agent/context.py`: `alphakeel_ir_routing=alphakeel_ir_routing,`
 - upstream `agent/src/agent/loop.py`: `{"type": "answer", "iter": current_iter},` — the card is appended right before both answer records
-- hook `agent/src/agent/loop.py`: `def _ir_result_card(session_id: str, user_message: str) -> str | None:`
-- hook `agent/src/agent/loop.py`: `card = _ir_result_card(session_id, user_message)  # research-truth: card at the answer`
+- hook `agent/src/agent/loop.py`: `def _ir_result_card(session_id: str, user_message: str, notes: Any = ()) -> str | None:`
+- hook `agent/src/agent/loop.py`: `card = _ir_result_card(session_id, user_message, grounding_card_notes)  # research-truth: card at the answer`
 - hook `agent/src/agent/loop.py`: `card = _ir_result_card(session_id, user_message)  # research-truth: card at the no-progress answer`
 - hook `agent/tests/test_context_attribution_layers.py`: `alphakeel_ir_routing="[test alphakeel routing]",`
 
@@ -1006,11 +1006,14 @@ which rows are hand-written. The grounding ledger tracks the library ids factor 
 `zoo_factor`), the number of successful retrieval calls and per retrieval call the distinct numbers of the result body (the call's own arguments and echoed keys such as query / text / status are
 dropped; `load_skill` and `sentiment` are no retrieval; at most 2000 numbers and 40 source names per call, the 60 newest calls kept),
 persists them (`factor_ids`, `retrieval_calls` = distinct call ids, `retrieval_records`) and carries them
-across turns; the final answer gets `factor_unknown` (id not in the library) / `factor_unsourced` (id never returned) issues,
-which are not redactable (a name cannot be cut like a figure; the run corrects or fails closed on `safe_fallback`), and a figure
-declared `cited` with no retrieval this session gets `citation_not_retrieved`, and one whose value is in no retrieved text gets `citation_value_not_retrieved` (tolerance: half of the last written digit; a source
-number backs itself, n/100 when it was a percent, and n*100 when it is a decimal below 1 and the figure is a percent; a note naming
-a source restricts the comparison to the calls whose title/source/host contains it). A bare number is a factor id only behind an id marker (`#`, `No.`, `第`,
+across turns. Name spotting and number matching in free text are heuristics, so since `research-integrity-r2-guards` (labels)
+neither blocks the answer: a factor name not in the library (`factor_unknown`) or never returned (`factor_unsourced` /
+`factor_never_returned`), and a figure declared `cited` with no retrieval this session (`citation_not_retrieved`) or whose value is
+in no retrieved text (`citation_value_not_retrieved`), become `ValidationResult.card_notes`, which the result card lists (tolerance:
+half of the last written digit; a source number backs itself, n/100 when it was a percent, and n*100 when it is a decimal below 1
+and the figure is a percent; every retrieval record of the session counts; url/link/domain values, `search_query`, the call's
+argument values also trimmed or URL-encoded, dates and clock times back nothing; `read_document` of a file the model wrote is no
+retrieval). A bare number is a factor id only behind an id marker (`#`, `No.`, `第`,
 `_`, `-`, "Alpha") or before 号, and never before a count word (个, bps, regions ...; except after 第); a prefix of word-named ids (`academic_`) is not open. One more prompt bullet states both rules.
 
 (5) A session compared eleven near-identical versions and named "the best" with nothing testing whether it is distinguishable
@@ -1092,13 +1095,13 @@ research contract, factor-name gate, `zoo_factor` helper and prompt bullets are 
 - hook `agent/src/skills/pair-trading/SKILL.md`: `"codes": ["BTC-USDT-PERP", "ETH-USDT-PERP"]`
 - hook `agent/src/agent/context.py`: `- A factor-library alpha is used only through `from backtest.zoo_signal import zoo_factor``
 - upstream `agent/src/agent/grounding/release.py`: `_REDACTABLE_CODES = frozenset(`
-- hook `agent/src/agent/grounding/release.py`: `_FACTOR_NAME_CODES = frozenset(`
-- hook `agent/src/agent/grounding/release.py`: `"citation_not_retrieved":`
+- hook `agent/src/agent/grounding/release.py`: `self.release_card_notes = check.card_notes`
+- hook `agent/src/agent/grounding/release.py`: `# Factor-library names, verdict words ("validated", "可上实盘") and cited figures no retrieval backs`
 - upstream `agent/src/agent/grounding/policies.py`: `def _check_cited(`
-- hook `agent/src/agent/grounding/policies.py`: `"citation_not_retrieved",`
+- hook `agent/src/agent/grounding/policies.py`: `self._card_notes.append(("citation", figure.text))`
 - hook `agent/src/agent/grounding/policies.py`: `def _validate_factor_names(self, content: str)`
 - upstream `agent/src/agent/grounding/ledger.py`: `def persist(self) -> None:`
-- hook `agent/src/agent/grounding/ledger.py`: `issues.extend(self._validate_factor_names(content))`
+- hook `agent/src/agent/grounding/ledger.py`: `self._card_notes.extend(self._validate_factor_names(content))`
 - hook `agent/src/agent/grounding/ledger.py`: `"retrieval_calls": self._retrieval_calls,`
 - hook `agent/backtest/engine_screen.py`: `facts["zoo_factors_used"], facts["zoo_names_in_code_not_used"] = _zoo_names(run_dir)`
 - hook `agent/src/tools/alphakeel_research_ledger.py`: `"zoo_unused":`
@@ -1107,7 +1110,7 @@ research contract, factor-name gate, `zoo_factor` helper and prompt bullets are 
 - hook `agent/src/agent/context.py`: `- When you compare versions or name the best one`
 - hook `agent/src/tools/alphakeel_research_ledger.py`: `def _multiple_testing_lines(`
 
-## `research-integrity-r2-guards` — recalled project memories are scoped by asset; verdict words need a passed screen; no order-placing code
+## `research-integrity-r2-guards` — recalled project memories are scoped by asset; verdict words, cited figures and factor names are stated on the result card; no order-placing code
 
 **Purpose.** Three defects of session f9941f6d027f, each a new guard in code rather than a prompt line.
 (1) Auto-recall injected an unrelated QQQ research memory into a crypto funding-arb conversation, and the model spoke of it as
@@ -1124,17 +1127,26 @@ the model writes (not "**研究结果汇总**" either) skips anything. 无风险
 不错/不仅/不但/不少/不断 and 未来 are not negations; en negation reaches back 20 characters (widened to the whole word), cut at
 . ! ? ; : , and newline, is cancelled by a conjunction (so/and/but/therefore/thus, or yet not directly after not) between it and the
 phrase, and never comes from "not only/just", "no doubt/question", "no X was found", "found no". The grounding
-ledger's `_validate_verdict_words` turns each one into a `verdict_unsupported` issue (reason `no_passed_trial`) unless
+ledger's `_validate_verdict_words` turns each one into a `("verdict", phrase)` card note (formerly the blocking
+`verdict_unsupported` issue, reason `no_passed_trial`) unless
 `alphakeel_research_ledger.session_has_passed_trial(current_llm_session_id())` (an IR row whose verified run card, or an engine
-row whose current screen, is `passed_screen`). The issue is not redactable (`release._VERDICT_CODES`): the draft is corrected
-without the verdict or the run fails closed on `safe_fallback` (zh/en text). The numeric-claim logic, identity checks, IR code
-and engines are unchanged.
+row whose current screen, is `passed_screen`). Labels round (2026-10-17): three review rounds kept finding bypasses and false
+positives in these free-text gates, so the verdict words, the cited-figure retrieval checks and the factor names
+(`_validate_factor_names`, `_check_cited`) no longer block, correct or fall back: they fill `ValidationResult.card_notes`
+(`(kind, text as written)`, kinds verdict / citation / factor); the loop keeps the notes of the text it releases (a valid draft, or
+`release_card_notes` of a redacted release; none for `safe_fallback`) and `_ir_result_card` passes them to `render_card`, which
+appends an answer-check section (zh "本会话没有任何版本通过初筛；答复中的「…」不是系统判定。", the cited figures not found in this
+session's retrieved sources, the factor names not used or retrieved; texts through `_safe_reason`, at most 12 per line) and renders
+that section alone when the session has no ledger rows. Their misses are P2 by policy. Also: 并非 / 绝非 negate; "and" cancels a
+negation only before a new subject; brackets, slashes and spaced or doubled dashes end the clause a negation reaches into; the en
+window is 40 characters; "it's verified", 已经过验证 / 已经验证 / 已获验证 are claims; 号 after 月 is a date, not a factor id. The
+numeric-claim logic, identity checks, IR code and engines are unchanged.
 (3) The agent wrote exchange order code ("改 dry_run=False 即可实盘"), although this repository never places orders.
-`tools/order_code_guard.py` holds the case-insensitive pattern list (`*create*order(s)`, `order_market_buy|sell*` / `order_limit_buy|sell*`,
-`place_?order`, `submit_?order` (not `replace_order`), `*private_?post*order`, the call forms `new_?order*(` / `edit_?order*(` /
+`tools/order_code_guard.py` (best effort, a tripwire and not a security boundary) holds the case-insensitive pattern list (`*create*order(s)` followed by no lower-case letter, so `create_order_ws`, `createOrderWithTakeProfit` match, `order_market_buy|sell*` / `order_limit_buy|sell*`,
+`place_?order`, `submit_?order` (not `replace_order`; `place_order_sync`, `submit_order_v2` match), `*private_?post*order`, the call forms `new_?order*(` / `edit_?order*(` /
 `batch_?orders?*(`; identifiers containing orderbook / order_book / order_flow / orderflow / order_ids / sort_order are ignored; `/api|fapi|dapi|sapi|papi/vN/**/order`, the OKX / Bybit order
-endpoints, `trading_place_order`); `write_file` (content) and `edit_file` (refused only when the whole replaced file has more order-code matches than the original file; an edit that adds none
-to a file that already has some is allowed) refuse with `error_code: order_code_refused` before touching the file. Scope: best effort for the file-writing tools only;
+endpoints, `trading_place_order`); `write_file` (content) and `edit_file` (refused only when the whole replaced file holds an order-code snippet the original file did not, compared as multisets of the matched
+snippets; an edit that adds none to a file that already has some is allowed) refuse with `error_code: order_code_refused` before touching the file. Scope: best effort for the file-writing tools only;
 the bash tool is NOT covered by this guard, and string concatenation such as `"/api/v3/" + "order"` is not detected.
 
 **Files.**
@@ -1146,6 +1158,7 @@ the bash tool is NOT covered by this guard, and string concatenation such as `"/
 - `agent/src/agent/grounding/release.py`
 - `agent/src/tools/alphakeel_research_ledger.py`
 - `agent/src/tools/order_code_guard.py`
+- `agent/src/agent/loop.py`
 - `agent/src/tools/write_file_tool.py`
 - `agent/src/tools/edit_file_tool.py`
 - `agent/tests/test_memory_scope.py`
@@ -1154,6 +1167,12 @@ the bash tool is NOT covered by this guard, and string concatenation such as `"/
 - `agent/tests/test_system_prompt_cache_stability.py`
 - `agent/tests/test_agent_grounding.py`
 - `agent/tests/test_agent_output_discipline.py`
+- `agent/tests/test_grounding_factor_citation.py`
+- `agent/tests/test_grounding_release.py`
+
+**Pre-existing tests changed (labels round).** `test_grounding_factor_citation.py` and `test_grounding_verdict_words.py` assert
+card notes instead of the former blocking issues (`factor_*`, `citation_*not_retrieved`, `verdict_unsupported`); the note-named
+source preference test now asserts that every record counts.
 
 **Pre-existing tests changed (fix round A).** Fixtures that declare a `cited` figure now ingest a retrieval result containing the
 cited number (a `web_search` result text), because a retrieval without the value no longer backs the figure and `load_skill` no
@@ -1176,9 +1195,11 @@ research ledger (local-only).
 - upstream `agent/src/agent/grounding/policies.py`: `def _check_cited(`
 - hook `agent/src/agent/grounding/policies.py`: `def _validate_verdict_words(`
 - upstream `agent/src/agent/grounding/release.py`: `_REDACTABLE_CODES = frozenset(`
-- hook `agent/src/agent/grounding/release.py`: `"no_passed_trial":`
+- hook `agent/src/agent/grounding/release.py`: `self.release_card_notes = check.card_notes`
 - upstream `agent/src/tools/write_file_tool.py`: `resolved.parent.mkdir(parents=True, exist_ok=True)`
 - hook `agent/src/tools/write_file_tool.py`: `order_code_refusal(`
 - upstream `agent/src/tools/edit_file_tool.py`: `new_content = content.replace(old_text, new_text, 1)`
-- hook `agent/src/tools/edit_file_tool.py`: `order_code_count(`
+- hook `agent/src/tools/edit_file_tool.py`: `order_code_added(`
 - hook `agent/src/tools/alphakeel_research_ledger.py`: `def session_has_passed_trial(`
+- hook `agent/src/agent/loop.py`: `card = _ir_result_card(session_id, user_message, grounding_card_notes)`
+- hook `agent/src/tools/alphakeel_research_ledger.py`: `def _note_lines(`

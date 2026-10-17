@@ -1,4 +1,4 @@
-"""Verdict words need a passed screen.
+"""Verdict words without a passed screen are stated on the result card as no system verdict; the answer is not blocked.
 
 Regression of session f9941f6d027f: a 5-round-trip, Sharpe 0.10 result was called "已验证" / "风险真正得到控制" / "稳健正收益" while no
 trial passed the screen. Every value here is synthetic.
@@ -55,6 +55,19 @@ def _phrases(text: str) -> list[str]:
         ("尚未验证", []),
         ("It is not yet fully validated.", []),
         ("It is fine, and validated.", ["validated"]),
+        ("It's verified.", ["verified"]),
+        ("It\u2019s now verified.", ["verified"]),
+        ("策略已经过验证", ["已经过验证"]),
+        ("策略已经验证", ["已经验证"]),
+        ("该结果并非已验证", []),
+        ("绝非无风险", []),
+        ("Not overfit - validated.", ["validated"]),
+        ("Not overfit \u2014 validated.", ["validated"]),
+        ("not overfit (validated)", ["validated"]),
+        ("不/已验证", ["已验证"]),
+        ("It was not tested and validated.", []),
+        ("We do not consider this strategy validated.", []),
+        ("Sharpe is not bad and it is validated", ["validated"]),
     ],
 )
 def test_scan_cases(text: str, expected: list[str]) -> None:
@@ -130,37 +143,49 @@ def _ledger(tmp_path: Path) -> GroundingLedger:
     return GroundingLedger(run_dir=run_dir, user_message="总结一下")
 
 
-_ANSWER = "夏普 0.10，风险真正得到控制，策略已验证。"
+_ANSWER = "只有 5 笔交易，风险真正得到控制，策略已验证。"
 
 
-def test_no_session_means_verdict_unsupported(tmp_path: Path, monkeypatch) -> None:
+def test_no_session_means_the_verdict_words_are_card_notes(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("src.agent.grounding.policies.current_llm_session_id", lambda: "")
     result = _ledger(tmp_path).validate_final_answer(_ANSWER)
-    verdicts = [i for i in result.issues if i["code"] == "verdict_unsupported"]
-    assert [i["reason"] for i in verdicts] == ["no_passed_trial", "no_passed_trial"]
-    assert verdicts[0]["message"] == (
-        '"风险真正得到控制" states a research verdict, but no backtest of this session passed the screen; '
-        "describe the result without that verdict (the result card carries the verdict)."
-    )
-    assert [i["claim"] for i in verdicts] == [_ANSWER, _ANSWER]
+    assert result.valid and result.issues == []
+    assert result.card_notes == (("verdict", "风险真正得到控制"), ("verdict", "已验证"))
+    assert result.released_text == _ANSWER
 
 
-def test_a_session_without_a_passed_trial_is_unsupported_and_not_redactable(tmp_path: Path, monkeypatch) -> None:
+def test_a_session_without_a_passed_trial_releases_the_answer_with_card_notes(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("src.agent.grounding.policies.current_llm_session_id", lambda: "s1")
     monkeypatch.setattr(arl, "ledger_rows", lambda sid: [])
     monkeypatch.setattr(arl, "engine_rows", lambda sid: [])
-    ledger = _ledger(tmp_path)
-    result = ledger.validate_final_answer("策略已验证")
-    assert [i["code"] for i in result.issues] == ["verdict_unsupported"]
-    assert ledger.redacted_release("策略已验证", result) is None
-    assert "do not call the result validated" in ledger.correction_prompt(result)
+    result = _ledger(tmp_path).validate_final_answer("策略已验证，已验证")
+    assert result.valid and result.card_notes == (("verdict", "已验证"),)
 
 
 def test_a_passed_trial_allows_the_verdict(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("src.agent.grounding.policies.current_llm_session_id", lambda: "s1")
     monkeypatch.setattr(arl, "session_has_passed_trial", lambda sid: True)
-    issues = _ledger(tmp_path).validate_final_answer(_ANSWER).issues
-    assert [i for i in issues if i["code"] == "verdict_unsupported"] == []
+    result = _ledger(tmp_path).validate_final_answer(_ANSWER)
+    assert result.valid and result.card_notes == ()
+
+
+def test_the_card_states_the_notes(monkeypatch) -> None:
+    monkeypatch.setattr(arl, "_ir_section", lambda sid, zh: [])
+    monkeypatch.setattr(arl, "_engine_section", lambda sid, zh, first: [])
+    notes = (("verdict", "已验证"), ("verdict", "可上实盘"), ("citation", "12.5%"), ("factor", "gtja191_010"))
+    zh = arl.render_card("s1", True, notes)
+    assert zh == (
+        "**答复核对（系统根据本会话记录生成）**\n"
+        "- 本会话没有任何版本通过初筛；答复中的「已验证」、「可上实盘」不是系统判定。\n"
+        "- 答复标为引用的数字 「12.5%」 在本会话检索到的资料中没有找到。\n"
+        "- 答复提到的因子名 「gtja191_010」 在本会话没有被使用或检索到。"
+    )
+    en = arl.render_card("s1", False, [["verdict", "validated"], ["factor", "[x](y)\n#"]])
+    assert en.splitlines()[1] == (
+        "- No version in this session passed the screen; these words in the answer are not a system verdict: \u201cvalidated\u201d."
+    )
+    assert not any(c in en.splitlines()[2] for c in "[]()#") and len(en.splitlines()) == 3
+    assert arl.render_card("s1", True, ()) is None and arl.render_card(None, True, notes) is None
 
 
 def test_session_has_passed_trial_reads_both_ledgers(monkeypatch) -> None:
