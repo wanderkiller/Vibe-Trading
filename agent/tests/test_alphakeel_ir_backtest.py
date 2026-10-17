@@ -1280,7 +1280,7 @@ def _plan(doc, **args):
 
 def _card_of(fees: dict) -> dict:
     return {"view": "v", "window": {"start_ms": 1, "end_ms": 2}, "step_minutes": 15, "instruments": [dict(BN), dict(OK)],
-            "assumptions": {"fees": fees}}
+            "pack": {"pack_id": "p"}, "assumptions": {"fees": fees}}
 
 
 def test_taker_only_ir_keeps_the_default_fee_table_and_view():
@@ -1300,9 +1300,10 @@ def test_maker_ir_gets_default_maker_rates_and_view_of_carries_them():
     p = _plan(_request_ir(MAKER_EXECUTION))
     assert p["fees"] == {"binance": {"perp": "0.0005", "maker": {"perp": "0.0002"}},
                          "okx": {"perp": "0.0005", "maker": {"perp": "0.0002"}}}
-    assert ir_crosscheck.view_of(_card_of(p["fees"]))["fees"] == p["fees"]
+    assert ir_crosscheck.view_of(_card_of(p["fees"]), _request_ir(MAKER_EXECUTION))["fees"] == p["fees"]
     # a taker venue row without a maker entry stays {"perp": ...}
-    assert ir_crosscheck.view_of(_card_of({"binance": {"perp": "0.0005"}, "okx": {"perp": "0.0005"}}))["fees"]["okx"] == {"perp": "0.0005"}
+    assert ir_crosscheck.view_of(_card_of({"binance": {"perp": "0.0005"}, "okx": {"perp": "0.0005"}}),
+                                 _request_ir(MAKER_EXECUTION))["fees"]["okx"] == {"perp": "0.0005"}
 
 
 def test_request_fee_table_without_maker_perp_is_refused_for_a_maker_ir():
@@ -1355,8 +1356,86 @@ def test_ir_backtest_end_to_end_run_card_of_a_maker_ir(tmp_path):
     out = tmp_path / "run"
     rc = cli.main(["ir", "backtest", "--fees", str(tmp_path / "fees.json"), "--no-register", "--ir", str(tmp_path / "ir.json"),
                    "--start-ms", str(START), "--end-ms", str(END), "--instruments", str(tmp_path / "inst.json"), "--pack-dir", str(pd),
-                   "--trials", "3", "--trials-evidence", str(tmp_path / "trials.csv"), "--out", str(out)])
+                   "--trials", "3", "--trials-evidence", str(tmp_path / "trials.csv"), "--step-minutes", "5", "--out", str(out)])
     assert rc == 0
     card = json.loads((out / "run_card.json").read_text())
     assert card["approximations"][-1].startswith("maker_not_modelled:")
     assert card["assumptions"]["fees"]["okx"] == {"perp": "0.0005", "maker": {"perp": "0.0002"}}
+
+
+# --- review round 1: one set of maker request checks for the tool path and the CLI path; taker-only view_of unchanged -----------
+
+MAKER_FEES = {v: {"perp": "0.0005", "maker": {"perp": "0.0002"}} for v in ("binance", "okx")}
+
+
+def test_taker_only_ir_view_of_ignores_maker_rates_in_the_request_fee_table():
+    from alphakeel_research import ir_crosscheck
+
+    plain = {v: {"perp": "0.0005"} for v in ("binance", "okx")}
+    taker_ir = _request_ir({"entry": {"long": "taker", "short": "taker"}, "exit": "taker"})
+    for doc in (_request_ir(), taker_ir):
+        assert ir_crosscheck.view_of(_card_of(MAKER_FEES), doc) == ir_crosscheck.view_of(_card_of(plain), doc)
+        assert ir_crosscheck.view_of(_card_of(MAKER_FEES), doc)["fees"] == plain
+        body, key = ir_crosscheck.mirror_request(doc, _card_of(MAKER_FEES))
+        assert body["dataset_view"]["fees"] == plain and (body, key) == ir_crosscheck.mirror_request(doc, _card_of(plain))
+    # the maker IR carries them, per venue, only where the row has maker.perp
+    maker_ir = _request_ir(MAKER_EXECUTION)
+    assert ir_crosscheck.view_of(_card_of(MAKER_FEES), maker_ir)["fees"] == MAKER_FEES
+
+
+def test_maker_row_without_perp_neither_raises_in_view_of_nor_passes_the_shared_check():
+    from alphakeel_research import ir_crosscheck
+
+    maker_ir = _request_ir(MAKER_EXECUTION)
+    for bad in ({"spot": "0.0001"}, {}, None, {"perp": None}):
+        fees = {"binance": {"perp": "0.0005", "maker": bad}, "okx": {"perp": "0.0005", "maker": {"perp": "0.0002"}}}
+        got = ir_crosscheck.view_of(_card_of(fees), maker_ir)["fees"]  # no KeyError
+        assert got == {"binance": {"perp": "0.0005"}, "okx": {"perp": "0.0005", "maker": {"perp": "0.0002"}}}
+        msg = ir.maker_request_problem(maker_ir, fees, 5)
+        assert msg and "no maker.perp rate for binance" in msg and "okx" not in msg.split(":")[0]
+        with pytest.raises(ValueError, match=r"no maker\.perp rate for binance"):
+            _plan(maker_ir, fees=fees)
+    assert ir.maker_request_problem(maker_ir, MAKER_FEES, 5) is None
+    assert ir.maker_request_problem(_request_ir(), {"binance": {"perp": "0.0005"}}, 1) is None  # taker-only: nothing to check
+
+
+def test_the_cli_refuses_a_maker_ir_at_the_default_two_minute_step(tmp_path, capsys):
+    (tmp_path / "ir.json").write_text(json.dumps(_request_ir(MAKER_EXECUTION)))
+    (tmp_path / "inst.json").write_text(json.dumps([BN, OK]))
+    (tmp_path / "fees.json").write_text(json.dumps(MAKER_FEES))
+    (tmp_path / "fees_taker.json").write_text(json.dumps({v: {"perp": "0.0005"} for v in ("binance", "okx")}))
+    base = ["ir", "backtest", "--no-register", "--ir", str(tmp_path / "ir.json"), "--start-ms", str(START), "--end-ms", str(END),
+            "--instruments", str(tmp_path / "inst.json"), "--pack-dir", str(tmp_path / "no-such-pack")]
+
+    def error(*extra, name):
+        capsys.readouterr()
+        assert cli.main([*base, "--out", str(tmp_path / name), *extra]) == 1
+        return json.loads(capsys.readouterr().out)["error"]
+
+    e = error("--fees", str(tmp_path / "fees.json"), name="r1")  # --step-minutes defaults to 2
+    assert e["code"] == "request.invalid" and e["field"] == "step_minutes" and "--step-minutes 5" in e["message"] and ">= 5" in e["message"]
+    e = error("--fees", str(tmp_path / "fees_taker.json"), "--step-minutes", "5", name="r2")
+    assert e["code"] == "request.invalid" and e["field"] == "fees" and "no maker.perp rate for binance, okx" in e["message"]
+    # the same function backs the entry point (state.json says failed; no pack was read)
+    assert json.loads((tmp_path / "r1" / "state.json").read_text())["status"] == "failed"
+
+
+def test_a_spot_perp_maker_long_leg_is_refused(tmp_path):
+    doc = _request_ir()
+    doc["universe"].update({"shape": "spot_perp", "pairs": [["binance", "binance"]]})
+    doc["execution"] = {"entry": {"long": {"maker": {"model": "M1", "timeout_s": 600}}}}
+    assert ir.load(doc)
+    spot = {"binance": {"perp": "0.0005", "spot": "0.001", "maker": {"perp": "0.0002"}}}
+    msg = ir.maker_request_problem(doc, spot, 5)
+    assert msg and "spot maker" in msg and "no spot maker fees" in msg
+    assert ir.maker_request_check(doc, spot, 5)[0] == "ir"
+    # the perp (short) leg of a spot_perp IR may be the maker leg
+    doc["execution"] = {"entry": {"short": {"maker": {"model": "M1", "timeout_s": 600}}}}
+    assert ir.maker_request_problem(doc, spot, 5) is None
+    # and the entry point refuses it before any pack is read
+    doc["execution"] = {"entry": {"long": {"maker": {"model": "M1", "timeout_s": 600}}}}
+    inst = [{**BN, "market": "spot", "symbol": "BTCUSDT"}, BN]
+    with pytest.raises(ApiError) as ei:
+        ir_backtest.backtest(None, doc, inst, start_ms=START, end_ms=END, out_dir=tmp_path / "out", pack_dir=tmp_path / "pack",
+                             fees=spot, step_minutes=5)
+    assert ei.value.code == "request.invalid" and ei.value.field == "ir"

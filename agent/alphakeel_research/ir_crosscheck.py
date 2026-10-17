@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from . import canon
+from . import ir as IR
 from .errors import ApiError
 
 SCHEMA = "vibe-trading.ir-crosscheck/1"
@@ -54,15 +55,24 @@ NOTES = [
 ]
 
 
-def view_of(card: dict) -> dict:
-    """The ``dataset_view`` of the AlphaKeel run that mirrors a VT run card."""
+def view_of(card: dict, ir_doc: dict | None = None) -> dict:
+    """The ``dataset_view`` of the AlphaKeel run that mirrors a VT run card. A venue's ``maker.perp`` is sent only when the
+    IR has a maker entry leg (``ir_doc``) and the fee row carries it: a taker-only IR's view is the same whatever the fee table holds."""
     venues = sorted({i["venue"] for i in card["instruments"]})
     fees = card["assumptions"]["fees"]
+    with_maker = ir_doc is not None and IR.maker_leg(ir_doc) is not None
+
+    def row(v: str) -> dict:
+        out = {"perp": fees[v]["perp"]}
+        m = fees[v].get("maker")
+        if with_maker and isinstance(m, dict) and m.get("perp") not in (None, ""):
+            out["maker"] = {"perp": m["perp"]}
+        return out
+
     return {
         "view": card["view"], "start_ms": card["window"]["start_ms"], "end_ms": card["window"]["end_ms"],
         "step_minutes": card["step_minutes"],
-        "fees": {v: {"perp": fees[v]["perp"], **({"maker": {"perp": fees[v]["maker"]["perp"]}} if fees[v].get("maker") else {})}
-                 for v in venues},
+        "fees": {v: row(v) for v in venues},
         "instruments": [{k: i[k] for k in ("venue", "market", "symbol", "base", "quote")} for i in card["instruments"]],
     }
 
@@ -205,7 +215,7 @@ def mirror_request(ir_doc: dict, card: dict, *, profile: dict | None = None, key
     The body's ``ir`` never carries a top-level ``strategy_id``: ``write_run_files`` writes an ``ir.json`` with one, the in-flow
     IR has none, and AlphaKeel computes the id itself, so the same strategy would otherwise get two request digests / trial keys."""
     ir_doc = {k: v for k, v in ir_doc.items() if k != "strategy_id"}
-    body = {"mode": "ir_strategy", "pack_id": card["pack"]["pack_id"], "ir": ir_doc, "dataset_view": view_of(card)}
+    body = {"mode": "ir_strategy", "pack_id": card["pack"]["pack_id"], "ir": ir_doc, "dataset_view": view_of(card, ir_doc)}
     if profile is not None:
         body["profile"] = profile
     digest = hashlib.sha256(canon.canonical_bytes(body) + (b"\n" + key_salt.encode() if key_salt else b"")).hexdigest()[:32]

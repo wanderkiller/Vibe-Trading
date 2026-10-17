@@ -1098,7 +1098,13 @@ def backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, en
     (:func:`write_run_files`; ``state.json`` says ``failed`` when anything raised)."""
     out = Path(out_dir)
     try:
-        ir_views.require_fees(kw.get("fees"))  # before a pack is frozen
+        fee_table = ir_views.require_fees(kw.get("fees"))  # before a pack is frozen
+        # the maker-leg request checks (step, spot leg, maker.perp), the same function as the ir_backtest tool's plan()
+        if IR.maker_leg(ir_doc) is not None:
+            venues = list(dict.fromkeys(i["venue"] for i in universe_instruments(ir_doc, instruments)))
+            bad = IR.maker_request_check(ir_doc, {v: fee_table.get(v) for v in venues}, kw.get("step_minutes", 2))
+            if bad is not None:
+                raise ApiError("request.invalid", bad[1], field=bad[0])
         if register:
             if client is None:
                 raise ApiError("request.invalid", "registering the run needs the research-service client (or --no-register)", field="register")

@@ -912,11 +912,18 @@ post-only maker entry leg (`{"entry": {"short": {"maker": {"model": "M1", "timeo
 package now parses and validates it (shape errors `ir.shape`, range errors `ir.invalid` with the vector paths),
 writes the defaults into the definition when a maker leg exists and drops `execution` otherwise (a taker-only IR keeps
 its `strategy_id`), and exposes `ir.maker_leg(doc)`. Fee tables: a maker IR's default table adds
-`maker.perp` 0.0002 per venue, a request table must give `maker.perp` for every venue, `scale_fees` scales the nested
-maker rates, `view_of` and the result card's fee line carry them only when present. The local simulator does not model
-maker fills (taker fill at the touch, a conservative cost bound): the run card's `approximations` gets a
-`maker_not_modelled` entry, and `plan()` refuses a maker leg when `step_minutes <= 2`. Taker-only IRs, fee tables and
-run cards are byte-identical to before. The contract files are AlphaKeel's export of 2026-10-17. All code lives in
+`maker.perp` 0.0002 per venue, `scale_fees` scales the nested maker rates, and `view_of(card, ir_doc)` sends a venue's
+`maker.perp` only when the IR has a maker leg and the fee row carries it (a taker-only IR never sends maker fees, even
+when the request table has them). The local simulator does not model maker fills (taker fill at the touch, a conservative
+cost bound): the run card's `approximations` gets a `maker_not_modelled` entry. The maker request checks are one function,
+`ir.maker_request_problem(ir_doc, fees, step_minutes)`, used by `plan()` (ValueError) and by the CLI `ir backtest` entry
+(`ir_backtest.backtest`, ApiError `request.invalid`): `step_minutes <= 2` (the CLI default is 2: pass
+`--step-minutes >= 5`), a fee row without `maker.perp`, and a maker leg on a spot leg (the long leg of `spot_perp`; VT
+sends no spot maker fees). Taker-only IRs, fee tables and run cards are byte-identical to before. `models.py` is
+regenerated from the new `openapi.json` by `gen_models.sh` (two enum values, two description changes). Protocol 2.6: the
+trial idempotency key (`trial_key_salt`) includes the protocol version, so every key changes with 2.6; this is intended,
+and the AlphaKeel ledger dedupes by `request_sha`, so trial counts do not change. The contract files are AlphaKeel's
+export of 2026-10-17 (re-exported with `ir.shape` error vectors). All code lives in
 `leaf-package` and `research-truth` files, so the anchors only pin the new entry points.
 
 **Files.**
@@ -929,6 +936,7 @@ run cards are byte-identical to before. The contract files are AlphaKeel's expor
 - `agent/alphakeel_research/ir.py`
 - `agent/alphakeel_research/ir_backtest.py`
 - `agent/alphakeel_research/ir_crosscheck.py`
+- `agent/alphakeel_research/models.py`
 - `agent/alphakeel_research/robustness.py`
 - `agent/src/tools/alphakeel_ir_request.py`
 - `agent/src/tools/alphakeel_research_ledger.py`

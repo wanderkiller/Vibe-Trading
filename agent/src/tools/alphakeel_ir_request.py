@@ -165,9 +165,9 @@ def _fee_table(v: Any) -> dict | None:
 
 
 def fees(a: IrBacktestArgs, venues: list[str], ir_doc: dict | None = None) -> tuple[Any, str]:
-    """The fee table and its source label: the request's (every derived venue needs a perp rate, and a maker rate when the
-    IR has a maker entry leg), else :data:`DEFAULT_PUBLIC_TAKER` (plus :data:`DEFAULT_PUBLIC_MAKER` for a maker IR) cut to
-    the derived venues."""
+    """The fee table and its source label: the request's (every derived venue needs a perp rate; a maker IR's maker rate is
+    checked by :func:`alphakeel_research.ir.maker_request_problem`, which :func:`plan` calls), else
+    :data:`DEFAULT_PUBLIC_TAKER` (plus :data:`DEFAULT_PUBLIC_MAKER` for a maker IR) cut to the derived venues."""
     maker = ir_doc is not None and IR.maker_leg(ir_doc) is not None
     if a.fees in (None, "", {}):
         table = {v: dict(DEFAULT_PUBLIC_TAKER[v]) for v in venues if v in DEFAULT_PUBLIC_TAKER}
@@ -182,13 +182,6 @@ def fees(a: IrBacktestArgs, venues: list[str], ir_doc: dict | None = None) -> tu
         if missing:
             raise ValueError(f"fees has no perp rate for {', '.join(missing)}: give a rate for every venue in universe.pairs, "
                              "or omit fees to use the public base-tier default")
-        if maker:
-            no_maker = [v for v in venues if not (isinstance(table[v].get("maker"), dict)
-                                                  and table[v]["maker"].get("perp") not in (None, ""))]
-            if no_maker:
-                raise ValueError(f"fees has no maker.perp rate for {', '.join(no_maker)}: the IR has a maker entry leg "
-                                 "(execution), so give a maker rate for every venue in universe.pairs, "
-                                 "or omit fees to use the public base-tier default")
     return a.fees, REQUEST_FEES_SOURCE
 
 
@@ -203,12 +196,14 @@ def plan(args: dict[str, Any], ir_doc: dict, who: dict) -> dict[str, Any]:
     insts = instruments(ir_doc)
     check_rows(len(insts), start, end, ((who or {}).get("datasets") or {}).get("max_rows"))
     venues = list(dict.fromkeys(d["venue"] for d in insts))
-    if IR.maker_leg(ir_doc) is not None and step_minutes(start, end) <= 2:
-        raise ValueError("AlphaKeel refuses a maker entry leg with step_minutes <= 2: give a shorter window (a coarser step) "
-                         "or drop the maker leg")
+    step = step_minutes(start, end)
     fee_table, source = fees(a, venues, ir_doc)
+    # one definition for this path and the CLI's (step <= 2, a spot maker leg, a fee row without maker.perp)
+    problem = IR.maker_request_problem(ir_doc, {v: fee_table.get(v) for v in venues} if isinstance(fee_table, dict) else fee_table, step)
+    if problem:
+        raise ValueError(problem)
     out: dict[str, Any] = {"ir": a.ir, "start_ms": start, "end_ms": end, "instruments": insts,
-                           "step_minutes": step_minutes(start, end), "fees": fee_table, "fees_source": source,
+                           "step_minutes": step, "fees": fee_table, "fees_source": source,
                            "accept_partial": a.accept_partial, "verbose": a.verbose}
     for k in ("capital_base", "pack_dir", "selection"):
         if getattr(a, k) not in (None, "", {}):

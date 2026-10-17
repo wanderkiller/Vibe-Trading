@@ -95,6 +95,9 @@ JSON 整数只用于计数、小时、分钟（`horizon_hours`、`candidate_limi
 5b. `execution`（给出时）：最多一条腿是 `{"maker": …}`（两条都是 → `ir.invalid`，路径 `execution.entry`）；maker 腿的
    `timeout_s` ∈ [120, 3600]、`participation` ∈ (0, 0.25]（越界 → `ir.invalid`，路径 `execution.entry.<long|short>.maker.<键>`）。
    未知模型（如 `M0`）、`chase` 不是 `"taker"`、`exit` 不是 `"taker"`、腿既不是 `"taker"` 也不是 `{"maker": …}`、未知键 → 第 1 条（`ir.shape`）。
+   形状严格按 schema：`execution`、`entry` 与 maker 设定必须是对象（`"execution": null`、数组都是 `ir.shape`；不想要就省略），
+   `model`、`chase`、`exit` 与 `"taker"` 腿必须是字符串（`{"M1": null}`、`{"taker": null}` 是 `ir.shape`），`{"maker": …}` 只有这一个键，
+   `timeout_s` 是 JSON 整数（`180.0` 是 `ir.shape`）。
    `parameters.*.path` 不能指向 `execution`（第 5 条，`ir.parameter_path`）。
 6. `provenance` 形状。
 7. 文档带 `strategy_id` 时必须等于 §2 的计算值。

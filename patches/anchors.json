@@ -1806,6 +1806,7 @@
     "agent/alphakeel_research/ir.py",
     "agent/alphakeel_research/ir_backtest.py",
     "agent/alphakeel_research/ir_crosscheck.py",
+    "agent/alphakeel_research/models.py",
     "agent/alphakeel_research/robustness.py",
     "agent/src/tools/alphakeel_ir_request.py",
     "agent/src/tools/alphakeel_research_ledger.py",
@@ -1819,6 +1820,11 @@
      "file": "agent/alphakeel_research/ir.py",
      "kind": "hook",
      "literal": "def maker_leg(doc: Any)"
+    },
+    {
+     "file": "agent/alphakeel_research/ir.py",
+     "kind": "hook",
+     "literal": "def maker_request_problem("
     },
     {
      "file": "agent/alphakeel_research/ir_backtest.py",

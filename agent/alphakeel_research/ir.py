@@ -499,6 +499,40 @@ def maker_leg(doc: Any) -> tuple[str, dict] | None:
     return None
 
 
+def maker_request_check(ir_doc: Any, fees: Any, step_minutes: int | None) -> tuple[str, str] | None:
+    """``(field, message)`` when a request with this IR, fee table and step cannot run a maker entry leg, else None
+    (always None for an IR without one). One definition for the tool path and the CLI path:
+
+    * ``step_minutes <= 2``: AlphaKeel refuses a maker entry leg on such a step;
+    * a maker leg on a spot leg (``spot_perp``: the long leg is spot): VT sends no spot maker fees;
+    * a fee row without ``maker.perp`` (only a fee table that is a mapping can be inspected; a path or JSON text is read,
+      and reported, elsewhere)."""
+    m = maker_leg(ir_doc)
+    if m is None:
+        return None
+    leg = m[0]
+    shape = ((ir_doc.doc if isinstance(ir_doc, Ir) else ir_doc).get("universe") or {}).get("shape")
+    if shape == "spot_perp" and leg == "long":
+        return "ir", ("a maker entry leg on the long leg of a spot_perp IR is a spot maker leg: VT sends no spot maker fees, so it "
+                      "is refused; make the short (perp) leg the maker leg or use taker")
+    if isinstance(step_minutes, int) and step_minutes <= 2:
+        return "step_minutes", ("AlphaKeel refuses a maker entry leg with step_minutes <= 2: use step_minutes >= 5 "
+                                "(CLI: --step-minutes 5 or more; ir_backtest: a shorter window gives a coarser step) or drop the maker leg")
+    if isinstance(fees, dict):
+        missing = [v for v, row in fees.items() if not (isinstance(row, dict) and isinstance(row.get("maker"), dict)
+                                                         and row["maker"].get("perp") not in (None, ""))]
+        if missing:
+            return "fees", (f"fees has no maker.perp rate for {', '.join(missing)}: the IR has a maker entry leg (execution), "
+                            "so give a maker rate for every venue in universe.pairs (fees.<venue>.maker.perp)")
+    return None
+
+
+def maker_request_problem(ir_doc: Any, fees: Any, step_minutes: int | None) -> str | None:
+    """The message of :func:`maker_request_check`, or None."""
+    got = maker_request_check(ir_doc, fees, step_minutes)
+    return None if got is None else got[1]
+
+
 def _check_execution(doc: dict, k: _Sink) -> None:
     """README §3 rule 5b: at most one maker leg; timeout_s in [120, 3600]; participation in (0, 0.25]."""
     entry = (doc.get("execution") or {}).get("entry") or {}
