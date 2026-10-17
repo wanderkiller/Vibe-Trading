@@ -38,6 +38,23 @@ def _phrases(text: str) -> list[str]:
         ("No. Validated results only", ["Validated"]),
         ("表现不错，已验证", ["已验证"]),
         ("invalidated", []),
+        ("无风险利率为 4%", []),
+        ("无风险 收益率 4%", []),
+        ("risk-free rate 4%", []),
+        ("risk\u2011free rate 4%", []),
+        ("the risk-free asset and risk-free return", []),
+        ("该策略无风险", ["无风险"]),
+        ("the strategy is risk\u2011free", ["risk-free"]),
+        ("the strategy is risk\u2212free", ["risk-free"]),
+        ("经过验证的结论", ["经过验证"]),
+        ("The edge is verified", ["verified"]),
+        ("unverified", []),
+        ("收益不错已验证", ["已验证"]),
+        ("不仅已验证", ["已验证"]),
+        ("不但已验证", ["已验证"]),
+        ("尚未验证", []),
+        ("It is not yet fully, completely and thoroughly validated.", []),
+        ("It is fine, and validated.", ["validated"]),
     ],
 )
 def test_scan_cases(text: str, expected: list[str]) -> None:
@@ -50,12 +67,18 @@ def test_span_points_at_the_phrase() -> None:
     assert text[start:end] == phrase == "已验证"
 
 
-def test_the_system_result_card_and_figures_block_are_not_read() -> None:
-    card = "\n".join(["---", arl._TEXT[True]["title"], "通过初筛，已验证 run card", "判定：validated"])
-    assert _phrases("夏普 0.10。\n" + card) == []
-    engine = "\n".join(["---", arl._ENGINE_TEXT[False]["title"], "validated"])
-    assert _phrases("answer\n" + engine) == []
-    assert _phrases("已验证\n\n---\n" + arl._TEXT[True]["title"] + "\n已验证") == ["已验证"]
+def test_a_model_written_card_title_does_not_disable_the_gate() -> None:
+    """The real result card is appended after grounding, so a draft never contains it: a title is no skip marker."""
+    assert _phrases("**研究结果汇总**\n该策略已验证，可上实盘。") == ["已验证", "可上实盘"]
+    assert _phrases("**Research results**\nThe strategy is validated and ready for live.") == [
+        "validated",
+        "ready for live",
+    ]
+    assert _phrases("answer\n\n---\n**Generic engine backtests**\nvalidated") == ["validated"]
+    assert _phrases("已验证\n\n---\n" + arl._TEXT[True]["title"] + "\n已验证") == ["已验证", "已验证"]
+
+
+def test_the_figures_block_is_not_read() -> None:
     block = "5 笔\n\n```figures\n5 | count | 已验证的笔数 |\n```"
     assert _phrases(block) == []
 

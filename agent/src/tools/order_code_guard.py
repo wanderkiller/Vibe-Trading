@@ -1,7 +1,7 @@
 """Refuse order-placing code: this repository researches and backtests, it never places orders.
 
 Pure. Live execution goes through the AlphaKeel hand-off (Strategy IR); code that places an order on an exchange
-(ccxt ``create_order``, REST order endpoints, ``place_order`` helpers) is not written here, even with a dry-run switch.
+(ccxt ``create_order`` / ``createOrder``, REST order endpoints, ``place_order`` helpers) is not written here, even with a dry-run switch.
 """
 
 from __future__ import annotations
@@ -9,19 +9,20 @@ from __future__ import annotations
 import json
 import re
 
+# Case-insensitive, and not tied to a call parenthesis: a method name is also written as a string for ``getattr``.
+# String concatenation ("/api/v3/" + "order") and the bash tool are not covered (best effort for file-writing tools).
 _PATTERNS = tuple(
-    re.compile(p)
+    re.compile(p, re.IGNORECASE)
     for p in (
-        r"\.create_order\s*\(",
-        r"\bcreate_(?:market|limit|stop)_(?:buy_|sell_)?order\s*\(",
-        r"\bplace_order\s*\(",
-        r"\bprivatePost\w*Order\w*\s*\(",
-        r"/api/v3/order\b",
-        r"/fapi/v1/order\b",
+        r"\w*create\w*order",  # createOrder, create_order, futures_create_order, create_market_buy_order
+        r"order_(?:market|limit)_\w+",
+        r"\w*place_?order",  # place_order, placeOrder, trading_place_order
+        r"\w*submit_?order",
+        r"\w*private_?post\w*order",  # fapiPrivatePostOrder, private_post_order, privatePostTradeOrder
+        r"/(?:api|fapi|dapi|sapi|papi)/v\d+/(?:\w+/)*order\b",
         r"/api/v5/trade/order\b",
         r"/v5/order/create\b",
         r"\btrading_place_order\b",
-        r"\bsubmit_order\s*\(",
     )
 )
 

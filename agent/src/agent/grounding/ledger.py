@@ -57,8 +57,22 @@ _FACTOR_TOOLS = frozenset({"alpha_zoo", "alpha_bench", "alpha_compare", "factor_
 # the only sources a figure declared ``cited`` can stand on.
 _RETRIEVAL_TOOLS = frozenset(
     {"web_search", "read_url", "read_document", "get_stock_news", "research_papers",
-     "get_research_reports", "get_sec_filings", "sentiment", "load_skill"}
+     "get_research_reports", "get_sec_filings", "sentiment"}
 )
+# ``load_skill`` is deliberately absent: every backtest session loads a skill first, and a skill text is no source.
+_NUMBER_LITERAL_RE = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
+_MAX_RETRIEVED_NUMBERS = 5000
+
+
+def _numbers_in(text: str) -> list[float]:
+    """Numeric literals of ``text`` (thousands commas stripped), in order."""
+    out: list[float] = []
+    for raw in _NUMBER_LITERAL_RE.findall(text):
+        try:
+            out.append(float(raw.replace(",", "")))
+        except ValueError:
+            continue
+    return out
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +212,8 @@ class GroundingLedger(
         # over from earlier turns of the conversation.
         self._factor_ids: set[str] = set()
         self._retrieval_calls = 0
+        # Numeric literals of the retrieved documents (first ``_MAX_RETRIEVED_NUMBERS``): what a cited figure can stand on.
+        self._retrieved_numbers: list[float] = []
 
         # call id -> tool of the analysis calls carried from earlier turns (``_calls_of_tool``).
         self._prior_call_tools: dict[str, str] = {}
@@ -233,6 +249,9 @@ class GroundingLedger(
             retrievals = data.get("retrieval_calls")
             if isinstance(retrievals, int) and not isinstance(retrievals, bool) and retrievals > 0:
                 self._retrieval_calls += retrievals
+            self._add_retrieved_numbers(
+                x for x in data.get("retrieved_numbers") or [] if isinstance(x, (int, float)) and not isinstance(x, bool)
+            )
             for raw in data.get("evidence") or []:
                 if not isinstance(raw, dict) or raw.get("status") != "observed":
                     continue
@@ -456,6 +475,16 @@ class GroundingLedger(
                 self._factor_ids.update(str(x) for x in used if isinstance(x, str))
         if tool_name in _RETRIEVAL_TOOLS:
             self._retrieval_calls += 1
+            self._add_retrieved_numbers(_numbers_in(result))
+
+    def _add_retrieved_numbers(self, numbers: Any) -> None:
+        """Append ``numbers`` to the retrieved-number list, which keeps the first ``_MAX_RETRIEVED_NUMBERS``."""
+        room = _MAX_RETRIEVED_NUMBERS - len(self._retrieved_numbers)
+        for number in numbers:
+            if room <= 0:
+                break
+            self._retrieved_numbers.append(float(number))
+            room -= 1
 
     def validate_final_answer(self, content: str) -> ValidationResult:
         """Validate identity assertions and numeric price claims.
@@ -547,6 +576,7 @@ class GroundingLedger(
             "session_symbol_roots": sorted(self._session_symbol_roots),
             "factor_ids": sorted(self._factor_ids),
             "retrieval_calls": self._retrieval_calls,
+            "retrieved_numbers": list(self._retrieved_numbers),
             "evidence": [asdict(record) for record in self._evidence],
             "tool_failures": list(self._tool_failures),
             "analysis_completed": list(self._analysis_completed),

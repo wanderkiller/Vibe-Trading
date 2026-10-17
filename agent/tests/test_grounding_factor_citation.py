@@ -96,7 +96,7 @@ def test_a_cited_figure_needs_a_retrieval_this_session(tmp_path: Path) -> None:
     issues = ledger.validate_final_answer(_CITED).issues
     assert [(i["code"], i["reason"]) for i in issues] == [("numeric_claim_conflict", "citation_not_retrieved")]
     assert "retrieved no document, page, news or paper" in issues[0]["message"]
-    _ingest(ledger, "web_search", {"results": [{"title": "彭博社 fund flows", "url": "https://example.test/a"}]})
+    _ingest(ledger, "web_search", {"results": [{"title": "彭博社 fund flows up 12.5%", "url": "https://example.test/a"}]})
     assert ledger._retrieval_calls == 1
     assert ledger.validate_final_answer(_CITED).issues == []
 
@@ -118,8 +118,8 @@ def test_factor_ids_and_retrieval_count_carry_over_from_prior_turns(tmp_path: Pa
     first_copy = tmp_path / "sessions" / "s1" / "grounding" / "run-1.json"
     first = _ledger(tmp_path / "run-1", session_copy=first_copy)
     _ingest(first, "alpha_bench", {"rows": [{"id": "gtja191_010"}, {"id": "alpha101_017"}]})
-    _ingest(first, "read_url", {"text": "x"}, call_id="c2")
-    _ingest(first, "load_skill", {"name": "s"}, call_id="c3")
+    _ingest(first, "read_url", {"text": "AUM grew 12.5%"}, call_id="c2")
+    _ingest(first, "get_stock_news", {"items": [{"title": "n 12.5%"}]}, call_id="c3")
     assert first_copy.is_file()
     payload = json.loads(first_copy.read_text(encoding="utf-8"))
     assert payload["factor_ids"] == ["alpha101_017", "gtja191_010"] and payload["retrieval_calls"] == 2
@@ -134,3 +134,48 @@ def test_factor_ids_and_retrieval_count_carry_over_from_prior_turns(tmp_path: Pa
     assert _ledger(tmp_path / "run-3", prior_ledgers=[old])._retrieval_calls == 0
     both = _ledger(tmp_path / "run-4", prior_ledgers=[first_copy, first_copy])
     assert both._retrieval_calls == 4
+
+
+def _cited_value(value: str) -> str:
+    return f"彭博社报道增长 {value}。\n\n```figures\n{value} | cited | 彭博社 |\n```"
+
+
+def test_load_skill_is_no_retrieval(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path / "run")
+    _ingest(ledger, "load_skill", {"name": "backtest-guide", "text": "Sharpe above 12.5 is rare"})
+    assert ledger._retrieval_calls == 0 and ledger._retrieved_numbers == []
+    assert [i["reason"] for i in ledger.validate_final_answer(_CITED).issues] == ["citation_not_retrieved"]
+
+
+def test_a_retrieval_without_the_value_does_not_back_the_figure(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path / "run")
+    _ingest(ledger, "web_search", {"results": [{"title": "fund flows", "text": "AUM 3,400 and 7.1%"}]})
+    issues = ledger.validate_final_answer(_CITED).issues
+    assert [(i["code"], i["reason"]) for i in issues] == [("numeric_claim_conflict", "citation_value_not_retrieved")]
+    assert "appears in no document, page, news or paper" in issues[0]["message"]
+    assert ledger.redacted_release(_CITED, ledger.validate_final_answer(_CITED)) is not None
+    assert {3400.0, 7.1} <= set(ledger._retrieved_numbers)
+
+
+def test_a_retrieved_percent_backs_the_figure_as_a_percent_or_a_fraction(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path / "run")
+    _ingest(ledger, "web_search", {"results": [{"text": "growth was 4.2% last year"}]})
+    assert ledger.validate_final_answer(_cited_value("4.2")).issues == []
+    assert ledger.validate_final_answer(_cited_value("0.042")).issues == []
+    assert [i["reason"] for i in ledger.validate_final_answer(_cited_value("5.3")).issues] == [
+        "citation_value_not_retrieved"
+    ]
+
+
+def test_retrieved_numbers_persist_and_are_capped(tmp_path: Path) -> None:
+    session_copy = tmp_path / "sessions" / "s1" / "grounding" / "run-1.json"
+    first = _ledger(tmp_path / "run-1", session_copy=session_copy)
+    _ingest(first, "read_url", {"text": " ".join(str(n) for n in range(1, 6001))})
+    assert len(first._retrieved_numbers) == 5000 and first._retrieved_numbers[0] == 1.0
+    assert first._retrieved_numbers[-1] == 5000.0
+    later = _ledger(tmp_path / "run-2", prior_ledgers=[session_copy])
+    assert later._retrieved_numbers == first._retrieved_numbers
+    assert later.validate_final_answer(_cited_value("4999")).issues == []
+    assert [i["reason"] for i in later.validate_final_answer(_cited_value("765432.1")).issues] == [
+        "citation_value_not_retrieved"
+    ]

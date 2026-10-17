@@ -406,9 +406,10 @@ class ContextBuilder:
         enriched = user_message
         if self._persistent_memory:
             try:
-                recalls = self._persistent_memory.find_relevant(user_message, max_results=3)
+                # Scope filtering comes after ranking, so over-fetch: three out-of-scope hits must not hide a fourth in scope.
+                recalls = self._persistent_memory.find_relevant(user_message, max_results=10)
                 scope = asset_tokens(user_message)
-                recalls = [r for r in recalls if memory_in_scope(r, scope)]
+                recalls = [r for r in recalls if memory_in_scope(r, scope)][:3]
                 if recalls:
                     lines = [f"- **{r.title}** ({r.memory_type}): {r.body[:500]}" for r in recalls]
                     recall_block = "\n".join(lines)

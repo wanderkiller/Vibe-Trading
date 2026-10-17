@@ -1003,10 +1003,13 @@ returned 0 items) and declared a figure `cited` ("彭博社") although no retrie
 17", "Alpha#53") and the engine screen records `facts.zoo_factors_used` (string-literal first arguments of `zoo_factor(...)`)
 and `facts.zoo_names_in_code_not_used` (names the code mentions, comments included, without such a call); the engine card says
 which rows are hand-written. The grounding ledger tracks the library ids factor tools returned (or a backtest ran through
-`zoo_factor`) and the number of successful retrieval calls, persists both (`factor_ids`, `retrieval_calls`) and carries them
+`zoo_factor`), the number of successful retrieval calls and the numeric literals of the retrieved texts (`load_skill` is no
+retrieval; first 5000 numbers), persists them (`factor_ids`, `retrieval_calls`, `retrieved_numbers`) and carries them
 across turns; the final answer gets `factor_unknown` (id not in the library) / `factor_unsourced` (id never returned) issues,
 which are not redactable (a name cannot be cut like a figure; the run corrects or fails closed on `safe_fallback`), and a figure
-declared `cited` with no retrieval this session gets `citation_not_retrieved`. One more prompt bullet states both rules.
+declared `cited` with no retrieval this session gets `citation_not_retrieved`, and one whose value (as is, /100 or x100) is in no
+retrieved text gets `citation_value_not_retrieved`. A bare number is a factor id only behind an id marker (`#`, `No.`, `第`,
+`_`, `-`, "Alpha") and never before a count word (个, bps, regions ...); a prefix of word-named ids (`academic_`) is not open. One more prompt bullet states both rules.
 
 (5) A session compared eleven near-identical versions and named "the best" with nothing testing whether it is distinguishable
 from luck, and item 1.2 (minimum trades) counted closed legs, so a two-leg pair trade counted twice. Now (a) the engine
@@ -1097,23 +1100,27 @@ research contract, factor-name gate, `zoo_factor` helper and prompt bullets are 
 **Purpose.** Three defects of session f9941f6d027f, each a new guard in code rather than a prompt line.
 (1) Auto-recall injected an unrelated QQQ research memory into a crypto funding-arb conversation, and the model spoke of it as
 something the user had done there. `src/memory/scope.py` (pure) reads the upper-case ticker-like tokens of a text
-(`asset_tokens`; `BTC-USDT` gives `BTC-USDT` and `BTC`, quote currencies and report abbreviations are stop words, Chinese text
-yields nothing); `ContextBuilder.build_messages` keeps a recalled `project` memory only when its own tokens (title, keywords,
+(`asset_tokens`; `BTC-USDT` gives `BTC-USDT` and `BTC`, a concatenated pair such as `BTCUSDT` gives itself and `BTC`, aliases
+such as bitcoin / 比特币 give `BTC`, quote currencies, indicator names and report abbreviations are stop words); `ContextBuilder.build_messages` fetches 10 recalls, filters, and keeps the first 3 in scope: a recalled `project` memory is kept only when its own tokens (title, keywords,
 first 2000 characters of the body) meet the message's, or it has none; other memory types are never filtered. The wrapper is
 `<recalled-memories note="background from earlier sessions; not evidence for this session and not something the user did here">`.
 (2) The model called a 5-round-trip, Sharpe 0.10 result "已验证" / "风险真正得到控制" / "稳健正收益" while no trial passed the screen.
 `grounding/verdict_words.py` (pure) finds verdict phrases (zh list, en word-bounded) that are not negated (zh: 不/没/未/无法/尚未/
-没有/并未/不能/不可 within 3 characters before, cut at a clause end; en: not/never/no/cannot/n't within 12 characters) and are
-not inside the figures block or the system result card (from its `---` separator or title line to the end). The grounding
+没有/并未/不能/不可 within 3 characters before, cut at a clause end; en: not/never/no/cannot/n't before it) and are
+not inside the figures block. The system result card is appended after grounding, so a draft never contains it and no title
+the model writes (not "**研究结果汇总**" either) skips anything. "无风险利率" / "risk-free rate" and 不错/不仅/不但/不少/不断 are not claims
+or negations; en negation reaches back 60 characters across commas, cut at . ; : and newline. The grounding
 ledger's `_validate_verdict_words` turns each one into a `verdict_unsupported` issue (reason `no_passed_trial`) unless
 `alphakeel_research_ledger.session_has_passed_trial(current_llm_session_id())` (an IR row whose verified run card, or an engine
 row whose current screen, is `passed_screen`). The issue is not redactable (`release._VERDICT_CODES`): the draft is corrected
 without the verdict or the run fails closed on `safe_fallback` (zh/en text). The numeric-claim logic, identity checks, IR code
 and engines are unchanged.
 (3) The agent wrote exchange order code ("改 dry_run=False 即可实盘"), although this repository never places orders.
-`tools/order_code_guard.py` holds the pattern list (`create_order`, `create_*_order`, `place_order`, `privatePost*Order*`, the
-Binance / OKX / Bybit order endpoints, `trading_place_order`, `submit_order`); `write_file` (content) and `edit_file` (new text)
-refuse with `error_code: order_code_refused` before touching the file.
+`tools/order_code_guard.py` holds the case-insensitive pattern list (`*create*order`, `order_market_*` / `order_limit_*`,
+`*place_?order`, `*submit_?order`, `*private_?post*order`, `/api|fapi|dapi|sapi|papi/vN/**/order`, the OKX / Bybit order
+endpoints, `trading_place_order`); `write_file` (content) and `edit_file` (the whole replaced file content, not only new_text)
+refuse with `error_code: order_code_refused` before touching the file. Scope: best effort for the file-writing tools only;
+the bash tool is NOT covered by this guard, and string concatenation such as `"/api/v3/" + "order"` is not detected.
 
 **Files.**
 - `agent/src/memory/scope.py`
@@ -1130,6 +1137,12 @@ refuse with `error_code: order_code_refused` before touching the file.
 - `agent/tests/test_grounding_verdict_words.py`
 - `agent/tests/test_order_code_guard.py`
 - `agent/tests/test_system_prompt_cache_stability.py`
+- `agent/tests/test_agent_grounding.py`
+- `agent/tests/test_agent_output_discipline.py`
+
+**Pre-existing tests changed (fix round A).** Fixtures that declare a `cited` figure now ingest a retrieval result containing the
+cited number (a `web_search` result text), because a retrieval without the value no longer backs the figure and `load_skill` no
+longer counts as a retrieval; no assertion was changed.
 
 **Pre-existing test changed.** `test_system_prompt_cache_stability.py` (`test_state_envelope_sits_before_recalled_memories`): the
 envelope opens `<recalled-memories note=...>` now, so it asserts the prefix `<recalled-memories`.

@@ -101,6 +101,7 @@ _CORRECTION_REASONS = {
     "proposed_not_a_price": "a proposed level is a price, not a percentage; state the price it implies",
     "symbol_mismatch": "it is declared for one instrument but the sentence writes it about another",
     "citation_not_retrieved": "this session retrieved no document, page, news or paper, so there is no source to cite; retrieve one, or drop the figure",
+    "citation_value_not_retrieved": "its value appears in no document, page, news or paper retrieved in this session; retrieve the source, or drop the figure",
     "not_in_factor_library": "it is not a factor in alpha_zoo; describe the rule in your own words, without a factor-library name",
     "factor_never_returned": "no factor tool returned it in this session; call alpha_zoo for it, or describe the rule in your own words without the name",
     "no_passed_trial": "no backtest of this session passed the screen, so a verdict word is not allowed; describe the result and leave the verdict to the result card",

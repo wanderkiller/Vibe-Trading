@@ -1928,6 +1928,9 @@ def test_reference_level_and_currency_thresholds_pass_end_to_end(tmp_path: Path)
     proposed levels.
     """
     ledger = _spcx_us_ledger(tmp_path)
+    ledger.ingest_tool_result(
+        tool_name="web_search", arguments={}, result='{"results": [{"text": "all-time high 225.64"}]}', call_id="web-1", success=True
+    )  # a cited figure needs a retrieved value
 
     result = ledger.validate_final_answer(
         "SPCX.US 8/10 收 138.74 USD、8/12 高 149.60 USD（source: yahoo）。"
@@ -1979,6 +1982,9 @@ def test_validation_summary_with_counts_and_line_cites_passes_end_to_end(
     them. All three are bare integers, so all three are simply not checked.
     """
     ledger = _spcx_us_ledger(tmp_path)
+    ledger.ingest_tool_result(
+        tool_name="web_search", arguments={}, result='{"results": [{"text": "intraday high 150.57"}]}', call_id="web-1", success=True
+    )  # a cited figure needs a retrieved value
 
     result = ledger.validate_final_answer(
         "SPCX.US 核验(USD, source: yahoo):❌ 1 项事实错误 — "
@@ -3051,6 +3057,9 @@ def test_analysis_definition_is_declared_not_phrased(tmp_path: Path) -> None:
     undeclared one is reported instead of being waved through by its framing.
     """
     ledger = GroundingLedger(run_dir=tmp_path, user_message="什么是夏普比率？")
+    ledger.ingest_tool_result(
+        tool_name="web_search", arguments={}, result='{"results": [{"text": "Sharpe above 1.0"}]}', call_id="web-1", success=True
+    )  # a cited figure needs a retrieved value
 
     declared = ledger.validate_final_answer(
         "按行业惯例，夏普比率大于 1.0 被认为较好。\n\n"
@@ -3373,6 +3382,9 @@ def test_a_citation_subject_no_longer_exempts_anything(tmp_path: Path) -> None:
     # The other side: declaring the paper's figure cited passes, and it does
     # NOT carry the sibling the same sentence invents.
     ledger = GroundingLedger(run_dir=tmp_path, user_message="Research the factor.")
+    ledger.ingest_tool_result(
+        tool_name="web_search", arguments={}, result='{"results": [{"text": "Sharpe 1.8"}]}', call_id="web-1", success=True
+    )  # a cited figure needs a retrieved value
     partial = ledger.validate_final_answer(
         "The Fama-French paper reports a Sharpe ratio of 1.8, and our strategy achieved "
         "an annualized return of 47.3%.\n\n"

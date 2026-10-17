@@ -2044,6 +2044,22 @@ class _PolicyMixin:
                     "news or paper; retrieve the source, or drop the figure",
                 )
             ]
+        if not any(
+            _close(figure.value, x)
+            for n in self._retrieved_numbers
+            for x in (n, n / 100, n * 100)
+        ):
+            return [
+                self._figure_issue(
+                    "numeric_claim_conflict",
+                    figure,
+                    "cited",
+                    symbol,
+                    "citation_value_not_retrieved",
+                    "is declared cited, but its value appears in no document, page, news or paper "
+                    "retrieved in this session; retrieve the source, or drop the figure",
+                )
+            ]
         folded = line.casefold()
         if not any(token in folded for token in _note_tokens(declaration.note)):
             return [

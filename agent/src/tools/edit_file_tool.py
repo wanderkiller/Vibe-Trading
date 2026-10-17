@@ -82,6 +82,10 @@ class EditFileTool(BaseTool):
                     ensure_ascii=False,
                 )
             new_content = content.replace(old_text, new_text, 1)
+            # The whole result is checked, not only new_text: an edit can complete order code from pieces already in the file.
+            refused = order_code_refusal(new_content)
+            if refused:
+                return refusal_json(refused)
             resolved.write_text(new_content, encoding="utf-8")
             return json.dumps(
                 {
