@@ -117,9 +117,10 @@ def _run_card(run_dir: str) -> dict:
     return card
 
 
-def _robustness_inputs(a) -> tuple[str, str, str, tuple[int, int], str]:
-    """(ir, instruments, pack_dir, IS window, out) of ``ir robustness``: explicit arguments, or -- with ``--run`` -- the
-    run directory's files and run card; an explicit argument that disagrees with the run card is an error."""
+def _robustness_inputs(a) -> tuple[str, str, tuple[str, str], tuple[int, int], str]:
+    """(ir, instruments, pack source, IS window, out) of ``ir robustness``: explicit arguments, or -- with ``--run`` -- the
+    run directory's files and run card; an explicit argument that disagrees with the run card is an error. The pack source is
+    ``("dir", exported pack directory)`` or ``("service", pack_id)`` (the run froze its pack through the service)."""
     from . import ir as IR
 
     if not a.run:
@@ -127,7 +128,7 @@ def _robustness_inputs(a) -> tuple[str, str, str, tuple[int, int], str]:
                                   ("--is-end-ms", a.is_end_ms), ("--out", a.out)) if v is None]
         if missing:
             raise ApiError("request.invalid", f"ir robustness needs {', '.join(missing)} (or --run DIR)", field="run")
-        return a.ir, a.instruments, a.pack_dir, (a.is_start_ms, a.is_end_ms), a.out
+        return a.ir, a.instruments, ("dir", a.pack_dir), (a.is_start_ms, a.is_end_ms), a.out
     run = Path(a.run)
     card = _run_card(a.run)
     ir_path = a.ir or str(run / "ir.json")
@@ -142,12 +143,17 @@ def _robustness_inputs(a) -> tuple[str, str, str, tuple[int, int], str]:
         if given is not None and given != want:
             raise ApiError("request.invalid", f"{flag} {given} differs from the run card's window ({want})", field="is_window")
     pack_dir = a.pack_dir or card.get("pack_dir")
-    if not pack_dir:
-        raise ApiError("request.invalid", "the run card records no pack_dir (the pack came from the service): give --pack-dir", field="pack_dir")
+    if pack_dir:
+        source = ("dir", pack_dir)
+    elif (card.get("research_service") or {}).get("used") and (card.get("pack") or {}).get("pack_id"):
+        source = ("service", card["pack"]["pack_id"])
+    else:
+        raise ApiError("request.invalid", "the run card records no pack_dir and no service-frozen pack (research_service.used is not true "
+                       "or pack.pack_id is missing): give --pack-dir", field="pack_dir")
     inst = a.instruments or str(run / "instruments.json")
     if not Path(inst).is_file():
         raise ApiError("request.invalid", f"{inst} does not exist: give --instruments", field="instruments")
-    return ir_path, inst, pack_dir, window, a.out or str(run / "robustness")
+    return ir_path, inst, source, window, a.out or str(run / "robustness")
 
 
 def _robustness_fees(a) -> tuple[dict | None, str | None]:
@@ -166,12 +172,12 @@ def _robustness_fees(a) -> tuple[dict | None, str | None]:
     return assumptions["fees"], f"run_card:{Path(a.run) / 'run_card.json'}"
 
 
-def _battery(robustness, registry, ir_path, pack, inst_path, window, oos, a, trials_floor) -> dict:
+def _battery(robustness, registry, ir_path, pack, inst_path, window, oos, a, trials_floor, oos_pack=None) -> dict:
     from decimal import Decimal
 
     fees, fees_source = _robustness_fees(a)
     return robustness.battery(_load(ir_path), pack, _load(inst_path), is_window=window, oos_window=oos,
-                              oos_pack=Pack.from_directory(a.oos_pack_dir) if a.oos_pack_dir else None, out_dir=a.out,
+                              oos_pack=oos_pack if oos_pack is not None else (Pack.from_directory(a.oos_pack_dir) if a.oos_pack_dir else None), out_dir=a.out,
                               fees=fees, fees_source=fees_source,
                               filter_spec=_load(a.filter), permutations=a.permutations, seed=a.seed,
                               permutation_seed=a.permutation_seed,
@@ -189,21 +195,40 @@ def _ir_research(a) -> int:
 
         if (a.oos_start_ms is None) != (a.oos_end_ms is None):
             raise ApiError("request.invalid", "--oos-start-ms and --oos-end-ms go together", field="oos_window")
-        ir_path, inst_path, pack_dir, window, out_dir = _robustness_inputs(a)
-        pack = Pack.from_directory(pack_dir)
-        if a.run and pack.id != _run_card(a.run)["pack"]["pack_id"]:
-            raise ApiError("request.invalid", f"--pack-dir is pack {pack.id}, the run used {_run_card(a.run)['pack']['pack_id']}", field="pack_dir")
+        ir_path, inst_path, (src_kind, src), window, out_dir = _robustness_inputs(a)
         oos = None if a.oos_start_ms is None else (a.oos_start_ms, a.oos_end_ms)
         a.out = out_dir
         # prior_trials is never below the IR run card's trials.count (audit 2 P1-1 b): the battery uses the larger and says so
         floor = ((_run_card(a.run).get("trials") or {}).get("count") or 0) if a.run else 0
         # every candidate run is registered in the research service's trial ledger (audit 2 P1-1 c); --no-register opts out, visibly
         reg = None if a.no_register else Client(a.url)
+        fetch = None  # the client that opens a service-frozen pack (needed even with --no-register)
         try:
-            doc = _battery(robustness, reg, ir_path, pack, inst_path, window, oos, a, floor)
+            oos_pack = None
+            if src_kind == "dir":
+                pack = Pack.from_directory(src)
+            else:
+                from . import ir_backtest
+
+                fetch = Client(a.url)
+                fetch.check()
+                pack = Pack.open(fetch, src, a.cache)
+                if oos is not None and not a.oos_pack_dir:
+                    # the OOS window is frozen by the service too (a hold-out overlap is refused there: the ApiError propagates)
+                    ir_doc = _load(ir_path)
+                    insts = ir_backtest.universe_instruments(ir_doc, _load(inst_path))
+                    req = ir_backtest.dataset_request(insts, oos[0], oos[1], accept_partial=False,
+                                                      selection=pack.lock["request"].get("selection"))
+                    oos_pack = workflow.freeze_pack(fetch, req, cache_dir=a.cache)
+                    ir_backtest.check_pack(oos_pack, req)
+            if a.run and pack.id != _run_card(a.run)["pack"]["pack_id"]:
+                raise ApiError("request.invalid", f"the pack is {pack.id}, the run used {_run_card(a.run)['pack']['pack_id']}", field="pack_dir")
+            doc = _battery(robustness, reg, ir_path, pack, inst_path, window, oos, a, floor, oos_pack)
         finally:
             if reg is not None:
                 reg.close()
+            if fetch is not None:
+                fetch.close()
         for n in doc["notes"]:
             if n.startswith("warning:"):
                 print(n, file=sys.stderr)
@@ -244,6 +269,7 @@ def _ir_research(a) -> int:
         _out({"evidence_status": card["screen"]["evidence_status"], "screen": card["screen"], "run_id": card["run_id"], "strategy_id": card["strategy_id"], "pack_id": card["pack"]["pack_id"],
               "window": card["window"], "view": card["view"], "counts": card["counts"], "amounts": card["amounts"],
               "max_drawdown": card["max_drawdown"], "trials": card["trials"], "assumptions": card["assumptions"],
+              "diagnostics": card.get("diagnostics"),
               "service_registration": card.get("service_registration"),
               "run_dir": str(a.out), "run_card": str(Path(a.out) / "run_card.json"), "note": "research evidence (dataset view approximations in the run card); not reconciliation input"})
         return 0
@@ -353,9 +379,9 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--verbose", action="store_true", help="write every rejected pair into decisions.jsonl")
     q.add_argument("--out", help="output directory (default: a new Vibe-Trading run directory RUNS_DIR/<YYYYMMDD_HHMMSS>_ir/)")
     q = irs.add_parser("robustness", help="reliability battery + confidence grade on an exported dataset pack (data offline; each candidate run is registered with the research service)")
-    q.add_argument("--run", help="an `ir backtest` run directory: defaults --out (DIR/robustness), --ir, --instruments, the IS window and --pack-dir")
+    q.add_argument("--run", help="an `ir backtest` run directory: defaults --out (DIR/robustness), --ir, --instruments, the IS window and the pack (its pack_dir, else -- a run whose pack the service froze -- that pack is fetched from the service and an --oos window is frozen there too; no pack_dir needed)")
     q.add_argument("--ir")
-    q.add_argument("--pack-dir", help="exported dataset pack directory (lock.json + content/)")
+    q.add_argument("--pack-dir", help="exported dataset pack directory (lock.json + content/); not needed with --run when the run's pack was frozen by the service")
     q.add_argument("--instruments", help="JSON list of {venue, market, symbol, base?, quote?}")
     q.add_argument("--is-start-ms", type=int)
     q.add_argument("--is-end-ms", type=int)

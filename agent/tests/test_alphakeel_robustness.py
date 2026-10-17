@@ -525,3 +525,45 @@ def test_robustness_run_defaults_come_from_the_run_and_export_carries_the_eviden
         assert cli.main([*base, "--out", str(tmp_path / "rb-old")]) == 1
         assert "give --fees" in capsys.readouterr().out
         assert not (tmp_path / "rb-old" / "robustness.json").exists()
+
+
+def test_robustness_run_on_a_service_frozen_pack_fetches_it_and_otherwise_refuses(tmp_path, monkeypatch, capsys):
+    insts, pd = _market(tmp_path)
+    pack = Pack.from_directory(pd)
+    d = _ir()
+    run = tmp_path / "run"
+    ir_backtest.run(d, pack, insts, start_ms=START, end_ms=START + H6, out_dir=run, step_minutes=2, fees=FEES, fees_source="fees.json")
+    (run / "ir.json").write_text(json.dumps(d))
+    (run / "instruments.json").write_text(json.dumps(insts))
+    card_path = run / "run_card.json"
+    card = json.loads(card_path.read_text())
+    card.update(pack_dir=None, research_service={"used": True})
+    card_path.write_text(json.dumps(card))
+
+    opened = []
+
+    class FakeClient:
+        def __init__(self, url=None):
+            pass
+
+        def check(self):
+            return {}
+
+        def close(self):
+            pass
+
+    def fake_open(client, pack_id, cache_dir):
+        opened.append(pack_id)
+        return Pack.from_directory(pd)
+
+    monkeypatch.setattr(cli, "Client", FakeClient)
+    monkeypatch.setattr(Pack, "open", staticmethod(fake_open))
+    rc = cli.main(["ir", "robustness", "--run", str(run), "--no-register", "--permutations", "0", "--workers", "1", "--step-minutes", "2"])
+    assert rc == 0 and opened == [card["pack"]["pack_id"]]
+    assert json.loads(capsys.readouterr().out)["strategy_id"] == card["strategy_id"]
+
+    card.update(research_service={"used": False})
+    card_path.write_text(json.dumps(card))
+    capsys.readouterr()
+    rc = cli.main(["ir", "robustness", "--run", str(run), "--no-register", "--permutations", "0", "--workers", "1"])
+    assert rc != 0 and json.loads(capsys.readouterr().out)["error"]["code"] == "request.invalid"

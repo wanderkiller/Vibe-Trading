@@ -1483,3 +1483,19 @@ def test_a_spot_perp_maker_long_leg_is_refused(tmp_path):
         ir_backtest.backtest(None, doc, inst, start_ms=START, end_ms=END, out_dir=tmp_path / "out", pack_dir=tmp_path / "pack",
                              fees=spot, step_minutes=5)
     assert ei.value.code == "request.invalid" and ei.value.field == "ir"
+
+
+def test_diagnostics_count_the_rejections_and_the_entry_feature_distribution_of_a_zero_trade_run(tmp_path):
+    doc = golden_ir()
+    doc["entry"]["conditions"] = [{"feature": "funding_hourly_net", "op": ">=", "value": "1000"}]  # never satisfied
+    assert ir.load(doc)
+    pack = Pack.from_directory(export_dir(tmp_path, golden_built()))
+    card = ir_backtest.run(doc, pack, [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "d", step_minutes=2, fees=FEES, diagnostics=True)
+    assert card["counts"]["closed"] == 0
+    d = card["diagnostics"]
+    assert d["rejections"]["entry:funding_hourly_net"] > 0 and d["sample_stride"] == 1
+    f = d["entry_features"]["funding_hourly_net"]
+    assert f["threshold"] == {"op": ">=", "value": "1000"}
+    assert any(r["share_holding"] == "0.0000" and r["samples"] > 0 for r in f["by_base"].values())
+    plain = ir_backtest.run(doc, pack, [BN, OK], start_ms=START, end_ms=END, out_dir=tmp_path / "p", step_minutes=2, fees=FEES)
+    assert "diagnostics" not in plain

@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -579,6 +580,16 @@ def _summary(result: dict) -> str:
     days = (items.get("1.1") or {}).get("observed")
     fees_source = (result.get("assumptions") or {}).get("fees_source")
     parts += [f"{closed} closed trades", f"window {days} d", f"fees {fees_source}"]
+    diag = result.get("diagnostics")
+    if closed == 0 and isinstance(diag, dict):
+        top = list((diag.get("rejections") or {}).items())[:3]
+        if top:
+            parts.append("0 trades: top rejections " + ", ".join(f"{k} {n}" for k, n in top))
+        for name, f in (diag.get("entry_features") or {}).items():
+            thr = f.get("threshold")
+            p95s = [Decimal(r["p95"]) for r in (f.get("by_base") or {}).values() if r.get("p95") is not None]
+            if thr and p95s:
+                parts.append(f"{name} p95 {max(p95s).normalize():f} vs {thr['op']} {thr['value']}")
     return f"{result.get('evidence_status')}: " + "; ".join(parts)
 
 
@@ -628,8 +639,8 @@ class AlphakeelResearchTool(BaseTool):
         "settlements), so do not 'freeze' before it. It needs only args.ir; start_ms/end_ms are optional (default: the 180 "
         "days before the hold-out cutoff); instruments, step, fees (public base-tier taker unless args.fees is given) and "
         "the trial count are derived from the IR and the session's trial ledger. It returns evidence_status "
-        "(insufficient / failed_screen / passed_screen) and evidence_dir (the ref of its observed figures)), 'ir_robustness' (reliability battery + grade on the run's exported pack: cost stress, parameter neighbours, "
-        "anchored walk-forward, OOS, filter permutation test; args.run = the ir_backtest run directory), 'ir_crosscheck' (the same "
+        "(insufficient / failed_screen / passed_screen) and evidence_dir (the ref of its observed figures)), 'ir_robustness' (reliability battery + grade on the run's pack: cost stress, parameter neighbours, "
+        "anchored walk-forward, OOS, filter permutation test; args.run = the ir_backtest run directory; a run whose pack the service froze needs no pack_dir), 'ir_crosscheck' (the same "
         "backtest run by AlphaKeel's engine, compared trade by trade), 'ir_export' (strategy.json with strategy_id "
         "and provenance for AlphaKeel's registry, from an ir_backtest run; carries the robustness evidence). You cannot export into "
         "AlphaKeel's hand-off directory: hand-off is the user's button on the run page. The IR may carry an optional "

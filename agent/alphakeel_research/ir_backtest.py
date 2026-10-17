@@ -732,6 +732,77 @@ class Sim:
 # the backtest
 # ---------------------------------------------------------------------------------------------------------------------
 
+class _Diagnostics:
+    """Why a run opened (few or) no trades: the first failing check per pair and instant (``decide``'s ``rejected``), and the
+    entry features' value distribution per base, sampled every ``stride`` instants. Diagnostic only; never feeds the run."""
+
+    def __init__(self, doc: dict, total_instants: int):
+        self.doc = doc
+        self.assumptions = doc["assumptions"]
+        e = doc["entry"]
+        self.conds = {}
+        for c in e["conditions"]:
+            self.conds.setdefault(c["feature"], c)
+        self.features = list(dict.fromkeys([c["feature"] for c in e["conditions"]] + [e["rank_by"]]))
+        self.stride = max(1, -(-max(0, total_instants) // 2000))
+        self.rejections: dict[str, int] = {}
+        self.by_base: dict[str, dict[str, int]] = {}
+        # feature -> base -> [values, unavailable, invalid]
+        self.samples: dict[str, dict[str, list]] = {f: {} for f in self.features}
+
+    def observe(self, pairs: list[dict], rejected: list[dict], t: int, *, sample: bool) -> None:
+        base_of = {p["id"]: IR.ascii_upper(p["base"]) for p in pairs}
+        for r in rejected:
+            why = r["reason"]
+            self.rejections[why] = self.rejections.get(why, 0) + 1
+            b = self.by_base.setdefault(base_of.get(r["pair_id"], "?"), {})
+            b[why] = b.get(why, 0) + 1
+        if not sample:
+            return
+        for p in pairs:
+            base = base_of[p["id"]]
+            try:
+                f = IR.compute_features(p, self.assumptions, t)
+            except IR.PairInvalid:
+                f = None
+            for name in self.features:
+                slot = self.samples[name].setdefault(base, [[], 0, 0])
+                if f is None:
+                    slot[2] += 1
+                    continue
+                v = f.value(name)
+                if v is None:
+                    slot[1] += 1
+                else:
+                    slot[0].append(v)
+
+    def card(self) -> dict:
+        def q(vals: list[Decimal], frac: float) -> Decimal:
+            return vals[min(len(vals) - 1, max(0, -(-int(frac * 100) * len(vals) // 100) - 1))]
+
+        feats = {}
+        for name in self.features:
+            cond = self.conds.get(name)
+            by_base = {}
+            for base in sorted(self.samples[name]):
+                vals, unavailable, invalid = self.samples[name][base]
+                vals = sorted(vals)
+                row = {"samples": len(vals), "unavailable": unavailable, "invalid": invalid,
+                       "p05": None, "p50": None, "p95": None, "max": None, "share_holding": None}
+                if vals:
+                    row.update(p05=_s(q(vals, 0.05)), p50=_s(q(vals, 0.5)), p95=_s(q(vals, 0.95)), max=_s(vals[-1]))
+                    if cond is not None:
+                        share = Decimal(sum(1 for v in vals if IR._holds(cond, v))) / len(vals)
+                        row["share_holding"] = str(share.quantize(Decimal("0.0001"), rounding=ROUND_HALF_EVEN))
+                by_base[base] = row
+            feats[name] = {"threshold": None if cond is None else {"op": cond["op"], "value": cond["value"]}, "by_base": by_base}
+        return {"note": f"diagnostic only: the first failing check per pair and instant; feature values sampled every {self.stride} instants",
+                "sample_stride": self.stride,
+                "rejections": dict(sorted(self.rejections.items(), key=lambda kv: (-kv[1], kv[0]))),
+                "rejections_by_base": {b: dict(sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))) for b, d in sorted(self.by_base.items())},
+                "entry_features": feats}
+
+
 def run_id_of(sid: str, pack_id: str, start_ms: int, end_ms: int, step: int, fees: dict | None, capital: Decimal) -> str:
     h = canon.canonical_sha256({"strategy_id": sid, "pack": pack_id, "start": start_ms, "end": end_ms, "step": step,
                                 "fees": fees, "capital": str(capital)})
@@ -740,7 +811,8 @@ def run_id_of(sid: str, pack_id: str, start_ms: int, end_ms: int, step: int, fee
 
 def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end_ms: int, out_dir: str | Path, step_minutes: int = 2,
         fees: dict | None = None, fees_source: str = "request", capital_base: Decimal | None = None, trials: int | None = None,
-        trials_evidence: str | Path | None = None, verbose: bool = False, research_service: dict | None = None) -> dict:
+        trials_evidence: str | Path | None = None, verbose: bool = False, research_service: dict | None = None,
+        diagnostics: bool = False) -> dict:
     """Run the IR over the dataset pack and write ``run_card.json``, ``trades.jsonl``, ``equity.jsonl``,
     ``decisions.jsonl`` into ``out_dir``. Returns the run card."""
     loaded = IR.load(ir_doc)
@@ -787,6 +859,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
     dd = {"amount": Decimal(0), "peak_ms": None, "trough_ms": None}
     peak_t = start_ms
     last_settled_t: int | None = None
+    diag = _Diagnostics(ir_obj.doc, (end_ms - start_ms) // step) if diagnostics else None
     ftr = open(out / "trades.jsonl", "w", encoding="utf-8")
     feq = open(out / "equity.jsonl", "w", encoding="utf-8")
     fde = open(out / "decisions.jsonl", "w", encoding="utf-8")
@@ -860,6 +933,8 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                               "short": {"venue": tr.short.inst.venue, "symbol": tr.short.inst.symbol}, "opened_ms": tr.opened_ms,
                               "net_now": None if nn is None else _s(nn)})
             decision = IR.decide(ir_obj, {"pairs": pairs}, {"positions": views, "cooldowns": cooldowns}, t)
+            if diag is not None:
+                diag.observe(pairs, decision["rejected"], t, sample=(counts["instants"] - 1) % diag.stride == 0)
             rec = {"t": t, "pairs": len(pairs), "exits": [], "held": [], "entries": [], "rejected": len(decision["rejected"])}
             counts["exits_decided"] += len(decision["exits"])
             for x in decision["exits"]:
@@ -988,6 +1063,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         "metrics": {"total_return_on_capital": _s(q8(final_eq / capital_base)), "days": len(days), "trades_closed": sim.closed,
                     "sharpe_daily_annualised": ak.get("sharpe_annualised") if isinstance(ak, dict) else None},
         "research_service": research_service or {"used": False},
+        **({"diagnostics": diag.card()} if diag is not None else {}),
         # the exported pack directory the run used (`ir robustness --run` reopens it); None when the pack came from the service
         "pack_dir": str(Path((research_service or {})["pack_dir"]).resolve()) if (research_service or {}).get("pack_dir") else None,
     }
@@ -1170,7 +1246,7 @@ def _backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, e
         service = {"used": True, "credential": who.get("credential"), "data_horizon": who.get("data_horizon"),
                    "holdout_days": who.get("holdout_days")}
     check_pack(pack, req)
-    card = run(ir_doc, pack, insts, start_ms=start_ms, end_ms=end_ms, out_dir=out_dir, research_service=service, **kw)
+    card = run(ir_doc, pack, insts, start_ms=start_ms, end_ms=end_ms, out_dir=out_dir, research_service=service, diagnostics=True, **kw)
     # G1 1.1 / 1.2 / 1.3 / 1.16 judged by code (research-truth B3): the label the agent reports verbatim. Only the
     # `ir backtest` run gets it (not the robustness battery's sub-runs, which call run() directly).
     from .screen import screen
