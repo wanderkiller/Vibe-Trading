@@ -509,6 +509,7 @@ class GroundingLedger(
         issues.extend(self._validate_unsourced_symbols(content, figures, block))
         issues.extend(self._validate_figures(content, block, figures))
         issues.extend(self._validate_factor_names(content))
+        issues.extend(self._validate_verdict_words(content))
         issues = self._dedupe_issues(issues)
         result = ValidationResult(
             valid=not issues,

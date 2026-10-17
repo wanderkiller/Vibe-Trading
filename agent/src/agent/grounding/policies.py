@@ -33,6 +33,8 @@ from src.agent.grounding.evidence import (
     tail_risk_identity,
 )
 from src.agent.grounding.factor_names import known_factor_ids, scan_factor_refs
+from src.agent.grounding.verdict_words import scan_verdict_claims
+from src.providers.session_context import current_llm_session_id
 from src.agent.grounding.figures import (
     ROUNDED_BAND,
     Declaration,
@@ -2102,6 +2104,43 @@ class _PolicyMixin:
                     "claim": line.strip()[:200],
                     "span": [offset, offset + len(line)],
                     "message": message,
+                }
+            )
+        return issues
+
+    def _validate_verdict_words(self, content: str) -> list[dict[str, Any]]:
+        """Reject a research verdict word ("已验证", "可上实盘", "risk-free" ...) when no backtest of the session passed the screen.
+
+        The verdict of a result is carried by the system result card; the model's own sentence may only repeat it
+        after a trial passed the screen. Negated phrases, the figures block and the card are not read.
+        """
+        claims = scan_verdict_claims(content)
+        if not claims:
+            return []
+        from src.tools.alphakeel_research_ledger import session_has_passed_trial
+
+        if session_has_passed_trial(current_llm_session_id()):
+            return []
+        lines = _lines_with_offsets(content)
+        issues: list[dict[str, Any]] = []
+        for phrase, span in claims:
+            line, offset = next(
+                ((text, start) for text, start in reversed(lines) if start <= span[0]),
+                ("", 0),
+            )
+            issues.append(
+                {
+                    "code": "verdict_unsupported",
+                    "symbol": None,
+                    "value": None,
+                    "role": None,
+                    "reason": "no_passed_trial",
+                    "claim": line.strip()[:200],
+                    "span": [offset, offset + len(line)],
+                    "message": (
+                        f'"{phrase}" states a research verdict, but no backtest of this session passed '
+                        "the screen; describe the result without that verdict (the result card carries the verdict)."
+                    ),
                 }
             )
         return issues

@@ -44,6 +44,7 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `research-integrity` | validation, backtest_tool, grounding ledger + policies, loop, context, 9 locale labels | partly upstreamable (Monte Carlo, cross-turn grounding, tool-name refs); the rest local-only |
 | `ir-execution` | none (leaf package, its tool and tests only) | local-only (follows the leaf package) |
 | `research-integrity-r2` | crypto + composite engine (one refusal each), read_file_tool (one namespace), engine card column, research contract (ledger, tool arg, card), agent/context (three bullets), two skill notes, factor-name and cited-retrieval gates (grounding ledger, policies, release), `zoo_factor` helper and engine-screen facts | spot-short refusal and the `trials/` namespace are upstreamable in principle; the ledger lineage, card column, research contract, factor-name gate, `zoo_factor` and the retrieval rule for cited figures are local-only |
+| `research-integrity-r2-guards` | agent/context (recall filter, wrapper note), grounding ledger + policies + release (verdict-word gate), ledger `session_has_passed_trial`, write_file / edit_file (order-code refusal) | recall scope, verdict-word gate and the order-code refusal are local-only (they follow the research ledger and the hand-off boundary) |
 
 ---
 
@@ -1071,3 +1072,66 @@ research contract, factor-name gate, `zoo_factor` helper and prompt bullets are 
 - hook `agent/src/tools/alphakeel_research_ledger.py`: `"zoo_unused":`
 - upstream `agent/backtest/runner.py`: `def _build_price_panel(`
 - upstream `agent/src/factors/registry.py`: `def get_default_registry() -> Registry:`
+
+## `research-integrity-r2-guards` — recalled project memories are scoped by asset; verdict words need a passed screen; no order-placing code
+
+**Purpose.** Three defects of session f9941f6d027f, each a new guard in code rather than a prompt line.
+(1) Auto-recall injected an unrelated QQQ research memory into a crypto funding-arb conversation, and the model spoke of it as
+something the user had done there. `src/memory/scope.py` (pure) reads the upper-case ticker-like tokens of a text
+(`asset_tokens`; `BTC-USDT` gives `BTC-USDT` and `BTC`, quote currencies and report abbreviations are stop words, Chinese text
+yields nothing); `ContextBuilder.build_messages` keeps a recalled `project` memory only when its own tokens (title, keywords,
+first 2000 characters of the body) meet the message's, or it has none; other memory types are never filtered. The wrapper is
+`<recalled-memories note="background from earlier sessions; not evidence for this session and not something the user did here">`.
+(2) The model called a 5-round-trip, Sharpe 0.10 result "已验证" / "风险真正得到控制" / "稳健正收益" while no trial passed the screen.
+`grounding/verdict_words.py` (pure) finds verdict phrases (zh list, en word-bounded) that are not negated (zh: 不/没/未/无法/尚未/
+没有/并未/不能/不可 within 3 characters before, cut at a clause end; en: not/never/no/cannot/n't within 12 characters) and are
+not inside the figures block or the system result card (from its `---` separator or title line to the end). The grounding
+ledger's `_validate_verdict_words` turns each one into a `verdict_unsupported` issue (reason `no_passed_trial`) unless
+`alphakeel_research_ledger.session_has_passed_trial(current_llm_session_id())` (an IR row whose verified run card, or an engine
+row whose current screen, is `passed_screen`). The issue is not redactable (`release._VERDICT_CODES`): the draft is corrected
+without the verdict or the run fails closed on `safe_fallback` (zh/en text). The numeric-claim logic, identity checks, IR code
+and engines are unchanged.
+(3) The agent wrote exchange order code ("改 dry_run=False 即可实盘"), although this repository never places orders.
+`tools/order_code_guard.py` holds the pattern list (`create_order`, `create_*_order`, `place_order`, `privatePost*Order*`, the
+Binance / OKX / Bybit order endpoints, `trading_place_order`, `submit_order`); `write_file` (content) and `edit_file` (new text)
+refuse with `error_code: order_code_refused` before touching the file.
+
+**Files.**
+- `agent/src/memory/scope.py`
+- `agent/src/agent/context.py`
+- `agent/src/agent/grounding/verdict_words.py`
+- `agent/src/agent/grounding/ledger.py`
+- `agent/src/agent/grounding/policies.py`
+- `agent/src/agent/grounding/release.py`
+- `agent/src/tools/alphakeel_research_ledger.py`
+- `agent/src/tools/order_code_guard.py`
+- `agent/src/tools/write_file_tool.py`
+- `agent/src/tools/edit_file_tool.py`
+- `agent/tests/test_memory_scope.py`
+- `agent/tests/test_grounding_verdict_words.py`
+- `agent/tests/test_order_code_guard.py`
+- `agent/tests/test_system_prompt_cache_stability.py`
+
+**Pre-existing test changed.** `test_system_prompt_cache_stability.py` (`test_state_envelope_sits_before_recalled_memories`): the
+envelope opens `<recalled-memories note=...>` now, so it asserts the prefix `<recalled-memories`.
+
+**Commits.** (this commit)
+
+**Upstreamable.** The recall scope and the order-code refusal are generic in principle; the verdict-word gate follows the local
+research ledger (local-only).
+
+**Anchors.**
+- upstream `agent/src/agent/context.py`: `# Auto-recall: inject relevant memories into user message`
+- preimage `agent/src/agent/context.py`: `f"<recalled-memories>\n{recall_block}`
+- hook `agent/src/agent/context.py`: `<recalled-memories note=`
+- upstream `agent/src/agent/grounding/ledger.py`: `def persist(self) -> None:`
+- hook `agent/src/agent/grounding/ledger.py`: `self._validate_verdict_words(content)`
+- upstream `agent/src/agent/grounding/policies.py`: `def _check_cited(`
+- hook `agent/src/agent/grounding/policies.py`: `def _validate_verdict_words(`
+- upstream `agent/src/agent/grounding/release.py`: `_REDACTABLE_CODES = frozenset(`
+- hook `agent/src/agent/grounding/release.py`: `"no_passed_trial":`
+- upstream `agent/src/tools/write_file_tool.py`: `resolved.parent.mkdir(parents=True, exist_ok=True)`
+- hook `agent/src/tools/write_file_tool.py`: `order_code_refusal(`
+- upstream `agent/src/tools/edit_file_tool.py`: `new_content = content.replace(old_text, new_text, 1)`
+- hook `agent/src/tools/edit_file_tool.py`: `order_code_refusal(`
+- hook `agent/src/tools/alphakeel_research_ledger.py`: `def session_has_passed_trial(`

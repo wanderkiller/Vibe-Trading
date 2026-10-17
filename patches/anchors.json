@@ -2032,6 +2032,98 @@
      "literal": "def get_default_registry() -> Registry:"
     }
    ]
+  },
+  {
+   "id": "research-integrity-r2-guards",
+   "title": "Research integrity r2 guards: recalled project memories scoped by asset, verdict words need a passed screen, no order-placing code",
+   "files": [
+    "agent/src/memory/scope.py",
+    "agent/src/agent/context.py",
+    "agent/src/agent/grounding/verdict_words.py",
+    "agent/src/agent/grounding/ledger.py",
+    "agent/src/agent/grounding/policies.py",
+    "agent/src/agent/grounding/release.py",
+    "agent/src/tools/alphakeel_research_ledger.py",
+    "agent/src/tools/order_code_guard.py",
+    "agent/src/tools/write_file_tool.py",
+    "agent/src/tools/edit_file_tool.py",
+    "agent/tests/test_memory_scope.py",
+    "agent/tests/test_grounding_verdict_words.py",
+    "agent/tests/test_order_code_guard.py",
+    "agent/tests/test_system_prompt_cache_stability.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "upstream",
+     "literal": "# Auto-recall: inject relevant memories into user message"
+    },
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "preimage",
+     "literal": "f\"<recalled-memories>\\n{recall_block}"
+    },
+    {
+     "file": "agent/src/agent/context.py",
+     "kind": "hook",
+     "literal": "<recalled-memories note="
+    },
+    {
+     "file": "agent/src/agent/grounding/ledger.py",
+     "kind": "upstream",
+     "literal": "def persist(self) -> None:"
+    },
+    {
+     "file": "agent/src/agent/grounding/ledger.py",
+     "kind": "hook",
+     "literal": "self._validate_verdict_words(content)"
+    },
+    {
+     "file": "agent/src/agent/grounding/policies.py",
+     "kind": "upstream",
+     "literal": "def _check_cited("
+    },
+    {
+     "file": "agent/src/agent/grounding/policies.py",
+     "kind": "hook",
+     "literal": "def _validate_verdict_words("
+    },
+    {
+     "file": "agent/src/agent/grounding/release.py",
+     "kind": "upstream",
+     "literal": "_REDACTABLE_CODES = frozenset("
+    },
+    {
+     "file": "agent/src/agent/grounding/release.py",
+     "kind": "hook",
+     "literal": "\"no_passed_trial\":"
+    },
+    {
+     "file": "agent/src/tools/write_file_tool.py",
+     "kind": "upstream",
+     "literal": "resolved.parent.mkdir(parents=True, exist_ok=True)"
+    },
+    {
+     "file": "agent/src/tools/write_file_tool.py",
+     "kind": "hook",
+     "literal": "order_code_refusal("
+    },
+    {
+     "file": "agent/src/tools/edit_file_tool.py",
+     "kind": "upstream",
+     "literal": "new_content = content.replace(old_text, new_text, 1)"
+    },
+    {
+     "file": "agent/src/tools/edit_file_tool.py",
+     "kind": "hook",
+     "literal": "order_code_refusal("
+    },
+    {
+     "file": "agent/src/tools/alphakeel_research_ledger.py",
+     "kind": "hook",
+     "literal": "def session_has_passed_trial("
+    }
+   ]
   }
  ]
 }

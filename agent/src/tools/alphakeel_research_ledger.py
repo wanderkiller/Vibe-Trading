@@ -821,6 +821,23 @@ def _current_screen(session_id: str, row: dict, screen: dict | None) -> dict | N
     return rescreen(screen, returns, trials=trial_count(session_id), variant_sharpes=variant_sharpes_for(session_id, row.get("trial_key")))
 
 
+def session_has_passed_trial(session_id: str | None) -> bool:
+    """Whether any backtest of the conversation passed the screen: an IR row whose verified run card says
+    ``passed_screen``, or a generic-engine row whose current screen (DSR recomputed for today's trial count) does.
+    False without a session id."""
+    if not session_id:
+        return False
+    for row in ledger_rows(session_id):
+        card = verified_card(row)
+        if card is not None and _status(card) == "passed_screen":
+            return True
+    for row in engine_rows(session_id):
+        screen = _current_screen(session_id, row, verified_engine_screen(row))
+        if screen is not None and screen.get("evidence_status") == "passed_screen":
+            return True
+    return False
+
+
 def _net_return(screen: dict) -> str:
     net, base = _dec(_item_observed(screen, "1.3")), _dec((screen.get("facts") or {}).get("capital_base"))
     return "—" if net is None or base is None or base <= 0 else fmt_fraction(net / base)
