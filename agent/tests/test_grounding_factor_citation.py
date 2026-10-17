@@ -23,9 +23,11 @@ def _ledger(run_dir: Path, **kwargs) -> GroundingLedger:
     return GroundingLedger(run_dir=run_dir, user_message="总结一下", **kwargs)
 
 
-def _ingest(ledger: GroundingLedger, tool: str, payload: dict, call_id: str = "c1", success: bool = True) -> None:
+def _ingest(
+    ledger: GroundingLedger, tool: str, payload: dict, call_id: str = "c1", success: bool = True, arguments: dict | None = None
+) -> None:
     ledger.ingest_tool_result(
-        tool_name=tool, arguments={}, result=json.dumps(payload), call_id=call_id, success=success
+        tool_name=tool, arguments=arguments or {}, result=json.dumps(payload), call_id=call_id, success=success
     )
 
 
@@ -118,7 +120,7 @@ def test_factor_ids_and_retrieval_count_carry_over_from_prior_turns(tmp_path: Pa
     first_copy = tmp_path / "sessions" / "s1" / "grounding" / "run-1.json"
     first = _ledger(tmp_path / "run-1", session_copy=first_copy)
     _ingest(first, "alpha_bench", {"rows": [{"id": "gtja191_010"}, {"id": "alpha101_017"}]})
-    _ingest(first, "read_url", {"text": "AUM grew 12.5%"}, call_id="c2")
+    _ingest(first, "read_url", {"content": "AUM grew 12.5%"}, call_id="c2")
     _ingest(first, "get_stock_news", {"items": [{"title": "n 12.5%"}]}, call_id="c3")
     assert first_copy.is_file()
     payload = json.loads(first_copy.read_text(encoding="utf-8"))
@@ -132,8 +134,9 @@ def test_factor_ids_and_retrieval_count_carry_over_from_prior_turns(tmp_path: Pa
     old = tmp_path / "sessions" / "s1" / "grounding" / "old.json"
     old.write_text(json.dumps({"schema_version": 1, "evidence": []}), encoding="utf-8")
     assert _ledger(tmp_path / "run-3", prior_ledgers=[old])._retrieval_calls == 0
+    # the same ledger given twice is one set of calls, not two
     both = _ledger(tmp_path / "run-4", prior_ledgers=[first_copy, first_copy])
-    assert both._retrieval_calls == 4
+    assert both._retrieval_calls == 2
 
 
 def _cited_value(value: str) -> str:
@@ -143,23 +146,23 @@ def _cited_value(value: str) -> str:
 def test_load_skill_is_no_retrieval(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path / "run")
     _ingest(ledger, "load_skill", {"name": "backtest-guide", "text": "Sharpe above 12.5 is rare"})
-    assert ledger._retrieval_calls == 0 and ledger._retrieved_numbers == []
+    assert ledger._retrieval_calls == 0 and ledger._retrieval_records == []
     assert [i["reason"] for i in ledger.validate_final_answer(_CITED).issues] == ["citation_not_retrieved"]
 
 
 def test_a_retrieval_without_the_value_does_not_back_the_figure(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path / "run")
-    _ingest(ledger, "web_search", {"results": [{"title": "fund flows", "text": "AUM 3,400 and 7.1%"}]})
+    _ingest(ledger, "web_search", {"results": [{"title": "fund flows", "snippet": "AUM 3,400 and 7.1%"}]})
     issues = ledger.validate_final_answer(_CITED).issues
     assert [(i["code"], i["reason"]) for i in issues] == [("numeric_claim_conflict", "citation_value_not_retrieved")]
     assert "appears in no document, page, news or paper" in issues[0]["message"]
     assert ledger.redacted_release(_CITED, ledger.validate_final_answer(_CITED)) is not None
-    assert {3400.0, 7.1} <= set(ledger._retrieved_numbers)
+    assert [[3400.0, False], [7.1, True]] == ledger._retrieval_records[0]["numbers"]
 
 
 def test_a_retrieved_percent_backs_the_figure_as_a_percent_or_a_fraction(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path / "run")
-    _ingest(ledger, "web_search", {"results": [{"text": "growth was 4.2% last year"}]})
+    _ingest(ledger, "web_search", {"results": [{"snippet": "growth was 4.2% last year"}]})
     assert ledger.validate_final_answer(_cited_value("4.2")).issues == []
     assert ledger.validate_final_answer(_cited_value("0.042")).issues == []
     assert [i["reason"] for i in ledger.validate_final_answer(_cited_value("5.3")).issues] == [
@@ -167,15 +170,157 @@ def test_a_retrieved_percent_backs_the_figure_as_a_percent_or_a_fraction(tmp_pat
     ]
 
 
-def test_retrieved_numbers_persist_and_are_capped(tmp_path: Path) -> None:
+def test_retrieval_records_persist_and_are_capped_per_call(tmp_path: Path) -> None:
     session_copy = tmp_path / "sessions" / "s1" / "grounding" / "run-1.json"
     first = _ledger(tmp_path / "run-1", session_copy=session_copy)
-    _ingest(first, "read_url", {"text": " ".join(str(n) for n in range(1, 6001))})
-    assert len(first._retrieved_numbers) == 5000 and first._retrieved_numbers[0] == 1.0
-    assert first._retrieved_numbers[-1] == 5000.0
+    _ingest(first, "read_url", {"content": " ".join(str(n) for n in range(1, 6001))})
+    (record,) = first._retrieval_records
+    assert len(record["numbers"]) == 2000 and record["numbers"][0] == [1.0, False] and record["numbers"][-1] == [2000.0, False]
+    persisted = json.loads(session_copy.read_text(encoding="utf-8"))
+    assert "retrieved_numbers" not in persisted and persisted["retrieval_records"][0]["call_id"] == "c1"
     later = _ledger(tmp_path / "run-2", prior_ledgers=[session_copy])
-    assert later._retrieved_numbers == first._retrieved_numbers
-    assert later.validate_final_answer(_cited_value("4999")).issues == []
-    assert [i["reason"] for i in later.validate_final_answer(_cited_value("765432.1")).issues] == [
+    assert later._retrieval_records[0]["numbers"] == record["numbers"]
+    assert later.validate_final_answer(_cited_value("1999.0")).issues == []
+    assert [i["reason"] for i in later.validate_final_answer(_cited_value("4999.5")).issues] == [
         "citation_value_not_retrieved"
     ]
+
+
+def test_an_old_flat_retrieved_numbers_list_is_ignored(tmp_path: Path) -> None:
+    old = tmp_path / "sessions" / "s1" / "grounding" / "old.json"
+    old.parent.mkdir(parents=True)
+    old.write_text(
+        json.dumps({"schema_version": 1, "retrieval_calls": 3, "retrieved_numbers": [12.5], "evidence": []}), encoding="utf-8"
+    )
+    later = _ledger(tmp_path / "run", prior_ledgers=[old])
+    assert later._retrieval_calls == 0
+    assert [i["reason"] for i in later.validate_final_answer(_CITED).issues] == ["citation_not_retrieved"]
+
+
+_QUERY = "彭博社 基金规模 增长 12.5%"
+
+
+def _search(ledger: GroundingLedger, snippet: str, call_id: str = "c1", tool: str = "web_search") -> None:
+    args = {"query": _QUERY, "limit": 5}
+    _ingest(
+        ledger,
+        tool,
+        {"query": _QUERY, "mode": "search", "results": [{"title": "fund flows", "snippet": snippet}]},
+        call_id=call_id,
+        arguments=args,
+    )
+
+
+def test_a_call_that_only_echoes_its_query_does_not_back_the_figure(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path / "run")
+    _search(ledger, "AUM rose sharply last quarter")
+    assert [i["reason"] for i in ledger.validate_final_answer(_CITED).issues] == ["citation_value_not_retrieved"]
+    other = _ledger(tmp_path / "run-2")
+    _search(other, "AUM rose 12.5% last quarter")
+    assert other.validate_final_answer(_CITED).issues == []
+
+
+def test_a_plain_text_result_loses_the_calls_own_arguments(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path / "run")
+    ledger.ingest_tool_result(
+        tool_name="read_url", arguments={"url": "https://example.test/12.5", "length": 5000},
+        result="searched https://example.test/12.5 length 5000: nothing relevant", call_id="c1", success=True,
+    )
+    assert [i["reason"] for i in ledger.validate_final_answer(_CITED).issues] == ["citation_value_not_retrieved"]
+    other = _ledger(tmp_path / "run-2")
+    other.ingest_tool_result(
+        tool_name="read_url", arguments={"url": "https://example.test/a", "length": 5},
+        result="AUM rose 12.5% (length 5)", call_id="c1", success=True,
+    )
+    assert other.validate_final_answer(_CITED).issues == []
+
+
+def test_sentiment_retrieves_nothing(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path / "run")
+    _ingest(ledger, "sentiment", {"mode": "sentiment_score", "text": _QUERY, "score": 0.1}, arguments={"text": _QUERY})
+    assert ledger._retrieval_calls == 0
+    assert [i["reason"] for i in ledger.validate_final_answer(_CITED).issues] == ["citation_not_retrieved"]
+
+
+def test_the_newest_of_many_calls_is_kept(tmp_path: Path) -> None:
+    sessions = tmp_path / "sessions" / "s1" / "grounding"
+    copies: list[Path] = []
+    ledger = None
+    for turn in range(1, 6):
+        copy = sessions / f"run-{turn}.json"
+        ledger = _ledger(tmp_path / f"run-{turn}", prior_ledgers=list(copies), session_copy=copy)
+        _ingest(ledger, "read_url", {"content": " ".join(str(turn * 10000 + n) for n in range(1000))})
+        copies.append(copy)
+    assert ledger is not None and ledger._retrieval_calls == 5
+    assert ledger.validate_final_answer(_cited_value("50500.0")).issues == []
+    assert ledger.validate_final_answer(_cited_value("10500.0")).issues == []
+
+
+def test_only_the_sixty_newest_records_are_kept(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path / "run")
+    for n in range(70):
+        _ingest(ledger, "read_url", {"content": f"value {n + 1000}"}, call_id=f"c{n}")
+    assert ledger._retrieval_calls == 60
+    assert ledger._retrieval_records[0]["call_id"] == "c10" and ledger._retrieval_records[-1]["call_id"] == "c69"
+
+
+def _numbers(text: str) -> list[tuple[float, bool]]:
+    from src.agent.grounding.ledger import _numbers_in
+
+    return _numbers_in(text)
+
+
+def test_a_thousands_comma_joins_only_groups_of_three() -> None:
+    assert _numbers("5,10,15") == [(5.0, False), (10.0, False), (15.0, False)]
+    assert _numbers("1,234,567 and 4.2% and -12.5%") == [(1234567.0, False), (4.2, True), (12.5, True)]
+
+
+def _backs(tmp_path: Path, source: str, value: str, name: str = "r") -> bool:
+    ledger = _ledger(tmp_path / name)
+    _ingest(ledger, "read_url", {"content": source})
+    return ledger.validate_final_answer(_cited_value(value)).issues == []
+
+
+def test_matching_is_tight(tmp_path: Path) -> None:
+    assert not _backs(tmp_path, "volume 137 shares", "1.37", "a")
+    assert _backs(tmp_path, "growth 4.2% yoy", "4.2", "b") and _backs(tmp_path, "growth 4.2% yoy", "0.042", "c")
+    assert _backs(tmp_path, "down -12.5% yoy", "12.5", "d")
+    # half of the last written digit: a source 12.54 backs 12.5 but not 12.50 -> 12.54 is within 0.005 of 12.54 only
+    assert _backs(tmp_path, "rate 12.54", "12.5", "e") and not _backs(tmp_path, "rate 12.54", "12.50", "f")
+    assert not _backs(tmp_path, "rate 12.6", "12.5", "g")
+
+
+def test_a_decimal_fraction_backs_a_percent_figure(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path / "run")
+    _ingest(ledger, "read_url", {"content": "share 0.125 of assets"})
+    assert ledger.validate_final_answer(_CITED).issues == []
+
+
+def test_a_random_page_backs_few_fabricated_sharpe_values(tmp_path: Path) -> None:
+    import random
+
+    rng = random.Random(20261017)
+    page = (
+        [f"{rng.uniform(1, 1000):.2f}" for _ in range(700)]
+        + [str(rng.randint(1000, 5_000_000)) for _ in range(250)]
+        + [f"{rng.uniform(0.5, 30):.1f}%" for _ in range(50)]
+    )
+    rng.shuffle(page)
+    ledger = _ledger(tmp_path / "run")
+    _ingest(ledger, "read_url", {"content": " ".join(page)})
+    backed = sum(
+        1 for _ in range(200) if ledger.validate_final_answer(_cited_value(f"{rng.uniform(0.30, 3.00):.2f}")).issues == []
+    )
+    assert backed / 200 < 0.05
+
+
+def test_a_note_naming_a_source_compares_only_with_that_sources_records(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path / "run")
+    _ingest(ledger, "web_search", {"results": [{"title": "彭博社 fund report", "snippet": "AUM up 12.5%"}]}, call_id="c1")
+    _ingest(ledger, "web_search", {"results": [{"title": "other blog", "snippet": "AUM up 99.9%"}]}, call_id="c2")
+    assert ledger.validate_final_answer(_cited_value("12.5")).issues == []
+    assert [i["reason"] for i in ledger.validate_final_answer(_cited_value("99.9")).issues] == ["citation_value_not_retrieved"]
+    # a note no record's sources contain falls back to every record
+    ledger2 = _ledger(tmp_path / "run-2")
+    _ingest(ledger2, "web_search", {"results": [{"title": "other blog", "snippet": "AUM up 99.9%"}]})
+    assert ledger2.validate_final_answer(_cited_value("99.9")).issues == []

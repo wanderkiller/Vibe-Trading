@@ -71,7 +71,8 @@ def _read_trial(file_path: str, limit: Any) -> tuple[Path | None, str | None]:
         existing = sorted(p.name for p in runs.iterdir() if p.is_dir() and p.name.isdigit()) if runs.is_dir() else []
         listing = ", ".join(existing) if existing else "none"
         return None, _trial_error("not_found", f"{file_path} was not found. Existing trials of this session: {listing}.")
-    expected = {"code/signal_engine.py": row.get("code_sha256"), "config.json": row.get("config_sha256")}.get(match.group(2))
+    expected = {"code/signal_engine.py": row.get("code_sha256"), "config.json": row.get("config_sha256"),
+                "screen.json": row.get("screen_sha256")}.get(match.group(2))
     if isinstance(expected, str) and expected:
         try:
             actual = hashlib.sha256(path.read_bytes()).hexdigest()  # the ledger hashes the file bytes the same way

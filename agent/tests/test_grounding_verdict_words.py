@@ -39,26 +39,67 @@ def _phrases(text: str) -> list[str]:
         ("表现不错，已验证", ["已验证"]),
         ("invalidated", []),
         ("无风险利率为 4%", []),
-        ("无风险 收益率 4%", []),
+        ("无风险收益率 4%", []),
         ("risk-free rate 4%", []),
         ("risk\u2011free rate 4%", []),
-        ("the risk-free asset and risk-free return", []),
+        ("the risk-free asset and risk-free return", ["risk-free"]),
         ("该策略无风险", ["无风险"]),
         ("the strategy is risk\u2011free", ["risk-free"]),
         ("the strategy is risk\u2212free", ["risk-free"]),
-        ("经过验证的结论", ["经过验证"]),
+        ("经过验证的策略", ["经过验证的策略"]),
         ("The edge is verified", ["verified"]),
         ("unverified", []),
         ("收益不错已验证", ["已验证"]),
         ("不仅已验证", ["已验证"]),
         ("不但已验证", ["已验证"]),
         ("尚未验证", []),
-        ("It is not yet fully, completely and thoroughly validated.", []),
+        ("It is not yet fully validated.", []),
         ("It is fine, and validated.", ["validated"]),
     ],
 )
 def test_scan_cases(text: str, expected: list[str]) -> None:
     assert _phrases(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "No lookahead was found, so the strategy is validated.",
+        "Not only robust but validated.",
+        "There is no doubt the edge is validated.",
+        "We found no leakage and the results are validated",
+        "Sharpe is not bad and the model is validated",
+        "It is not just profitable, it is validated",
+        "The strategy is production ready.",
+        "This is a risk free strategy.",
+        "The strategy delivers risk-free returns.",
+        "该策略无风险 收益稳定",
+        "该策略未来可上实盘",
+        "The strategy is verified.",
+    ],
+)
+def test_these_state_a_verdict(text: str) -> None:
+    assert _phrases(text) != []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "It is not validated.",
+        "It is not yet validated.",
+        "It has not been validated.",
+        "It isn't validated.",
+        "It was never verified.",
+        "It cannot be considered production ready.",
+        "I verified the data has no gaps.",
+        "经过验证，数据无缺失",
+        "无风险利率为 4%",
+        "risk-free rate 4%",
+        "无风险收益率 4%",
+    ],
+)
+def test_these_state_no_verdict(text: str) -> None:
+    assert _phrases(text) == []
 
 
 def test_span_points_at_the_phrase() -> None:
@@ -138,3 +179,8 @@ def test_session_has_passed_trial_reads_both_ledgers(monkeypatch) -> None:
     assert arl.session_has_passed_trial("s1") is True
     monkeypatch.setattr(arl, "_current_screen", lambda sid, row, screen: None)
     assert arl.session_has_passed_trial("s1") is False
+
+
+def test_a_reason_renders_with_full_width_brackets() -> None:
+    out = arl._safe_reason("[官方确认](http://x)")
+    assert not any(c in out for c in "[]()") and "官方确认" in out

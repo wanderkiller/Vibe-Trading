@@ -212,7 +212,8 @@ def _write_json_atomic(path: Path, doc: dict) -> None:
 
 
 _REASON_MAX = 200
-_REASON_ESCAPES = str.maketrans({"|": "｜", "*": "＊", "#": "＃", "`": "｀", "<": "＜", ">": "＞"})
+_REASON_ESCAPES = str.maketrans({"|": "｜", "*": "＊", "#": "＃", "`": "｀", "<": "＜", ">": "＞",
+                                    "[": "［", "]": "］", "(": "（", ")": "）"})
 
 
 def _collapse(text: Any) -> str:
@@ -221,7 +222,7 @@ def _collapse(text: Any) -> str:
 
 def _safe_reason(text: Any) -> str:
     """A free-text reason as one line of plain text for the system-generated card: whitespace (newlines too) collapsed to single
-    spaces, the markdown characters ``| * # ` < >`` replaced by their full-width forms, cut to 200 characters with ``…``.
+    spaces, the markdown characters ``| * # ` < > [ ] ( )`` replaced by their full-width forms, cut to 200 characters with ``…``.
     Idempotent, so the card applies it again to reasons stored before it existed."""
     out = _collapse(text).translate(_REASON_ESCAPES)
     return out if len(out) <= _REASON_MAX else out[: _REASON_MAX - 1] + "…"

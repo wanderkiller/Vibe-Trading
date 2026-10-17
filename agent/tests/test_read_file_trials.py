@@ -112,6 +112,20 @@ def test_a_tampered_snapshot_is_a_snapshot_mismatch(env, bound) -> None:
     assert _read(env, "trials/0001/config.json")["error_code"] == "snapshot_mismatch"
 
 
+def test_a_tampered_screen_json_is_a_snapshot_mismatch(env, bound) -> None:
+    snap = _snapshot(1)
+    screen = snap / "screen.json"
+    screen.write_text('{"evidence_status": "failed_screen"}', encoding="utf-8")
+    # a row with no screen hash (an older ledger) leaves screen.json readable
+    assert _read(env, "trials/0001/screen.json")["status"] == "ok"
+    L._append_durable(L._session_dir(SESSION) / L.ENGINE_LEDGER_FILE, {
+        "seq": 1, "trial_key": "key1", "snapshot_dir": str(snap), "screen_sha256": L._sha256(screen)})
+    assert _read(env, "trials/0001/screen.json")["status"] == "ok"
+    screen.write_text('{"evidence_status": "passed_screen"}', encoding="utf-8")
+    out = _read(env, "trials/0001/screen.json")
+    assert out["status"] == "error" and out["error_code"] == "snapshot_mismatch"
+
+
 def test_a_snapshot_without_a_ledger_row_is_not_found(env, bound) -> None:
     _snapshot(1, row=False)
     out = _read(env, "trials/0001/code/signal_engine.py")

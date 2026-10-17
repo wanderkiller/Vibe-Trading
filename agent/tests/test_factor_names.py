@@ -38,6 +38,8 @@ def _canon(text: str) -> list[str]:
         ("国泰君安191 第10号", ["gtja191_010"]),
         ("GTJA191 No.10", ["gtja191_010"]),
         ("Kakushadze no. 17", ["alpha101_017"]),
+        ("Alpha101 中第 12 个因子", ["alpha101_012"]),
+        ("GTJA191 的 10 号因子", ["gtja191_010"]),
         ("qlib158_beta10 and qlib158_made_up", ["qlib158_beta10", "qlib158_made_up"]),
     ],
 )

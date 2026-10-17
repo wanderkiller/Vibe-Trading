@@ -2130,7 +2130,7 @@
     {
      "file": "agent/src/tools/edit_file_tool.py",
      "kind": "hook",
-     "literal": "order_code_refusal("
+     "literal": "order_code_count("
     },
     {
      "file": "agent/src/tools/alphakeel_research_ledger.py",

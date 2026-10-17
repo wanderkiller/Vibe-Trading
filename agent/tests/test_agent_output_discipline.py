@@ -303,7 +303,7 @@ class TestTheGateDoesNotKillCorrectAnswers:
         """
         cited_ledger = _ledger(tmp_path)
         cited_ledger.ingest_tool_result(
-            tool_name="web_search", arguments={}, result='{"results": [{"text": "YTD +12%"}]}',
+            tool_name="web_search", arguments={}, result='{"results": [{"snippet": "YTD +12%"}]}',
             call_id="web-1", success=True,
         )  # a cited figure needs a retrieved value
         cited = cited_ledger.validate_final_answer(

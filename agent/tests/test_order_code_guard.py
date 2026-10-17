@@ -49,6 +49,11 @@ _ORDER_SNIPPETS = [
     "requests.post('https://x/papi/v1/um/order')",
     "requests.post('https://x/dapi/v1/order')",
     "requests.post('https://x/api/v3/order/test')",
+    "client.new_order(symbol=s)",
+    "client.new_order_test()",
+    "ex.editOrder(id)",
+    "ex.batchOrders([a, b])",
+    "x = obj.fooPlaceOrder(s)",
 ]
 _ALLOWED = [
     "import ccxt\nex = ccxt.okx()\nbars = ex.fetch_ohlcv('BTC/USDT:USDT', '1h', limit=500)\n",
@@ -58,6 +63,12 @@ _ALLOWED = [
     "reorder_columns(df)",
     "order_book_depth = 5",
     "url = base + '/api/v3/depth'",
+    "def create_orderbook_features(df):",
+    "create_order_flow_imbalance(x)",
+    "create_sort_order(cols)",
+    "self.replace_order_ids()",
+    "df.order_limit_days",
+    "x = replace_order(a)",
 ]
 
 
@@ -102,3 +113,12 @@ def test_edit_file_checks_the_whole_replaced_content(tmp_path: Path) -> None:
     body = json.loads(EditFileTool().execute(path="signal_engine.py", old_text="foo", new_text="create_order", run_dir=str(tmp_path)))
     assert body["status"] == "error" and body["error_code"] == "order_code_refused"
     assert target.read_text(encoding="utf-8") == "ex.foo(s)\n"
+
+
+def test_edit_to_a_file_that_already_has_order_code_is_allowed_when_it_adds_none(tmp_path: Path) -> None:
+    target = tmp_path / "legacy.py"
+    target.write_text("ex.create_order(s)\nLIMIT = 1\n", encoding="utf-8")
+    ok = json.loads(EditFileTool().execute(path="legacy.py", old_text="LIMIT = 1", new_text="LIMIT = 2", run_dir=str(tmp_path)))
+    assert ok["status"] == "ok" and "LIMIT = 2" in target.read_text(encoding="utf-8")
+    more = json.loads(EditFileTool().execute(path="legacy.py", old_text="LIMIT = 2", new_text="ex.create_order(t)", run_dir=str(tmp_path)))
+    assert more["status"] == "error" and more["error_code"] == "order_code_refused"

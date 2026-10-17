@@ -1994,6 +1994,45 @@ class _PolicyMixin:
             )
         ]
 
+    def _retrieved_value_backs(self, figure: Figure, declaration: Declaration) -> bool:
+        """Whether a number a retrieval returned backs the cited ``figure`` at the precision it was written.
+
+        The tolerance is half of the figure's last written digit and signs are ignored. A source number backs
+        itself, its hundredth when it was a percent ("4.2%" backs 0.042), and its hundred-fold when it is a decimal
+        fraction below one and the figure is a percent ("0.125" backs 12.5%); a plain integer is never divided.
+        Records whose sources name something of the declaration's note are preferred; with none, all records count.
+        """
+        digits = figure.digits or ""
+        if "." in digits:
+            places = len(digits.split(".", 1)[1])
+        elif digits:
+            places = 0
+        else:
+            places = min(6, len(repr(abs(figure.value)).partition(".")[2].rstrip("0")))
+        tol = 0.5 * 10 ** (-places) + 1e-12
+        # (target, tolerance): "4.5bp" has the value 0.045 in percent units, but a source says "4.5"
+        targets = [(abs(figure.value), tol)]
+        try:
+            written = abs(float(digits))
+            if written and written != abs(figure.value):
+                targets[0] = (abs(figure.value), tol * abs(figure.value) / written)
+                targets.append((written, tol))
+        except ValueError:
+            pass
+        records = list(self._retrieval_records)
+        tokens = _note_tokens(declaration.note)
+        named = [r for r in records if any(t in source for source in r["sources"] for t in tokens)]
+        for record in named or records:
+            for value, is_pct in record["numbers"]:
+                for target, bound in targets:
+                    if abs(target - value) <= bound:
+                        return True
+                    if is_pct and abs(target - value / 100) <= bound:
+                        return True
+                    if figure.percent and 0 < value < 1 and abs(target - value * 100) <= bound:
+                        return True
+        return False
+
     def _check_cited(
         self,
         figure: Figure,
@@ -2044,11 +2083,7 @@ class _PolicyMixin:
                     "news or paper; retrieve the source, or drop the figure",
                 )
             ]
-        if not any(
-            _close(figure.value, x)
-            for n in self._retrieved_numbers
-            for x in (n, n / 100, n * 100)
-        ):
+        if not self._retrieved_value_backs(figure, declaration):
             return [
                 self._figure_issue(
                     "numeric_claim_conflict",

@@ -80,9 +80,18 @@ _ID_MARKER = re.compile(r"(?:[#\uff03_\-\u2013]|\bno\.|第|(?<![a-z])alpha)\s*$"
 _COUNT_UNIT = re.compile(r"\s*(?:个|种|项|bps|bp|%|区域|regions|factors|alphas)", re.IGNORECASE)
 
 
+# "第 12 个因子" counts the 12th factor, so 个 after a 第 number is no count unit; "10 号因子" is an id by itself.
+_ID_SUFFIX = re.compile(r"\s?号")
+
+
 def _is_marked_id(text: str, between: str, num_end: int) -> bool:
     """Whether the number ending at ``num_end``, preceded by ``between``, is written as a factor id."""
-    return _ID_MARKER.search(between) is not None and _COUNT_UNIT.match(text, num_end) is None
+    marker = _ID_MARKER.search(between)
+    if marker is None:
+        return _ID_SUFFIX.match(text, num_end) is not None
+    if marker.group(0).strip() == "第":
+        return True
+    return _COUNT_UNIT.match(text, num_end) is None
 
 
 def _overlaps(span: tuple[int, int], taken: list[tuple[int, int]]) -> bool:

@@ -1003,13 +1003,15 @@ returned 0 items) and declared a figure `cited` ("彭博社") although no retrie
 17", "Alpha#53") and the engine screen records `facts.zoo_factors_used` (string-literal first arguments of `zoo_factor(...)`)
 and `facts.zoo_names_in_code_not_used` (names the code mentions, comments included, without such a call); the engine card says
 which rows are hand-written. The grounding ledger tracks the library ids factor tools returned (or a backtest ran through
-`zoo_factor`), the number of successful retrieval calls and the numeric literals of the retrieved texts (`load_skill` is no
-retrieval; first 5000 numbers), persists them (`factor_ids`, `retrieval_calls`, `retrieved_numbers`) and carries them
+`zoo_factor`), the number of successful retrieval calls and per retrieval call the distinct numbers of the result body (the call's own arguments and echoed keys such as query / text / status are
+dropped; `load_skill` and `sentiment` are no retrieval; at most 2000 numbers and 40 source names per call, the 60 newest calls kept),
+persists them (`factor_ids`, `retrieval_calls` = distinct call ids, `retrieval_records`) and carries them
 across turns; the final answer gets `factor_unknown` (id not in the library) / `factor_unsourced` (id never returned) issues,
 which are not redactable (a name cannot be cut like a figure; the run corrects or fails closed on `safe_fallback`), and a figure
-declared `cited` with no retrieval this session gets `citation_not_retrieved`, and one whose value (as is, /100 or x100) is in no
-retrieved text gets `citation_value_not_retrieved`. A bare number is a factor id only behind an id marker (`#`, `No.`, `第`,
-`_`, `-`, "Alpha") and never before a count word (个, bps, regions ...); a prefix of word-named ids (`academic_`) is not open. One more prompt bullet states both rules.
+declared `cited` with no retrieval this session gets `citation_not_retrieved`, and one whose value is in no retrieved text gets `citation_value_not_retrieved` (tolerance: half of the last written digit; a source
+number backs itself, n/100 when it was a percent, and n*100 when it is a decimal below 1 and the figure is a percent; a note naming
+a source restricts the comparison to the calls whose title/source/host contains it). A bare number is a factor id only behind an id marker (`#`, `No.`, `第`,
+`_`, `-`, "Alpha") or before 号, and never before a count word (个, bps, regions ...; except after 第); a prefix of word-named ids (`academic_`) is not open. One more prompt bullet states both rules.
 
 (5) A session compared eleven near-identical versions and named "the best" with nothing testing whether it is distinguishable
 from luck, and item 1.2 (minimum trades) counted closed legs, so a two-leg pair trade counted twice. Now (a) the engine
@@ -1029,10 +1031,10 @@ the agent to quote the SPA line and to say "cannot be told apart from luck" when
 
 (6) Review fixes. Annualisation uses `research_contract._is_crypto` (venue-prefixed codes are crypto, 365). The tool result
 of `backtest` carries `contract_drift` and `trial_files` (the `_research_screen` whitelist dropped them). A free-text
-`supersedes_contract` reason is stored as one line (whitespace collapsed, `| * # ` < >` replaced by their full-width forms,
+`supersedes_contract` reason is stored as one line (whitespace collapsed, `| * # ` < > [ ] ( )` replaced by their full-width forms,
 200 characters at most) and re-sanitised on render, so it cannot add rows to the system-generated card. A run whose screen is
 unavailable or has no codes does not touch the contract. `read_file trials/NNNN/...` requires the seq to have a row in the
-session's engine ledger and compares `code/signal_engine.py` and `config.json` with the row's `code_sha256` / `config_sha256`
+session's engine ledger and compares `code/signal_engine.py`, `config.json` and `screen.json` with the row's `code_sha256` / `config_sha256` / `screen_sha256` (when present)
 (`snapshot_mismatch` on a difference, `not_found` without a row). The funding model is not part of the contract and is not
 measured.
 
@@ -1117,19 +1119,22 @@ first 2000 characters of the body) meet the message's, or it has none; other mem
 (2) The model called a 5-round-trip, Sharpe 0.10 result "已验证" / "风险真正得到控制" / "稳健正收益" while no trial passed the screen.
 `grounding/verdict_words.py` (pure) finds verdict phrases (zh list, en word-bounded) that are not negated (zh: 不/没/未/无法/尚未/
 没有/并未/不能/不可 within 3 characters before, cut at a clause end; en: not/never/no/cannot/n't before it) and are
-not inside the figures block. The system result card is appended after grounding, so a draft never contains it and no title
-the model writes (not "**研究结果汇总**" either) skips anything. "无风险利率" / "risk-free rate" and 不错/不仅/不但/不少/不断 are not claims
-or negations; en negation reaches back 60 characters across commas, cut at . ; : and newline. The grounding
+not inside the figures block ("verified" counts only after a copula: "is/are/was/were/been/be [fully|now] verified"; 经过验证 only as 经过验证的策略 / 经过验证，可). The system result card is appended after grounding, so a draft never contains it and no title
+the model writes (not "**研究结果汇总**" either) skips anything. 无风险 directly followed by 利率/收益率/资产/利息, and risk-free / risk free followed by rate/asset/interest/bond/treasury, are not claims;
+不错/不仅/不但/不少/不断 and 未来 are not negations; en negation reaches back 20 characters (widened to the whole word), cut at
+. ! ? ; : , and newline, is cancelled by a conjunction (so/and/but/therefore/thus, or yet not directly after not) between it and the
+phrase, and never comes from "not only/just", "no doubt/question", "no X was found", "found no". The grounding
 ledger's `_validate_verdict_words` turns each one into a `verdict_unsupported` issue (reason `no_passed_trial`) unless
 `alphakeel_research_ledger.session_has_passed_trial(current_llm_session_id())` (an IR row whose verified run card, or an engine
 row whose current screen, is `passed_screen`). The issue is not redactable (`release._VERDICT_CODES`): the draft is corrected
 without the verdict or the run fails closed on `safe_fallback` (zh/en text). The numeric-claim logic, identity checks, IR code
 and engines are unchanged.
 (3) The agent wrote exchange order code ("改 dry_run=False 即可实盘"), although this repository never places orders.
-`tools/order_code_guard.py` holds the case-insensitive pattern list (`*create*order`, `order_market_*` / `order_limit_*`,
-`*place_?order`, `*submit_?order`, `*private_?post*order`, `/api|fapi|dapi|sapi|papi/vN/**/order`, the OKX / Bybit order
-endpoints, `trading_place_order`); `write_file` (content) and `edit_file` (the whole replaced file content, not only new_text)
-refuse with `error_code: order_code_refused` before touching the file. Scope: best effort for the file-writing tools only;
+`tools/order_code_guard.py` holds the case-insensitive pattern list (`*create*order(s)`, `order_market_buy|sell*` / `order_limit_buy|sell*`,
+`place_?order`, `submit_?order` (not `replace_order`), `*private_?post*order`, the call forms `new_?order*(` / `edit_?order*(` /
+`batch_?orders?*(`; identifiers containing orderbook / order_book / order_flow / orderflow / order_ids / sort_order are ignored; `/api|fapi|dapi|sapi|papi/vN/**/order`, the OKX / Bybit order
+endpoints, `trading_place_order`); `write_file` (content) and `edit_file` (refused only when the whole replaced file has more order-code matches than the original file; an edit that adds none
+to a file that already has some is allowed) refuse with `error_code: order_code_refused` before touching the file. Scope: best effort for the file-writing tools only;
 the bash tool is NOT covered by this guard, and string concatenation such as `"/api/v3/" + "order"` is not detected.
 
 **Files.**
@@ -1175,5 +1180,5 @@ research ledger (local-only).
 - upstream `agent/src/tools/write_file_tool.py`: `resolved.parent.mkdir(parents=True, exist_ok=True)`
 - hook `agent/src/tools/write_file_tool.py`: `order_code_refusal(`
 - upstream `agent/src/tools/edit_file_tool.py`: `new_content = content.replace(old_text, new_text, 1)`
-- hook `agent/src/tools/edit_file_tool.py`: `order_code_refusal(`
+- hook `agent/src/tools/edit_file_tool.py`: `order_code_count(`
 - hook `agent/src/tools/alphakeel_research_ledger.py`: `def session_has_passed_trial(`

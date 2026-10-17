@@ -9,6 +9,7 @@ import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlsplit
 
 from src.agent.resolution_context import ResolutionContext
 
@@ -54,25 +55,154 @@ _ANALYSIS_TOOLS = frozenset(
 # (``backtest`` is read through its screen's ``zoo_factors_used``).
 _FACTOR_TOOLS = frozenset({"alpha_zoo", "alpha_bench", "alpha_compare", "factor_analysis"})
 # Tools whose success means a document, page, news item or paper was retrieved:
-# the only sources a figure declared ``cited`` can stand on.
+# the only sources a figure declared ``cited`` can stand on. ``sentiment`` scores a text the caller passed in
+# (its ``sentiment_score`` mode echoes it) and retrieves nothing.
 _RETRIEVAL_TOOLS = frozenset(
     {"web_search", "read_url", "read_document", "get_stock_news", "research_papers",
-     "get_research_reports", "get_sec_filings", "sentiment"}
+     "get_research_reports", "get_sec_filings"}
 )
 # ``load_skill`` is deliberately absent: every backtest session loads a skill first, and a skill text is no source.
-_NUMBER_LITERAL_RE = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
-_MAX_RETRIEVED_NUMBERS = 5000
+# A thousands comma only joins groups of three digits ("1,234,567"); "5,10,15" is three numbers. A trailing % marks a percent.
+_NUMBER_LITERAL_RE = re.compile(r"(?<![\d.])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(\s?[%\uff05])?")
+_MAX_NUMBERS_PER_CALL = 2000
+_MAX_SOURCES_PER_CALL = 40
+_MAX_SOURCE_LEN = 80
+_MAX_RETRIEVAL_RECORDS = 60
+# Keys of a retrieval result that echo the call or describe the envelope, not a document body.
+_ECHO_KEYS = frozenset(
+    {"query", "q", "mode", "text", "input", "prompt", "backends", "backend", "length", "status", "error", "arguments",
+     "params", "args", "limit", "page", "symbol", "ticker", "codes", "lang"}
+)
+_SOURCE_KEYS = frozenset({"title", "source", "publisher", "site"})
+_HOST_KEYS = frozenset({"url", "link", "domain"})
+_BARE_NUMBER_RE = re.compile(r"[-+]?\d+(?:\.\d+)?")
 
 
-def _numbers_in(text: str) -> list[float]:
-    """Numeric literals of ``text`` (thousands commas stripped), in order."""
-    out: list[float] = []
-    for raw in _NUMBER_LITERAL_RE.findall(text):
+def _numbers_in(text: str) -> list[tuple[float, bool]]:
+    """Numeric literals of ``text`` as ``(absolute value, is_pct)`` in order (thousands commas stripped)."""
+    out: list[tuple[float, bool]] = []
+    for match in _NUMBER_LITERAL_RE.finditer(text):
         try:
-            out.append(float(raw.replace(",", "")))
+            out.append((float(match.group(1).replace(",", "")), match.group(2) is not None))
         except ValueError:
             continue
     return out
+
+
+def _argument_strings(arguments: Any, out: list[str]) -> None:
+    """Every string and numeric argument value of a call, rendered as the result would echo it."""
+    if isinstance(arguments, Mapping):
+        for value in arguments.values():
+            _argument_strings(value, out)
+    elif isinstance(arguments, (list, tuple, set, frozenset)):
+        for value in arguments:
+            _argument_strings(value, out)
+    elif isinstance(arguments, str):
+        if arguments.strip():
+            out.append(arguments)
+    elif isinstance(arguments, (int, float)) and not isinstance(arguments, bool):
+        out.append(str(arguments))
+
+
+def _strip_arguments(text: str, arguments: Mapping[str, Any]) -> str:
+    """``text`` without any occurrence of the call's own argument values (a result echoes them).
+
+    A value that is a bare number is removed only as a whole numeric token, so ``limit=5`` does not cut "12.5".
+    """
+    values: list[str] = []
+    _argument_strings(arguments, values)
+    for value in sorted(set(values), key=len, reverse=True):
+        if _BARE_NUMBER_RE.fullmatch(value.strip()):
+            text = re.sub(r"(?<![\d.,])" + re.escape(value.strip()) + r"(?!\d|[.,]\d)", " ", text)
+        else:
+            text = text.replace(value, " ")
+    return text
+
+
+def _host(value: str) -> str:
+    """Host of a url, link or domain string, casefolded."""
+    value = value.strip()
+    host = urlsplit(value if "//" in value else "//" + value).netloc or value
+    return host.rsplit("@", 1)[-1].split(":", 1)[0].casefold()[:_MAX_SOURCE_LEN]
+
+
+def _walk_body(
+    node: Any,
+    key: str,
+    arguments: Mapping[str, Any],
+    numbers: dict[tuple[float, bool], None],
+    sources: dict[str, None],
+    skip: frozenset[str],
+) -> None:
+    """Collect numbers and source names from the body of a retrieval result, skipping echoed keys."""
+    if key.casefold() in skip:
+        return
+    if isinstance(node, Mapping):
+        for k, v in node.items():
+            _walk_body(v, str(k), arguments, numbers, sources, skip)
+    elif isinstance(node, list):
+        for v in node:
+            _walk_body(v, key, arguments, numbers, sources, skip)
+    elif isinstance(node, str):
+        lowered = key.casefold()
+        if lowered in _SOURCE_KEYS and node.strip():
+            sources.setdefault(node.strip().casefold()[:_MAX_SOURCE_LEN], None)
+        elif lowered in _HOST_KEYS and node.strip():
+            sources.setdefault(_host(node), None)
+        for number in _numbers_in(_strip_arguments(node, arguments)):
+            numbers.setdefault(number, None)
+    elif isinstance(node, (int, float)) and not isinstance(node, bool):
+        if str(node) not in {v.strip() for v in _flat_arguments(arguments)}:
+            numbers.setdefault((abs(float(node)), False), None)
+
+
+def _flat_arguments(arguments: Mapping[str, Any]) -> list[str]:
+    values: list[str] = []
+    _argument_strings(arguments, values)
+    return values
+
+
+def retrieval_record(
+    call_id: str, tool: str, arguments: Mapping[str, Any], result: str
+) -> dict[str, Any]:
+    """The per-call record of a retrieval: its distinct body numbers and the sources it names."""
+    numbers: dict[tuple[float, bool], None] = {}
+    sources: dict[str, None] = {}
+    try:
+        body = json.loads(result)
+    except ValueError:
+        body = None
+    if isinstance(body, (Mapping, list)):
+        # ``read_document`` returns the document itself under "text"; for every other tool "text" is an echoed input.
+        skip = _ECHO_KEYS - {"text"} if tool == "read_document" else _ECHO_KEYS
+        _walk_body(body, "", arguments, numbers, sources, skip)
+    else:
+        for number in _numbers_in(_strip_arguments(result, arguments)):
+            numbers.setdefault(number, None)
+    return {
+        "call_id": call_id,
+        "tool": tool,
+        "sources": list(sources)[:_MAX_SOURCES_PER_CALL],
+        "numbers": [[value, pct] for value, pct in list(numbers)[:_MAX_NUMBERS_PER_CALL]],
+    }
+
+
+def _clean_record(raw: Any, call_id: str) -> dict[str, Any] | None:
+    """A persisted retrieval record, validated, under ``call_id``; None when malformed."""
+    if not isinstance(raw, dict):
+        return None
+    sources = [str(x) for x in raw.get("sources") or [] if isinstance(x, str)][:_MAX_SOURCES_PER_CALL]
+    numbers: list[list[Any]] = []
+    for pair in raw.get("numbers") or []:
+        if (
+            isinstance(pair, (list, tuple)) and len(pair) == 2
+            and isinstance(pair[0], (int, float)) and not isinstance(pair[0], bool)
+        ):
+            numbers.append([float(pair[0]), bool(pair[1])])
+        if len(numbers) >= _MAX_NUMBERS_PER_CALL:
+            break
+    return {"call_id": call_id, "tool": str(raw.get("tool") or ""), "sources": sources, "numbers": numbers}
+
 
 logger = logging.getLogger(__name__)
 
@@ -211,9 +341,9 @@ class GroundingLedger(
         # ``zoo_factor``) and the count of successful retrieval calls; both carry
         # over from earlier turns of the conversation.
         self._factor_ids: set[str] = set()
-        self._retrieval_calls = 0
-        # Numeric literals of the retrieved documents (first ``_MAX_RETRIEVED_NUMBERS``): what a cited figure can stand on.
-        self._retrieved_numbers: list[float] = []
+        # One record per successful retrieval call (newest last, at most ``_MAX_RETRIEVAL_RECORDS``): the distinct numbers
+        # of its body and the sources it names, which is what a cited figure can stand on.
+        self._retrieval_records: list[dict[str, Any]] = []
 
         # call id -> tool of the analysis calls carried from earlier turns (``_calls_of_tool``).
         self._prior_call_tools: dict[str, str] = {}
@@ -246,12 +376,14 @@ class GroundingLedger(
             self._factor_ids.update(
                 str(x) for x in data.get("factor_ids") or [] if isinstance(x, str) and x in known_factors
             )
-            retrievals = data.get("retrieval_calls")
-            if isinstance(retrievals, int) and not isinstance(retrievals, bool) and retrievals > 0:
-                self._retrieval_calls += retrievals
-            self._add_retrieved_numbers(
-                x for x in data.get("retrieved_numbers") or [] if isinstance(x, (int, float)) and not isinstance(x, bool)
-            )
+            # An older ledger's flat ``retrieved_numbers`` list is ignored: its numbers carried no call or source.
+            for raw in data.get("retrieval_records") or []:
+                if not isinstance(raw, dict) or not raw.get("call_id"):
+                    continue
+                call_id = str(raw["call_id"])
+                record = _clean_record(raw, call_id if call_id.startswith(_PRIOR_PREFIX) else f"{prefix}{call_id}")
+                if record is not None:
+                    self._upsert_retrieval_record(record)
             for raw in data.get("evidence") or []:
                 if not isinstance(raw, dict) or raw.get("status") != "observed":
                     continue
@@ -445,7 +577,7 @@ class GroundingLedger(
             return
 
         self._track_session_symbols(arguments, result)
-        self._track_factor_and_retrieval(tool_name, payload, result)
+        self._track_factor_and_retrieval(tool_name, payload, result, arguments, call_id)
         self._note_model_write(tool_name, arguments, payload)
         if tool_name in _ANALYSIS_TOOLS:
             self._ingest_analysis_result(tool_name, arguments, payload, call_id)
@@ -461,8 +593,18 @@ class GroundingLedger(
             self._ingest_generic_numeric(tool_name, arguments, payload, call_id)
         self.persist()
 
+    @property
+    def _retrieval_calls(self) -> int:
+        """Number of distinct successful retrieval calls (by call id) still on record."""
+        return len({record["call_id"] for record in self._retrieval_records})
+
     def _track_factor_and_retrieval(
-        self, tool_name: str, payload: Mapping[str, Any] | None, result: str
+        self,
+        tool_name: str,
+        payload: Mapping[str, Any] | None,
+        result: str,
+        arguments: Mapping[str, Any],
+        call_id: str,
     ) -> None:
         """Note which factor-library ids a succeeding call returned and count retrievals."""
         if tool_name in _FACTOR_TOOLS:
@@ -474,17 +616,22 @@ class GroundingLedger(
             if isinstance(used, list):
                 self._factor_ids.update(str(x) for x in used if isinstance(x, str))
         if tool_name in _RETRIEVAL_TOOLS:
-            self._retrieval_calls += 1
-            self._add_retrieved_numbers(_numbers_in(result))
+            self._upsert_retrieval_record(retrieval_record(call_id, tool_name, arguments, result))
 
-    def _add_retrieved_numbers(self, numbers: Any) -> None:
-        """Append ``numbers`` to the retrieved-number list, which keeps the first ``_MAX_RETRIEVED_NUMBERS``."""
-        room = _MAX_RETRIEVED_NUMBERS - len(self._retrieved_numbers)
-        for number in numbers:
-            if room <= 0:
+    def _upsert_retrieval_record(self, record: dict[str, Any]) -> None:
+        """Add ``record`` as the newest, merging into an earlier record of the same call id; keep the newest 60."""
+        for index, old in enumerate(self._retrieval_records):
+            if old["call_id"] == record["call_id"]:
+                del self._retrieval_records[index]
+                merged = {(float(v), bool(p)): None for v, p in [*old["numbers"], *record["numbers"]]}
+                record = {
+                    **record,
+                    "sources": list(dict.fromkeys([*old["sources"], *record["sources"]]))[:_MAX_SOURCES_PER_CALL],
+                    "numbers": [[v, p] for v, p in list(merged)[:_MAX_NUMBERS_PER_CALL]],
+                }
                 break
-            self._retrieved_numbers.append(float(number))
-            room -= 1
+        self._retrieval_records.append(record)
+        del self._retrieval_records[:-_MAX_RETRIEVAL_RECORDS]
 
     def validate_final_answer(self, content: str) -> ValidationResult:
         """Validate identity assertions and numeric price claims.
@@ -576,7 +723,7 @@ class GroundingLedger(
             "session_symbol_roots": sorted(self._session_symbol_roots),
             "factor_ids": sorted(self._factor_ids),
             "retrieval_calls": self._retrieval_calls,
-            "retrieved_numbers": list(self._retrieved_numbers),
+            "retrieval_records": list(self._retrieval_records),
             "evidence": [asdict(record) for record in self._evidence],
             "tool_failures": list(self._tool_failures),
             "analysis_completed": list(self._analysis_completed),

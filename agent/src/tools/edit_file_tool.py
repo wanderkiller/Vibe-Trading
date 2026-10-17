@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from src.agent.tools import BaseTool
-from src.tools.order_code_guard import order_code_refusal, refusal_json
+from src.tools.order_code_guard import REFUSAL, order_code_count, refusal_json
 from src.tools.path_utils import allowed_write_roots
 from src.tools.path_utils import resolve_safe_path
 from src.tools.redaction import redact_internal_paths
@@ -41,9 +41,6 @@ class EditFileTool(BaseTool):
         file_path = kwargs["path"]
         old_text = kwargs["old_text"]
         new_text = kwargs["new_text"]
-        refused = order_code_refusal(str(new_text))
-        if refused:
-            return refusal_json(refused)
         run_dir = kwargs.get("run_dir")
 
         try:
@@ -82,10 +79,11 @@ class EditFileTool(BaseTool):
                     ensure_ascii=False,
                 )
             new_content = content.replace(old_text, new_text, 1)
-            # The whole result is checked, not only new_text: an edit can complete order code from pieces already in the file.
-            refused = order_code_refusal(new_content)
-            if refused:
-                return refusal_json(refused)
+            # The whole result is compared with the file, not only new_text: an edit can complete order code from pieces
+            # already in the file. Only an edit that ADDS order code is refused; one to a file that already has some
+            # and adds none is allowed.
+            if order_code_count(new_content) > order_code_count(content):
+                return refusal_json(REFUSAL)
             resolved.write_text(new_content, encoding="utf-8")
             return json.dumps(
                 {
