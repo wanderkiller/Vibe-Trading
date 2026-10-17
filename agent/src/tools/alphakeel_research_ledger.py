@@ -799,7 +799,7 @@ _TEXT = {
            "rob": "稳健性（ir_robustness，研究证据，非审批）：{name} 评级 {grade}，适用项通过 {passed}/{applicable}；OOS {oos}；封顶：{caps}",
            "rob_oos_run": "已运行", "rob_oos_none": "未运行", "rob_no_caps": "无",
            "rob_tampered": "稳健性（ir_robustness）：{name} 的 robustness.json 已改动或缺失，评级不显示",
-           "rob_mismatch": "稳健性（ir_robustness）：{name} 的检验输入（窗口、pack、费率或过滤）与已记录的回测不一致，评级不显示",
+           "rob_mismatch": "稳健性（ir_robustness）：{name} 的检验输入（窗口、pack、费率、过滤、标的、步长或资金基数）与已记录的回测不一致，评级不显示",
            "ledger": "账本：{file}",
            "also_failed": "；另未通过：{ids}", "na_zero": "不适用（0 笔）",
            "trials": "试验数：本会话 {n}；研究服务账本同 kind 同谱系 {k}（1.6 取较大值）",
@@ -821,7 +821,7 @@ _TEXT = {
             "rob": "Robustness (ir_robustness; research evidence, not an approval): {name} grade {grade}, {passed}/{applicable} applicable checks passed; OOS {oos}; caps: {caps}",
             "rob_oos_run": "run", "rob_oos_none": "not run", "rob_no_caps": "none",
             "rob_tampered": "Robustness (ir_robustness): robustness.json of {name} was modified or is missing; grade not shown",
-            "rob_mismatch": "Robustness (ir_robustness): the battery inputs of {name} (window, pack, fees or filter) are not those of a recorded backtest; grade not shown",
+            "rob_mismatch": "Robustness (ir_robustness): the battery inputs of {name} (window, pack, fees, filter, instruments, step or capital base) are not those of a recorded backtest; grade not shown",
             "ledger": "Ledger: {file}",
             "also_failed": "; also failed: {ids}", "na_zero": "n/a (0 trades)",
             "trials": "Trials: this session {n}; research-service ledger, same kind and lineage {k} (1.6 uses the larger)",
@@ -942,15 +942,19 @@ def _int_or_q(v: Any) -> Any:
 
 def _battery_matches(doc: dict, card: dict) -> bool:
     """Whether a battery ran on the backtest of ``card``: the same IS window, pack, fee table, instruments (any order),
-    step and capital base, the fees taken from a run card (not an override) and no universe filter. A grade from other
+    step and capital base (instruments by venue, market, symbol), the fees taken from a run card (not an override) and no universe filter. A grade from other
     inputs never lands on this row (review P1-1, round 2)."""
     inputs = doc.get("inputs")
     if not isinstance(inputs, dict):
         return False
 
+    def keys(a: Any) -> list | None:
+        if not isinstance(a, list) or not all(isinstance(x, dict) for x in a):
+            return None
+        return sorted((str(x.get("venue")), str(x.get("market")), str(x.get("symbol"))) for x in a)
+
     def same_set(a: Any, b: Any) -> bool:
-        return (isinstance(a, list) and isinstance(b, list) and bool(a)
-                and sorted(json.dumps(x, sort_keys=True) for x in a) == sorted(json.dumps(x, sort_keys=True) for x in b))
+        return bool(keys(a)) and keys(a) == keys(b)
 
     capital, card_capital = _dec(inputs.get("capital_base")), _dec((card.get("assumptions") or {}).get("capital_base"))
     if not (same_set(inputs.get("instruments"), card.get("instruments")) and capital is not None and capital == card_capital

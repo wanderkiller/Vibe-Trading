@@ -216,6 +216,8 @@ def _ir_research(a) -> int:
         floor = ((_run_card(a.run).get("trials") or {}).get("count") or 0) if a.run else 0
         if a.step_minutes is None and a.run:  # the step the IR backtest chose for this window (the battery checks it fits)
             a.step_minutes = _run_card(a.run).get("step_minutes")
+        if a.capital_base is None and a.run:  # the run's capital base, given or derived (review round 3)
+            a.capital_base = (_run_card(a.run).get("assumptions") or {}).get("capital_base")
         # every candidate run is registered in the research service's trial ledger (audit 2 P1-1 c); --no-register opts out, visibly
         reg = None if a.no_register else Client(a.url)
         fetch = None  # the client that opens a service-frozen pack (needed even with --no-register)

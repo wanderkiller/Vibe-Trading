@@ -673,6 +673,12 @@ def _service_conservative(client: Any, run_id: str, local_net: Decimal, timeout:
         return {"run_id": run_id, "net": None, "error": getattr(e, "message", None) or str(e)}
 
 
+def _universe_keys(ir_doc: dict, instruments: list[dict]) -> list[dict]:
+    """``{venue, market, symbol}`` of the instruments the runs trade (``ir_backtest.universe_instruments``): what the run
+    card's ``instruments`` lists, so the result card can tell a battery on the backtest's universe from one on another."""
+    return [{k: d[k] for k in ("venue", "market", "symbol")} for d in ir_backtest.universe_instruments(ir_doc, instruments)]
+
+
 def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos_window=None, oos_pack: Pack | None = None,
             out_dir: str | Path, fees: dict | None = None, fees_source: str | None = None, filter_spec: dict | None = None, permutations: int = 999, seed: int = 7,
             step_minutes: int | None = None, capital_base: Decimal | str | None = None, workers: int = 2, prior_trials: int = 0,
@@ -1049,7 +1055,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         "schema": SCHEMA, "strategy_id": sid, "name": base_doc["name"],
         "inputs": {"is_window": {"start_ms": windows["is"][0], "end_ms": windows["is"][1]}, "pack_id": pack.id,
                    "oos_window": oos_doc["window"] if oos_doc else None, "oos_pack_id": packs["oos"].id if oos_doc else None,
-                   "fees": fees, "fees_source": fees_source or "request", "filter": filter_spec, "instruments": instruments, "permutations": permutations, "seed": seed, "permutation_seed": perm_seed,
+                   "fees": fees, "fees_source": fees_source or "request", "filter": filter_spec, "instruments": _universe_keys(ir_doc, instruments), "permutations": permutations, "seed": seed, "permutation_seed": perm_seed,
                    "step_minutes": step_minutes, "capital_base": _s(capital), "workers": workers,
                    "execution": R.serial_reason or ("process pool (spawn)" if workers > 1 else "in process"), "segments": segments, "walk_forward": wf_cfg},
         "trials": {"count": n_trials, "distinct_candidate_variants": len(candidates), "prior_trials_declared": declared_prior, "prior_trials_used": prior_trials, "prior_trials_floor": prior_trials_floor,

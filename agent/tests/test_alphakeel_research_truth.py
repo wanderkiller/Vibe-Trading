@@ -394,7 +394,7 @@ def test_result_card_shows_the_ir_robustness_grade(session, tmp_path) -> None:
     for k, (key, value) in enumerate((("instruments", inputs["instruments"][:1]), ("step_minutes", 60), ("capital_base", "1000"))):
         assert battery(f"other-{k}", {**doc, "rating": {**doc["rating"], "grade": "A"}, "inputs": {**inputs, key: value}}) == []
     lines = render_card(SESSION_ID, True).splitlines()
-    assert ("稳健性（ir_robustness）：carry-wide (ir-bbbbb) 的检验输入（窗口、pack、费率或过滤）与已记录的回测不一致，"
+    assert ("稳健性（ir_robustness）：carry-wide (ir-bbbbb) 的检验输入（窗口、pack、费率、过滤、标的、步长或资金基数）与已记录的回测不一致，"
             "评级不显示") in lines
     assert not any("评级 A" in ln for ln in lines) and any(ln.endswith("| 通过初筛，1.4–1.13 未评估 |") for ln in lines)
     assert battery("rob", doc) == []
