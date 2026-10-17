@@ -588,6 +588,8 @@ def _summary(result: dict) -> str:
         if top:
             parts.append("0 trades: top rejections " + ", ".join(f"{k} {n}" for k, n in top)
                          + (f" (plus {outside} outside the universe)" if outside else ""))
+        elif outside:
+            parts.append(f"0 trades: all {outside} rejections outside the universe")
         if diag.get("error"):
             parts.append(f"diagnostics failed: {diag['error']}")
         for name, f in (diag.get("entry_features") or {}).items():

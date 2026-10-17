@@ -1529,3 +1529,5 @@ def test_the_zero_trade_summary_ranks_only_in_universe_rejections():
     text = _summary({"counts": {"closed": 0}, "diagnostics": {
         "rejections": {"universe:shape": 900, "entry:funding_hourly_net": 40, "cooldown": 2}, "entry_features": {}}})
     assert "top rejections entry:funding_hourly_net 40, cooldown 2 (plus 900 outside the universe)" in text
+    only_outside = _summary({"counts": {"closed": 0}, "diagnostics": {"rejections": {"universe:shape": 900}, "entry_features": {}}})
+    assert "0 trades: all 900 rejections outside the universe" in only_outside
