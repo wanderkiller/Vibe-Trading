@@ -69,7 +69,7 @@ _GTJA_RE = re.compile(
     rf"(?:GTJA|国泰君安)[\s\-\u2010-\u2015_]?191(?!\d)(?P<gap>[^\d]{{0,{_MAX_GAP}}})(?P<num>\d{{1,3}})(?!\d)", re.IGNORECASE
 )
 _ALPHA101_RE = re.compile(
-    rf"(?:Kakushadze|WorldQuant|Alpha[\s\-_]?101)(?P<gap>[^\d]{{0,{_MAX_GAP}}})"
+    rf"(?:Kakushadze|Alpha[\s\-_]?101)(?P<gap>[^\d]{{0,{_MAX_GAP}}})"
     rf"(?:101(?!\d)[^\d]{{0,{_MAX_GAP}}})?\s*(?P<num>\d{{1,3}})(?!\d)",
     re.IGNORECASE,
 )
@@ -107,7 +107,7 @@ def scan_factor_refs(text: str) -> list[FactorRef]:
     Returns:
         One :class:`FactorRef` per name; overlapping spellings count once. A
         number that is the size of a family ("GTJA-191 has 191 factors",
-        "WorldQuant Alpha 101") is not an id unless marked as one.
+        "Kakushadze Alpha 101") is not an id unless marked as one.
     """
     refs: list[FactorRef] = []
     taken: list[tuple[int, int]] = []
