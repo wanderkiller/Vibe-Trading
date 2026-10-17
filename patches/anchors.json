@@ -2226,6 +2226,53 @@
      "literal": "`params` / `param_ranges` / `components`: declare the strategy's tunable parameters"
     }
    ]
+  },
+  {
+   "id": "grounding-count-nouns",
+   "title": "Counted nouns containing 币 are not money; a date row and one bad row no longer sink a figures block",
+   "files": [
+    "agent/src/agent/grounding/figures.py",
+    "agent/src/agent/grounding/release.py",
+    "agent/tests/test_grounding_shape_hardening.py",
+    "agent/tests/test_grounding_release.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/src/agent/grounding/figures.py",
+     "kind": "upstream",
+     "literal": "def _is_currency_word(run: str) -> bool:"
+    },
+    {
+     "file": "agent/src/agent/grounding/figures.py",
+     "kind": "upstream",
+     "literal": "def parse_figures_block(content: str) -> FiguresBlock:"
+    },
+    {
+     "file": "agent/src/agent/grounding/figures.py",
+     "kind": "hook",
+     "literal": "_CJK_CLASSIFIERS = frozenset("
+    },
+    {
+     "file": "agent/src/agent/grounding/figures.py",
+     "kind": "hook",
+     "literal": "def strip_malformed_lines(content: str, block: FiguresBlock) -> str:"
+    },
+    {
+     "file": "agent/src/agent/grounding/release.py",
+     "kind": "upstream",
+     "literal": "dropped_block = any("
+    },
+    {
+     "file": "agent/src/agent/grounding/release.py",
+     "kind": "hook",
+     "literal": "narrowed = strip_malformed_lines(text, block)"
+    },
+    {
+     "file": "agent/src/agent/grounding/release.py",
+     "kind": "preimage",
+     "literal": "text = strip_figures_block(text, parse_figures_block(text))"
+    }
+   ]
   }
  ]
 }

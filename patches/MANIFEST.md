@@ -1272,3 +1272,23 @@ card lines follow the local engine ledger (local-only).
 - hook `agent/src/tools/alphakeel_research_ledger.py`: `if r.get("sweep") and held is not None and not held.get("sweep"):`
 - hook `agent/backtest/multiple_testing.py`: `def annual_sharpe(`
 - hook `agent/src/skills/strategy-generate/SKILL.md`: `` `params` / `param_ranges` / `components`: declare the strategy's tunable parameters ``
+
+## `grounding-count-nouns` — counted nouns containing "币" are not money; a date row and one bad row no longer sink a figures block
+
+**Purpose.** In a live session "10 个币" / "扩到 20 个币" declared as `count` were read as currency (`_is_currency_word`
+accepted any short CJK run holding "币"), judged against BTC prices and cut to "（略※）". Separately a
+`2026-02-19 | count | window start date | ref` row was `figures_block_malformed`, and release dropped the whole block,
+so every correctly declared number in it was cut too. Now a CJK run opening with a classifier (`_CJK_CLASSIFIERS`) or
+"币种"/"币对" is not a currency word (人民币, 港币, 美元, 元 unchanged); an ISO-date value cell is skipped by
+`parse_figures_block`; release cuts only the unreadable lines (`strip_malformed_lines`) and falls back to the whole block
+only if a malformed line remains. Prose dates were already exempt (`_DATE_RE` hard spans in `scan_figures`). Upstreamable
+as a bug fix.
+
+**Files.**
+- `agent/src/agent/grounding/figures.py`
+- `agent/src/agent/grounding/release.py`
+- `agent/tests/test_grounding_shape_hardening.py`
+- `agent/tests/test_grounding_release.py`
+
+**Commits.** (this commit).
+

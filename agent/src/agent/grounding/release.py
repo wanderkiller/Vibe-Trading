@@ -20,6 +20,7 @@ from src.agent.grounding.figures import (
     parse_figures_block,
     scan_figures,
     strip_figures_block,
+    strip_malformed_lines,
 )
 from src.agent.grounding.policies import ValidationResult
 
@@ -576,7 +577,14 @@ class _ReleaseMixin:
             issue.get("code") == "figures_block_malformed" for issue in check.issues
         )
         if dropped_block:
-            text = strip_figures_block(text, parse_figures_block(text))
+            # Cut only the lines that cannot be read, so the declarations that parsed
+            # still cover their figures; a leftover malformed line drops the whole block.
+            block = parse_figures_block(text)
+            narrowed = strip_malformed_lines(text, block)
+            if narrowed != text and not parse_figures_block(narrowed).malformed:
+                text = narrowed
+            else:
+                text = strip_figures_block(text, block)
             check = self._validate(text, record=False)
         removed = 0
         keys: set[str] = set()

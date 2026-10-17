@@ -457,7 +457,7 @@ def test_a_declared_value_tolerates_its_marks(
 
 
 @pytest.mark.parametrize(
-    "written", ["0.95 is entry", "0.95 0.97", "0.95 元/股", "ABCD$3", "3.6ppm", "2026-09-09"]
+    "written", ["0.95 is entry", "0.95 0.97", "0.95 元/股", "ABCD$3", "3.6ppm"]
 )
 def test_a_declared_value_with_anything_else_is_malformed(written: str) -> None:
     assert len(_parse(f"{written} | proposed | entry").malformed) == 1, written
@@ -585,10 +585,10 @@ def test_a_malformed_block_is_dropped_and_the_draft_is_cut_as_usual(tmp_path: Pa
 
     assert released is not None
     assert "最新收盘 0.666 元" in released
-    # Without the block, 0.65 is an observed claim like any other and is cut too.
-    assert "0.65" not in released and "2.50" not in released
+    # Only the unreadable line goes: 0.65 keeps its declaration, 2.50 is cut as undeclared.
+    assert "0.65" in released and "2.50" not in released
     assert "figures" not in released and "observed" not in released
-    assert "※ 略去 2 处" in released
+    assert "※ 略去 1 处" in released
 
 
 def test_a_malformed_line_with_nothing_to_cut_releases_the_checked_text(tmp_path: Path) -> None:
@@ -650,6 +650,14 @@ def test_a_three_character_currency_word_is_money_and_a_four_character_run_is_no
     released = ledger.redacted_release(draft, ledger.validate_final_answer(draft))
     assert released is not None
     assert "另报价（略※）。" in released and "人民币" not in released
+
+
+def test_a_counted_noun_with_the_money_character_is_not_a_currency_word() -> None:
+    assert _shapes("共 10 个币")["10"] != "measured"
+    assert _shapes("扩到 3 种币")["3"] != "measured"
+    assert _shapes("覆盖 5 币种")["5"] != "measured"
+    assert _shapes("报价 100 人民币")["100"] == "measured"
+    assert _shapes("报价 100 港币")["100"] == "measured"
 
 
 def test_a_line_opening_with_a_figure_is_not_an_ordinal(tmp_path: Path) -> None:

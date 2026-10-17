@@ -86,6 +86,12 @@ _TEX_INLINE_RE = re.compile(r"(?<![\\$])\$(?=[^\s$])[^\n$]*?(?<=[^\s\\])\$(?![\d
 # touching a bare integer ("$100", "820 CNY") makes it measurement-shaped.
 _CURRENCY_CHARS = frozenset("$¥￥€£₩₹元币圆镑円원")
 
+# A CJK run opening with a classifier is a counted noun ("10 个币", "3 种币", "5 币种",
+# "2 对"), never a currency word, even though it holds the money character "币".
+_CJK_CLASSIFIERS = frozenset("个种枚只类家条项笔次位名组对轮档支款")
+_COUNT_NOUN_PREFIXES = ("币种", "币对")
+_ISO_DATE_CELL_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[T ]\S*)?$")
+
 _CURRENCY_CODES = frozenset(
     {
         "USD", "CNY", "CNH", "RMB", "HKD", "JPY", "EUR", "GBP", "KRW", "INR",
@@ -598,6 +604,8 @@ def _fenced_blocks(content: str) -> list[tuple[int, int, str, tuple[int, int]]]:
 
 def _is_currency_word(run: str) -> bool:
     """Whether a CJK run is short enough to be a currency word and holds a money mark."""
+    if run[:1] in _CJK_CLASSIFIERS or run.startswith(_COUNT_NOUN_PREFIXES):
+        return False
     return len(run) <= _MAX_CURRENCY_WORD and any(char in _CURRENCY_CHARS for char in run)
 
 
@@ -698,6 +706,9 @@ def parse_figures_block(content: str) -> FiguresBlock:
         parts = [part.strip() for part in stripped.split("|", 3)]
         if _is_header_or_rule(parts):
             continue
+        # A date is a label, not a figure to check: a window-start row is not a declaration.
+        if parts and _ISO_DATE_CELL_RE.match(parts[0]):
+            continue
         parsed = _parse_value(parts[0], document_reading) if parts else None
         role = parts[1].casefold() if len(parts) > 1 else ""
         if parsed is None or role not in ROLES:
@@ -733,6 +744,45 @@ def strip_figures_block(content: str, block: FiguresBlock) -> str:
         head, tail = text[:start].rstrip(), text[end:].lstrip()
         text = head + ("\n\n" if head and tail else "") + tail
     return text.strip() if spans else content
+
+
+def strip_malformed_lines(content: str, block: FiguresBlock) -> str:
+    """Return the draft with only the unreadable declaration lines removed.
+
+    ``block.malformed`` numbers lines of the concatenation of every ``figures``
+    fence body (see ``parse_figures_block``); each is mapped back into its own
+    fence and cut, so the declarations that did parse stay in place.
+    """
+    if not block.present or not block.malformed:
+        return content
+    bodies = [
+        (start, end)
+        for start, end, info, (start, end) in _fenced_blocks(content)
+        if info == BLOCK_LANGUAGE
+    ]
+    # raw offset -> content offset, one segment per fence body.
+    segments: list[tuple[int, int, int]] = []
+    cursor = 0
+    for start, end in bodies:
+        segments.append((cursor, cursor + end - start, start))
+        cursor += end - start
+    raw = "".join(content[start:end] for start, end in bodies)
+    lines = raw.splitlines(keepends=True)
+    cuts: list[tuple[int, int]] = []
+    for number, _ in block.malformed:
+        if not 1 <= number <= len(lines):
+            continue
+        begin = sum(len(line) for line in lines[: number - 1])
+        finish = begin + len(lines[number - 1])
+        for seg_start, seg_end, origin in segments:
+            if seg_start <= begin < seg_end:
+                finish = min(finish, seg_end)
+                cuts.append((origin + begin - seg_start, origin + finish - seg_start))
+                break
+    text = content
+    for start, end in sorted(set(cuts), reverse=True):
+        text = text[:start] + text[end:]
+    return text
 
 
 def _table_cells(line: str, offset: int) -> list[tuple[str, int, int]]:
