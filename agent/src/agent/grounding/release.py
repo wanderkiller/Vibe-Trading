@@ -325,7 +325,10 @@ class _ReleaseMixin:
             if self._symbol_resolution_attempts < MAX_SYMBOL_RESOLUTION_ATTEMPTS:
                 return _RESOLVER_TOOL
             return None
-        if self.identity_status == "locked" and any(
+        # research-truth: an AlphaKeel research answer is about its backtests; a quote fetched to "ground" a parameter or
+        # an item id adds an unrelated price to the answer (replay e273a64edf89), so it gets the correction prompt instead.
+        alphakeel = any(entry.get("tool") == "alphakeel_research" for entry in self._analysis_completed)
+        if self.identity_status == "locked" and not alphakeel and any(
             issue.get("code") == "unsourced_symbol_figures"
             or (issue.get("code") == "numeric_claim_unavailable" and issue.get("price_like"))
             for issue in validation.issues

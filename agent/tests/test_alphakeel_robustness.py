@@ -627,3 +627,42 @@ def test_robustness_oos_window_is_frozen_by_the_service_refused_on_holdout_and_n
     assert cli.main([*base, "--oos-start-ms", str(START + H6 // 2), "--oos-end-ms", str(START + 2 * H6), "--out", str(tmp_path / "c")]) != 0
     assert "request.invalid" in capsys.readouterr().out
     assert len(frozen) == m and len(closed) > n
+
+
+def test_a_step_the_service_would_refuse_is_refused_before_any_run_and_the_default_fits(tmp_path, monkeypatch):
+    """Replay 2026-10-17: a 180-day battery at the old fixed 5-minute default ran ~17 minutes of local candidates before the
+    service refused 51840 decision instants (> 25000). The battery now checks every window up front."""
+    assert robustness.smallest_step(0, 180 * DAY) == 15 and robustness.smallest_step(0, H6) == 1
+    insts, pd = _market(tmp_path)
+    pack = Pack.from_directory(pd)
+    ran = []
+
+    class _Stop(Exception):
+        pass
+
+    def stub(self, *a, **k):
+        ran.append(a)
+        raise _Stop
+
+    monkeypatch.setattr(robustness._Runner, "__init__", stub)
+    long_is = (START, START + 180 * DAY)
+    with pytest.raises(ApiError) as e:
+        robustness.battery(_ir(), pack, insts, is_window=long_is, fees=FEES, out_dir=tmp_path / "r", step_minutes=5, workers=1)
+    assert e.value.field == "step_minutes" and "use step_minutes >= 15" in str(e.value) and not ran
+    with pytest.raises(_Stop):
+        robustness.battery(_ir(), pack, insts, is_window=long_is, fees=FEES, out_dir=tmp_path / "r2", workers=1)
+    assert ran and ran[-1][4] == 15  # no step given: the smallest step that fits (the runner is stubbed, so the battery stops)
+
+
+def test_the_default_oos_window_is_the_gap_before_the_holdout_cutoff() -> None:
+    """Replay e273a64edf89: the default backtest window ran to the cutoff, so no OOS could be run. The IR backtest now
+    stops 30 days before the cutoff and ``ir robustness --run`` uses that gap (at most 30 days, at least 7, whole minutes)."""
+    from alphakeel_research.cli import _default_oos
+
+    day = 86_400_000
+    is_end = 200 * day
+    assert _default_oos((0, is_end), is_end + 30 * day) == (is_end, is_end + 30 * day)
+    assert _default_oos((0, is_end), is_end + 90 * day) == (is_end, is_end + 30 * day)  # never more than 30 days
+    assert _default_oos((0, is_end), is_end + 10 * day + 59_999) == (is_end, is_end + 10 * day)  # whole minutes
+    assert _default_oos((0, is_end), is_end + 6 * day) is None  # too short to say anything
+    assert _default_oos((0, is_end), None) is None and _default_oos((0, is_end), True) is None

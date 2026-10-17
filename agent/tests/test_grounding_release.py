@@ -2508,6 +2508,23 @@ def test_a_count_claim_without_evidence_does_not_fetch_prices(tmp_path: Path) ->
     assert ledger.recovery_action(unsourced) == "get_market_data"
 
 
+def test_an_alphakeel_research_answer_never_fetches_prices(tmp_path: Path) -> None:
+    """Replay e273a64edf89: a currency-marked IR parameter ("max_loss 100 USDT") sent the loop to get_market_data, and
+    the answer then quoted an unrelated BTC close. After an alphakeel_research analysis the correction prompt applies."""
+    ledger = _ledger(tmp_path)
+    ledger._analysis_completed.append({"call_id": "bt-1", "tool": "alphakeel_research", "recorded_at": "x"})
+    assert ledger.recovery_action(_numeric_unavailable("proposed", True)) is None
+    assert ledger.recovery_action(SimpleNamespace(issues=[{"code": "unsourced_symbol_figures"}])) is None
+
+
+def test_an_answer_section_calling_itself_system_generated_is_noted(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    draft = HDR + "\n\n---\n**研究结果(系统根据试验账本生成,非模型撰写)**\n本会话 IR 2 个版本。"
+    notes = ledger.validate_final_answer(draft).card_notes
+    assert ("imitation", "研究结果(系统根据试验账本生成,非模型撰写)") in notes
+    assert not [n for n in ledger.validate_final_answer(HDR).card_notes if n[0] == "imitation"]
+
+
 def test_figure_issues_carry_price_like(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path)
     draft = HDR + " 建议买入价 1.10 元。"

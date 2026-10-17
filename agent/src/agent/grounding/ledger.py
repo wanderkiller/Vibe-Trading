@@ -709,6 +709,7 @@ class GroundingLedger(
         issues.extend(self._validate_figures(content, block, figures))
         self._card_notes.extend(self._validate_factor_names(content))
         self._card_notes.extend(self._validate_verdict_words(content))
+        self._card_notes.extend(self._validate_card_imitation(content))
         issues = self._dedupe_issues(issues)
         result = ValidationResult(
             valid=not issues,

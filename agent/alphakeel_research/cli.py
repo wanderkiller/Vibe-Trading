@@ -32,7 +32,7 @@
                                           (strategy.json with strategy_id + provenance for AlphaKeel's registry)
     python -m alphakeel_research ir robustness --ir strategy.json --pack-dir DIR --instruments inst.json --is-start-ms N --is-end-ms N
                                           [--oos-start-ms N --oos-end-ms N [--oos-pack-dir DIR]] [--fees fees.json] [--filter filter.json]
-                                          [--permutations 999] [--seed 7] [--permutation-seed N] [--workers 2] [--step-minutes 5] [--capital-base X]
+                                          [--permutations 999] [--seed 7] [--permutation-seed N] [--workers 2] [--step-minutes N] [--capital-base X]
                                           [--prior-trials N] [--wf-folds 3] [--wf-test-days 30] [--wf-min-train-days 30] --out DIR
     python -m alphakeel_research ir robustness --run DIR [--oos-start-ms N --oos-end-ms N ...]
                                           (DIR = an `ir backtest` run: --out DIR/robustness, --ir DIR/ir.json, --instruments
@@ -173,6 +173,19 @@ def _robustness_fees(a) -> tuple[dict | None, str | None]:
     return assumptions["fees"], f"run_card:{Path(a.run) / 'run_card.json'}"
 
 
+DEFAULT_OOS_DAYS = 30
+#: shortest default out-of-sample window worth running (a shorter gap before the cutoff: no default OOS)
+MIN_DEFAULT_OOS_MS = 7 * 86_400_000
+
+
+def _default_oos(window: tuple[int, int], cutoff_ms) -> tuple[int, int] | None:
+    """``[IS end, min(cutoff, IS end + DEFAULT_OOS_DAYS))`` (whole minutes), or None when the cutoff is unknown or too close."""
+    if isinstance(cutoff_ms, bool) or not isinstance(cutoff_ms, int):
+        return None
+    end = min(cutoff_ms - cutoff_ms % 60_000, window[1] + DEFAULT_OOS_DAYS * 86_400_000)
+    return (window[1], end) if end - window[1] >= MIN_DEFAULT_OOS_MS else None
+
+
 def _battery(robustness, registry, ir_path, pack, inst_path, window, oos, a, trials_floor, oos_pack=None) -> dict:
     from decimal import Decimal
 
@@ -201,6 +214,8 @@ def _ir_research(a) -> int:
         a.out = out_dir
         # prior_trials is never below the IR run card's trials.count (audit 2 P1-1 b): the battery uses the larger and says so
         floor = ((_run_card(a.run).get("trials") or {}).get("count") or 0) if a.run else 0
+        if a.step_minutes is None and a.run:  # the step the IR backtest chose for this window (the battery checks it fits)
+            a.step_minutes = _run_card(a.run).get("step_minutes")
         # every candidate run is registered in the research service's trial ledger (audit 2 P1-1 c); --no-register opts out, visibly
         reg = None if a.no_register else Client(a.url)
         fetch = None  # the client that opens a service-frozen pack (needed even with --no-register)
@@ -212,8 +227,15 @@ def _ir_research(a) -> int:
                 from . import ir_backtest
 
                 fetch = Client(a.url)
-                fetch.check()
+                info = fetch.check()
                 pack = Pack.open(fetch, src, a.cache)
+                if oos is None and not a.oos_pack_dir and a.run:
+                    # no OOS window given: the data between the run's end and the hold-out cutoff (the default IR backtest
+                    # window leaves DEFAULT_OOS_DAYS of it), when there is enough of it to say anything
+                    oos = _default_oos(window, (info or {}).get("holdout_cutoff_ms"))
+                    if oos is not None:
+                        print(f"note: out-of-sample window defaulted to [{oos[0]}, {oos[1]}) (after the run's window, before the "
+                              "hold-out cutoff)", file=sys.stderr)
                 if oos is not None and not a.oos_pack_dir:
                     # the OOS window is frozen by the service too (a hold-out overlap is refused there: the ApiError propagates)
                     if oos[0] < window[1] and oos[1] > window[0]:
@@ -399,7 +421,8 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--permutation-seed", type=int, default=None,
                    help="default (and required by AlphaKeel 1.12): derived from the strategy id")
     q.add_argument("--workers", type=int, default=2)
-    q.add_argument("--step-minutes", type=int, default=5)
+    q.add_argument("--step-minutes", type=int, default=None,
+                   help="default: the --run card's step, else 5 or the smallest larger step that keeps every window within the service's limit")
     q.add_argument("--capital-base", help="capital base shared by every variant (default notional_per_leg x 2 x max_open of the IR)")
     q.add_argument("--prior-trials", type=int, default=0, help="variants tried BEFORE this battery (self-declared; added to the DSR count; "
                    "never below the `ir backtest` run card's trials.count: the larger is used, with a warning)")

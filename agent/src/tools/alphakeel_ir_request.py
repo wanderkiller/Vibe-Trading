@@ -19,8 +19,10 @@ from alphakeel_research import ir as IR
 
 DAY_MS = 86_400_000
 MINUTE_MS = 60_000
-#: default research window: the ``DEFAULT_WINDOW_DAYS`` days before the credential's hold-out cutoff (UTC day aligned)
+#: default research window: the ``DEFAULT_WINDOW_DAYS`` days ending ``DEFAULT_OOS_DAYS`` before the credential's hold-out cutoff
+#: (UTC day aligned); the last ``DEFAULT_OOS_DAYS`` are left for ``ir robustness``'s out-of-sample run (``cli._default_oos``)
 DEFAULT_WINDOW_DAYS = 180
+DEFAULT_OOS_DAYS = 30
 
 #: Each venue's public non-VIP perp taker fee, checked 2026-10-14; AlphaKeel G1 1.17 compares it with the account's fees
 #: again. Used only when the request gives no ``fees`` (the leaf package keeps "no default fee": the default lives here,
@@ -36,9 +38,7 @@ REQUEST_FEES_SOURCE = "request"
 VENUE_PERP_SYMBOL = {"binance": "{b}USDT", "okx": "{b}-USDT-SWAP", "bybit": "{b}USDT"}
 SHAPE_MARKETS = {"cross_perp": ("perp",)}
 
-STEP_CHOICES = (1, 2, 5, 10, 15, 30, 60)
-#: mirrors AlphaKeel ``crates/research-service/src/dataset_view.rs`` ``MAX_FRAMES`` (decision instants per run)
-MAX_DECISION_INSTANTS = 25_000
+from alphakeel_research.robustness import MAX_DECISION_INSTANTS, STEP_CHOICES  # noqa: E402 - one definition of the limit
 
 #: model arguments the tool computes itself (from the IR and the trial ledger)
 DERIVED_ARGS = ("instruments", "step_minutes", "trials", "trials_evidence")
@@ -81,12 +81,13 @@ def utc_day_floor(ms: int) -> int:
 
 
 def window(a: IrBacktestArgs, holdout_cutoff_ms: Any) -> tuple[int, int]:
-    """``(start_ms, end_ms)``: the given ones, else end = the hold-out cutoff aligned to its UTC day and start = end - 180 d."""
+    """``(start_ms, end_ms)``: the given ones, else end = the hold-out cutoff aligned to its UTC day minus the
+    ``DEFAULT_OOS_DAYS`` left for the out-of-sample run, and start = end - 180 d."""
     end = a.end_ms
     if end is None:
         if isinstance(holdout_cutoff_ms, bool) or not isinstance(holdout_cutoff_ms, int):
             raise ValueError("ir_backtest: the service reports no holdout_cutoff_ms, so there is no default window: pass end_ms")
-        end = utc_day_floor(holdout_cutoff_ms)
+        end = utc_day_floor(holdout_cutoff_ms) - DEFAULT_OOS_DAYS * DAY_MS
     start = a.start_ms if a.start_ms is not None else end - DEFAULT_WINDOW_DAYS * DAY_MS
     if not end > start:
         raise ValueError("ir_backtest: end_ms must be after start_ms")

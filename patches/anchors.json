@@ -2318,6 +2318,45 @@
      "literal": "CACHE_MAX_BYTES_ENV = \"ALPHAKEEL_PACK_CACHE_MAX_BYTES\""
     }
    ]
+  },
+  {
+   "id": "research-replay-2",
+   "title": "Replay 2: robustness that fits the service, a default out-of-sample window, the robustness grade on the card, IR result leaves under the run ref, no price fetch in AlphaKeel answers",
+   "files": [
+    "agent/tests/test_grounding_release.py"
+   ],
+   "anchors": [
+    {
+     "file": "agent/src/agent/grounding/policies.py",
+     "kind": "upstream",
+     "literal": "def _artifact_scope(self, key: str) -> list[EvidenceRecord] | None:"
+    },
+    {
+     "file": "agent/src/agent/grounding/policies.py",
+     "kind": "hook",
+     "literal": "ir_calls = {record.call_id for record in chosen.values()}"
+    },
+    {
+     "file": "agent/src/agent/grounding/policies.py",
+     "kind": "hook",
+     "literal": "def _validate_card_imitation(self, content: str) -> list[tuple[str, str]]:"
+    },
+    {
+     "file": "agent/src/agent/grounding/ledger.py",
+     "kind": "hook",
+     "literal": "self._card_notes.extend(self._validate_card_imitation(content))"
+    },
+    {
+     "file": "agent/src/agent/grounding/release.py",
+     "kind": "upstream",
+     "literal": "def recovery_action(self, validation: ValidationResult) -> str | None:"
+    },
+    {
+     "file": "agent/src/agent/grounding/release.py",
+     "kind": "hook",
+     "literal": "alphakeel = any(entry.get(\"tool\") == \"alphakeel_research\" for entry in self._analysis_completed)"
+    }
+   ]
   }
  ]
 }

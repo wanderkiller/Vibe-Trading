@@ -51,7 +51,7 @@ def test_only_ir_is_needed_and_everything_else_is_derived() -> None:
     from src.tools import alphakeel_ir_request as req
 
     p = req.plan({"ir": "strategy.json"}, _ir_doc(), _who())
-    end = CUTOFF_MS - CUTOFF_MS % DAY_MS
+    end = CUTOFF_MS - CUTOFF_MS % DAY_MS - 30 * DAY_MS  # the last 30 days before the cutoff stay out of sample
     assert (p["start_ms"], p["end_ms"]) == (end - 180 * DAY_MS, end)
     assert p["instruments"] == [
         {"venue": "binance", "market": "perp", "symbol": "BTCUSDT", "base": "BTC", "quote": "USDT"},
@@ -259,6 +259,29 @@ def test_ir_backtest_figures_are_observed_under_evidence_dir(session) -> None:
     assert not declared("-200.00").valid
 
 
+def test_ir_backtest_result_leaves_are_observed_under_evidence_dir(session) -> None:
+    """Replay e273a64edf89: "-0.00238 | observed | ETH p95 | ir_runs/<run>" was refused (only metrics.csv was in scope),
+    the model then dropped the declaration and the median was cut. The result leaves of the call that wrote the evidence
+    copy answer a ref naming that copy."""
+    from src.agent.grounding import GroundingLedger
+
+    raw = _run_tool(session, "20261014_090950_ir", _card(session["sid"], "carry-high-hurdle", "-138.19", 15))
+    raw["result"]["diagnostics"] = {"entry_features": {"net_conservative": {"by_base": {
+        "ETH": {"p50": "-0.00250003", "p95": "-0.00238003", "samples": 3840}}}}}
+    ledger = GroundingLedger(run_dir=session["session"], user_message="回测这个跨所资金费率策略")
+    ledger.ingest_tool_result(tool_name="alphakeel_research", arguments={"action": "ir_backtest", "args": {"ir": "strategy.json"}},
+                              result=json.dumps(raw), call_id="bt-1", success=True)
+
+    def declared(value: str):
+        return ledger.validate_final_answer(f"ETH 的 net_conservative 为 {value}。\n\n```figures\n{value} | observed | "
+                                            f"ETH net_conservative | ir_runs/20261014_090950_ir\n```")
+
+    for value in ("-0.00238", "-0.0025"):
+        r = declared(value)
+        assert r.valid, json.dumps(r.issues, ensure_ascii=False, indent=1)
+    assert not declared("-0.00300").valid
+
+
 def test_usdt_marked_ir_backtest_figures_are_observed_under_evidence_dir(session) -> None:
     """Spec §7.3 wording: "净收益 -138.19 USDT" (a currency-marked figure). Grounding answers a currency-marked figure only
     from money fields (``_is_price_kind``): the IR backtest's ``*_usdt`` columns are in ``_AMOUNT_FIELDS``."""
@@ -321,6 +344,39 @@ def test_result_card_rows_order_and_language(session) -> None:
     assert "This session's IR: 3 versions / 4 backtests: passed screen 1, failed screen 1, insufficient 2" in en
     assert "| carry-tight (ir-ccccc) | 2026-01-01→06-29 | 40 | −10.00 | −27.87 | 300.43 | 190.11 | 0.27% | failed screen (1.3) |" in en
     assert en.splitlines()[-1] == "Ledger: ir_trials_evidence.jsonl"
+
+
+def test_result_card_shows_the_ir_robustness_grade(session, tmp_path) -> None:
+    """Replay e273a64edf89: the battery graded the run F, yet the card said "1.4–1.13 not evaluated". A finished
+    ir_robustness is recorded; the card re-reads robustness.json (sha256 checked) and shows grade, checks, OOS and caps."""
+    from src.tools.alphakeel_research_ledger import render_card
+    from src.tools.alphakeel_research_tool import _finish_ir_robustness
+
+    s8 = session["sid"][:8]
+    _run_tool(session, "20261014_091500_ir", _card("ir-bbbbbbbbbb", "carry-wide", "50", 40, days=120))
+    _run_tool(session, "20261014_090950_ir", _card(session["sid"], "carry-high-hurdle", "-138.19", 15))
+    doc = {"strategy_id": "ir-bbbbbbbbbb", "name": "carry-wide", "oos": None,
+           "rating": {"grade": "C", "passed": 3, "applicable": 8,
+                      "caps": [{"id": "no_oos", "max_grade": "C"}, {"id": "synthetic_view", "max_grade": "B"}]}}
+    path = tmp_path / "rob" / "robustness.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps(doc))
+    warnings: list[str] = []
+    _finish_ir_robustness({"status": "ok", "result": {"json": str(path)}}, SESSION_ID, warnings)
+    assert warnings == []
+    lines = render_card(SESSION_ID, True).splitlines()
+    assert "| carry-wide (ir-bbbbb) | 2026-01-01→06-29 | 40 | 50.00 | −27.87 | 300.43 | 190.11 | 0.27% | 通过初筛，稳健性评级 C |" in lines
+    assert ("稳健性（ir_robustness，研究证据，非审批）：carry-wide (ir-bbbbb) 评级 C，适用项通过 3/8；OOS 未运行；"
+            "封顶：no_oos ≤C, synthetic_view ≤B") in lines
+    assert "其余版本 1.4–1.13 未评估：需要 ir_robustness。" in lines  # carry-high-hurdle has no battery
+    assert not any(ln.startswith("1.4–1.13（") for ln in lines)
+    # a changed robustness.json shows no grade
+    path.write_text(json.dumps({**doc, "rating": {**doc["rating"], "grade": "A"}}))
+    lines = render_card(SESSION_ID, True).splitlines()
+    assert "稳健性（ir_robustness）：carry-wide (ir-bbbbb) 的 robustness.json 已改动或缺失，评级不显示" in lines
+    assert any(ln.endswith("| 通过初筛，1.4–1.13 未评估 |") for ln in lines)
+    assert not any("评级 A" in ln for ln in lines)
+    assert s8
 
 
 # --- review round 1 ------------------------------------------------------------------------------------------------------
@@ -737,6 +793,14 @@ def test_screen_1_3_is_judged_when_positions_were_opened_but_none_closed() -> No
     assert next(i for i in screen(_screen_card("0", 0, 120, opened=0))["items"] if i["id"] == "1.3")["result"] == "N/A"
     zero = screen(_screen_card("0", 0, 120, opened=0))
     assert L._item_observed(zero, "1.3", zh=False) == "n/a (0 trades)" and L._item_observed(zero, "1.3", zh=True) == "不适用（0 笔）"
+
+
+def test_the_card_states_an_imitated_system_section() -> None:
+    from src.tools.alphakeel_research_ledger import _note_lines
+
+    assert _note_lines([("imitation", "研究结果(系统根据试验账本生成,非模型撰写)")], True) == [
+        "**答复核对（系统根据本会话记录生成）**",
+        "- 答复中自称系统生成的段落 「研究结果（系统根据试验账本生成,非模型撰写）」 是模型写的，不是系统结果卡；以本卡为准。"]
 
 
 def test_verdict_lists_fails_outside_the_primary_group_and_na_is_not_a_fail() -> None:

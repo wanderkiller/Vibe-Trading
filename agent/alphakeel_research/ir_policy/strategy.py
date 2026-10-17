@@ -50,8 +50,9 @@ def initialize(parameters):
     doc = parameters["ir"]
     loaded = IR.load(doc)
     if loaded["assumptions"]["funding_estimate"] != "predicted":
-        raise Unsupported("assumptions.funding_estimate = last_settled cannot be served by the scan-frame view (it holds the "
-                          "venues' current/predicted funding rates)")
+        raise Unsupported("assumptions.funding_estimate = last_settled is not supported: declare \"predicted\". Scan frames "
+                          "hold the venues' predicted rates; the dataset view (ir_backtest) serves predicted with the last "
+                          "official settlement as a proxy and records that in the run card's approximations")
     qty_dp = parameters.get("qty_dp", QTY_DP)
     if isinstance(qty_dp, bool) or not isinstance(qty_dp, int) or not 0 <= qty_dp <= 18:
         raise ValueError("qty_dp must be an integer in 0..=18")

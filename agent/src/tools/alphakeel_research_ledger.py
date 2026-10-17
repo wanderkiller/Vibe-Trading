@@ -58,6 +58,7 @@ RETURNS_FILE = "returns.json"
 RETURNS_DATES_FILE = "returns_dates.json"
 CONTRACT_FILE = "research_contract.json"
 ROBUSTNESS_FILE = "robustness.jsonl"
+IR_ROBUSTNESS_FILE = "ir_robustness.jsonl"
 DEFAULT_HOLDOUT_DAYS = 60
 HOLDOUT_FILE = "alphakeel_holdout.json"
 HOLDOUT_CACHE_SECONDS = 6 * 3600
@@ -615,6 +616,50 @@ def record_robustness(session_id: str, run_dir: Path, parent_seq: int) -> dict |
     return doc
 
 
+def record_ir_robustness(session_id: str, result: dict) -> None:
+    """After a successful ``ir robustness`` (its CLI result: ``json`` = the written ``robustness.json``): append its
+    ``strategy_id``, ``name``, absolute ``path`` and ``sha256`` to ``ir_robustness.jsonl``, so the card can show the grade
+    (re-read, sha256 checked: ``verified_ir_robustness``)."""
+    path = Path(str(result["json"])).resolve()
+    raw = path.read_bytes()
+    doc = json.loads(raw.decode("utf-8"))
+    _append_durable(_session_dir(session_id) / IR_ROBUSTNESS_FILE,
+                    {"strategy_id": doc["strategy_id"], "name": doc.get("name"), "path": str(path),
+                     "sha256": hashlib.sha256(raw).hexdigest(), "ts": int(time.time() * 1000)})
+
+
+def ir_robustness_rows(session_id: str) -> list[dict]:
+    """The rows of ``ir_robustness.jsonl`` in append order."""
+    out = []
+    try:
+        with open(_session_dir(session_id) / IR_ROBUSTNESS_FILE, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict) and isinstance(row.get("strategy_id"), str):
+                    out.append(row)
+    except OSError:
+        return []
+    return out
+
+
+def verified_ir_robustness(row: dict) -> dict | None:
+    """The ``robustness.json`` an ``ir_robustness.jsonl`` row names, re-read; None when it is missing, unreadable, not the
+    row's strategy or its sha256 differs from the row's."""
+    try:
+        raw = Path(str(row["path"])).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != row.get("sha256"):
+            return None
+        doc = json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(doc, dict) or doc.get("strategy_id") != row.get("strategy_id") or not isinstance(doc.get("rating"), dict):
+        return None
+    return doc
+
+
 def robustness_records(session_id: str) -> list[dict]:
     """The sweeps of ``robustness.jsonl`` in append order."""
     out = []
@@ -747,6 +792,11 @@ _TEXT = {
            "passed": "通过初筛，1.4–1.13 未评估", "failed": "未通过初筛（{ids}）", "insufficient": "证据不足（{ids}）",
            "more": "另有 {n} 次回测见账本", "tampered": "，已改动 {n}", "tampered_row": "run card 已改动或缺失",
            "not_evaluated": "1.4–1.13（成本压力、DSR、PBO、邻域、走步等）未评估：需要 ir_robustness。",
+           "not_evaluated_rest": "其余版本 1.4–1.13 未评估：需要 ir_robustness。",
+           "passed_graded": "通过初筛，稳健性评级 {grade}",
+           "rob": "稳健性（ir_robustness，研究证据，非审批）：{name} 评级 {grade}，适用项通过 {passed}/{applicable}；OOS {oos}；封顶：{caps}",
+           "rob_oos_run": "已运行", "rob_oos_none": "未运行", "rob_no_caps": "无",
+           "rob_tampered": "稳健性（ir_robustness）：{name} 的 robustness.json 已改动或缺失，评级不显示",
            "ledger": "账本：{file}",
            "also_failed": "；另未通过：{ids}", "na_zero": "不适用（0 笔）",
            "trials": "试验数：本会话 {n}；研究服务账本同 kind 同谱系 {k}（1.6 取较大值）",
@@ -763,6 +813,11 @@ _TEXT = {
             "passed": "passed screen; 1.4–1.13 not evaluated", "failed": "failed screen ({ids})", "insufficient": "insufficient ({ids})",
             "more": "{n} more backtests in the ledger", "tampered": ", modified {n}", "tampered_row": "run card modified or missing",
             "not_evaluated": "1.4–1.13 (cost stress, DSR, PBO, neighbours, walk-forward, ...) not evaluated: needs ir_robustness.",
+            "not_evaluated_rest": "Other versions: 1.4–1.13 not evaluated: needs ir_robustness.",
+            "passed_graded": "passed screen; robustness grade {grade}",
+            "rob": "Robustness (ir_robustness; research evidence, not an approval): {name} grade {grade}, {passed}/{applicable} applicable checks passed; OOS {oos}; caps: {caps}",
+            "rob_oos_run": "run", "rob_oos_none": "not run", "rob_no_caps": "none",
+            "rob_tampered": "Robustness (ir_robustness): robustness.json of {name} was modified or is missing; grade not shown",
             "ledger": "Ledger: {file}",
             "also_failed": "; also failed: {ids}", "na_zero": "n/a (0 trades)",
             "trials": "Trials: this session {n}; research-service ledger, same kind and lineage {k} (1.6 uses the larger)",
@@ -827,10 +882,10 @@ def _also_failed(items: Any, group: tuple, t: dict) -> str:
     return t["also_failed"].format(ids=", ".join(rest)) if rest else ""
 
 
-def _verdict(card: dict, t: dict) -> str:
+def _verdict(card: dict, t: dict, grade: str | None = None) -> str:
     status = _status(card)
     if status == "passed_screen":
-        return t["passed"]
+        return t["passed_graded"].format(grade=grade) if grade else t["passed"]
     if status in _SCREEN_GROUPS:
         items = (card.get("screen") or {}).get("items") or []
         ids = [i.get("id") for i in items if isinstance(i, dict) and i.get("result") == "FAIL" and i.get("id") in _SCREEN_GROUPS[status]]
@@ -870,6 +925,40 @@ def _row_notes(row: dict, t: dict) -> str:
     if same:
         out += t["same_name"].format(ids=", ".join(same))
     return out
+
+
+def _grade(doc: dict) -> str:
+    g = (doc.get("rating") or {}).get("grade")
+    return g if isinstance(g, str) and re.fullmatch(r"[A-F]", g) else "?"
+
+
+def _int_or_q(v: Any) -> Any:
+    return v if isinstance(v, int) and not isinstance(v, bool) else "?"
+
+
+def _robustness_section(session_id: str, t: dict) -> tuple[dict[str, str], list[str]]:
+    """``({strategy_id: grade}, card lines)`` from the latest ``ir_robustness.jsonl`` row of each strategy: grade, passed
+    applicable checks, OOS run or not and the caps, re-read from the sha256-checked ``robustness.json``; a row whose file
+    changed says so and gives no grade."""
+    latest: dict[str, dict] = {}
+    for row in ir_robustness_rows(session_id):
+        latest.pop(row["strategy_id"], None)
+        latest[row["strategy_id"]] = row
+    grades: dict[str, str] = {}
+    lines = []
+    for sid, row in latest.items():
+        doc = verified_ir_robustness(row)
+        name = f"{_safe_reason((doc or row).get('name') or '—')} ({sid[:8]})"
+        if doc is None:
+            lines.append(t["rob_tampered"].format(name=name))
+            continue
+        r = doc["rating"]
+        grades[sid] = _grade(doc)
+        caps = [f"{c.get('id')} ≤{c.get('max_grade')}" for c in r.get("caps") or [] if isinstance(c, dict)]
+        lines.append(t["rob"].format(name=name, grade=grades[sid], passed=_int_or_q(r.get("passed")), applicable=_int_or_q(r.get("applicable")),
+                                     oos=t["rob_oos_run"] if doc.get("oos") else t["rob_oos_none"],
+                                     caps=_safe_reason(", ".join(caps)) if caps else t["rob_no_caps"]))
+    return grades, lines
 
 
 def _run_card_trials(entries: list) -> int | None:
@@ -923,6 +1012,7 @@ def _ir_section(session_id: str, zh: bool) -> list[str]:
     order = sorted(range(len(entries)), key=key)
     always = {i for i, (_, c) in enumerate(entries) if c is None or _status(c) in ("passed_screen", "failed_screen")}
     shown = set(order[:CARD_MAX_ROWS]) | always
+    grades, rob_lines = _robustness_section(session_id, t)
     rows = []
     for i in order:
         if i not in shown:
@@ -937,7 +1027,7 @@ def _ir_section(session_id: str, zh: bool) -> list[str]:
                     f"{fmt_amount((c.get('amounts') or {}).get('equity_end'))} | "
                     f"{fmt_amount((c.get('amounts') or {}).get('price_pnl_closed'))} | "
                     f"{fmt_amount((c.get('amounts') or {}).get('fees'))} | {fmt_amount((c.get('amounts') or {}).get('funding'))} | "
-                    f"{fmt_fraction((c.get('max_drawdown') or {}).get('fraction_of_capital'))} | {_verdict(c, t)}{_row_notes(row, t)}{_undeclared_mark(row, _CONTRACT_TEXT[bool(zh)])} |")
+                    f"{fmt_fraction((c.get('max_drawdown') or {}).get('fraction_of_capital'))} | {_verdict(c, t, grades.get(c.get('strategy_id')))}{_row_notes(row, t)}{_undeclared_mark(row, _CONTRACT_TEXT[bool(zh)])} |")
     summary = t["summary"].format(n=len(versions), m=len(entries), p=counts["passed_screen"], f=counts["failed_screen"],
                                   i=counts["insufficient"]) + (t["tampered"].format(n=bad) if bad else "")
     k = _service_trials(entries)
@@ -948,7 +1038,12 @@ def _ir_section(session_id: str, zh: bool) -> list[str]:
     lines = ["---", t["title"], *_fee_lines(cards, t), summary, trials, *approx, t["head"], "|---|---|---|---|---|---|---|---|---|", *rows]
     if len(entries) > len(rows):
         lines.append(t["more"].format(n=len(entries) - len(rows)))
-    lines += [t["not_evaluated"], t["ledger"].format(file=TRIALS_EVIDENCE_FILE)]
+    lines += rob_lines
+    if not rob_lines:
+        lines.append(t["not_evaluated"])
+    elif versions - set(grades):
+        lines.append(t["not_evaluated_rest"])
+    lines.append(t["ledger"].format(file=TRIALS_EVIDENCE_FILE))
     return lines
 
 
@@ -1448,28 +1543,31 @@ _NOTE_TEXT = {
     True: {"title": "**答复核对（系统根据本会话记录生成）**", "sep": "、", "quote": "「{}」",
            "verdict": "- 本会话没有任何版本通过初筛；答复中的{items}不是系统判定。",
            "citation": "- 答复标为引用的数字 {items} 在本会话检索到的资料中没有找到。",
-           "factor": "- 答复提到的因子名 {items} 在本会话没有被使用或检索到。"},
+           "factor": "- 答复提到的因子名 {items} 在本会话没有被使用或检索到。",
+           "imitation": "- 答复中自称系统生成的段落 {items} 是模型写的，不是系统结果卡；以本卡为准。"},
     False: {"title": "**Answer check (generated by the system from this session's records)**", "sep": ", ", "quote": "\u201c{}\u201d",
             "verdict": "- No version in this session passed the screen; these words in the answer are not a system verdict: {items}.",
             "citation": "- Figures the answer declares cited that were not found in any source retrieved in this session: {items}.",
-            "factor": "- Factor names the answer mentions that were not used or retrieved in this session: {items}."},
+            "factor": "- Factor names the answer mentions that were not used or retrieved in this session: {items}.",
+            "imitation": "- Sections of the answer that call themselves system-generated were written by the model, not by the system; this card is authoritative: {items}."},
 }
 _NOTE_MAX_ITEMS = 12
+_NOTE_KINDS = ("verdict", "citation", "factor", "imitation")
 
 
 def _note_lines(notes: Any, zh: bool) -> list[str]:
     """The answer-check section: one line per kind of ``(kind, text as written)`` grounding note (verdict / citation /
-    factor), the texts made plain by ``_safe_reason`` and quoted; [] without notes."""
+    factor / imitation), the texts made plain by ``_safe_reason`` and quoted; [] without notes."""
     t = _NOTE_TEXT[bool(zh)]
     by_kind: dict[str, list[str]] = {}
     for note in notes or ():
-        if not (isinstance(note, (list, tuple)) and len(note) == 2) or note[0] not in ("verdict", "citation", "factor"):
+        if not (isinstance(note, (list, tuple)) and len(note) == 2) or note[0] not in _NOTE_KINDS:
             continue
         text = _safe_reason(note[1]).replace("~", "\uff5e").replace("\\", "\uff3c")
         if text and text not in by_kind.setdefault(str(note[0]), []):
             by_kind[str(note[0])].append(text)
     lines = []
-    for kind in ("verdict", "citation", "factor"):
+    for kind in _NOTE_KINDS:
         items = by_kind.get(kind)
         if not items:
             continue

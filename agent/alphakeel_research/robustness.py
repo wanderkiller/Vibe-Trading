@@ -130,6 +130,19 @@ COST_MULTIPLIERS = ("1.5", "2")
 BASIS_MULTIPLIER = "2"
 SEGMENTS = 4
 WF_FOLDS, WF_TEST_DAYS, WF_MIN_TRAIN_DAYS = 3, 30, 30
+STEP_CHOICES = (1, 2, 5, 10, 15, 30, 60)
+#: mirrors AlphaKeel ``crates/research-service/src/dataset_view.rs`` ``MAX_FRAMES`` (decision instants per run)
+MAX_DECISION_INSTANTS = 25_000
+
+
+def smallest_step(start_ms: int, end_ms: int) -> int:
+    """The smallest of :data:`STEP_CHOICES` that keeps ``[start_ms, end_ms)`` within :data:`MAX_DECISION_INSTANTS`."""
+    for s in STEP_CHOICES:
+        if -(-(end_ms - start_ms) // (s * 60_000)) <= MAX_DECISION_INSTANTS:
+            return s
+    longest = MAX_DECISION_INSTANTS * STEP_CHOICES[-1] // 1440
+    raise ApiError("request.invalid", f"the window is too long: at {STEP_CHOICES[-1]}-minute steps it may span at most {longest} days",
+                   field="window")
 WF_CARTESIAN_MAX = 27
 BOOTSTRAP_RESAMPLES = 2000
 PBO_MAX_BLOCKS = 10
@@ -662,7 +675,7 @@ def _service_conservative(client: Any, run_id: str, local_net: Decimal, timeout:
 
 def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos_window=None, oos_pack: Pack | None = None,
             out_dir: str | Path, fees: dict | None = None, fees_source: str | None = None, filter_spec: dict | None = None, permutations: int = 999, seed: int = 7,
-            step_minutes: int = 5, capital_base: Decimal | str | None = None, workers: int = 2, prior_trials: int = 0,
+            step_minutes: int | None = None, capital_base: Decimal | str | None = None, workers: int = 2, prior_trials: int = 0,
             segments: int = SEGMENTS, wf_folds: int = WF_FOLDS, wf_test_days: int = WF_TEST_DAYS,
             wf_min_train_days: int = WF_MIN_TRAIN_DAYS, prior_trials_floor: int = 0, registry: Any = None,
             permutation_seed: int | None = None) -> dict:
@@ -703,6 +716,16 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         packs["oos"] = oos_pack or pack
         if windows["oos"][0] < windows["is"][1] and windows["oos"][1] > windows["is"][0]:
             raise ApiError("request.invalid", "the OOS window overlaps the IS window: it would not be out of sample", field="oos_window")
+    # every candidate run is also a research-service run with this step: refuse up front what the service would refuse
+    # after the local runs (AlphaKeel MAX_FRAMES), and pick the smallest step that fits when none is given
+    need = max(smallest_step(w[0], w[1]) for w in windows.values())
+    if step_minutes is None:
+        step_minutes = max(5, need)  # the historical default, raised when the window needs it
+    elif isinstance(step_minutes, bool) or not isinstance(step_minutes, int) or step_minutes < 1:
+        raise ApiError("request.invalid", "step_minutes must be an integer >= 1", field="step_minutes")
+    elif step_minutes < need:
+        raise ApiError("request.invalid", f"{step_minutes}-minute steps exceed {MAX_DECISION_INSTANTS} decision instants in this "
+                       f"window: use step_minutes >= {need}", field="step_minutes")
     wf_cfg = {"folds": wf_folds, "test_days": wf_test_days, "min_train_days": wf_min_train_days}
     wf_plan = walk_forward_plan(windows["is"], wf_folds, wf_test_days, wf_min_train_days)
     # parameters whose path the dataset view cannot move (constant features): no neighbour, no grid axis

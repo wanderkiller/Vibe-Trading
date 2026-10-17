@@ -765,6 +765,11 @@ ts); its distinct `strategy_id` are the run's `--trials`, listed in `<turn run d
 (`--trials-evidence`). Every run is also linked to one upstream `HypothesisRegistry` hypothesis per conversation (id in
 `<sessions dir>/<sid>/ir_hypothesis.json`), which is not a source of counts or of the card. flock on every
 read-modify-write. No session id: nothing is registered, no `--trials`, no card (a warning says so).
+A successful `ir_robustness` appends `strategy_id`, name, the absolute `robustness.json` path and its sha256 to
+`<sessions dir>/<sid>/ir_robustness.jsonl`; the card shows, per strategy, the latest row's grade, passed/applicable checks,
+OOS run or not and caps, re-read with the sha256 checked (a changed file says so and shows no grade); a passed row then
+reads "passed screen; robustness grade X", and the "1.4–1.13 not evaluated" line stays only for versions without a battery
+(2026-10-17 replay e273a64edf89: the card said "not evaluated" after a graded battery).
 §5: the loop appends a result card of the conversation after the (grounded) answer, at both answer sites; a failure
 only logs a warning. The card reads only the private ledger and re-reads every run card, checking its sha256 (a changed
 or missing one keeps a marked row, see round 2 below); one row per backtest, `name (strategy_id[:8])`; header "N versions / M
@@ -1310,3 +1315,35 @@ ledger, research contract, IR backtest) changed alongside; they are not upstream
 - `agent/tests/test_alphakeel_packfile.py`
 
 **Commits.** (this commit).
+
+## `research-replay-2` — robustness that fits the service, a default out-of-sample window, the robustness grade on the card, IR result leaves under the run ref, no price fetch in AlphaKeel answers
+
+**Purpose.** Findings of the 2026-10-17 replay of session e273a64edf89. `ir robustness` picks a step that keeps every
+window within the service's decision-instant limit (`MAX_DECISION_INSTANTS`, `STEP_CHOICES`) and refuses a smaller one
+before any run (it failed after 17 minutes at the 5-minute default); with `--run` it takes the run card's step. The default
+IR backtest window ends 30 days before the hold-out cutoff and `ir robustness --run` uses that gap as its out-of-sample
+window (at most 30, at least 7 days), so `no_oos` no longer caps every default battery. A finished `ir_robustness` is
+recorded and the result card shows its grade (sha256-checked). Grounding: a ref naming an IR run's evidence copy
+(`ir_runs/<run>`) also covers the result leaves of the call that wrote it (diagnostics such as `p95`), so the model can
+cite them; recovery never fetches market data after an `alphakeel_research` analysis (it put an unrelated BTC close in a
+carry answer); answer lines that call themselves system-generated get a card note ("imitation"). The routing block says
+IR parameters and G1 item ids are `count`, and forbids self-made "system" sections. The refusal of
+`funding_estimate = last_settled` says to declare `predicted` (the dataset view's proxy is in the run card).
+
+**Files.**
+- `agent/src/agent/grounding/ledger.py`
+- `agent/src/agent/grounding/policies.py`
+- `agent/src/agent/grounding/release.py`
+- `agent/tests/test_grounding_release.py`
+
+**Commits.** (this commit).
+
+**Upstreamable.** No, local-only (follows the leaf package).
+
+**Anchors.**
+- upstream `agent/src/agent/grounding/policies.py`: `def _artifact_scope(self, key: str) -> list[EvidenceRecord] | None:`
+- hook `agent/src/agent/grounding/policies.py`: `ir_calls = {record.call_id for record in chosen.values()}`
+- hook `agent/src/agent/grounding/policies.py`: `def _validate_card_imitation(self, content: str) -> list[tuple[str, str]]:`
+- hook `agent/src/agent/grounding/ledger.py`: `self._card_notes.extend(self._validate_card_imitation(content))`
+- upstream `agent/src/agent/grounding/release.py`: `def recovery_action(self, validation: ValidationResult) -> str | None:`
+- hook `agent/src/agent/grounding/release.py`: `alphakeel = any(entry.get("tool") == "alphakeel_research" for entry in self._analysis_completed)`

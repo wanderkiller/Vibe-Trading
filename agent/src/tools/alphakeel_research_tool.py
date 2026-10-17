@@ -642,6 +642,19 @@ def _finish_ir_backtest(out: dict, planned: dict, run_dir: Any, session_id: str 
             warnings.append(f"trial ledger: {e.__class__.__name__}: {str(e)[:300]}")
 
 
+def _finish_ir_robustness(out: dict, session_id: str | None, warnings: list[str]) -> None:
+    """A finished ``ir_robustness``: its ``robustness.json`` recorded for the result card (grade, caps, OOS)."""
+    result = out.get("result")
+    if out["status"] != "ok" or not isinstance(result, dict) or not result.get("json") or session_id is None:
+        return
+    try:
+        from src.tools import alphakeel_research_ledger as ledger
+
+        ledger.record_ir_robustness(session_id, result)
+    except Exception as e:  # noqa: BLE001 - the ledger never fails the battery
+        warnings.append(f"robustness ledger: {e.__class__.__name__}: {str(e)[:300]}")
+
+
 class AlphakeelResearchTool(BaseTool):
     """Freeze AlphaKeel data, review a Python backtest, run a policy or the native strategy, compare results."""
 
@@ -657,7 +670,8 @@ class AlphakeelResearchTool(BaseTool):
         "layered reconciliation), 'ir_backtest' (long-history research backtest on a dataset pack: 1m klines + official "
         "settlements, synthetic touch; research evidence, not reconciliation; it freezes its own pack (kline_1m trade + "
         "settlements), so do not 'freeze' before it. It needs only args.ir; start_ms/end_ms are optional (default: the 180 "
-        "days before the hold-out cutoff); instruments, step, fees (public base-tier taker unless args.fees is given) and "
+        "days ending 30 days before the hold-out cutoff, so the last 30 days stay out of sample for ir_robustness, which "
+        "uses them by default when no oos window is given); instruments, step, fees (public base-tier taker unless args.fees is given) and "
         "the trial count are derived from the IR and the session's trial ledger. It returns evidence_status "
         "(insufficient / failed_screen / passed_screen) and evidence_dir (the ref of its observed figures)), 'ir_robustness' (reliability battery + grade on the run's pack: cost stress, parameter neighbours, "
         "anchored walk-forward, OOS, filter permutation test; args.run = the ir_backtest run directory; a run whose pack the service froze needs no pack_dir), 'ir_crosscheck' (the same "
@@ -819,6 +833,8 @@ class AlphakeelResearchTool(BaseTool):
         e = result.get("error") if isinstance(result, dict) else None
         if rc != 0 and isinstance(e, dict) and _market_blocked(e.get("code"), e.get("message")):
             out["next"] = _MARKET_BLOCKED_NEXT
+        if action == "ir_robustness":
+            _finish_ir_robustness(out, _session_id(self), warnings)
         if planned is not None:
             _finish_ir_backtest(out, planned, session_run_dir, _session_id(self), warnings,
                                 supersedes=args.get("supersedes_contract") if isinstance(args.get("supersedes_contract"), str) else None,
