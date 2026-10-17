@@ -422,11 +422,12 @@ def trial_count(session_id: str, extra_key: str | None = None) -> int:
 
 
 def variant_sharpes_for(session_id: str, key: str | None) -> list[float]:
-    """The daily Sharpes of the other engine trials (latest row per key, ``key`` itself excluded)."""
+    """The daily Sharpes of the other engine trials (latest row per key, ``key`` itself excluded). System sweep rows count
+    in the trial number but not here: near-identical neighbours would shrink the cross-trial variance of the DSR."""
     out = []
     for k, r in _latest_engine_rows(session_id).items():
         v = r.get("sharpe_daily")
-        if k != key and isinstance(v, (int, float)) and not isinstance(v, bool):
+        if k != key and not r.get("sweep") and isinstance(v, (int, float)) and not isinstance(v, bool):
             out.append(float(v))
     return out
 
@@ -555,8 +556,9 @@ def record_robustness(session_id: str, run_dir: Path, parent_seq: int) -> dict |
     every sweep run as an engine row (``record_engine_run(..., sweep=...)``, so it counts as a trial) and append the
     sweep to ``robustness.jsonl``: ``parent_seq``, ``runs`` (the plan ``robustness.variants`` recomputes from the run's
     ``config.json``, each with ``status`` ``ok`` + ``seq``, ``failed`` + ``error`` or ``missing``) and ``skipped``. A run
-    counts as ok only when the manifest says so, its metrics exist and its ``config.json`` is the planned variant config.
-    None when the config declares nothing."""
+    is recorded (a trial) whenever its metrics exist, its ``config.json`` is the planned variant config and its
+    ``code/signal_engine.py`` is the run's code; it is ``ok`` when the manifest also says so, else ``failed`` with its
+    ``seq`` (a result that exists is counted even when the run then failed). None when the config declares nothing."""
     from backtest import robustness as rb
 
     run_dir = Path(run_dir)
@@ -568,21 +570,26 @@ def record_robustness(session_id: str, run_dir: Path, parent_seq: int) -> dict |
     manifest = _json_file(run_dir / "robustness" / "manifest.json")
     entries = manifest.get("runs") if isinstance(manifest, dict) and isinstance(manifest.get("runs"), list) else []
     by_label = {e.get("label"): e for e in entries if isinstance(e, dict)}
+    code_sha = _sha256(run_dir / "code" / "signal_engine.py")
     runs = []
     for run in planned:
         entry: dict[str, Any] = {**run, "status": "missing", "seq": None}
-        reported = by_label.get(run["label"])
+        reported = by_label.get(run["label"]) if isinstance(by_label.get(run["label"]), dict) else None
+        reported_ok = reported is not None and reported.get("status") == "ok"
+        if reported is not None and not reported_ok:
+            entry.update(status="failed", error=_collapse(reported.get("error"))[:300])
         vdir = run_dir / "robustness" / run["label"]
-        if isinstance(reported, dict) and reported.get("status") == "ok":
-            if not (vdir / "artifacts" / "metrics.csv").is_file():
-                entry.update(status="failed", error="no artifacts/metrics.csv")
-            elif not _same_json(vdir / "config.json", rb.variant_config(config, run)):
+        if (vdir / "artifacts" / "metrics.csv").is_file():
+            code = vdir / "code" / "signal_engine.py"
+            if not _same_json(vdir / "config.json", rb.variant_config(config, run)):
                 entry.update(status="failed", error="config.json is not the planned sweep config")
+            elif not code.is_file() or _sha256(code) != code_sha:
+                entry.update(status="failed", error="code/signal_engine.py is not the run's code")
             else:
                 rec = record_engine_run(session_id, vdir, sweep={"parent_seq": parent_seq, "label": run["label"]})
-                entry.update(status="ok", seq=rec.get("seq"))
-        elif isinstance(reported, dict):
-            entry.update(status="failed", error=_collapse(reported.get("error"))[:300])
+                entry.update(status="ok" if reported_ok else "failed", seq=rec.get("seq"))
+        elif reported_ok:
+            entry.update(status="failed", error="no artifacts/metrics.csv")
         runs.append(entry)
     doc = {"parent_seq": parent_seq, "runs": runs, "skipped": skipped, "ts": int(time.time() * 1000)}
     _append_durable(_session_dir(session_id) / ROBUSTNESS_FILE, doc)
@@ -899,7 +906,8 @@ _ENGINE_TEXT = {
            "rb_ablation": "- #{seq} 组件消融（系统逐个关闭）：{parts}{flag}。参考信息，不改变判定。",
            "rb_delta": "{point}，变化 {d:+.2f}", "rb_below": "，低于本点一半",
            "rb_all_needed": "——去掉任何一个组件 Sharpe 都低于一半：结果依赖全部组件的叠加，是过拟合迹象",
-           "rb_failed_note": "（{n} 次扫描回测失败，未计入）",
+           "rb_failed_note": "（{n} 次扫描回测失败；已有结果的仍计入试验数）",
+           "mt_sweep_capped": "（{n} 个较早的系统扫描版本超出上限，未计入多重比较；仍计入试验数）",
            "rb_trials": "（以上 {n} 次扫描回测按不同结果计入本会话的试验数：DSR、SPA/PBO）",
            "no_live": "通用引擎结果不能直接上实盘：须交接 Strategy IR，通过 ir_robustness 与 AlphaKeel G1/G2。",
            "non_auditable": "数据不可审计（{srcs}）：实时拉取的数据无法逐位复现，不能作为 AlphaKeel 证据。",
@@ -932,7 +940,8 @@ _ENGINE_TEXT = {
             "rb_ablation": "- #{seq} component ablation (system switches each off in turn): {parts}{flag}. Reference only; it does not change the verdict.",
             "rb_delta": "{point}, change {d:+.2f}", "rb_below": ", below half the chosen point",
             "rb_all_needed": " -- removing any one component halves the Sharpe: the result needs every component stacked, a sign of overfitting",
-            "rb_failed_note": "({n} sweep backtests failed and are not counted)",
+            "rb_failed_note": "({n} sweep backtests failed; those that left a result still count as trials)",
+            "mt_sweep_capped": "({n} older system sweep versions are over the cap and not in the multiple-comparison test; they still count as trials)",
             "rb_trials": "(the {n} sweep backtests above count in this session's trials by distinct result: DSR, SPA/PBO)",
             "no_live": "Engine results cannot go live directly: hand over a Strategy IR, pass ir_robustness and AlphaKeel G1/G2.",
             "non_auditable": "Data not auditable ({srcs}): live-pulled data cannot be re-read bit for bit and is not AlphaKeel evidence.",
@@ -1022,7 +1031,8 @@ def _net_return(screen: dict) -> str:
     return "—" if net is None or base is None or base <= 0 else fmt_fraction(net / base)
 
 
-MT_MAX_VERSIONS = 40  # sweep runs are versions too (robustness.py: at most 2 * 8 + 8 per backtest)
+MT_MAX_VERSIONS = 20
+MT_MAX_SWEEP_VERSIONS = 20  # sweep rows are versions too, on top of the model's own and never instead of them
 MT_MIN_VERSIONS = 3
 MT_PBO_MIN_VERSIONS = 8
 MT_MIN_DAYS = 60
@@ -1074,8 +1084,12 @@ def _multiple_testing_lines_unsafe(session_id: str, t: dict) -> list[str]:
     long_enough = [u for u in usable if len(u[2]) >= MT_MIN_DAYS]  # a short or empty run would empty the date intersection
     short = len(usable) - len(long_enough)
     lines: list[str] = []
-    capped = len(long_enough) > MT_MAX_VERSIONS
-    versions = long_enough[-MT_MAX_VERSIONS:]
+    model = [u for u in long_enough if not u[0].get("sweep")]
+    swept = [u for u in long_enough if u[0].get("sweep")]
+    capped = len(model) > MT_MAX_VERSIONS
+    sweep_left_out = max(0, len(swept) - MT_MAX_SWEEP_VERSIONS)
+    keep = {id(u) for u in model[-MT_MAX_VERSIONS:]} | {id(u) for u in swept[len(swept) - min(len(swept), MT_MAX_SWEEP_VERSIONS):]}
+    versions = [u for u in long_enough if id(u) in keep]
     if len(versions) >= MT_MIN_VERSIONS:
         common = sorted(set.intersection(*(set(d) for _, d, _ in versions)))
         if len(common) >= MT_MIN_DAYS:
@@ -1100,7 +1114,7 @@ def _multiple_testing_lines_unsafe(session_id: str, t: dict) -> list[str]:
             lines.append(t["split"].format(seq=row.get("seq"), is_s=_fmt2(split["is_sharpe"]), oos_s=_fmt2(split["oos_sharpe"]),
                                            lo=_fmt2(ci.get("ci_lower")), hi=_fmt2(ci.get("ci_upper"))))
             break
-    for key, n in (("mt_skipped", skipped), ("mt_mismatch", mismatch), ("mt_short", short)):
+    for key, n in (("mt_skipped", skipped), ("mt_mismatch", mismatch), ("mt_short", short), ("mt_sweep_capped", sweep_left_out)):
         if n:
             lines.append(t[key].format(n=n))
     return lines
@@ -1110,7 +1124,7 @@ _NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,39}")
 
 
 def _num_text(v: Any) -> str:
-    return f"{v:g}" if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else "?"
+    return f"{v:.10g}" if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else "?"
 
 
 def _sweep_point(row: dict | None, ppy: int) -> dict | None:
@@ -1222,7 +1236,7 @@ def _robustness_lines_unsafe(session_id: str, t: dict) -> list[str]:
                                              flag=t["rb_all_needed"] if len(ablations) >= 2 and collapsed == len(ablations) else ""))
     if failed:
         lines.append(t["rb_failed_note"].format(n=failed))
-    lines.append(t["rb_trials"].format(n=sum(1 for r in doc["runs"] if isinstance(r, dict) and r.get("status") == "ok")))
+    lines.append(t["rb_trials"].format(n=sum(1 for r in doc["runs"] if isinstance(r, dict) and isinstance(r.get("seq"), int))))
     return lines
 
 

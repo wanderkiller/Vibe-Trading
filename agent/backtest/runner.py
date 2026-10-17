@@ -1322,7 +1322,7 @@ def main(run_dir: Path, *, robustness: bool = False) -> None:
     loader = _AutoLoader(data_map)
 
     if robustness:
-        _run_robustness(run_dir, declared_config, config, engine_cls, loader, effective_source, codes, bars_per_year)
+        _run_robustness(run_dir, declared_config, config, loader, effective_source, codes, bars_per_year)
         return
 
     if engine_type == "options":
@@ -1333,10 +1333,12 @@ def main(run_dir: Path, *, robustness: bool = False) -> None:
         market_engine.run_backtest(config, loader, signal_engine, run_dir, bars_per_year=bars_per_year)
 
 
-def _run_robustness(run_dir: Path, declared_config: dict, config: dict, engine_cls, loader, effective_source: str,
+def _run_robustness(run_dir: Path, declared_config: dict, config: dict, loader, effective_source: str,
                     codes: List[str], bars_per_year) -> None:
-    """The sweep of ``main(..., robustness=True)``: one engine run per ``robustness.variants`` entry, each on a fresh
-    ``SignalEngine`` and engine and a copy of the run-time ``config``; a failing run is recorded and the next one runs."""
+    """The sweep of ``main(..., robustness=True)``: one engine run per ``robustness.variants`` entry, each on a copy of
+    the run-time ``config``, a fresh engine and a ``SignalEngine`` class from a freshly loaded module (so neither ``PARAMS``
+    merged by an earlier variant nor any other class-level state carries over); a failing run is recorded and the next
+    one runs."""
     import shutil
 
     root = run_dir / "robustness"
@@ -1355,6 +1357,10 @@ def _run_robustness(run_dir: Path, declared_config: dict, config: dict, engine_c
         vconfig = _robustness.variant_config(config, run)
         entry = {**run, "status": "ok"}
         try:
+            engine_cls = getattr(_load_module_from_file(vdir / "code" / "signal_engine.py", "signal_engine"), "SignalEngine", None)
+            if engine_cls is None:
+                raise ValueError("SignalEngine class not found in signal_engine.py")
+            _validate_signal_engine_class(engine_cls)
             _robustness.apply(engine_cls, vconfig)
             signal_engine = engine_cls()
             if vconfig.get("engine", "daily") == "options":

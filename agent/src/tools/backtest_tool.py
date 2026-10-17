@@ -421,10 +421,21 @@ def _robustness_sweep(run_path: Path, config: dict, entry_script: Path, agent_ro
     seq = screen.get("seq")
     if not session_id or not isinstance(seq, int) or isinstance(seq, bool):
         return {"status": "skipped", "reason": "no session id or no recorded run: the sweep is not run"}
+    import shutil
+    import time
+
     logs = run_path / "logs"
-    saved = {n: (logs / n).read_bytes() for n in _RUNNER_LOGS if (logs / n).is_file()}
     error = None
-    emit_progress("simulate", message="parameter neighbourhood and component ablation sweep")
+    try:
+        saved = {n: (logs / n).read_bytes() for n in _RUNNER_LOGS if (logs / n).is_file()}
+        # an earlier sweep's results must never be recorded as this run's sweep
+        shutil.rmtree(run_path / "robustness", ignore_errors=True)
+        if (run_path / "robustness").exists():
+            return {"status": "error", "error": "an earlier robustness/ directory could not be removed; the sweep is not run"}
+        emit_progress("simulate", message="parameter neighbourhood and component ablation sweep")
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "error": f"sweep not started: {exc}"}
+    started = time.time()
     try:
         result = Runner(timeout=_backtest_timeout_seconds()).execute(
             entry_script, run_path, cwd=agent_root, cli_args=[str(run_path), "--robustness"])
@@ -438,7 +449,7 @@ def _robustness_sweep(run_path: Path, config: dict, entry_script: Path, agent_ro
         sweep_logs = run_path / "robustness" / "logs"
         sweep_logs.mkdir(parents=True, exist_ok=True)
         for n in _RUNNER_LOGS:
-            if (logs / n).is_file():
+            if (logs / n).is_file() and (logs / n).stat().st_mtime >= started - 1:  # written by the sweep, not the chosen run
                 (sweep_logs / n).write_bytes((logs / n).read_bytes())
             if n in saved:
                 (logs / n).write_bytes(saved[n])
@@ -457,6 +468,9 @@ def _robustness_sweep(run_path: Path, config: dict, entry_script: Path, agent_ro
                                for i in current.get("items") or []]
             screen["facts"] = current.get("facts")
             screen["trials"] = (current.get("facts") or {}).get("trials", screen.get("trials"))
+        else:
+            screen["warning"] = "; ".join(w for w in (screen.get("warning"), "the screen could not be recomputed for the "
+                                                      "trial count after the sweep; quote the result card") if w)
         runs = doc["runs"]
         out: dict[str, Any] = {
             "status": "ok" if error is None else "partial",

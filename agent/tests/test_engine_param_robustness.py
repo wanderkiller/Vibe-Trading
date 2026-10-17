@@ -128,29 +128,31 @@ def test_the_sweep_pass_runs_every_variant_on_fresh_engines_and_survives_a_failu
             (Path(run_dir) / "artifacts").mkdir(parents=True)
             (Path(run_dir) / "artifacts" / "metrics.csv").write_text("final_value\n1\n")
 
-    class Engine:
-        PARAMS = {"fast": 1}
-
-        def generate(self, data_map):
-            return {}
-
+    # __init__ derives a parameter and fills a class-level cache: neither may carry over from one variant to the next
+    code = ("class SignalEngine:\n    PARAMS = {'fast': 1}\n    _cache = {}\n\n    def __init__(self):\n"
+            "        self.PARAMS.setdefault('derived', self.PARAMS['fast'] * 3)\n        self._cache.setdefault('first', self.PARAMS['fast'])\n\n"
+            "    def generate(self, data_map):\n        return {}\n")
     monkeypatch.setattr(runner, "_create_market_engine", lambda *a: Market())
     rd = tmp_path / "run"
     (rd / "code").mkdir(parents=True)
-    (rd / "code" / "signal_engine.py").write_text("# code\n")
+    (rd / "code" / "signal_engine.py").write_text(code)
     (rd / "robustness" / "stale").mkdir(parents=True)
     declared = {"codes": ["X"], **DECLARED}
-    runner._run_robustness(rd, declared, {**declared, "_run_card_x": 1}, Engine, None, "yfinance", ["X"], 252)
+    chosen = runner._load_module_from_file(rd / "code" / "signal_engine.py", "signal_engine").SignalEngine
+    rb.apply(chosen, declared)
+    chosen()  # the chosen point's instance, as main() makes it before the sweep
+    runner._run_robustness(rd, declared, {**declared, "_run_card_x": 1}, None, "yfinance", ["X"], 252)
     manifest = json.loads((rd / "robustness" / "manifest.json").read_text())
     status = {e["label"]: e["status"] for e in manifest["runs"]}
     assert status == {"p_fast_minus": "ok", "p_fast_plus": "failed", "p_slow_minus": "ok", "p_slow_plus": "ok",
                       "a_trend": "ok", "a_vol": "ok"}
     assert "boom" in next(e["error"] for e in manifest["runs"] if e["label"] == "p_fast_plus")
     assert not (rd / "robustness" / "stale").exists()
-    assert seen[0][0] == {"fast": 8, "slow": 30} and seen[4][1] == {"trend": False, "vol": True}
+    assert seen[0][0] == {"fast": 8, "slow": 30, "derived": 24} and seen[4][1] == {"trend": False, "vol": True}
+    assert seen[2][0] == {"fast": 10, "slow": 24, "derived": 30}
     vconf = json.loads((rd / "robustness" / "a_vol" / "config.json").read_text())
     assert vconf == rb.variant_config(declared, {"kind": "ablation", "component": "vol"}) and "_run_card_x" not in vconf
-    assert (rd / "robustness" / "a_vol" / "code" / "signal_engine.py").read_text() == "# code\n"
+    assert (rd / "robustness" / "a_vol" / "code" / "signal_engine.py").read_text() == code
 
 
 # --- ledger, trials and card ----------------------------------------------------------------------------------------------
@@ -215,16 +217,20 @@ def test_a_failed_tampered_or_misconfigured_sweep_run_is_not_shown_as_a_result(t
     rd, first = _parent(tmp_path)
     _write_sweep(rd, failed=("a_vol",))
     (rd / "robustness" / "a_trend" / "config.json").write_text(json.dumps({**DECLARED, "params": {"fast": 99, "slow": 30}}))
+    (rd / "robustness" / "p_slow_plus" / "code" / "signal_engine.py").write_text("# an earlier version\n")
     doc = L.record_robustness(SESSION, rd, first["seq"])
     status = {r["label"]: (r["status"], r.get("error")) for r in doc["runs"]}
-    assert status["a_vol"] == ("failed", "boom")
+    assert status["a_vol"] == ("failed", "boom")  # it left a result: recorded and counted, shown as failed
+    assert isinstance(next(r for r in doc["runs"] if r["label"] == "a_vol")["seq"], int)
     assert status["a_trend"] == ("failed", "config.json is not the planned sweep config")
+    assert status["p_slow_plus"] == ("failed", "code/signal_engine.py is not the run's code")
     row = next(r for r in L.engine_rows(SESSION) if (r.get("sweep") or {}).get("label") == "p_fast_minus")
     (Path(row["snapshot_dir"]) / "returns.json").write_text("[0.5]")
     card = L.render_card(SESSION, zh=False)
     assert "8 → snapshot does not match the record" in card
     assert "trend → backtest failed" in card and "vol → backtest failed" in card
-    assert "(2 sweep backtests failed and are not counted)" in card
+    assert "(3 sweep backtests failed; those that left a result still count as trials)" in card
+    assert "(the 4 sweep backtests above count" in card
     assert "removing any one component" not in card
 
 
@@ -270,6 +276,7 @@ def _fake_runner(calls: list):
             sweep = "--robustness" in (cli_args or [])
             (logs / "runner_stdout.txt").write_text("sweep" if sweep else "main")
             if sweep:
+                assert not (Path(run_path) / "robustness" / "stale").exists()  # cleared before the sweep starts
                 _write_sweep(Path(run_path))
             return RunResult(success=True, exit_code=0, stdout="", stderr="", artifacts={})
 
@@ -284,6 +291,7 @@ def test_the_tool_runs_the_sweep_only_for_a_declared_strategy(tmp_path, monkeypa
     calls: list = []
     monkeypatch.setattr(backtest_tool, "Runner", _fake_runner(calls))
     rd = _make_run(tmp_path, source="yfinance", codes=("AAPL.US",), config_extra=DECLARED if declared else None)
+    (rd / "robustness" / "stale").mkdir(parents=True)
     token = bind_llm_session_id(SESSION)
     try:
         out = json.loads(backtest_tool.run_backtest(str(rd)))
@@ -353,3 +361,20 @@ def test_the_sweep_pass_on_the_real_engine_reaches_the_card(tmp_path, monkeypatc
     lines = L.robustness_lines(SESSION, zh=False)
     assert lines[0].startswith("- #1 parameter neighbourhood (system sweep of 4 neighbours")
     assert "identical to the chosen point" not in "\n".join(lines) and "trend → Sharpe" in lines[-2]
+
+
+def test_sweep_rows_never_push_model_versions_out_of_the_multiple_comparison(tmp_path, monkeypatch) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    monkeypatch.setattr(L, "MT_MAX_SWEEP_VERSIONS", 2)
+    L.record_engine_run(SESSION, _make_run(tmp_path, "m1", seed=11, drift=0.003))
+    L.record_engine_run(SESSION, _make_run(tmp_path, "m2", seed=12, drift=0.001))
+    rd, first = _parent(tmp_path)
+    _write_sweep(rd)
+    L.record_robustness(SESSION, rd, first["seq"])
+    card = L.render_card(SESSION, zh=False)
+    # 3 model versions + the 2 newest distinct sweep versions; the 2 older distinct sweep versions are named, not hidden
+    assert "Multiple comparison (5 distinct versions" in card
+    assert "(2 older system sweep versions are over the cap" in card
+    # the DSR cross-variance ignores sweep rows; the trial number counts them
+    assert len(L.variant_sharpes_for(SESSION, None)) == 3 and L.trial_count(SESSION) == 7

@@ -1196,18 +1196,24 @@ not in components_off}`) before the engine is instantiated; nothing is set when 
 chosen value +/- `step`, else +/- 20 % (an integer moves by at least 1 and stays an integer); a neighbour outside `[min, max]`
 or a zero without a step is not run and is listed as skipped. Each component that is on is switched off in turn. (3)
 `backtest_tool.run_backtest`, after the chosen run is recorded and only when the config declares something and a session id
-exists, runs `runner.py <run_dir> --robustness`: one data fetch, every variant on a fresh `SignalEngine` and engine into
+exists, removes `<run_dir>/robustness/` and runs `runner.py <run_dir> --robustness`: one data fetch (the same request as the
+chosen run, fetched again once; a live source may serve slightly different bars), every variant on a fresh engine and a
+`SignalEngine` class from a freshly loaded module (no `PARAMS` merged by an earlier variant and no class-level state carries over) into
 `<run_dir>/robustness/<label>/` (its `config.json` = `robustness.variant_config`, a copy of the code, artifacts), a failing
 variant is recorded and the next one runs, `robustness/manifest.json` is rewritten after each run (a sweep cut by the timeout
-keeps what finished). The chosen run's `logs/runner_*.txt` are restored; the sweep's go to `robustness/logs/`. (4) Trials:
-`record_robustness` recomputes the plan from the run's `config.json` and records every variant the manifest reports ok, whose
-metrics exist and whose `config.json` is the planned variant config, through `record_engine_run(..., sweep={parent_seq,
-label})`; so every sweep run is an engine row and its distinct `trial_key` counts in `trial_count`, `variant_sharpes_for`, the
-DSR rescreen, the IR trials evidence and the SPA/PBO versions (`MT_MAX_VERSIONS` 20 -> 40). A sweep row never updates the
+keeps what finished). The chosen run's `logs/runner_*.txt` are restored; the sweep's (only files written after it started) go
+to `robustness/logs/`. (4) Trials: `record_robustness` recomputes the plan from the run's `config.json` and records every
+variant whose metrics exist, whose `config.json` is the planned variant config and whose `code/signal_engine.py` is the run's
+code, through `record_engine_run(..., sweep={parent_seq, label})` (status `ok` when the manifest also says so, else `failed`
+with its seq: a result that exists is counted); so every sweep result is an engine row and its distinct `trial_key` counts in
+`trial_count`, the DSR rescreen, the IR trials evidence and the SPA/PBO versions. The DSR cross-trial Sharpe variance
+(`variant_sharpes_for`) leaves sweep rows out (near-identical neighbours would shrink it). SPA/PBO take the latest
+`MT_MAX_VERSIONS` (20) model versions as before plus at most `MT_MAX_SWEEP_VERSIONS` (20) newest sweep versions, so sweep rows
+never push a model version out; sweep versions over that cap are named in a note. A sweep row never updates the
 research contract, is not a row of the card's table (the summary counts it), never makes `session_has_passed_trial` true, never
 replaces a model row of the same result in `_latest_engine_rows`, is skipped for the split/interval line, and is labelled when it
 is the SPA's best. The sweep is appended to the session's `robustness.jsonl`. The tool result's `research_screen` is recomputed
-for the new trial count and carries `robustness` (counts, failures, the English card lines). (5) Card: `robustness_lines` (system
+for the new trial count (a warning when the chosen snapshot does not verify) and carries `robustness` (counts, failures, the English card lines). (5) Card: `robustness_lines` (system
 lines after the multiple-comparison lines) takes the latest sweep whose chosen row verifies and prints, from the verified
 returns (annualised Sharpe, `multiple_testing.annual_sharpe`) and screens (round trips, item 1.2) of the sweep rows: the
 neighbourhood line (chosen Sharpe and round trips, the share of neighbours with a Sharpe below half the chosen one, a neighbour
