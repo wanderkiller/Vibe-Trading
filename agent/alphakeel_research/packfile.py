@@ -814,6 +814,10 @@ class Pit:
         self._check(end)
         return [b for b in self.__pack.bbo(inst, start, end) if b.ts_recv_ms is not None and b.ts_recv_ms <= self.as_of_ms]
 
+    def window_start_ms(self) -> int:
+        """Start of the pack's frozen request window (a dataset pack's funding, klines and tables all start there)."""
+        return int(self.__pack.lock["request"]["window"]["start_ms"])
+
     def borrow_lend(self, venue: str, quote_ccy: str) -> Borrow | None:
         """The latest reading of the venue's ``quote_ccy`` pool known at ``as_of`` (visible from its read time), or None
         (no such table, or no reading yet)."""

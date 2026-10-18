@@ -53,6 +53,19 @@ def initialize(parameters):
         raise Unsupported("assumptions.funding_estimate = last_settled is not supported: declare \"predicted\". Scan frames "
                           "hold the venues' predicted rates; the dataset view (ir_backtest) serves predicted with the last "
                           "official settlement as a proxy and records that in the run card's approximations")
+    # AlphaKeel ViewCapabilities::missing (strategy-ir runtime.rs): scan frames hold no history, borrow or listing fields, no
+    # equity leg and no portfolio-margin booking, so an IR that needs one is refused here, never run with silent nulls
+    if loaded["universe"]["shape"] == "equity_perp":
+        raise Unsupported("universe.shape = equity_perp is not supported on scan frames: the pack has no equity leg (ibkr) quote view")
+    if loaded["sizing"].get("margin") is not None:
+        raise Unsupported("sizing.margin is not supported on scan frames: no portfolio-margin booking (borrow, ratio checks, "
+                          "reduction, liquidation)")
+    needs = IR.view_needs(loaded.doc)
+    for need, what, feats in (("history", "view.funding_history", "funding_apr_7d / funding_apr_30d / funding_pos_share_30d"),
+                              ("borrow", "view.borrow", "borrow_apr / borrow_utilization / borrow_cap_used"),
+                              ("listing", "view.listing", "listing_age_hours")):
+        if need in needs:
+            raise Unsupported(f"{what}: the IR reads a feature of {feats}, which scan frames do not provide; use the dataset backtest")
     qty_dp = parameters.get("qty_dp", QTY_DP)
     if isinstance(qty_dp, bool) or not isinstance(qty_dp, int) or not 0 <= qty_dp <= 18:
         raise ValueError("qty_dp must be an integer in 0..=18")

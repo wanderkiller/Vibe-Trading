@@ -89,10 +89,16 @@ APPROXIMATIONS = [
     "fallback (no published mark) is the close of the latest closed bar of any series within 5 minutes of the settlement",
     "funding_mean_7d/30d and funding_pos_share_30d: from the official settlements visible at the decision time in [now - W, now) "
     "(hourly rate = rate / interval hours; missing when their intervals cover < 0.9 x W hours); the pack's warm-up is 24 h, so they "
-    "are missing in the first week / month of a run unless the pack reaches further back",
+    "are missing in the first week / month of a run unless the pack reaches further back (an IR that reads them is refused unless the "
+    "pack's funding starts 31 days before the first decision; ir_backtest.dataset_request asks for that); funding_pos_share_30d = the "
+    "share of rate > 0 among the settlements of the window that have a usable interval (the same rows as the mean)",
     "borrow_apr / borrow_util / borrow_cap_used: the latest borrow_lend reading visible at the decision time (the pack's table), "
-    "else the request's constants borrow.<venue> = {apr, util?, cap_used?}, else missing; no borrow interest is ever charged here",
-    "listed_ms from the pack's instrument_meta snapshot known at the decision time; missing without it",
+    "else the request's constants borrow.<venue> = {apr, util?, cap_used?}, else missing; a pool reading read more than 6 hours "
+    "before the decision time is stale: borrow_* are missing (the constants do not replace it); an IR that reads borrow_* is refused "
+    "unless every perp has a borrow_lend table or a constant; no borrow interest is ever charged here",
+    "listed_ms from the pack's instrument_meta snapshot known at the decision time; missing without it (an IR that reads "
+    "listing_age_hours is refused unless every non-equity leg has a listing time in the pack)",
+    "the equity leg's volume_quote is missing (its price is the reference perp's index, which has no equity volume)",
     "equity leg (ibkr): bid = ask = the close of the INDEX-price bar of the declared Binance perp of the same base (not an IBKR "
     "quote), present only 10:00 ET to 30 minutes before the NYSE close on trading days (holidays and early closes of "
     "stockperp-paper/common.py); taker_fee = fees.ibkr.equity as a rate on notional (IBKR's per-share commission is approximated)",
@@ -176,18 +182,21 @@ def universe_instruments(ir_doc: dict, declared: list[dict]) -> list[dict]:
 
 
 def dataset_request(instruments: list[dict], start_ms: int, end_ms: int, *, accept_partial: bool = False,
-                    selection: dict | str | None = None, market_tables: list[str] | None = None) -> dict:
+                    selection: dict | str | None = None, market_tables: list[str] | None = None, history: bool = False) -> dict:
     """Dataset-pack request: 1m trade klines + the latest funding dataset for the instruments, ``WARMUP_MS`` before start.
     ``selection``: how the instrument list was chosen (``Client.dataset_pack_request``; omitted = ``"declared"``).
     ``market_tables``: default ``["kline_1m"]``; add ``kline_1h`` / ``kline_1d`` for the coarse series of the dataset view.
-    Equity instruments are left out of the pack's instrument list; an IR with one asks for ``index`` klines as well."""
+    Equity instruments are left out of the pack's instrument list; an IR with one asks for ``index`` klines as well.
+    ``history``: the IR reads the history features (``ir.view_needs``): the window starts ``HISTORY_LOOKBACK_MS`` (31 days) before
+    ``start_ms`` instead of ``WARMUP_MS``, so the pack's funding reaches back far enough for the 30-day window; otherwise the
+    request, and with it the pack id, is unchanged."""
     from .client import Client
 
     # an equity leg (venue ibkr) has no data of its own: it is priced by the index klines of its reference perp, which is in the list
     refs = [{"venue": d["venue"], "market": d["market"], "symbol": d["symbol"]} for d in instruments if d["market"] != "equity"]
     has_perp = any(d["market"] == "perp" for d in instruments)
     has_equity = any(d["market"] == "equity" for d in instruments)
-    return Client.dataset_pack_request(start_ms=start_ms - WARMUP_MS, end_ms=end_ms, instruments=refs,
+    return Client.dataset_pack_request(start_ms=start_ms - (ir_views.HISTORY_LOOKBACK_MS if history else WARMUP_MS), end_ms=end_ms, instruments=refs,
                                        funding_dataset=None if has_perp else "none",
                                        market_tables=list(market_tables) if market_tables else ["kline_1m"],
                                        price_kinds=["trade", "index"] if has_equity else ["trade"],
@@ -502,7 +511,7 @@ class DatasetCursor:
     """Streams the dataset frames of ``ir_views.dataset_frame_legs`` in time order (same legs, bounded memory)."""
 
     def __init__(self, pack: Pack, instruments: list[dict], start_ms: int, end_ms: int, *, fees: dict | None, work: Path,
-                 borrow: dict | None = None):
+                 borrow: dict | None = None, needs=frozenset()):
         self.decl = sorted(instruments, key=lambda d: (d["venue"], d["market"], d["symbol"]))
         metas = pack.instruments()
         self.insts = [Inst(d["venue"], d["market"], d["symbol"]) for d in self.decl]
@@ -530,6 +539,12 @@ class DatasetCursor:
                 self.identity[i] = ir_views.equity_identity(d, ref_quote)
             self.fee[i] = ir_views.dataset_fee(fees, i.venue, i.market)
         lo = pack.lock["request"]["window"]["start_ms"]
+        if any(i.market == "equity" for i in self.insts):
+            ir_calendar.require_coverage(start_ms, end_ms)  # outside the holiday tables an ordinary weekday would be a guess
+        if "history" in needs:
+            ir_views.require_history_reach(lo, start_ms)
+        if needs:
+            ir_views.require_sources(pack, self.decl, self.identity, needs, self.borrow_constants)
         primary = [i for i in self.insts if i.market != "equity"]
         paths, self.chains = spill_klines(pack, primary, lo, end_ms, work)
         # bar series per contract, finest first: ``(interval, max age ms, bars)``; the 1m one is ``self.bars``
@@ -598,6 +613,7 @@ class DatasetCursor:
         #: engine frame's snaps and intents (bid = ask = mark = close here); an official mark is rounded to it, and left as
         #: published while the contract has not been observed yet
         self.price_dp: dict[Inst, int] = {}
+        self._lo = lo
         self.now = None
 
     def advance(self, now: int) -> None:
@@ -641,7 +657,8 @@ class DatasetCursor:
         got = self._hist_cache.get(inst)
         if got is None or (got[1] is not None and now > got[1]):
             ts = self._hist_ts[inst]
-            got = ir_views.funding_history_fields(self._hist[inst][bisect.bisect_left(ts, now - ir_views.HISTORY_LOOKBACK_MS):], now)
+            floor = max(self._lo, now - ir_views.HISTORY_LOOKBACK_MS)  # the same lower bound as ir_views.visible_settlements
+            got = ir_views.funding_history_fields(self._hist[inst][bisect.bisect_left(ts, floor):], now)
             self._hist_cache[inst] = got
         return got[0]
 
@@ -680,14 +697,14 @@ class DatasetCursor:
                     prev = None
                 st = None if s is None else ir_views.settlement_tuple(s, prev)
                 extra.update(self._history(i))
-                extra.update(ir_views.borrow_fields(self._borrow_now[i], i.venue, self.borrow_constants))
+                extra.update(ir_views.borrow_fields(self._borrow_now[i], i.venue, self.borrow_constants, now))
             if i.market != "equity":
                 listed = ir_views.listed_ms_at(self._meta[i], now)
                 if listed is not None:
                     extra["listed_ms"] = listed
             base, quote = self.identity[i]
             leg = ir_views.dataset_leg(venue=i.venue, market=i.market, symbol=i.symbol, base=base, quote_ccy=quote, close=b.last[2],
-                                       close_time_ms=b.last[1], volume_quote=b.volume(), settlement=st, taker_fee=fee, extra=extra)
+                                       close_time_ms=b.last[1], volume_quote=None if i.market == "equity" else b.volume(), settlement=st, taker_fee=fee, extra=extra)
             if leg is not None:
                 out.append(leg)
         return out
@@ -1038,7 +1055,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
     run_id = run_id_of(sid, pack.id, start_ms, end_ms, step_minutes, fees, capital_base, borrow)
     work = out / ".work"
     t0 = time.monotonic()  # the spill (DatasetCursor) is part of the run's elapsed time
-    cursor = DatasetCursor(pack, insts, start_ms, end_ms, fees=fees, work=work, borrow=borrow)
+    cursor = DatasetCursor(pack, insts, start_ms, end_ms, fees=fees, work=work, borrow=borrow, needs=IR.view_needs(loaded.doc))
     sim = Sim()
     ir_obj = IR.Ir(loaded.doc)
     cooldowns: dict[str, int] = {}
@@ -1426,7 +1443,8 @@ def _backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, e
               cache_dir: str | Path | None = None, pack_dir: str | Path | None = None, accept_partial: bool = False,
               selection: dict | str | None = None, **kw: Any) -> dict:
     insts = universe_instruments(ir_doc, instruments)
-    req = dataset_request(insts, start_ms, end_ms, accept_partial=accept_partial, selection=selection)
+    req = dataset_request(insts, start_ms, end_ms, accept_partial=accept_partial, selection=selection,
+                          history="history" in IR.view_needs(IR.load(ir_doc).doc))
     service = None
     if pack_dir is not None:
         pack = Pack.from_directory(pack_dir)

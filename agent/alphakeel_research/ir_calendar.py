@@ -2,8 +2,9 @@
 
 The equity leg of an ``equity_perp`` frame exists only in the signal window of a NYSE trading day: 10:00 ET up to 30 minutes
 before the close, both ends inclusive (13:00 early close -> 12:30). Weekends, the holidays below and the early-close days are the
-tables of the paper monitor ``stockperp-paper/common.py`` (HOLIDAYS, EARLY_CLOSE), copied as data; the tables end at 2027-03-26
-and a day outside them is treated as an ordinary weekday (the paper monitor does the same).
+tables of the paper monitor ``stockperp-paper/common.py`` (HOLIDAYS, EARLY_CLOSE), copied as data; the tables cover
+2024-11-28 .. 2027-03-26 (``COVERAGE``); a run whose window leaves them is refused (``require_coverage``) instead of treating
+the days outside as ordinary weekdays.
 
 Standard library only (``zoneinfo``; the zone database must be present on the machine).
 """
@@ -27,6 +28,19 @@ HOLIDAYS = {dt.date(*x) for x in [
     (2027, 1, 1), (2027, 1, 18), (2027, 2, 15), (2027, 3, 26)]}
 EARLY_CLOSE = {dt.date(*x): 13 for x in [(2024, 11, 29), (2024, 12, 24), (2025, 7, 3), (2025, 11, 28), (2025, 12, 24),
                                          (2026, 11, 27), (2026, 12, 24)]}
+
+
+COVERAGE = (dt.date(2024, 11, 28), dt.date(2027, 3, 26))  # first and last day the holiday / early-close tables speak for
+
+
+def require_coverage(start_ms: int, end_ms: int) -> None:
+    """``request.invalid`` unless the ET dates of ``[start_ms, end_ms]`` lie inside ``COVERAGE``."""
+    from .errors import ApiError
+
+    a, b = et_date(start_ms), et_date(end_ms)
+    if a < COVERAGE[0] or b > COVERAGE[1]:
+        raise ApiError("request.invalid", f"the run window ({a} .. {b} ET) leaves the NYSE holiday calendar this version carries "
+                       f"({COVERAGE[0]} .. {COVERAGE[1]}); an equity leg there would treat holidays as trading days", field="window")
 
 
 def is_trading_day(d: dt.date) -> bool:

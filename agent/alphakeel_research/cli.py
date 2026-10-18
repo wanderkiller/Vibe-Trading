@@ -266,7 +266,8 @@ def _ir_research(a) -> int:
                     ir_doc = _load(ir_path)
                     insts = ir_backtest.universe_instruments(ir_doc, _load(inst_path))
                     req = ir_backtest.dataset_request(insts, oos[0], oos[1], accept_partial=False,
-                                                      selection=pack.lock["request"].get("selection"))
+                                                      selection=pack.lock["request"].get("selection"),
+                                                      history="history" in ir_backtest.IR.view_needs(ir_backtest.IR.load(ir_doc).doc))
                     day_key = key_for("pack", {"request": req, "utc_day": ir_backtest.utc_day(int(time.time() * 1000))})
                     oos_pack = workflow.freeze_pack(fetch, req, cache_dir=a.cache, key=day_key)
                     ir_backtest.check_pack(oos_pack, req)

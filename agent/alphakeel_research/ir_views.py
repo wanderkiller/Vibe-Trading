@@ -247,6 +247,8 @@ REFERENCE_VENUE = "binance"  # the venue whose index klines price an equity leg
 HISTORY_WINDOWS = ((7, "funding_mean_7d"), (30, "funding_mean_30d"))  # days, view field
 HISTORY_LOOKBACK_MS = 31 * 86_400_000  # the 30-day window plus one more day for the interval inference of its first row
 HISTORY_MIN_COVERAGE_PCT = 90
+#: a borrow/lend reading older than this (by its read time) at the decision time is not a current pool state: borrow_* are missing
+BORROW_MAX_AGE_MS = 6 * 3_600_000
 SETTLEMENT_KINDS = ("regular", "special")
 SETTLEMENT_LOOKBACK_MS = 86_400_000  # longest funding interval of the nine venues is 8 h
 KLINE_SPAN_MS = 59_999
@@ -340,10 +342,13 @@ def require_borrow(borrow) -> dict:
     return out
 
 
-def borrow_fields(state, venue: str, constants: dict) -> dict:
+def borrow_fields(state, venue: str, constants: dict, now_ms: int | None = None) -> dict:
     """``borrow_*`` view fields of a perp leg: the pool reading ``state`` (``packfile.Borrow``) when there is one -- its fields
-    that are None are missing -- else the venue's constants, else nothing."""
+    that are None are missing, and all are missing when it was read more than ``BORROW_MAX_AGE_MS`` before ``now_ms`` (a stale
+    pool is not replaced by the constants) -- else the venue's constants, else nothing."""
     if state is not None:
+        if now_ms is not None and state.t < now_ms - BORROW_MAX_AGE_MS:
+            return {}
         got = {"borrow_apr": state.apr, "borrow_util": state.util, "borrow_cap_used": state.cap_used}
         return {k: fmt(x) for k, x in got.items() if x is not None}
     return dict(constants.get(venue) or {})
@@ -406,6 +411,45 @@ def funding_history_fields(rows: list[tuple[int, Decimal, int | None]], now_ms: 
     return out, until
 
 
+def visible_settlements(pit, inst, now_ms: int) -> list:
+    """The official settlements of ``inst`` visible at ``now_ms``, unique by settlement time ``t`` and ascending, from
+    ``max(pack window start, now - 31 d)``: when two visible rows share a ``t`` the one that became visible LATER replaces the
+    earlier (rows ordered by ``(visible time, t)``; the streaming cursor does the same)."""
+    lo = max(pit.window_start_ms(), now_ms - HISTORY_LOOKBACK_MS)
+    delay = pit._delay
+    raw = [s for s in pit.settlements(inst, lo, now_ms + 1) if s.event_kind in SETTLEMENT_KINDS]
+    raw.sort(key=lambda s: ((s.available_at_ms if s.available_at_ms is not None else s.t + delay), s.t))
+    by_t = {s.t: s for s in raw}
+    return [by_t[t] for t in sorted(by_t)]
+
+
+def require_sources(pack, decl: list[dict], identity: dict, needs, constants: dict) -> None:
+    """The data each view need of the IR (``ir.view_needs``) is sourced from, else ``request.invalid``: ``borrow`` -- the pack
+    has a ``borrow_lend`` table for the perp's venue and quote currency, or the request gave a constant for the venue;
+    ``listing`` -- the pack's ``instrument_meta`` of every non-equity leg has a listing time. (``history`` needs the pack to reach
+    ``HISTORY_LOOKBACK_MS`` before the first decision: checked by the caller, which knows the run window.) ``identity``:
+    ``Inst -> (base, quote)``."""
+    from .packfile import Inst
+
+    for d in decl:
+        inst = Inst(d["venue"], d["market"], d["symbol"])
+        if "borrow" in needs and inst.market == "perp":
+            if not pack.has_table("borrow_lend", pack.borrow_inst(inst.venue, identity[inst][1])) and inst.venue not in constants:
+                raise ApiError("request.invalid", f"the IR reads borrow_* but {inst.leg()} has neither a borrow_lend table in the pack "
+                               f"(pool {inst.venue}:lend:{identity[inst][1]}) nor a --borrow constant for {inst.venue}", field="borrow")
+        if "listing" in needs and inst.market != "equity":
+            if not pack.has_table("instrument_meta", inst) or not any(m["listed_ms"] is not None for m in pack.instrument_meta_history(inst)):
+                raise ApiError("request.invalid", f"the IR reads listing_age_hours but the pack has no instrument_meta listing time for {inst.leg()}",
+                               field="instruments")
+
+
+def require_history_reach(pack_start_ms: int, first_decision_ms: int) -> None:
+    """``history`` need: the pack's funding must reach ``HISTORY_LOOKBACK_MS`` before the first decision."""
+    if pack_start_ms > first_decision_ms - HISTORY_LOOKBACK_MS:
+        raise ApiError("request.invalid", "the IR reads funding_apr_7d/30d or funding_pos_share_30d: the pack's funding must start "
+                       f"{HISTORY_LOOKBACK_MS // 86_400_000} days before the window (ir_backtest.dataset_request asks for it)", field="window")
+
+
 def equity_identity(d: dict, ref_quote: str) -> tuple[str, str]:
     """``(base, quote)`` of a declared equity instrument: its ``base`` (default its symbol) and ``quote`` (default the quote of
     the reference perp)."""
@@ -464,7 +508,8 @@ def _finest_fresh_bar(pit, inst, now_ms: int, price_kind: str):
     return None
 
 
-def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, view: str = DATASET_VIEW, borrow: dict | None = None) -> list[dict]:
+def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, view: str = DATASET_VIEW, borrow: dict | None = None,
+                       needs=frozenset()) -> list[dict]:
     """The legs of the dataset frame at ``now_ms`` (see the block comment above), in (venue, market, symbol) order.
 
     ``pit_or_pack``: a ``Pit`` whose ``as_of_ms == now_ms`` or a dataset ``Pack`` (wrapped in ``Pit(pack, now_ms)``).
@@ -486,6 +531,10 @@ def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, vie
     metas = pit.instruments()
     legs = []
     decl = [d if isinstance(d, dict) else d.ref() for d in insts]
+    if needs and not hasattr(pit_or_pack, "as_of_ms"):  # the source checks need the unfiltered pack
+        ident = {Inst(d["venue"], d["market"], d["symbol"]): instrument_identity(metas.get(Inst(d["venue"], d["market"], d["symbol"])), d)
+                 for d in decl if d["market"] != "equity"}
+        require_sources(pit_or_pack, decl, ident, needs, constants)
     for d in sorted(decl, key=lambda d: (d["venue"], d["market"], d["symbol"])):
         inst = Inst(d["venue"], d["market"], d["symbol"])
         if inst.venue not in VENUES or inst.market not in ("perp", "spot", "equity"):
@@ -513,16 +562,16 @@ def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, vie
         if got is None:
             continue
         last, vol = got
+        if inst.market == "equity":
+            vol = None  # the index price of the reference perp carries no volume of the equity: missing, never the perp's
         st = None
         extra: dict = {}
         if inst.market == "perp":
-            raw = [s for s in pit.settlements(inst, max(0, now_ms - HISTORY_LOOKBACK_MS), now_ms + 1) if s.event_kind in SETTLEMENT_KINDS]
-            by_t = {s.t: s for s in raw}  # unique by settlement time (a later row replaces an earlier one)
-            rows = [by_t[t] for t in sorted(by_t)]
+            rows = visible_settlements(pit, inst, now_ms)  # unique by t (the later-visible row wins), from max(pack start, now - 31 d)
             near = [s for s in rows if s.t >= now_ms - SETTLEMENT_LOOKBACK_MS]
             st = settlement_tuple(near[-1], near[-2] if len(near) > 1 else None) if near else None
             extra.update(funding_history_fields([(s.t, s.rate, s.interval_seconds) for s in rows], now_ms)[0])
-            extra.update(borrow_fields(pit.borrow_lend(inst.venue, quote), inst.venue, constants))
+            extra.update(borrow_fields(pit.borrow_lend(inst.venue, quote), inst.venue, constants, now_ms))
         if inst.market != "equity":
             listed = (pit.instrument_meta(inst) or {}).get("listed_ms")
             if listed is not None:

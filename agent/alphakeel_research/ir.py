@@ -31,6 +31,17 @@ FEATURES = ("funding_hourly_net", "funding_apr", "funding", "basis", "spread", "
             "borrow_cap_used", "entry_edge", "listing_age_hours")
 OPS = (">=", "<=", ">", "<", "between")
 SHAPES = ("cross_perp", "spot_perp", "equity_perp")
+
+#: README §2.1 view needs: the optional view data a feature reads (AlphaKeel ``Feature::view_need``)
+VIEW_NEED = {"funding_apr_7d": "history", "funding_apr_30d": "history", "funding_pos_share_30d": "history",
+             "borrow_apr": "borrow", "borrow_utilization": "borrow", "borrow_cap_used": "borrow", "listing_age_hours": "listing"}
+
+
+def view_needs(doc: dict) -> frozenset:
+    """The optional view data (``history`` / ``borrow`` / ``listing``) the IR document's entry conditions, ``rank_by`` and exit
+    conditions read (AlphaKeel ``ViewCapabilities::missing`` walks the same three places)."""
+    feats = [c["feature"] for c in doc["entry"]["conditions"]] + [doc["entry"]["rank_by"]] + [c["feature"] for c in doc["exit"]["conditions"]]
+    return frozenset(VIEW_NEED[f] for f in feats if f in VIEW_NEED)
 IBKR = "ibkr"  # the equity leg's venue name; only equity_perp pairs may name it (README §1, §3)
 FUNDING_ESTIMATES = ("predicted", "last_settled")
 U32_MAX = 4294967295
