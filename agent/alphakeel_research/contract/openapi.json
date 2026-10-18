@@ -1214,7 +1214,7 @@
             ]
           },
           "market_tables": {
-            "description": "Subset of `kline_1m`, `bbo`, `depth20`, `instrument_meta`.",
+            "description": "Subset of `kline_1m`, `bbo`, `depth20`, `instrument_meta`, `kline_1h`, `kline_1d`, `borrow_lend` (`borrow_lend` also needs `{venue, market: \"lend\", symbol: <quote currency>}` entries in `instruments`).",
             "items": {
               "type": "string"
             },

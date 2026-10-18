@@ -90,12 +90,13 @@ APPROXIMATIONS = [
     "funding_mean_7d/30d and funding_pos_share_30d: from the official settlements visible at the decision time in [now - W, now) "
     "(hourly rate = rate / interval hours; missing when their intervals cover < 0.9 x W hours); the pack's warm-up is 24 h, so they "
     "are missing in the first week / month of a run unless the pack reaches further back (an IR that reads them is refused unless the "
-    "pack's funding starts 31 days before the first decision; ir_backtest.dataset_request asks for that); funding_pos_share_30d = the "
+    "pack's funding starts 31 days before the first decision: the caller asks the service for that window, nothing moves it); funding_pos_share_30d = the "
     "share of rate > 0 among the settlements of the window that have a usable interval (the same rows as the mean)",
     "borrow_apr / borrow_util / borrow_cap_used: the latest borrow_lend reading visible at the decision time (the pack's table), "
     "else the request's constants borrow.<venue> = {apr, util?, cap_used?}, else missing; a pool reading read more than 6 hours "
     "before the decision time is stale: borrow_* are missing (the constants do not replace it); an IR that reads borrow_* is refused "
-    "unless every perp has a borrow_lend table or a constant; no borrow interest is ever charged here",
+    "unless every perp has a borrow_lend table or a constant; borrow_cap_used = total borrowed / the reading's global cap, else the "
+    "request's declared borrow_cap.<venue>.<TOKEN>; no borrow interest is ever charged here",
     "listed_ms from the pack's instrument_meta snapshot known at the decision time; missing without it (an IR that reads "
     "listing_age_hours is refused unless every non-equity leg has a listing time in the pack)",
     "the equity leg's volume_quote is missing (its price is the reference perp's index, which has no equity volume)",
@@ -182,25 +183,44 @@ def universe_instruments(ir_doc: dict, declared: list[dict]) -> list[dict]:
 
 
 def dataset_request(instruments: list[dict], start_ms: int, end_ms: int, *, accept_partial: bool = False,
-                    selection: dict | str | None = None, market_tables: list[str] | None = None, history: bool = False) -> dict:
+                    selection: dict | str | None = None, market_tables: list[str] | None = None, borrow_pools: bool = False) -> dict:
     """Dataset-pack request: 1m trade klines + the latest funding dataset for the instruments, ``WARMUP_MS`` before start.
     ``selection``: how the instrument list was chosen (``Client.dataset_pack_request``; omitted = ``"declared"``).
     ``market_tables``: default ``["kline_1m"]``; add ``kline_1h`` / ``kline_1d`` for the coarse series of the dataset view.
     Equity instruments are left out of the pack's instrument list; an IR with one asks for ``index`` klines as well.
-    ``history``: the IR reads the history features (``ir.view_needs``): the window starts ``HISTORY_LOOKBACK_MS`` (31 days) before
-    ``start_ms`` instead of ``WARMUP_MS``, so the pack's funding reaches back far enough for the 30-day window; otherwise the
-    request, and with it the pack id, is unchanged."""
+    The window starts ``WARMUP_MS`` before ``start_ms`` and nothing else moves it: an IR that reads the history features needs the
+    pack to start 31 days before its first decision, which the CALLER asks for through ``start_ms`` (a shorter pack is refused
+    by ``ir_views.require_history_reach``, exactly as AlphaKeel's ``check_sources`` does).
+    ``borrow_pools``: add the borrow/lend table and, per perp leg, the pool ``{venue, market: "lend", symbol: <quote currency>}``
+    (a declared perp needs its ``quote`` for it; the pack's rows carry the symbol ``lend:<CCY>``)."""
     from .client import Client
 
     # an equity leg (venue ibkr) has no data of its own: it is priced by the index klines of its reference perp, which is in the list
     refs = [{"venue": d["venue"], "market": d["market"], "symbol": d["symbol"]} for d in instruments if d["market"] != "equity"]
     has_perp = any(d["market"] == "perp" for d in instruments)
     has_equity = any(d["market"] == "equity" for d in instruments)
-    return Client.dataset_pack_request(start_ms=start_ms - (ir_views.HISTORY_LOOKBACK_MS if history else WARMUP_MS), end_ms=end_ms, instruments=refs,
+    tables = list(market_tables) if market_tables else ["kline_1m"]
+    if borrow_pools:
+        pools = sorted({(d["venue"], str(d.get("quote") or "")) for d in instruments if d["market"] == "perp"})
+        if not pools or any(not q for _v, q in pools):
+            raise ApiError("request.invalid", "a borrow/lend pool is asked for by the quote currency of each perp: declare `quote` on the perps",
+                           field="instruments")
+        refs += [{"venue": v, "market": ir_views.LEND_MARKET, "symbol": q} for v, q in pools]
+        if "borrow_lend" not in tables:
+            tables.append("borrow_lend")
+    return Client.dataset_pack_request(start_ms=start_ms - WARMUP_MS, end_ms=end_ms, instruments=refs,
                                        funding_dataset=None if has_perp else "none",
-                                       market_tables=list(market_tables) if market_tables else ["kline_1m"],
+                                       market_tables=tables,
                                        price_kinds=["trade", "index"] if has_equity else ["trade"],
                                        accept_partial=accept_partial, selection=selection)
+
+
+def needs_pools(ir_doc: dict, instruments: list[dict], borrow: dict | None) -> bool:
+    """The IR reads ``borrow_*`` and some perp venue has no request constant ``borrow.<venue>``: the pack must hold the venue's pool."""
+    if "borrow" not in IR.view_needs(IR.load(ir_doc).doc):
+        return False
+    const = ir_views.require_borrow(borrow)
+    return any(d["market"] == "perp" and d["venue"] not in const for d in instruments)
 
 
 def _selection_matches(locked, wanted) -> bool:
@@ -511,13 +531,17 @@ class DatasetCursor:
     """Streams the dataset frames of ``ir_views.dataset_frame_legs`` in time order (same legs, bounded memory)."""
 
     def __init__(self, pack: Pack, instruments: list[dict], start_ms: int, end_ms: int, *, fees: dict | None, work: Path,
-                 borrow: dict | None = None, needs=frozenset()):
+                 borrow: dict | None = None, needs=None, borrow_cap: dict | None = None):
+        #: ``needs``: the view field groups the IR reads (``ir.view_needs``) -- only those are computed and read from the pack;
+        #: None = every group, no source checks (direct callers that name no IR)
+        self.needs = needs
         self.decl = sorted(instruments, key=lambda d: (d["venue"], d["market"], d["symbol"]))
         metas = pack.instruments()
         self.insts = [Inst(d["venue"], d["market"], d["symbol"]) for d in self.decl]
         self.identity: dict[Inst, tuple[str, str]] = {}
         self.fee: dict[Inst, str | None] = {}
         self.borrow_constants = ir_views.require_borrow(borrow)
+        self.borrow_caps = ir_views.require_borrow_cap(borrow_cap)
         #: an equity leg's source contract: the declared perp whose index klines price it
         self.reference: dict[Inst, Inst] = {}
         for d, i in zip(self.decl, self.insts):
@@ -541,7 +565,7 @@ class DatasetCursor:
         lo = pack.lock["request"]["window"]["start_ms"]
         if any(i.market == "equity" for i in self.insts):
             ir_calendar.require_coverage(start_ms, end_ms)  # outside the holiday tables an ordinary weekday would be a guess
-        if "history" in needs:
+        if needs and "history" in needs:
             ir_views.require_history_reach(lo, start_ms)
         if needs:
             ir_views.require_sources(pack, self.decl, self.identity, needs, self.borrow_constants)
@@ -597,17 +621,19 @@ class DatasetCursor:
         self._settle_ts = {i: [s.t for s in rows] for i, rows in self.settles.items()}
         self._vis = {i: sorted(v, key=lambda s: (s.visible_ms, s.t)) for i, v in self.settles.items()}
         self._vis_ptr = {i: 0 for i in self._vis}
-        self._vis_last: dict[Inst, _Settle | None] = {i: None for i in self._vis}
-        self._vis_prev: dict[Inst, _Settle | None] = {i: None for i in self._vis}
+        self._vis_rows: dict[Inst, list[_Settle]] = {i: [] for i in self._vis}  # visible, unique by t, ascending (parallel to _hist_ts)
         # 2026-10-18 view fields: the visible settlements by settlement time (history windows; recomputed only when a settlement
         # becomes visible or the oldest one leaves a window), the borrow/lend readings and the listing time
         self._hist: dict[Inst, list[tuple[int, Decimal, int | None]]] = {i: [] for i in self._vis}
         self._hist_ts: dict[Inst, list[int]] = {i: [] for i in self._vis}
         self._hist_cache: dict[Inst, tuple[dict, int | None]] = {}
-        self._borrow = {i: pack.borrow_lend(i.venue, self.identity[i][1], 0, end_ms) for i in self._vis}
+        # only the groups the IR reads are read from the pack (the run's inputs record what was read)
+        self._borrow = {i: pack.borrow_lend(i.venue, self.identity[i][1], 0, end_ms,
+                                            ir_views.declared_cap(self.borrow_caps, i.venue, self.identity[i][1]))
+                        if ir_views.wants(needs, "borrow") else [] for i in self._vis}
         self._borrow_ptr = {i: 0 for i in self._vis}
         self._borrow_now: dict[Inst, Any] = {i: None for i in self._vis}
-        self._meta = {i: pack.instrument_meta_history(i) for i in self.insts if i.market != "equity"}
+        self._meta = {i: pack.instrument_meta_history(i) for i in self.insts if i.market != "equity"} if ir_views.wants(needs, "listing") else {}
         #: per contract, the most price decimals observed so far (capped at ``sim.ENGINE_MAX_DP``; :meth:`observe`): the
         #: quotes of held legs and legs closed in a frame, and fill prices -- AlphaKeel's ``MarkRounder.observe`` over the
         #: engine frame's snaps and intents (bid = ask = mark = close here); an official mark is rounded to it, and left as
@@ -627,12 +653,6 @@ class DatasetCursor:
             k = self._vis_ptr[i]
             while k < len(rows) and rows[k].visible_ms <= now:
                 self._add_history(i, rows[k])
-                cur = self._vis_last[i]
-                if cur is None or rows[k].t > cur.t:
-                    self._vis_prev[i] = cur
-                    self._vis_last[i] = rows[k]
-                elif rows[k].t == cur.t:
-                    self._vis_last[i] = rows[k]
                 k += 1
             self._vis_ptr[i] = k
             br, bk = self._borrow[i], self._borrow_ptr[i]
@@ -642,15 +662,32 @@ class DatasetCursor:
             self._borrow_ptr[i] = bk
 
     def _add_history(self, inst: Inst, s: _Settle) -> None:
+        """A settlement became visible: one row per settlement time ``t`` (the later-visible row replaces the earlier)."""
         ts, rows = self._hist_ts[inst], self._hist[inst]
         k = bisect.bisect_left(ts, s.t)
         row = (s.t, s.rate, s.interval_seconds)
         if k < len(ts) and ts[k] == s.t:
-            rows[k] = row  # the same settlement time again: the later-visible row replaces it
+            rows[k] = row
+            self._vis_rows[inst][k] = s
         else:
             ts.insert(k, s.t)
             rows.insert(k, row)
+            self._vis_rows[inst].insert(k, s)
         self._hist_cache.pop(inst, None)
+
+    def _near(self, inst: Inst) -> tuple[_Settle | None, _Settle | None]:
+        """The latest two visible settlements with ``t <= now`` (and within ``SETTLEMENT_LOOKBACK_MS``): a settlement whose time is
+        still ahead of ``now`` is not one yet, however early it became visible."""
+        now = self.now
+        k = bisect.bisect_right(self._hist_ts[inst], now)
+        rows = self._vis_rows[inst]
+        cur = rows[k - 1] if k >= 1 else None
+        prev = rows[k - 2] if k >= 2 else None
+        if cur is not None and cur.t < now - ir_views.SETTLEMENT_LOOKBACK_MS:
+            cur = None
+        if prev is not None and prev.t < now - ir_views.SETTLEMENT_LOOKBACK_MS:
+            prev = None
+        return cur, prev
 
     def _history(self, inst: Inst) -> dict:
         now = self.now
@@ -689,16 +726,13 @@ class DatasetCursor:
             st = None
             extra: dict = {}
             if i.market == "perp":
-                s = self._vis_last[i]
-                if s is not None and s.t < now - ir_views.SETTLEMENT_LOOKBACK_MS:
-                    s = None  # same lookback as the point-in-time function
-                prev = self._vis_prev[i]
-                if prev is not None and prev.t < now - ir_views.SETTLEMENT_LOOKBACK_MS:
-                    prev = None
+                s, prev = self._near(i)  # same rows, lookback and t <= now as the point-in-time function
                 st = None if s is None else ir_views.settlement_tuple(s, prev)
-                extra.update(self._history(i))
-                extra.update(ir_views.borrow_fields(self._borrow_now[i], i.venue, self.borrow_constants, now))
-            if i.market != "equity":
+                if ir_views.wants(self.needs, "history"):
+                    extra.update(self._history(i))
+                if ir_views.wants(self.needs, "borrow"):
+                    extra.update(ir_views.borrow_fields(self._borrow_now[i], i.venue, self.borrow_constants, now))
+            if i.market != "equity" and ir_views.wants(self.needs, "listing"):
                 listed = ir_views.listed_ms_at(self._meta[i], now)
                 if listed is not None:
                     extra["listed_ms"] = listed
@@ -1010,10 +1044,12 @@ class _Diagnostics:
 
 
 def run_id_of(sid: str, pack_id: str, start_ms: int, end_ms: int, step: int, fees: dict | None, capital: Decimal,
-              borrow: dict | None = None) -> str:
+              borrow: dict | None = None, borrow_cap: dict | None = None) -> str:
     doc = {"strategy_id": sid, "pack": pack_id, "start": start_ms, "end": end_ms, "step": step, "fees": fees, "capital": str(capital)}
     if borrow:
         doc["borrow"] = borrow  # only when given: the ids of runs without constants do not change
+    if borrow_cap:
+        doc["borrow_cap"] = borrow_cap  # likewise
     h = canon.canonical_sha256(doc)
     return f"irbt-{sid[3:15]}-{h[:12]}"
 
@@ -1021,13 +1057,14 @@ def run_id_of(sid: str, pack_id: str, start_ms: int, end_ms: int, step: int, fee
 def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end_ms: int, out_dir: str | Path, step_minutes: int = 2,
         fees: dict | None = None, fees_source: str = "request", capital_base: Decimal | None = None, trials: int | None = None,
         trials_evidence: str | Path | None = None, verbose: bool = False, research_service: dict | None = None,
-        diagnostics: bool = False, borrow: dict | None = None) -> dict:
+        diagnostics: bool = False, borrow: dict | None = None, borrow_cap: dict | None = None) -> dict:
     """Run the IR over the dataset pack and write ``run_card.json``, ``trades.jsonl``, ``equity.jsonl``,
     ``decisions.jsonl`` into ``out_dir``. Returns the run card."""
     loaded = IR.load(ir_doc)
     sid = loaded.strategy_id
     fees = ir_views.require_fees(fees)
-    ir_views.require_borrow(borrow)  # shape check before any work; the card records the request's constants as given
+    constants = ir_views.require_borrow(borrow)  # shape check before any work; the card records the request's constants as given
+    ir_views.require_borrow_cap(borrow_cap)
     if not (isinstance(step_minutes, int) and step_minutes >= 1):
         raise ApiError("request.invalid", "step_minutes must be an integer >= 1", field="step_minutes")
     if not end_ms > start_ms:
@@ -1052,10 +1089,20 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     step = step_minutes * MINUTE_MS
-    run_id = run_id_of(sid, pack.id, start_ms, end_ms, step_minutes, fees, capital_base, borrow)
+    run_id = run_id_of(sid, pack.id, start_ms, end_ms, step_minutes, fees, capital_base, borrow, borrow_cap)
     work = out / ".work"
     t0 = time.monotonic()  # the spill (DatasetCursor) is part of the run's elapsed time
-    cursor = DatasetCursor(pack, insts, start_ms, end_ms, fees=fees, work=work, borrow=borrow, needs=IR.view_needs(loaded.doc))
+    cursor = DatasetCursor(pack, insts, start_ms, end_ms, fees=fees, work=work, borrow=borrow, needs=IR.view_needs(loaded.doc),
+                           borrow_cap=borrow_cap)
+    margin = None
+    if "margin" in sizing:
+        # portfolio margin is not simulated here (README 5c), but its borrow rate must have a source, as in AlphaKeel: the request's
+        # constant borrow.<venue>.apr, else the pool's highest reading in the decision window
+        perp = next((d for d in cursor.decl if d["market"] == "perp"), None)
+        if perp is None:
+            raise ApiError("request.invalid", "sizing.margin: the run declares no perp", field="instruments")
+        apr, src = ir_views.margin_borrow_apr(pack, cursor.decl, cursor.identity, constants, perp["venue"], start_ms, end_ms)
+        margin = {"borrow_apr": _s(apr), "borrow_apr_source": src}
     sim = Sim()
     ir_obj = IR.Ir(loaded.doc)
     cooldowns: dict[str, int] = {}
@@ -1252,6 +1299,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         "step_minutes": step_minutes, "view": ir_views.DATASET_VIEW, "approximations": approximations_of(loaded.doc), "simulator": SIM_CONVENTIONS,
         "assumptions": {"funding_estimate_of_ir": loaded.doc["assumptions"]["funding_estimate"],
                         "fees": fees, "fees_source": fees_source, **({"borrow": borrow} if borrow else {}),
+                        **({"borrow_cap": borrow_cap} if borrow_cap else {}), **(margin or {}),
                         "capital_base": _s(capital_base), "capital_base_source": capital_source},
         "instruments": [{**d, "base": cursor.identity[Inst(d["venue"], d["market"], d["symbol"])][0],
                          "quote": cursor.identity[Inst(d["venue"], d["market"], d["symbol"])][1]} for d in insts],
@@ -1444,7 +1492,7 @@ def _backtest(client, ir_doc: dict, instruments: list[dict], *, start_ms: int, e
               selection: dict | str | None = None, **kw: Any) -> dict:
     insts = universe_instruments(ir_doc, instruments)
     req = dataset_request(insts, start_ms, end_ms, accept_partial=accept_partial, selection=selection,
-                          history="history" in IR.view_needs(IR.load(ir_doc).doc))
+                          borrow_pools=needs_pools(ir_doc, insts, kw.get("borrow")))
     service = None
     if pack_dir is not None:
         pack = Pack.from_directory(pack_dir)

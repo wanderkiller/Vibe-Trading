@@ -661,3 +661,113 @@ def evaluate(robustness: dict | None, protocol: dict, other_candidates: int = 0,
                 o["note"] = f"{o['note']}; {msg}" if o["note"] else msg
         out.extend(extra["items"])
     return out
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Borrow floor of a portfolio-margin IR (protocol 2.7, items 1.14 / 1.17; AlphaKeel ``verdict.rs`` ``borrow_floor_max``)
+# ---------------------------------------------------------------------------------------------------------------------
+
+#: a borrow/lend reading must be at most this old at ``now``, and consecutive readings at most this far apart (same 6 h as the dataset view)
+BORROW_MAX_AGE_MS = 6 * 3_600_000
+#: minimum coverage of the lookback window by the readings (each reading stands for the time up to the next one, at most 6 h; %)
+BORROW_MIN_COVERAGE_PCT = 90
+_DAY_MS = 86_400_000
+
+
+def ir_has_portfolio_margin(ir: dict) -> bool:
+    return ((ir.get("sizing") or {}).get("margin") or {}).get("mode") == "portfolio"
+
+
+def pair_venues(ir: dict) -> list[str]:
+    """The venues named in the IR's ``universe.pairs`` list (sorted, unique); ``"any"`` -> ``[]``."""
+    pairs = (ir.get("universe") or {}).get("pairs")
+    return sorted({v for p in pairs for v in p if isinstance(v, str)}) if isinstance(pairs, list) else []
+
+
+def input_venues(ir: dict, rob: dict | None) -> list[str]:
+    """The venues whose research inputs are checked (1.17): the IR's listed venues; ``pairs: "any"`` -> every venue of the
+    robustness ``inputs.fees``; the equity venue ``ibkr`` is left out of an ``equity_perp`` IR (its fee is ``fees.ibkr.equity``)."""
+    v = set(pair_venues(ir))
+    fees = ((rob or {}).get("inputs") or {}).get("fees")
+    if not v and isinstance(fees, dict):
+        v.update(fees)
+    if (ir.get("universe") or {}).get("shape") == "equity_perp":
+        v.discard("ibkr")
+    return sorted(v)
+
+
+def borrow_series_problem(pts: list[tuple[int, Decimal]], now_ms: int, lookback_days: int) -> str | None:
+    """Whether a borrow-APR series can serve as an observation (AlphaKeel ``borrow_series_problem``): the latest reading at most 6 h
+    before ``now``, consecutive readings in the window at most 6 h apart, and the window ``(now - lookback, now]`` covered at least
+    90% (each reading stands for the time up to the next one -- ``now`` for the last -- at most 6 h). Returns the first condition
+    that fails, or None."""
+    lo = now_ms - lookback_days * _DAY_MS
+    ts = sorted({t for t, _ in pts if lo < t <= now_ms})
+    if not ts:
+        return "no borrow-lend point in the lookback window"
+    if now_ms - ts[-1] > BORROW_MAX_AGE_MS:
+        return f"the latest borrow-lend reading is {(now_ms - ts[-1]) // 3_600_000}h old (max 6h)"
+    gap = max((b - a for a, b in zip(ts, ts[1:])), default=0)
+    if gap > BORROW_MAX_AGE_MS:
+        return f"borrow-lend readings have a {gap // 3_600_000}h gap inside the window (max 6h)"
+    covered = sum(min((ts[k + 1] if k + 1 < len(ts) else now_ms) - t, BORROW_MAX_AGE_MS) for k, t in enumerate(ts))
+    window = now_ms - lo
+    if covered * 100 < BORROW_MIN_COVERAGE_PCT * window:
+        return f"borrow-lend readings cover {covered * 100 // window}% of the {lookback_days}-day window (min {BORROW_MIN_COVERAGE_PCT}%)"
+    return None
+
+
+def _item_threshold(protocol: dict, item_id: str) -> dict:
+    for stage in protocol["stages"].values():
+        for i in stage["items"]:
+            if i["id"] == item_id:
+                return i.get("threshold") or {}
+    return {}
+
+
+def borrow_floors(protocol: dict, venues: list[str], series: dict | None, now_ms: int, item_id: str = "1.14") -> tuple[dict[str, Decimal], list[str]]:
+    """``({venue: floor}, problems)``: the floor of each venue is ``max(protocol borrow_apr_floor, highest APR of its series inside the
+    protocol's ``borrow_lookback_days`` window)``. A venue without a valid series (missing, or ``borrow_series_problem``) has no floor
+    and a problem -- never a pass at the protocol floor. A protocol without a positive integer ``borrow_lookback_days`` or without
+    ``borrow_apr_floor`` gives no floor at all."""
+    thr = _item_threshold(protocol, item_id)
+    days = _dec(thr.get("borrow_lookback_days"))
+    if days is None or days <= 0 or days != days.to_integral_value():
+        return {}, [f"protocol {item_id} has no positive integer borrow_lookback_days: the borrow floor cannot be set"]
+    proto = _dec(thr.get("borrow_apr_floor"))
+    if proto is None:
+        return {}, [f"protocol {item_id} has no borrow_apr_floor: the borrow floor cannot be set"]
+    days = int(days)
+    out: dict[str, Decimal] = {}
+    why: list[str] = []
+    lo = now_ms - days * _DAY_MS
+    for v in venues:
+        pts = (series or {}).get(v)
+        if pts is None:
+            why.append(f"{v}: no borrow-lend series observed; cannot set the borrow floor")
+            continue
+        problem = borrow_series_problem(pts, now_ms, days)
+        if problem is not None:
+            why.append(f"{v}: {problem}; cannot set the borrow floor")
+            continue
+        out[v] = max(proto, max(a for t, a in pts if lo < t <= now_ms))
+    return out, why
+
+
+def borrow_floor_max(protocol: dict, ir: dict, rob: dict | None, series: dict | None, now_ms: int, *, run_venues: list[str] | tuple = (),
+                     item_id: str = "1.14") -> tuple[Decimal | None, str | None]:
+    """``(floor, problem)`` of a portfolio-margin IR: the largest venue floor (the single number a validation run's recorded
+    ``borrow_apr`` must not be below). ``(None, None)`` = the IR has no portfolio margin, nothing to check. The venues are
+    :func:`input_venues`; with ``pairs: "any"`` also the venues the validation run used (the keys of its
+    ``run_assumptions.fees_perp_taker``, ``ibkr`` aside), so a venue the research inputs left out cannot escape the floor."""
+    if not ir_has_portfolio_margin(ir):
+        return None, None
+    venues = input_venues(ir, rob)
+    if not venues:
+        return None, "cannot tell which venues the IR borrows on; the borrow floor cannot be set"
+    if not pair_venues(ir):
+        venues = sorted({*venues, *(v for v in run_venues if v != "ibkr")})
+    floors, why = borrow_floors(protocol, venues, series, now_ms, item_id)
+    if why:
+        return None, "; ".join(why)
+    return max(floors.values()), None

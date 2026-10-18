@@ -93,7 +93,7 @@ JSON 整数只用于计数、小时、分钟（`horizon_hours`、`candidate_limi
 2. `schema` 常量、`kind = cross_venue_carry`。
 3. §1 表中的取值范围；`universe.pairs` 与 `shape` 一致（`cross_perp` 两平台不同、`spot_perp` 相同、`equity_perp` 不同且恰有一端是 `ibkr`，`ibkr` 不许出现在其他形态；违反 → `ir.invalid`，路径 `universe.pairs[i]`）；`excluded_bases`、`quote_ccys` 大写；`bases` 给出时非空、大写、不重复（依次检查 `excluded_bases`、`bases`、`quote_ccys`，报告第一处）。
 4. 条件：`between` ↔ 区间且 `lo ≤ hi`；其他运算符 ↔ 单值。`min_hold_hours`：只许在 `exit.conditions`（入场条件带它 → `ir.invalid`，路径 `entry.conditions[i].min_hold_hours`），
-   值 ≥ 1（0 → `ir.invalid`，路径 `exit.conditions[i].min_hold_hours`）；必须写成 JSON 整数字面量（`6.0`、字符串、负数 → `ir.shape`，与 `timeout_s` 同一条）。
+   值 ≥ 1（0 → `ir.invalid`，路径 `exit.conditions[i].min_hold_hours`）；必须写成 JSON 整数字面量（`6.0`、字符串、负数 → `ir.shape`，与 `timeout_s` 同一条）；显式 `null`（`min_hold_hours` 与 `sizing.margin`）同为 `ir.shape`，不等于缺省。
 4b. `sizing.margin`（给出时）：`universe.shape` 不是 `spot_perp` → `ir.invalid`，路径 `sizing.margin`；`reduce_to ≤ 0` 或 `reduce_to ≥ reduce_above` → `ir.invalid`，路径 `sizing.margin.reduce_to`；
    `reduce_above ≥ 0.95` → `ir.invalid`，路径 `sizing.margin.reduce_above`（依次检查，报告第一处）；`mode` 不是 `"portfolio"`、未知键、缺键 → `ir.shape`。
 5. `parameters`：v1 **不支持占位符**。每个参数用 `path` 指向它描述的字面量，路径语法 `seg(.seg)*`，`seg = name([index])*`，
@@ -142,6 +142,16 @@ Python 实现用 60 位精度、Rust 用 `rust_decimal`（约 28 位有效数字
 | `funding_pos_share_30d` | 永续腿 | 同一 30 天窗口里 `rate > 0` 的结算个数 / 结算个数；覆盖规则同上。 |
 | `borrow_apr`、`borrow_util`、`borrow_cap_used` | 永续腿 | 该平台计价币（Hyperliquid 为 USDC）借贷池在决策时刻可见的最新状态：年化借款利率、利用率、全局已借 ÷ 全局上限；视图没有就缺失。 |
 | `listed_ms` | 任何腿 | 合约首笔成交（或平台给的上线时间）的毫秒时间戳。 |
+
+**数据集视图的补充规则**（AK 的数据集视图 `kline_close_synthetic_bbo` 已实现下列全部规则：重复结算排序、结算回看下界与 31 天前移、`funding_pos_share_30d` 分母、股票腿无 `volume_quote`、借贷读数 6 小时、来源缺失拒绝运行、日历范围拒绝；VT 的实现以其自身文档为准。AK 还没有的能力一律以 `capability.unsupported` 拒绝，不静默降级；扫描帧不涉及）：
+
+- 重复结算：同一 `(venue, symbol, t)` 出现多条时，按 (可见时刻, `t`) 排序，后可见的覆盖先可见的。
+- 结算回看下界 = `max(资金费包起点, now − 31 天)`；IR 用到历史特征（`funding_mean_*`、`funding_pos_share_30d`、`funding_apr_*`）时，冻结数据包的窗口起点前移 31 天。
+- `funding_pos_share_30d` 的分母 = 窗口内有可用周期（声明的 `interval_hours` 或能从相邻结算推断）的结算个数。
+- 股票腿没有 `volume_quote`（缺失）。
+- 借贷读数最大年龄 6 小时：比决策时刻早超过 6 小时的最新读数视为缺失。
+- IR 用到的视图字段在运行环境 / 数据包里没有来源时拒绝运行（`capability.unsupported` / `request.invalid`），不静默按“不可用”运行。
+- 交易日历超出假日表覆盖范围（2024-11-28 至 2027-03-26）时，含股票腿的运行被拒。
 
 扫描帧（AK 扫描档案、在线 paper、跨所执行器）**不提供**这些字段（对应特征不可用）。运行环境给不出它们时，用到这些特征（入场条件、`rank_by`、退出条件）、`sizing.margin` 或
 `equity_perp` 的 IR 必须**拒绝加载**，不得静默当作“不可用”（Rust：`IrDecider::new` 以 `capability.unsupported` 拒绝，运行环境的视图用 `IrDecider::with_view` 声明自己提供哪些能力；
@@ -368,7 +378,7 @@ paper 与跨所执行器在支持之前拒绝加载带 `sizing.margin` 的 IR（
 - `canonical.json`：`doc → definition_canonical, strategy_id`；含 `same_id_as` / `different_id_from` 标注
   （出处变化、键顺序、自述 id、`quote_ccys` 缺省、数值变化、假设变化、平台对列表及其顺序、`execution` 全部 taker / 空对象 / 缺省值补全 /
   maker 模型与腿、`min_hold_hours`、`sizing.margin`、`equity_perp` 文档）。带 `error` 的条目是必须拒绝的文档：`doc → error`（错误码），`error_path` 给出时是 `ir.invalid` 的路径（§3 第 4、4b、5b 条；
-  2026-10-18 增补的错误：入场条件带 `min_hold_hours`、`min_hold_hours` 为 0/小数/字符串、`sizing.margin` 用在 `cross_perp`、`reduce_to ≥ reduce_above`、`reduce_to = 0`、`reduce_above ≥ 0.95`、`mode` 非 `portfolio`、`equity_perp` 的平台对不合法、`ibkr` 用在其他形态、未知特征）。
+  2026-10-18 增补的错误：入场条件带 `min_hold_hours`、`min_hold_hours` 为 0/小数/字符串/null、`sizing.margin` 为 null、`sizing.margin` 用在 `equity_perp`、`sizing.margin` 用在 `cross_perp`、`reduce_to ≥ reduce_above`、`reduce_to = 0`、`reduce_above ≥ 0.95`、`mode` 非 `portfolio`、`equity_perp` 的平台对不合法、`ibkr` 用在其他形态、未知特征）。
 - `decisions.json`：`{ir, frame, state, now_ms} → expected`（Decision）。覆盖按排名进场、`candidate_limit`、`max_open`、冷却、
   `one_per_base`（已持仓与同时刻重复）、特征不可用、每一种退出原因、持仓组合不在帧里、宇宙过滤（形态/平台对/基础币白名单/排除币/计价币/非法组合）、
   `between` 与布尔特征、现货+永续进场；2026-10-18 增补：`sizing.margin` 不改决策、`min_hold_hours`（未满/恰满/跳过后落到下一条条件、不影响 `max_loss`/`max_hold`）、`equity_perp` 两个方向进场与各类拒绝。

@@ -267,7 +267,7 @@ def _ir_research(a) -> int:
                     insts = ir_backtest.universe_instruments(ir_doc, _load(inst_path))
                     req = ir_backtest.dataset_request(insts, oos[0], oos[1], accept_partial=False,
                                                       selection=pack.lock["request"].get("selection"),
-                                                      history="history" in ir_backtest.IR.view_needs(ir_backtest.IR.load(ir_doc).doc))
+                                                      borrow_pools="borrow_lend" in ((pack.lock["request"].get("dataset") or {}).get("market_tables") or []))
                     day_key = key_for("pack", {"request": req, "utc_day": ir_backtest.utc_day(int(time.time() * 1000))})
                     oos_pack = workflow.freeze_pack(fetch, req, cache_dir=a.cache, key=day_key)
                     ir_backtest.check_pack(oos_pack, req)
@@ -312,6 +312,7 @@ def _ir_research(a) -> int:
                                         step_minutes=a.step_minutes, fees=_load(a.fees),
                                         fees_source=a.fees_source or _source_label(a.fees), trials=a.trials, trials_evidence=a.trials_evidence,
                                         borrow=_load(a.borrow) if a.borrow else None,
+                                        borrow_cap=_load(a.borrow_cap) if a.borrow_cap else None,
                                         capital_base=Decimal(a.capital_base) if a.capital_base else None,
                                         accept_partial=a.accept_partial, selection=_selection(a.selection), verbose=a.verbose)
         finally:
@@ -422,6 +423,8 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--fees-source", help="label of the fee table in the run card (default: the --fees value)")
     q.add_argument("--borrow", help="JSON {venue: {apr, util?, cap_used?}}: borrow constants for a pack without a borrow_lend table "
                    "(borrow_apr / borrow_util / borrow_cap_used of a perp leg; recorded in the run card)")
+    q.add_argument("--borrow-cap", help="JSON {venue: {TOKEN: cap}}: declared global pool caps (positive decimals), used for borrow_cap_used "
+                   "where a borrow_lend reading has no cap (Hyperliquid publishes none); recorded in the run card")
     q.add_argument("--trials", type=int)
     q.add_argument("--trials-evidence")
     q.add_argument("--capital-base", help="capital base of the daily returns (default notional_per_leg x 2 x max_open)")

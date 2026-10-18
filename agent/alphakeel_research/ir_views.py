@@ -243,6 +243,7 @@ BAR_SPECS = (("1m", 60_000, 1440, DATASET_MAX_BAR_AGE_MS),
              ("1d", 86_400_000, 1, 86_400_000 + 5 * 60_000))
 BAR_SPECS_INDEX = {spec[0]: k for k, spec in enumerate(BAR_SPECS)}
 EQUITY_VENUE = "ibkr"
+LEND_MARKET = "lend"  # pseudo market of a borrow/lend pool: request symbol "USDC", rows and objects under "lend:USDC"
 REFERENCE_VENUE = "binance"  # the venue whose index klines price an equity leg
 HISTORY_WINDOWS = ((7, "funding_mean_7d"), (30, "funding_mean_30d"))  # days, view field
 HISTORY_LOOKBACK_MS = 31 * 86_400_000  # the 30-day window plus one more day for the interval inference of its first row
@@ -340,6 +341,66 @@ def require_borrow(borrow) -> dict:
             raise ApiError("request.invalid", f"borrow.{v}: not a decimal", field="borrow") from None
         out[v] = vals
     return out
+
+
+def require_borrow_cap(cap) -> dict:
+    """The request's declared pool caps ``{venue: {TOKEN: cap}}`` (positive decimals; AlphaKeel ``borrow_cap``) as
+    ``{venue: {TOKEN: Decimal}}`` with the token upper-cased. They give ``borrow_cap_used`` where the pool reading has no cap
+    (Hyperliquid's interface publishes none). None -> ``{}``."""
+    if cap in (None, {}):
+        return {}
+    shape = ApiError("request.invalid", "borrow_cap must be {venue: {TOKEN: cap}} (positive decimal strings)", field="borrow_cap")
+    if not isinstance(cap, dict):
+        raise shape
+    out: dict = {}
+    for v, row in cap.items():
+        if v not in VENUES or not isinstance(row, dict) or not row:
+            raise shape
+        caps = {}
+        for token, c in row.items():
+            if isinstance(c, bool) or not isinstance(c, (str, int)):
+                raise shape
+            try:
+                d = Decimal(str(c))
+            except ArithmeticError:
+                raise shape from None
+            if not d.is_finite() or d <= 0:
+                raise shape
+            caps[str(token).upper()] = d
+        out[v] = caps
+    return out
+
+
+def declared_cap(caps: dict, venue: str, quote_ccy: str) -> Decimal | None:
+    """The declared global cap of the venue's ``quote_ccy`` pool (``require_borrow_cap`` output), or None."""
+    return (caps.get(venue) or {}).get(quote_ccy.upper())
+
+
+def wants(needs, key: str) -> bool:
+    """Whether the optional view field group ``key`` (``history`` / ``borrow`` / ``listing``) is computed. ``needs`` None = every
+    group (direct callers that name no IR); a set (``ir.view_needs``) = exactly those groups, and only those are read."""
+    return needs is None or key in needs
+
+
+def margin_borrow_apr(pack, decl: list[dict], identity: dict, constants: dict, venue: str, start_ms: int, end_ms: int) -> tuple[Decimal, str]:
+    """``(apr, source)`` of the portfolio-margin borrow rate on ``venue`` (AlphaKeel ``margin_environment``): the request's
+    constant ``borrow.<venue>.apr`` (source ``"constant"``), else the highest ``borrow_apr`` reading of the pool of the venue's
+    first declared perp's quote currency read inside the decision window ``[start_ms, end_ms)`` (source ``"table_max"``); neither
+    -> ``request.invalid``. ``identity``: ``Inst -> (base, quote)``; ``constants``: ``require_borrow`` output."""
+    from .packfile import Inst
+
+    const = (constants.get(venue) or {}).get("borrow_apr")
+    if const is not None:
+        return Decimal(const), "constant"
+    perp = next((d for d in decl if d["venue"] == venue and d["market"] == "perp"), None)
+    if perp is None:
+        raise ApiError("request.invalid", f"sizing.margin: the venue {venue} has no declared perp", field="instruments")
+    quote = identity[Inst(venue, "perp", perp["symbol"])][1]
+    aprs = [b.apr for _vis, b in pack.borrow_lend(venue, quote, start_ms, end_ms) if b.apr is not None]
+    if not aprs:
+        raise ApiError("request.invalid", f"sizing.margin needs a borrow rate: declare borrow.{venue}.apr, or give the pack a "
+                       f"borrow_lend table of {venue}:{quote} with readings inside the window", field="borrow")
+    return max(aprs), "table_max"
 
 
 def borrow_fields(state, venue: str, constants: dict, now_ms: int | None = None) -> dict:
@@ -444,10 +505,12 @@ def require_sources(pack, decl: list[dict], identity: dict, needs, constants: di
 
 
 def require_history_reach(pack_start_ms: int, first_decision_ms: int) -> None:
-    """``history`` need: the pack's funding must reach ``HISTORY_LOOKBACK_MS`` before the first decision."""
+    """``history`` need: the pack's funding must reach ``HISTORY_LOOKBACK_MS`` before the first decision. The pack is NOT moved
+    back for it: the window the caller asks the service for carries the 31 days (AlphaKeel ``check_sources``: the same
+    ``request.invalid``, field ``dataset_view.start_ms``)."""
     if pack_start_ms > first_decision_ms - HISTORY_LOOKBACK_MS:
-        raise ApiError("request.invalid", "the IR reads funding_apr_7d/30d or funding_pos_share_30d: the pack's funding must start "
-                       f"{HISTORY_LOOKBACK_MS // 86_400_000} days before the window (ir_backtest.dataset_request asks for it)", field="window")
+        raise ApiError("request.invalid", "the IR reads funding_apr_7d/30d or funding_pos_share_30d: the pack's funding must start 31 days "
+                       f"before the first decision ({first_decision_ms}), but the pack window starts at {pack_start_ms}", field="dataset_view.start_ms")
 
 
 def equity_identity(d: dict, ref_quote: str) -> tuple[str, str]:
@@ -509,12 +572,15 @@ def _finest_fresh_bar(pit, inst, now_ms: int, price_kind: str):
 
 
 def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, view: str = DATASET_VIEW, borrow: dict | None = None,
-                       needs=frozenset()) -> list[dict]:
+                       needs=None, borrow_cap: dict | None = None) -> list[dict]:
     """The legs of the dataset frame at ``now_ms`` (see the block comment above), in (venue, market, symbol) order.
 
     ``pit_or_pack``: a ``Pit`` whose ``as_of_ms == now_ms`` or a dataset ``Pack`` (wrapped in ``Pit(pack, now_ms)``).
     ``insts``: ``[{venue, market, symbol, base?, quote?}]`` (or ``Inst``). Reads go through the point-in-time reader.
     ``borrow``: the request's borrow constants (:func:`require_borrow`), used for a perp whose pack has no ``borrow_lend`` table.
+    ``borrow_cap``: the request's declared pool caps (:func:`require_borrow_cap`), used where a reading has no cap.
+    ``needs``: the view field groups the IR reads (``ir.view_needs``); only those are computed (and read from the pack). None =
+    all of them, no source checks (callers that name no IR).
     """
     from . import ir_calendar
     from .packfile import Inst, Pit
@@ -528,6 +594,7 @@ def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, vie
     else:
         pit = Pit(pit_or_pack, now_ms)
     constants = require_borrow(borrow)
+    caps = require_borrow_cap(borrow_cap)
     metas = pit.instruments()
     legs = []
     decl = [d if isinstance(d, dict) else d.ref() for d in insts]
@@ -570,9 +637,12 @@ def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, vie
             rows = visible_settlements(pit, inst, now_ms)  # unique by t (the later-visible row wins), from max(pack start, now - 31 d)
             near = [s for s in rows if s.t >= now_ms - SETTLEMENT_LOOKBACK_MS]
             st = settlement_tuple(near[-1], near[-2] if len(near) > 1 else None) if near else None
-            extra.update(funding_history_fields([(s.t, s.rate, s.interval_seconds) for s in rows], now_ms)[0])
-            extra.update(borrow_fields(pit.borrow_lend(inst.venue, quote), inst.venue, constants, now_ms))
-        if inst.market != "equity":
+            if wants(needs, "history"):
+                extra.update(funding_history_fields([(s.t, s.rate, s.interval_seconds) for s in rows], now_ms)[0])
+            if wants(needs, "borrow"):
+                extra.update(borrow_fields(pit.borrow_lend(inst.venue, quote, declared_cap=declared_cap(caps, inst.venue, quote)),
+                                           inst.venue, constants, now_ms))
+        if inst.market != "equity" and wants(needs, "listing"):
             listed = (pit.instrument_meta(inst) or {}).get("listed_ms")
             if listed is not None:
                 extra["listed_ms"] = listed
@@ -584,6 +654,6 @@ def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, vie
 
 
 def dataset_frame_pairs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, view: str = DATASET_VIEW,
-                        borrow: dict | None = None) -> list[PairView]:
+                        borrow: dict | None = None, needs=None, borrow_cap: dict | None = None) -> list[PairView]:
     """All candidate pairs of the dataset frame at ``now_ms`` (§4.1a rules 4–5 over :func:`dataset_frame_legs`), by ``id``."""
-    return pairs_of_legs(dataset_frame_legs(pit_or_pack, insts, now_ms, fees=fees, view=view, borrow=borrow))
+    return pairs_of_legs(dataset_frame_legs(pit_or_pack, insts, now_ms, fees=fees, view=view, borrow=borrow, needs=needs, borrow_cap=borrow_cap))

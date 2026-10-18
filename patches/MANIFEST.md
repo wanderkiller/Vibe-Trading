@@ -152,6 +152,7 @@ reachable are the next groups.
 - `agent/tests/test_alphakeel_handoff.py`
 - `agent/tests/test_alphakeel_hl_views.py`
 - `agent/tests/test_alphakeel_hl_review_fixes.py`
+- `agent/tests/test_alphakeel_g3_alignment.py`
 - `agent/tests/test_alphakeel_ir.py`
 - `agent/tests/test_alphakeel_ir_backtest.py`
 - `agent/tests/test_alphakeel_metrics.py`

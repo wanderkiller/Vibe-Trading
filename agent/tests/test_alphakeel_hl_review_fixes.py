@@ -123,12 +123,7 @@ def test_history_need_needs_the_pack_to_reach_31_days_before_the_first_decision(
     _cursor(tmp_path / "z", long_pack, {"history"}, NOW - 5 * DAY)
 
 
-def test_dataset_request_moves_the_window_start_31_days_only_for_history_irs():
-    plain = ir_backtest.dataset_request([BTC], NOW, NOW + DAY)
-    hist = ir_backtest.dataset_request([BTC], NOW, NOW + DAY, history=True)
-    assert plain["window"]["start_ms"] == NOW - ir_backtest.WARMUP_MS
-    assert hist["window"]["start_ms"] == NOW - 31 * DAY and {k: v for k, v in hist.items() if k != "window"} == {k: v for k, v in plain.items() if k != "window"}
-    assert ir_backtest.dataset_request([BTC], NOW, NOW + DAY, history=False) == plain
+def test_view_needs_of_history_irs():
     assert ir.view_needs(_entry("funding_apr_30d")) == {"history"} and ir.view_needs(_doc()) == frozenset()
 
 

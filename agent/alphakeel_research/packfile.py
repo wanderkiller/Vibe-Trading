@@ -577,9 +577,11 @@ class Pack:
         tag = f"market/{table}/{inst.venue}/{inst.market}/"
         return any(o["role"] == "market" and o["name"].startswith(tag) for o in self.lock["objects"])
 
-    def borrow_lend(self, venue: str, quote_ccy: str, start: int, end: int) -> list[tuple[int, Borrow]]:
+    def borrow_lend(self, venue: str, quote_ccy: str, start: int, end: int, declared_cap: Decimal | None = None) -> list[tuple[int, Borrow]]:
         """``[(visible_ms, Borrow)]`` of the venue's ``quote_ccy`` pool in ``[start, end)`` by read time, sorted by
-        ``(visible_ms, t)``; ``visible_ms`` = ``read_ms`` (else ``t``), never before ``t``. Empty when the pack has no such table."""
+        ``(visible_ms, t)``; ``visible_ms`` = ``read_ms`` (else ``t``), never before ``t``. Empty when the pack has no such table.
+        ``cap_used`` = total borrowed / the reading's global cap when that is positive, else / ``declared_cap`` (the request's
+        ``borrow_cap``; None = no declared cap)."""
         inst = self.borrow_inst(venue, quote_ccy)
         if not self.has_table("borrow_lend", inst):
             return []
@@ -589,6 +591,8 @@ class Pack:
         out = []
         for r in rows:
             borrowed, cap = D(r[5]), D(r[6])
+            if cap is None or cap <= 0:
+                cap = declared_cap
             cap_used = borrowed / cap if borrowed is not None and cap is not None and cap > 0 else None
             vis = max(r[0], r[7]) if len(r) > 7 and r[7] is not None else r[0]
             out.append((vis, Borrow(r[0], D(r[2]), D(r[3]), cap_used)))
@@ -818,10 +822,10 @@ class Pit:
         """Start of the pack's frozen request window (a dataset pack's funding, klines and tables all start there)."""
         return int(self.__pack.lock["request"]["window"]["start_ms"])
 
-    def borrow_lend(self, venue: str, quote_ccy: str) -> Borrow | None:
+    def borrow_lend(self, venue: str, quote_ccy: str, declared_cap: Decimal | None = None) -> Borrow | None:
         """The latest reading of the venue's ``quote_ccy`` pool known at ``as_of`` (visible from its read time), or None
-        (no such table, or no reading yet)."""
-        rows = self.__pack.borrow_lend(venue, quote_ccy, 0, self.as_of_ms + 1)
+        (no such table, or no reading yet). ``declared_cap``: see ``Pack.borrow_lend``."""
+        rows = self.__pack.borrow_lend(venue, quote_ccy, 0, self.as_of_ms + 1, declared_cap)
         known = [b for vis, b in rows if vis <= self.as_of_ms]
         return known[-1] if known else None
 

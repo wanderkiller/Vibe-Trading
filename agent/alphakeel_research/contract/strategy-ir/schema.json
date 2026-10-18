@@ -430,9 +430,9 @@
     },
     "min_hold_hours": {
      "type": "integer",
-     "minimum": 1,
+     "minimum": 0,
      "maximum": 4294967295,
-     "description": "Optional (2026-10-18). exit.conditions only (README section 3): the condition does not take part until the position has been held this many hours."
+     "description": "Optional (2026-10-18). exit.conditions only (README section 3): the condition does not take part until the position has been held this many hours. 0 passes the schema and is rejected by the README section 3 semantic check (ir.invalid)."
     }
    },
    "if": {
