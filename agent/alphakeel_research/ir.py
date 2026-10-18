@@ -24,11 +24,14 @@ from .errors import ApiError
 
 SCHEMA = "alphakeel.strategy-ir/1"
 KIND = "cross_venue_carry"
-VENUES = ("binance", "okx", "bybit", "bitget", "gate", "aster", "hyperliquid", "lighter", "backpack")
+VENUES = ("binance", "okx", "bybit", "bitget", "gate", "aster", "hyperliquid", "lighter", "backpack", "ibkr")
 FEATURES = ("funding_hourly_net", "funding_apr", "funding", "basis", "spread", "fees", "stress", "net_expected",
-            "net_conservative", "volume_min", "quote_age_ms", "leg_skew_ms", "price_estimated")
+            "net_conservative", "volume_min", "quote_age_ms", "leg_skew_ms", "price_estimated",
+            "funding_apr_7d", "funding_apr_30d", "funding_pos_share_30d", "borrow_apr", "borrow_utilization",
+            "borrow_cap_used", "entry_edge", "listing_age_hours")
 OPS = (">=", "<=", ">", "<", "between")
-SHAPES = ("cross_perp", "spot_perp")
+SHAPES = ("cross_perp", "spot_perp", "equity_perp")
+IBKR = "ibkr"  # the equity leg's venue name; only equity_perp pairs may name it (README §1, §3)
 FUNDING_ESTIMATES = ("predicted", "last_settled")
 U32_MAX = 4294967295
 MAX_CANDIDATE_LIMIT = 200
@@ -258,7 +261,7 @@ def _s_conditions(v: Any, path: str) -> None:
         raise _shape("must be a list", path)
     for i, c in enumerate(v):
         p = f"{path}[{i}]"
-        _obj(c, p, ("feature", "op", "value"))
+        _obj(c, p, ("feature", "op", "value"), ("min_hold_hours",))
         _s_enum(c["feature"], FEATURES, f"{p}.feature")
         _s_enum(c["op"], OPS, f"{p}.op")
         val = c["value"]
@@ -269,6 +272,19 @@ def _s_conditions(v: Any, path: str) -> None:
                 _s_dec(x, f"{p}.value[{j}]")
         else:
             _s_dec(val, f"{p}.value")
+        if "min_hold_hours" in c:
+            _s_u32(c["min_hold_hours"], f"{p}.min_hold_hours")
+
+
+MARGIN_MODES = ("portfolio",)
+
+
+def _s_margin(v: Any, path: str) -> None:
+    """README §1 ``sizing.margin`` (optional): ``{mode: "portfolio", reduce_above, reduce_to}``, decimal strings."""
+    _obj(v, path, ("mode", "reduce_above", "reduce_to"))
+    _s_enum(v["mode"], MARGIN_MODES, f"{path}.mode")
+    _s_dec(v["reduce_above"], f"{path}.reduce_above")
+    _s_dec(v["reduce_to"], f"{path}.reduce_to")
 
 
 # Per object: required fields, optional fields, and the check of each field in the order the first-error path runs them.
@@ -284,8 +300,9 @@ _SECTIONS: dict[str, tuple[tuple[str, ...], tuple[str, ...], tuple[tuple[str, An
     "exit": (("max_hold_hours", "max_loss", "take_profit", "conditions"), (), (
         ("max_hold_hours", _s_u32, ()), ("max_loss", _s_dec, ()), ("take_profit", _s_dec_or_null, ()),
         ("conditions", _s_conditions, ()))),
-    "sizing": (("notional_per_leg", "max_open", "leverage"), (), (
-        ("notional_per_leg", _s_dec, ()), ("max_open", _s_u32, ()), ("leverage", _s_dec_or_null, ()))),
+    "sizing": (("notional_per_leg", "max_open", "leverage"), ("margin",), (
+        ("notional_per_leg", _s_dec, ()), ("max_open", _s_u32, ()), ("leverage", _s_dec_or_null, ()),
+        ("margin", _s_margin, ()))),
 }
 _TOP_REQUIRED = ("schema", "name", "kind", "universe", "assumptions", "entry", "exit", "sizing", "parameters", "provenance")
 
@@ -409,9 +426,15 @@ def _D(s: str) -> Decimal:
     return Decimal(s)
 
 
-def _check_conditions(conds: list, path: str) -> None:
+def _check_conditions(conds: list, path: str, *, min_hold: bool = False) -> None:
+    """§3.4. ``min_hold_hours`` is for exit conditions only (>= 1); an entry condition that carries it is refused."""
     for i, c in enumerate(conds):
         p = f"{path}[{i}]"
+        if "min_hold_hours" in c:
+            if not min_hold:
+                raise _invalid(f"{p}.min_hold_hours", "only exit conditions take min_hold_hours")
+            if c["min_hold_hours"] < 1:
+                raise _invalid(f"{p}.min_hold_hours", "must be >= 1")
         ranged = isinstance(c["value"], list)
         if c["op"] == "between":
             if not ranged:
@@ -595,6 +618,10 @@ def _check_universe(u: dict) -> None:
                 raise _invalid(f"universe.pairs[{i}]", "cross_perp needs two different venues")
             if u["shape"] == "spot_perp" and a != b:
                 raise _invalid(f"universe.pairs[{i}]", "spot_perp needs one venue")
+            if u["shape"] == "equity_perp" and (a == b or (a == IBKR) == (b == IBKR)):
+                raise _invalid(f"universe.pairs[{i}]", "equity_perp needs two different venues, exactly one of them ibkr")
+            if u["shape"] != "equity_perp" and IBKR in (a, b):
+                raise _invalid(f"universe.pairs[{i}]", "ibkr can only be a venue of an equity_perp pair")
             if (a, b) in seen:
                 raise _invalid(f"universe.pairs[{i}]", "duplicate")
             seen.add((a, b))
@@ -642,16 +669,25 @@ def _check_exit(x: dict) -> None:
         raise _invalid("exit.max_loss", "must be > 0")
     if x["take_profit"] is not None and _D(x["take_profit"]) <= 0:
         raise _invalid("exit.take_profit", "must be > 0 or null")
-    _check_conditions(x["conditions"], "exit.conditions")
+    _check_conditions(x["conditions"], "exit.conditions", min_hold=True)
 
 
-def _check_sizing(s: dict) -> None:
+def _check_sizing(s: dict, shape: Any = None) -> None:
     if _D(s["notional_per_leg"]) <= 0:
         raise _invalid("sizing.notional_per_leg", "must be > 0")
     if not (1 <= s["max_open"] <= MAX_OPEN_LIMIT):
         raise _invalid("sizing.max_open", f"must be in 1..={MAX_OPEN_LIMIT}")
     if s["leverage"] is not None and _D(s["leverage"]) <= 0:
         raise _invalid("sizing.leverage", "must be > 0 or null")
+    m = s.get("margin")
+    if m is not None:
+        if shape in SHAPES and shape != "spot_perp":
+            raise _invalid("sizing.margin", "portfolio margin is only for spot_perp")
+        above, to = _D(m["reduce_above"]), _D(m["reduce_to"])
+        if to <= 0 or to >= above:
+            raise _invalid("sizing.margin.reduce_to", "must satisfy 0 < reduce_to < reduce_above")
+        if above >= Decimal("0.95"):
+            raise _invalid("sizing.margin.reduce_above", "must be < 0.95")
 
 
 def _check_strategy_id(doc: dict) -> None:
@@ -673,7 +709,11 @@ def _run_checks(doc: Any, k: _Sink) -> None:
     shape_ok = not k.items
     for key, fn in _SEMANTIC:
         if passed.get(key):
-            k.ok(fn, doc[key])
+            if key == "sizing":
+                u = doc["universe"] if passed.get("universe") else None
+                k.ok(fn, doc[key], u.get("shape") if isinstance(u, dict) else None)
+            else:
+                k.ok(fn, doc[key])
     if shape_ok:
         _check_parameters(doc, k)
     if passed.get("execution"):
@@ -805,8 +845,8 @@ def strategy_id(ir: Ir | dict | str) -> str:
 # ---------------------------------------------------------------------------------------------------------------------
 
 class Features(dict):
-    """The 13 features of one pair, keyed by name. Decimal features are ``Decimal`` (rounded as §4.2 says), the two
-    millisecond features ``int``, ``price_estimated`` ``bool``; unavailable is ``None`` (never 0)."""
+    """The 21 features of one pair, keyed by name. Decimal features are ``Decimal`` (rounded as §4.2 says), the
+    millisecond features and ``listing_age_hours`` ``int``, ``price_estimated`` ``bool``; unavailable is ``None`` (never 0)."""
 
     def value(self, name: str) -> Decimal | None:
         """The comparable value (§1: booleans as 0/1, milliseconds as decimals); ``None`` = unavailable."""
@@ -832,7 +872,7 @@ def _leg(p: dict, side: str) -> dict:
     if not isinstance(leg, dict):
         raise ValueError(f"pair {p.get('id')!r}: missing {side} leg")
     w = f"{p.get('id')}.{side}"
-    if leg.get("market") not in ("perp", "spot"):
+    if leg.get("market") not in ("perp", "spot", "equity"):
         raise ValueError(f"{w}.market: {leg.get('market')!r}")
     return {
         "venue": leg["venue"], "symbol": leg["symbol"], "market": leg["market"], "quote_ccy": leg["quote_ccy"],
@@ -843,6 +883,13 @@ def _leg(p: dict, side: str) -> dict:
         "volume_quote": _opt_dec(leg.get("volume_quote"), f"{w}.volume_quote"),
         "taker_fee": _dec(leg["taker_fee"], f"{w}.taker_fee"),
         "quote_ms": _opt_int(leg.get("quote_ms"), f"{w}.quote_ms"),
+        "funding_mean_7d": _opt_dec(leg.get("funding_mean_7d"), f"{w}.funding_mean_7d"),
+        "funding_mean_30d": _opt_dec(leg.get("funding_mean_30d"), f"{w}.funding_mean_30d"),
+        "funding_pos_share_30d": _opt_dec(leg.get("funding_pos_share_30d"), f"{w}.funding_pos_share_30d"),
+        "borrow_apr": _opt_dec(leg.get("borrow_apr"), f"{w}.borrow_apr"),
+        "borrow_util": _opt_dec(leg.get("borrow_util"), f"{w}.borrow_util"),
+        "borrow_cap_used": _opt_dec(leg.get("borrow_cap_used"), f"{w}.borrow_cap_used"),
+        "listed_ms": _opt_int(leg.get("listed_ms"), f"{w}.listed_ms"),
     }
 
 
@@ -855,7 +902,7 @@ def _horizon(assumptions: dict) -> tuple[int, Decimal]:
 
 def _fund(x: dict, h: int) -> Decimal | None:
     """Funding of one leg over the horizon, per 1 base unit; None = unavailable."""
-    if x["market"] == "spot":
+    if x["market"] in ("spot", "equity"):
         return Decimal(0)
     rate, interval = x["funding_rate"], x["interval_hours"]
     if rate is None or interval is None or interval == 0:
@@ -874,6 +921,8 @@ def compute_features(pair: dict, assumptions: dict, now_ms: int) -> Features:
         ok = L["market"] == "perp" and S["market"] == "perp" and L["venue"] != S["venue"]
     elif kind == "spot_perp":
         ok = L["market"] == "spot" and S["market"] == "perp" and L["venue"] == S["venue"]
+    elif kind == "equity_perp":
+        ok = ({L["market"], S["market"]} == {"equity", "perp"}) and L["venue"] != S["venue"]
     else:
         raise ValueError(f"pair {pair.get('id')!r}: unknown kind {kind!r}")
     if not ok:
@@ -902,8 +951,25 @@ def compute_features(pair: dict, assumptions: dict, now_ms: int) -> Features:
             f["stress"] = _round(stress_q / n, 8)
             f["net_expected"] = _round(exp_q / n, 8)
             f["net_conservative"] = _round(cons_q / n, 8)
+        # 2026-10-18 features: each is independent of the economics group and of the others
+        for name, key in (("funding_apr_7d", "funding_mean_7d"), ("funding_apr_30d", "funding_mean_30d")):
+            if all(x[key] is not None for x in (L, S) if x["market"] == "perp"):
+                m = {id(x): (x[key] if x["market"] == "perp" else Decimal(0)) for x in (L, S)}
+                f[name] = _round((m[id(S)] - m[id(L)]) * 8760, 6)
+        perps = [x for x in (L, S) if x["market"] == "perp"]
+        if kind != "cross_perp" and len(perps) == 1:
+            pl = perps[0]
+            for name, key, places in (("funding_pos_share_30d", "funding_pos_share_30d", 4), ("borrow_apr", "borrow_apr", 8),
+                                      ("borrow_utilization", "borrow_util", 8), ("borrow_cap_used", "borrow_cap_used", 8)):
+                if pl[key] is not None:
+                    f[name] = _round(pl[key], places)
+        if L["ask"] != 0:
+            f["entry_edge"] = _round((S["bid"] - L["ask"]) / L["ask"], 8)
         if L["volume_quote"] is not None and S["volume_quote"] is not None:
             f["volume_min"] = min(L["volume_quote"], S["volume_quote"])
+    listed = [x["listed_ms"] for x in (L, S) if x["listed_ms"] is not None]
+    if listed:
+        f["listing_age_hours"] = max(0, now_ms - max(listed)) // HOUR_MS
     if L["quote_ms"] is not None and S["quote_ms"] is not None:
         f["quote_age_ms"] = max(max(0, now_ms - L["quote_ms"]), max(0, now_ms - S["quote_ms"]))
         f["leg_skew_ms"] = abs(L["quote_ms"] - S["quote_ms"])
@@ -947,7 +1013,11 @@ def _exit_reason(ir: Ir, pairs: list[dict], pos: dict, now_ms: int) -> str | Non
         f = compute_features(pair, ir.doc["assumptions"], now_ms)
     except PairInvalid:
         return None
+    held_ms = now_ms - pos["opened_ms"]
     for c in x["conditions"]:
+        mh = c.get("min_hold_hours")
+        if mh is not None and held_ms < mh * HOUR_MS:
+            continue  # README §5 exit step 4: this condition does not take part yet
         v = f.value(c["feature"])
         if v is not None and _holds(c, v):
             return f"condition:{c['feature']}"
