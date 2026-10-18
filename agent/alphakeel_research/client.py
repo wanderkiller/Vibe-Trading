@@ -214,7 +214,10 @@ class Client:
         return self.get("/packs", key=key)
 
     def wait_pack(self, job_id: str, *, timeout: float = 900.0, poll: float = 0.5) -> dict:
-        return self._wait(lambda: self.pack(job_id), ("ready", "failed", "cancelled", "interrupted", "expired"), timeout, poll)
+        """Wait for the pack job to finish. ``timeout`` is the longest stretch without progress (status, phase, progress
+        or total unchanged), not the total build time: a build that keeps advancing is waited for."""
+        return self._wait(lambda: self.pack(job_id), ("ready", "failed", "cancelled", "interrupted", "expired"), timeout, poll,
+                          stall_key=lambda v: (v.get("status"), v.get("phase"), v.get("progress"), v.get("total")))
 
     def slice(self, pack_id: str, **q: Any) -> dict:
         return self.get(f"/packs/{pack_id}/slice", **q)
@@ -322,12 +325,24 @@ class Client:
 
     # -- helpers -----------------------------------------------------------------------------------------------
 
-    def _wait(self, fetch: Callable[[], dict], done: tuple[str, ...], timeout: float, poll: float) -> dict:
+    def _wait(self, fetch: Callable[[], dict], done: tuple[str, ...], timeout: float, poll: float,
+              stall_key: Callable[[dict], object] | None = None) -> dict:
+        """Poll ``fetch`` until ``status`` is in ``done``. With ``stall_key`` the timeout counts from the last change of
+        ``stall_key(v)``; without it, from the start."""
         t0 = time.monotonic()
+        last: tuple[object, float] | None = None
         while True:
             v = fetch()
             if v.get("status") in done:
                 return v
+            if stall_key is not None:
+                k = stall_key(v)
+                if last is None or k != last[0]:
+                    last = (k, time.monotonic())
+                t0 = last[1]
             if time.monotonic() - t0 > timeout:
+                if stall_key is not None:
+                    raise ApiError("service.unavailable", f"no progress for {timeout:.0f}s (status {v.get('status')}, phase {v.get('phase')}, "
+                                   f"progress {v.get('progress')}/{v.get('total')}); the job continues on the server", retryable=True)
                 raise ApiError("service.unavailable", f"timed out waiting (status {v.get('status')}); the job continues on the server", retryable=True)
             self._sleep(poll)

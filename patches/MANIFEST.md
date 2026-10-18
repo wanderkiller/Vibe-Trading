@@ -159,6 +159,7 @@ reachable are the next groups.
 - `agent/tests/test_alphakeel_protocol.py`
 - `agent/tests/test_alphakeel_registration.py`
 - `agent/tests/test_alphakeel_robustness.py`
+- `agent/tests/test_alphakeel_research_client_wait.py`
 - `agent/tests/test_alphakeel_sim_funding_gaps.py`
 - `agent/tests/test_alphakeel_universe.py`
 

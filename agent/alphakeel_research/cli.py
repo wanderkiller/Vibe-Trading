@@ -68,7 +68,15 @@ def _out(obj) -> None:
 
 
 def _load(path: str | None):
-    return None if not path else json.loads(Path(path).read_text(encoding="utf-8"))
+    """A JSON file path, or inline JSON (the value starts with ``[`` or ``{``)."""
+    if not path:
+        return None
+    if path.strip()[:1] in ("[", "{"):
+        try:
+            return json.loads(path)
+        except ValueError:
+            raise ApiError("request.invalid", "inline JSON argument is not valid JSON") from None
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 IR_FOOTER = "Decision (paper or not) is yours; this report does not approve anything."
@@ -335,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--warmup-frames", type=int, default=0)
     p.add_argument("--funding", default="latest", help="latest (default), none, or a dataset version")
     p.add_argument("--accept-partial", action="store_true")
-    p.add_argument("--instruments", help="JSON list of {venue, market, symbol}: makes this a dataset pack (required for one)")
+    p.add_argument("--instruments", help="inline JSON or a JSON file: list of {venue, market, symbol}; makes this a dataset pack (required for one)")
     p.add_argument("--market-tables", default="", help="dataset pack: comma list of kline_1m,bbo,depth20,instrument_meta")
     p.add_argument("--market-dataset", help="dataset pack: market dataset version (default: latest at acceptance)")
     p.add_argument("--price-kinds", default="", help="dataset pack: comma list of trade,mark,index for kline_1m (default trade)")
@@ -464,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
             if a.funding != "latest":
                 req["funding_dataset"] = a.funding
             if a.instruments:
-                req = c.dataset_pack_request(start_ms=a.start_ms, end_ms=a.end_ms, instruments=_load(a.instruments),
+                req = c.dataset_pack_request(start_ms=a.start_ms, end_ms=a.end_ms, instruments=[{k: i[k] for k in ("venue", "market", "symbol") if k in i} for i in _load(a.instruments)],
                                              funding_dataset=None if a.funding == "latest" else a.funding,
                                              market_tables=[t for t in a.market_tables.split(",") if t],
                                              price_kinds=[t for t in a.price_kinds.split(",") if t] or None,
