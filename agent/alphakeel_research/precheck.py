@@ -416,7 +416,9 @@ def numeric_literals(doc: dict) -> list[tuple[str, Decimal]]:
     """Every numeric literal of the entry / exit expressions, in document order (AlphaKeel ``numeric_literals``): the condition
     values (a ``between`` range contributes ``value[0]`` and ``value[1]``), ``entry.candidate_limit``, ``entry.cooldown_minutes``,
     ``exit.max_hold_hours``, ``exit.max_loss`` and ``exit.take_profit`` (when not null). Paths use the ``parameters.*.path`` grammar.
-    ``sizing`` and ``assumptions`` are cost / capital assumptions, not entry or exit expressions."""
+    From 2026-10-18 also ``<group>.conditions[i].min_hold_hours`` (when given, after that condition's value) and, last,
+    ``sizing.margin.reduce_above`` / ``reduce_to``. The rest of ``sizing`` and ``assumptions`` are cost / capital assumptions,
+    not entry or exit expressions."""
     out: list[tuple[str, Decimal]] = []
 
     def conds(prefix: str, cs: list) -> None:
@@ -427,6 +429,8 @@ def numeric_literals(doc: dict) -> list[tuple[str, Decimal]]:
                 out.append((f"{prefix}.conditions[{i}].value[1]", Decimal(v[1])))
             else:
                 out.append((f"{prefix}.conditions[{i}].value", Decimal(v)))
+            if c.get("min_hold_hours") is not None:  # 2026-10-18, exit conditions only
+                out.append((f"{prefix}.conditions[{i}].min_hold_hours", Decimal(c["min_hold_hours"])))
 
     e, x = doc["entry"], doc["exit"]
     conds("entry", e["conditions"])
@@ -437,6 +441,10 @@ def numeric_literals(doc: dict) -> list[tuple[str, Decimal]]:
     out.append(("exit.max_loss", Decimal(x["max_loss"])))
     if x.get("take_profit") is not None:
         out.append(("exit.take_profit", Decimal(x["take_profit"])))
+    margin = doc["sizing"].get("margin")
+    if margin is not None:  # 2026-10-18: the reduction lines are money-management literals, judged like the others
+        out.append(("sizing.margin.reduce_above", Decimal(margin["reduce_above"])))
+        out.append(("sizing.margin.reduce_to", Decimal(margin["reduce_to"])))
     return out
 
 
@@ -450,7 +458,11 @@ def _zero_scale(doc: dict, path: str) -> Decimal | None:
             return None
         table = {"funding_hourly_net": "0.001", "funding_apr": "1", "funding": "0.01", "basis": "0.01", "spread": "0.01", "fees": "0.01",
                  "stress": "0.01", "net_expected": "0.01", "net_conservative": "0.01", "volume_min": "1000000", "quote_age_ms": "60000",
-                 "leg_skew_ms": "60000", "price_estimated": "1"}
+                 "leg_skew_ms": "60000", "price_estimated": "1",
+                 # 2026-10-18 (AlphaKeel zero_value_scale): annualised 1; basis-point scale ratios 0.0001; a 0..1 share 0.01; hours 1
+                 "funding_apr_7d": "1", "funding_apr_30d": "1", "entry_edge": "0.0001", "borrow_apr": "0.0001",
+                 "borrow_utilization": "0.0001", "borrow_cap_used": "0.0001", "funding_pos_share_30d": "0.01",
+                 "listing_age_hours": "1"}
         return Decimal(table[feature]) if feature in table else None
     return {"entry.cooldown_minutes": Decimal("1440"), "assumptions.basis_stress": Decimal("0.01")}.get(path)
 

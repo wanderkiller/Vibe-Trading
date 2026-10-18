@@ -17,7 +17,7 @@
                                           (the IR in Python under the local simulator AND in AlphaKeel's Rust evaluator,
                                            compared layer by layer; prints the comparison, writes DIR/reconciliation.json)
     python -m alphakeel_research ir backtest --ir strategy.json --start-ms N --end-ms N --instruments inst.json [--step-minutes 2]
-                                          --fees fees.json [--fees-source LABEL] [--trials N [--trials-evidence FILE]] [--capital-base X]
+                                          --fees fees.json [--fees-source LABEL] [--borrow borrow.json] [--trials N [--trials-evidence FILE]] [--capital-base X]
                                           [--accept-partial] [--pack-dir DIR] [--selection declared|JSON] [--verbose] [--out DIR]
                                           (--out defaults to a new Vibe-Trading run directory RUNS_DIR/<YYYYMMDD_HHMMSS>_ir/, which
                                            also gets ir.json, instruments.json, req.json, review_report.json, state.json)
@@ -310,6 +310,7 @@ def _ir_research(a) -> int:
                                         cache_dir=a.cache, pack_dir=a.pack_dir, register=not a.no_register,
                                         step_minutes=a.step_minutes, fees=_load(a.fees),
                                         fees_source=a.fees_source or _source_label(a.fees), trials=a.trials, trials_evidence=a.trials_evidence,
+                                        borrow=_load(a.borrow) if a.borrow else None,
                                         capital_base=Decimal(a.capital_base) if a.capital_base else None,
                                         accept_partial=a.accept_partial, selection=_selection(a.selection), verbose=a.verbose)
         finally:
@@ -418,6 +419,8 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--step-minutes", type=int, default=2)
     q.add_argument("--fees", required=True, help="JSON {venue: {perp: rate, spot: rate}} (required: there is no default fee)")
     q.add_argument("--fees-source", help="label of the fee table in the run card (default: the --fees value)")
+    q.add_argument("--borrow", help="JSON {venue: {apr, util?, cap_used?}}: borrow constants for a pack without a borrow_lend table "
+                   "(borrow_apr / borrow_util / borrow_cap_used of a perp leg; recorded in the run card)")
     q.add_argument("--trials", type=int)
     q.add_argument("--trials-evidence")
     q.add_argument("--capital-base", help="capital base of the daily returns (default notional_per_leg x 2 x max_open)")

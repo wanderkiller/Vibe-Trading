@@ -48,7 +48,7 @@ from decimal import ROUND_HALF_EVEN, Decimal
 from pathlib import Path
 from typing import Any
 
-from . import canon, ir_views
+from . import canon, ir_calendar, ir_views
 from . import ir as IR
 from .errors import ApiError, EvidenceError, Unsupported
 from . import packfile
@@ -83,6 +83,19 @@ APPROXIMATIONS = [
     "a leg that stops trading is valued at its last close (stale) and cannot exit",
     f"a leg whose last closed bar is older than {ir_views.DATASET_MAX_BAR_AGE_MS // MINUTE_MS} minutes is not in the frame",
     "base / quote_ccy from the pack's instruments table, or from the declared instrument when the dataset pack leaves them null",
+    "coarse bars (2026-10-18): a leg uses the finest series of the pack whose last closed bar is fresh -- 1m (<= 5 minutes old), "
+    "else 1h (<= 65 minutes), else 1d (<= 1 day + 5 minutes); touch, quote_ms and the 24 h volume (24 hourly / 1 daily bar) follow "
+    "that series, so on 1h/1d bars quote_age_ms is up to the bar's age and the touch is the bar's close; the settlement price "
+    "fallback (no published mark) is the close of the latest closed bar of any series within 5 minutes of the settlement",
+    "funding_mean_7d/30d and funding_pos_share_30d: from the official settlements visible at the decision time in [now - W, now) "
+    "(hourly rate = rate / interval hours; missing when their intervals cover < 0.9 x W hours); the pack's warm-up is 24 h, so they "
+    "are missing in the first week / month of a run unless the pack reaches further back",
+    "borrow_apr / borrow_util / borrow_cap_used: the latest borrow_lend reading visible at the decision time (the pack's table), "
+    "else the request's constants borrow.<venue> = {apr, util?, cap_used?}, else missing; no borrow interest is ever charged here",
+    "listed_ms from the pack's instrument_meta snapshot known at the decision time; missing without it",
+    "equity leg (ibkr): bid = ask = the close of the INDEX-price bar of the declared Binance perp of the same base (not an IBKR "
+    "quote), present only 10:00 ET to 30 minutes before the NYSE close on trading days (holidays and early closes of "
+    "stockperp-paper/common.py); taker_fee = fees.ibkr.equity as a rate on notional (IBKR's per-share commission is approximated)",
 ]
 
 
@@ -104,7 +117,8 @@ SIM_CONVENTIONS = {
                 "every equity point the executed quantity",
     "equity": "realized + open pairs valued close-now (README §5a net_now formula at the touch; a leg without a quote at its last close)",
     "not_modelled": ["margin", "leverage", "liquidation", "partial fills", "latency", "slippage beyond the synthetic touch",
-                     "FX (USDT legs only)", "funding on spot legs"],
+                     "FX (USDT legs only)", "funding on spot legs",
+                     "portfolio margin (sizing.margin) and borrow interest: modelled only by the AlphaKeel research service conservative profile"],
 }
 
 
@@ -144,7 +158,7 @@ def universe_instruments(ir_doc: dict, declared: list[dict]) -> list[dict]:
     u = loaded.universe
     if any(q != "USDT" for q in u["quote_ccys"]):
         raise Unsupported("the dataset backtest has no FX model: universe.quote_ccys must be [\"USDT\"]")
-    markets = {"cross_perp": {"perp"}, "spot_perp": {"spot", "perp"}}[u["shape"]]
+    markets = {"cross_perp": {"perp"}, "spot_perp": {"spot", "perp"}, "equity_perp": {"equity", "perp"}}[u["shape"]]
     venues = None if u["pairs"] == "any" else {v for pair in u["pairs"] for v in pair}
     out: dict[tuple, dict] = {}
     for d in declared:
@@ -155,23 +169,29 @@ def universe_instruments(ir_doc: dict, declared: list[dict]) -> list[dict]:
         if scaled_symbol(d["symbol"]):
             raise Unsupported(f"{d['venue']}:{d['symbol']} is a price-scaled contract (1000x / 1M / k prefix): the dataset view pairs "
                               "legs by base and gives both the same quantity, it has no price-scale model -- leave it out")
-        out[(d["venue"], d["market"], d["symbol"])] = {k: d[k] for k in ("venue", "market", "symbol", "base", "quote") if d.get(k) is not None}
+        out[(d["venue"], d["market"], d["symbol"])] = {k: d[k] for k in ("venue", "market", "symbol", "base", "quote", "reference") if d.get(k) is not None}
     if not out:
         raise ApiError("data.insufficient", "none of the declared instruments is on the IR's venues and markets", field="instruments")
     return [out[k] for k in sorted(out)]
 
 
 def dataset_request(instruments: list[dict], start_ms: int, end_ms: int, *, accept_partial: bool = False,
-                    selection: dict | str | None = None) -> dict:
+                    selection: dict | str | None = None, market_tables: list[str] | None = None) -> dict:
     """Dataset-pack request: 1m trade klines + the latest funding dataset for the instruments, ``WARMUP_MS`` before start.
-    ``selection``: how the instrument list was chosen (``Client.dataset_pack_request``; omitted = ``"declared"``)."""
+    ``selection``: how the instrument list was chosen (``Client.dataset_pack_request``; omitted = ``"declared"``).
+    ``market_tables``: default ``["kline_1m"]``; add ``kline_1h`` / ``kline_1d`` for the coarse series of the dataset view.
+    Equity instruments are left out of the pack's instrument list; an IR with one asks for ``index`` klines as well."""
     from .client import Client
 
-    refs = [{"venue": d["venue"], "market": d["market"], "symbol": d["symbol"]} for d in instruments]
+    # an equity leg (venue ibkr) has no data of its own: it is priced by the index klines of its reference perp, which is in the list
+    refs = [{"venue": d["venue"], "market": d["market"], "symbol": d["symbol"]} for d in instruments if d["market"] != "equity"]
     has_perp = any(d["market"] == "perp" for d in instruments)
+    has_equity = any(d["market"] == "equity" for d in instruments)
     return Client.dataset_pack_request(start_ms=start_ms - WARMUP_MS, end_ms=end_ms, instruments=refs,
-                                       funding_dataset=None if has_perp else "none", market_tables=["kline_1m"],
-                                       price_kinds=["trade"], accept_partial=accept_partial, selection=selection)
+                                       funding_dataset=None if has_perp else "none",
+                                       market_tables=list(market_tables) if market_tables else ["kline_1m"],
+                                       price_kinds=["trade", "index"] if has_equity else ["trade"],
+                                       accept_partial=accept_partial, selection=selection)
 
 
 def _selection_matches(locked, wanted) -> bool:
@@ -388,10 +408,57 @@ def _spill_klines_uncached(pack: Pack, insts: list[Inst], start_ms: int, end_ms:
 SPILL_FORMAT = _spill_format()
 
 
+def _spill_aux(pack: Pack, jobs: list[tuple[str, str, Inst, Path, bool]], start_ms: int, end_ms: int) -> dict[tuple[str, Inst], Chain]:
+    """The bar series the 1m-trade spill does not carry (2026-10-18): ``jobs`` = ``(table, price_kind, source contract, file,
+    chain)``. One pass per (table, venue, market) over the pack's objects; a job's file gets the bars of its price kind in
+    ``[start, end)`` (``t close_time close volume_quote`` per line, the bar length and the time order checked). The row-digest
+    chain of ``(table, contract)`` covers every row of the contract in the range (all price kinds, as the 1m chain does) and is
+    returned for the jobs flagged ``chain`` (the 1m chain of the primary spill already holds the 1m index rows)."""
+    spans = {f"kline_{k}": packfile.KLINE_SPANS_MS[k] for k in packfile.KLINE_SPANS_MS}
+    chains: dict[tuple[str, Inst], Chain] = {}
+    for table, _kind, src, _path, want_chain in jobs:
+        if want_chain:
+            chains.setdefault((table, src), Chain())
+    files = {id(j): open(j[3], "w", encoding="utf-8") for j in jobs}
+    last: dict[int, int] = {}
+    try:
+        for table, venue, market in sorted({(j[0], j[2].venue, j[2].market) for j in jobs}):
+            mine = [j for j in jobs if (j[0], j[2].venue, j[2].market) == (table, venue, market)]
+            symbols = {j[2].symbol for j in mine}
+            tag = f"market/{table}/{venue}/{market}/"
+            for o in sorted((o for o in pack.lock["objects"] if o["role"] == "market" and o["name"].startswith(tag)), key=lambda o: o["name"]):
+                if (o["last_ms"] or 0) < start_ms or (o["first_ms"] or 0) >= end_ms:
+                    continue
+                for r in pack._read_rows_floatfree(o["name"]):
+                    if r[1] not in symbols or not (start_ms <= r[0] < end_ms):
+                        continue
+                    pushed = False
+                    for j in mine:
+                        if j[2].symbol != r[1]:
+                            continue
+                        if j[4] and not pushed:
+                            chains[(table, j[2])].push_floatfree(r[0], r)
+                            pushed = True
+                        if r[10] != j[1]:
+                            continue
+                        if r[2] != r[0] + spans[table]:
+                            raise EvidenceError("evidence.reference", f"{table} bar at {r[0]} of {venue}:{r[1]} has close_time_ms {r[2]}, "
+                                                f"not t + {spans[table]}")
+                        if id(j) in last and r[0] <= last[id(j)]:
+                            raise EvidenceError("evidence.reference", f"{table} bars of {venue}:{r[1]} are not in strict time order at {r[0]}")
+                        last[id(j)] = r[0]
+                        files[id(j)].write(f"{r[0]} {r[2]} {r[6]} {r[8]}\n")
+    finally:
+        for f in files.values():
+            f.close()
+    return chains
+
+
 class _Bars:
     """One instrument's spilled bars, advanced in time; keeps the 24 h rolling quote volume exactly."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, nbars: int = ir_views.DATASET_VOLUME_BARS, span_ms: int = MINUTE_MS):
+        self._nbars, self._span = nbars, span_ms  # 24 h of bars: 1440 x 1m, 24 x 1h, 1 x 1d
         self._f = open(path, encoding="utf-8")
         self._next: tuple[int, int, Decimal, Decimal] | None = self._read()
         self.last: tuple[int, int, Decimal, Decimal] | None = None  # t, close_time, close, volume_quote
@@ -411,12 +478,12 @@ class _Bars:
             self.last = b
             self._win.append((b[0], b[3]))
             self._sum += b[3]
-            while self._win and self._win[0][0] <= b[0] - ir_views.DATASET_VOLUME_BARS * MINUTE_MS:
+            while self._win and self._win[0][0] <= b[0] - self._nbars * self._span:
                 self._sum -= self._win.popleft()[1]
             self._next = self._read()
 
     def volume(self) -> Decimal | None:
-        return self._sum if len(self._win) == ir_views.DATASET_VOLUME_BARS else None
+        return self._sum if len(self._win) == self._nbars else None
 
     def close(self) -> None:
         self._f.close()
@@ -434,22 +501,69 @@ class _Settle:
 class DatasetCursor:
     """Streams the dataset frames of ``ir_views.dataset_frame_legs`` in time order (same legs, bounded memory)."""
 
-    def __init__(self, pack: Pack, instruments: list[dict], start_ms: int, end_ms: int, *, fees: dict | None, work: Path):
+    def __init__(self, pack: Pack, instruments: list[dict], start_ms: int, end_ms: int, *, fees: dict | None, work: Path,
+                 borrow: dict | None = None):
         self.decl = sorted(instruments, key=lambda d: (d["venue"], d["market"], d["symbol"]))
         metas = pack.instruments()
         self.insts = [Inst(d["venue"], d["market"], d["symbol"]) for d in self.decl]
         self.identity: dict[Inst, tuple[str, str]] = {}
         self.fee: dict[Inst, str | None] = {}
+        self.borrow_constants = ir_views.require_borrow(borrow)
+        #: an equity leg's source contract: the declared perp whose index klines price it
+        self.reference: dict[Inst, Inst] = {}
         for d, i in zip(self.decl, self.insts):
+            if i.market == "equity":
+                ref = ir_views.equity_reference(d, self.decl)
+                if ref is None:
+                    raise ApiError("request.invalid", f"{i.leg()}: no declared {ir_views.REFERENCE_VENUE} perp of base "
+                                   f"{d.get('base') or d['symbol']} (or a 'reference' instrument) to take the index price from", field="instruments")
+                self.reference[i] = Inst(ref["venue"], ref["market"], ref["symbol"])
+                continue
             base, quote = ir_views.instrument_identity(metas.get(i), d)
             if base is None or quote is None:
                 raise ApiError("request.invalid", f"{i.leg()}: base/quote are not in the pack's instruments table; declare them "
                                "in the instruments file ({venue, market, symbol, base, quote})", field="instruments")
             self.identity[i] = (base, quote)
+        for d, i in zip(self.decl, self.insts):
+            if i.market == "equity":
+                ref_quote = self.identity[self.reference[i]][1]
+                self.identity[i] = ir_views.equity_identity(d, ref_quote)
             self.fee[i] = ir_views.dataset_fee(fees, i.venue, i.market)
         lo = pack.lock["request"]["window"]["start_ms"]
-        paths, self.chains = spill_klines(pack, self.insts, lo, end_ms, work)
-        self.bars = {i: _Bars(paths[i]) for i in self.insts}
+        primary = [i for i in self.insts if i.market != "equity"]
+        paths, self.chains = spill_klines(pack, primary, lo, end_ms, work)
+        # bar series per contract, finest first: ``(interval, max age ms, bars)``; the 1m one is ``self.bars``
+        self.bars = {i: _Bars(paths[i]) for i in primary}
+        self.feeds: dict[Inst, list[tuple[str, int, _Bars]]] = {i: [("1m", ir_views.BAR_SPECS[0][3], self.bars[i])] for i in primary}
+        self.aux_chains: dict[tuple[str, Inst], Chain] = {}
+        jobs: list[tuple[str, str, Inst, Path, bool]] = []
+        owner: dict[int, tuple[Inst, str]] = {}  # job index -> (leg it feeds, interval)
+        work.mkdir(parents=True, exist_ok=True)
+        for i in self.insts:
+            src, kind = (self.reference[i], "index") if i.market == "equity" else (i, "trade")
+            for interval, span, n, max_age in ir_views.BAR_SPECS:
+                table = f"kline_{interval}"
+                if not pack.has_table(table, src) or (interval == "1m" and kind == "trade"):
+                    continue
+                path = work / f"{i.venue}-{i.market}-{i.symbol}.{kind}.{interval}.bars".replace("/", "_")
+                owner[len(jobs)] = (i, interval)
+                jobs.append((table, kind, src, path, interval != "1m"))
+        if jobs:
+            self.aux_chains = _spill_aux(pack, jobs, lo, end_ms)
+            for k, (table, kind, src, path, _c) in enumerate(jobs):
+                i, interval = owner[k]
+                spec = next(x for x in ir_views.BAR_SPECS if x[0] == interval)
+                feed = _Bars(path, spec[2], spec[1])
+                if interval == "1m":
+                    self.bars[i] = feed  # an equity leg's 1m index series
+                self.feeds.setdefault(i, []).append((interval, spec[3], feed))
+        for i in self.insts:
+            if i not in self.bars:  # an equity leg without 1m index bars: an empty series
+                empty = work / f"{i.venue}-{i.market}-{i.symbol}.empty.bars".replace("/", "_")
+                empty.write_text("", encoding="utf-8")
+                self.bars[i] = _Bars(empty)
+                self.feeds.setdefault(i, []).append(("1m", ir_views.BAR_SPECS[0][3], self.bars[i]))
+            self.feeds[i].sort(key=lambda f: ir_views.BAR_SPECS_INDEX[f[0]])
         # official settlements (small): visibility for the view, settlement times for the cashflows
         delay = None
         self.settles: dict[Inst, list[_Settle]] = {}
@@ -470,6 +584,15 @@ class DatasetCursor:
         self._vis_ptr = {i: 0 for i in self._vis}
         self._vis_last: dict[Inst, _Settle | None] = {i: None for i in self._vis}
         self._vis_prev: dict[Inst, _Settle | None] = {i: None for i in self._vis}
+        # 2026-10-18 view fields: the visible settlements by settlement time (history windows; recomputed only when a settlement
+        # becomes visible or the oldest one leaves a window), the borrow/lend readings and the listing time
+        self._hist: dict[Inst, list[tuple[int, Decimal, int | None]]] = {i: [] for i in self._vis}
+        self._hist_ts: dict[Inst, list[int]] = {i: [] for i in self._vis}
+        self._hist_cache: dict[Inst, tuple[dict, int | None]] = {}
+        self._borrow = {i: pack.borrow_lend(i.venue, self.identity[i][1], 0, end_ms) for i in self._vis}
+        self._borrow_ptr = {i: 0 for i in self._vis}
+        self._borrow_now: dict[Inst, Any] = {i: None for i in self._vis}
+        self._meta = {i: pack.instrument_meta_history(i) for i in self.insts if i.market != "equity"}
         #: per contract, the most price decimals observed so far (capped at ``sim.ENGINE_MAX_DP``; :meth:`observe`): the
         #: quotes of held legs and legs closed in a frame, and fill prices -- AlphaKeel's ``MarkRounder.observe`` over the
         #: engine frame's snaps and intents (bid = ask = mark = close here); an official mark is rounded to it, and left as
@@ -481,11 +604,13 @@ class DatasetCursor:
         if self.now is not None and now < self.now:
             raise ValueError("the cursor only moves forward")
         self.now = now
-        for b in self.bars.values():
-            b.advance(now)
+        for feeds in self.feeds.values():
+            for _name, _age, feed in feeds:
+                feed.advance(now)
         for i, rows in self._vis.items():
             k = self._vis_ptr[i]
             while k < len(rows) and rows[k].visible_ms <= now:
+                self._add_history(i, rows[k])
                 cur = self._vis_last[i]
                 if cur is None or rows[k].t > cur.t:
                     self._vis_prev[i] = cur
@@ -494,9 +619,43 @@ class DatasetCursor:
                     self._vis_last[i] = rows[k]
                 k += 1
             self._vis_ptr[i] = k
+            br, bk = self._borrow[i], self._borrow_ptr[i]
+            while bk < len(br) and br[bk][0] <= now:
+                self._borrow_now[i] = br[bk][1]
+                bk += 1
+            self._borrow_ptr[i] = bk
+
+    def _add_history(self, inst: Inst, s: _Settle) -> None:
+        ts, rows = self._hist_ts[inst], self._hist[inst]
+        k = bisect.bisect_left(ts, s.t)
+        row = (s.t, s.rate, s.interval_seconds)
+        if k < len(ts) and ts[k] == s.t:
+            rows[k] = row  # the same settlement time again: the later-visible row replaces it
+        else:
+            ts.insert(k, s.t)
+            rows.insert(k, row)
+        self._hist_cache.pop(inst, None)
+
+    def _history(self, inst: Inst) -> dict:
+        now = self.now
+        got = self._hist_cache.get(inst)
+        if got is None or (got[1] is not None and now > got[1]):
+            ts = self._hist_ts[inst]
+            got = ir_views.funding_history_fields(self._hist[inst][bisect.bisect_left(ts, now - ir_views.HISTORY_LOOKBACK_MS):], now)
+            self._hist_cache[inst] = got
+        return got[0]
+
+    def last_bar(self, inst: Inst):
+        """The most recently closed bar of ``inst`` over all its series (``(t, close_time, close, volume_quote)``; the finest
+        on a tie), or None."""
+        best = None
+        for _name, _age, feed in self.feeds[inst]:
+            if feed.last is not None and (best is None or feed.last[1] > best[1]):
+                best = feed.last
+        return best
 
     def last_close(self, inst: Inst) -> Decimal | None:
-        b = self.bars[inst].last
+        b = self.last_bar(inst)
         return None if b is None else b[2]
 
     def legs(self) -> list[dict]:
@@ -504,10 +663,14 @@ class DatasetCursor:
         out = []
         for i in self.insts:
             fee = self.fee[i]
-            b = self.bars[i]
-            if fee is None or b.last is None or now - b.last[1] > ir_views.DATASET_MAX_BAR_AGE_MS:
+            if fee is None or (i.market == "equity" and not ir_calendar.in_window(now)):
+                continue
+            # the finest series whose last closed bar is fresh (1m, else 1h, else 1d: ``ir_views.BAR_SPECS``)
+            b = next((f for _name, max_age, f in self.feeds[i] if f.last is not None and now - f.last[1] <= max_age), None)
+            if b is None:
                 continue
             st = None
+            extra: dict = {}
             if i.market == "perp":
                 s = self._vis_last[i]
                 if s is not None and s.t < now - ir_views.SETTLEMENT_LOOKBACK_MS:
@@ -516,9 +679,15 @@ class DatasetCursor:
                 if prev is not None and prev.t < now - ir_views.SETTLEMENT_LOOKBACK_MS:
                     prev = None
                 st = None if s is None else ir_views.settlement_tuple(s, prev)
+                extra.update(self._history(i))
+                extra.update(ir_views.borrow_fields(self._borrow_now[i], i.venue, self.borrow_constants))
+            if i.market != "equity":
+                listed = ir_views.listed_ms_at(self._meta[i], now)
+                if listed is not None:
+                    extra["listed_ms"] = listed
             base, quote = self.identity[i]
             leg = ir_views.dataset_leg(venue=i.venue, market=i.market, symbol=i.symbol, base=base, quote_ccy=quote, close=b.last[2],
-                                       close_time_ms=b.last[1], volume_quote=b.volume(), settlement=st, taker_fee=fee)
+                                       close_time_ms=b.last[1], volume_quote=b.volume(), settlement=st, taker_fee=fee, extra=extra)
             if leg is not None:
                 out.append(leg)
         return out
@@ -541,11 +710,14 @@ class DatasetCursor:
         """``run-manifest.inputs``-style entries: the streamed klines' chains + the pack's own log (settlements)."""
         out = [{"table": "kline_1m", "instrument": i.ref(), "first_ms": c.first_ms, "last_ms": c.last_ms, "rows": c.rows,
                 "chain_sha256": c.hexdigest()} for i, c in self.chains.items() if c.rows]
-        return out + [a for a in pack.accesses() if a["table"] != "kline_1m"]
+        out += [{"table": t, "instrument": i.ref(), "first_ms": c.first_ms, "last_ms": c.last_ms, "rows": c.rows,
+                 "chain_sha256": c.hexdigest()} for (t, i), c in sorted(self.aux_chains.items(), key=lambda kv: (kv[0][0], kv[0][1].leg())) if c.rows]
+        return out + [a for a in pack.accesses() if a["table"] not in ("kline_1m", "kline_1h", "kline_1d")]
 
     def close(self) -> None:
-        for b in self.bars.values():
-            b.close()
+        for feeds in self.feeds.values():
+            for _name, _age, feed in feeds:
+                feed.close()
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -820,21 +992,25 @@ class _Diagnostics:
                 "entry_features": feats}
 
 
-def run_id_of(sid: str, pack_id: str, start_ms: int, end_ms: int, step: int, fees: dict | None, capital: Decimal) -> str:
-    h = canon.canonical_sha256({"strategy_id": sid, "pack": pack_id, "start": start_ms, "end": end_ms, "step": step,
-                                "fees": fees, "capital": str(capital)})
+def run_id_of(sid: str, pack_id: str, start_ms: int, end_ms: int, step: int, fees: dict | None, capital: Decimal,
+              borrow: dict | None = None) -> str:
+    doc = {"strategy_id": sid, "pack": pack_id, "start": start_ms, "end": end_ms, "step": step, "fees": fees, "capital": str(capital)}
+    if borrow:
+        doc["borrow"] = borrow  # only when given: the ids of runs without constants do not change
+    h = canon.canonical_sha256(doc)
     return f"irbt-{sid[3:15]}-{h[:12]}"
 
 
 def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end_ms: int, out_dir: str | Path, step_minutes: int = 2,
         fees: dict | None = None, fees_source: str = "request", capital_base: Decimal | None = None, trials: int | None = None,
         trials_evidence: str | Path | None = None, verbose: bool = False, research_service: dict | None = None,
-        diagnostics: bool = False) -> dict:
+        diagnostics: bool = False, borrow: dict | None = None) -> dict:
     """Run the IR over the dataset pack and write ``run_card.json``, ``trades.jsonl``, ``equity.jsonl``,
     ``decisions.jsonl`` into ``out_dir``. Returns the run card."""
     loaded = IR.load(ir_doc)
     sid = loaded.strategy_id
     fees = ir_views.require_fees(fees)
+    ir_views.require_borrow(borrow)  # shape check before any work; the card records the request's constants as given
     if not (isinstance(step_minutes, int) and step_minutes >= 1):
         raise ApiError("request.invalid", "step_minutes must be an integer >= 1", field="step_minutes")
     if not end_ms > start_ms:
@@ -859,10 +1035,10 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     step = step_minutes * MINUTE_MS
-    run_id = run_id_of(sid, pack.id, start_ms, end_ms, step_minutes, fees, capital_base)
+    run_id = run_id_of(sid, pack.id, start_ms, end_ms, step_minutes, fees, capital_base, borrow)
     work = out / ".work"
     t0 = time.monotonic()  # the spill (DatasetCursor) is part of the run's elapsed time
-    cursor = DatasetCursor(pack, insts, start_ms, end_ms, fees=fees, work=work)
+    cursor = DatasetCursor(pack, insts, start_ms, end_ms, fees=fees, work=work, borrow=borrow)
     sim = Sim()
     ir_obj = IR.Ir(loaded.doc)
     cooldowns: dict[str, int] = {}
@@ -890,7 +1066,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                 if st < start_ms:
                     continue
                 cursor.advance(st)
-                b = cursor.bars[inst].last
+                b = cursor.last_bar(inst)
                 # F04: the settlement's published mark, else the last 1m close within DATASET_MAX_BAR_AGE_MS before it
                 # an official mark is rounded to the contract's price decimals seen so far (AlphaKeel MarkRounder, R2-D-3)
                 sim.settle(inst, s.rate, ir_views.settlement_price(
@@ -1058,7 +1234,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         "data_window": {"start_ms": lo, "end_ms": end_ms, "start_day": utc_day(lo), "end_day": utc_day(end_ms - 1), "warmup_ms": start_ms - lo},
         "step_minutes": step_minutes, "view": ir_views.DATASET_VIEW, "approximations": approximations_of(loaded.doc), "simulator": SIM_CONVENTIONS,
         "assumptions": {"funding_estimate_of_ir": loaded.doc["assumptions"]["funding_estimate"],
-                        "fees": fees, "fees_source": fees_source,
+                        "fees": fees, "fees_source": fees_source, **({"borrow": borrow} if borrow else {}),
                         "capital_base": _s(capital_base), "capital_base_source": capital_source},
         "instruments": [{**d, "base": cursor.identity[Inst(d["venue"], d["market"], d["symbol"])][0],
                          "quote": cursor.identity[Inst(d["venue"], d["market"], d["symbol"])][1]} for d in insts],
@@ -1078,7 +1254,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                          "fraction_of_capital": _s(q8(dd["amount"] / capital_base))},
         "files": {"equity": "equity.jsonl", "trades": "trades.jsonl", "decisions": "decisions.jsonl"},
         "trials": trials_doc,
-        "warnings": inert_warnings(loaded.doc),
+        "warnings": [*inert_warnings(loaded.doc), *margin_warnings(loaded.doc)],
         "alphakeel_metrics": ak,
         "metrics": {"total_return_on_capital": _s(q8(final_eq / capital_base)), "days": len(days), "trades_closed": sim.closed,
                     "sharpe_daily_annualised": ak.get("sharpe_annualised") if isinstance(ak, dict) else None},
@@ -1353,6 +1529,15 @@ def inert_parameters(ir_doc: dict) -> list[dict]:
         if why:
             out.append({"parameter": name, "path": path, "feature": feature, "reason": f"inert on the dataset view: {why}"})
     return out
+
+
+def margin_warnings(ir_doc: dict) -> list[str]:
+    """A ``sizing.margin`` IR is decided as usual and booked as isolated margin here (README §5c: the decision never reads it)."""
+    if "margin" not in ir_doc["sizing"]:
+        return []
+    return ["sizing.margin (portfolio margin) is not simulated here: decisions are unchanged and the legs are booked as isolated "
+            "margin without borrow interest, daily ratio checks or liquidation; portfolio margin and borrow interest are modelled "
+            "only by the AlphaKeel research service conservative profile"]
 
 
 def inert_warnings(ir_doc: dict) -> list[str]:

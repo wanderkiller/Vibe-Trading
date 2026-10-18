@@ -189,6 +189,18 @@ class Kline:
 
 
 @dataclass(frozen=True)
+class Borrow:
+    """One reading of a venue's quote-currency borrow/lend pool (``borrow_lend``, design 2026-10-18 section 4.1). ``t`` is the
+    time AlphaKeel read it (forward collection: the state is known from then on); the fields are None where the reading
+    lacks them. ``cap_used`` = global borrowed / global cap."""
+
+    t: int
+    apr: Decimal | None
+    util: Decimal | None
+    cap_used: Decimal | None
+
+
+@dataclass(frozen=True)
 class Bbo:
     """Best bid/offer snapshot of a dataset pack. ``t`` is the exchange time; visible from ``ts_recv_ms``."""
 
@@ -545,12 +557,42 @@ class Pack:
                         chain.push(r[0], r)
         return out
 
-    def klines(self, inst: Inst, start: int, end: int, *, price_kind: str = "trade") -> list[Kline]:
-        rows = self._market_rows("kline_1m", inst, start, end)
+    def klines(self, inst: Inst, start: int, end: int, *, price_kind: str = "trade", interval: str = "1m") -> list[Kline]:
+        """Bars of table ``kline_<interval>`` (``1m``; ``1h`` and ``1d`` when the pack holds those tables, else none)."""
+        table = f"kline_{interval}"
+        rows = self._market_rows(table, inst, start, end)
         if rows:
-            self.log.note("kline_1m", inst, rows[0][0], rows[-1][0])
+            self.log.note(table, inst, rows[0][0], rows[-1][0])
         out = [Kline(r[0], r[2], D(r[3]), D(r[4]), D(r[5]), D(r[6]), D(r[7]), D(r[8]), r[9], r[10]) for r in rows if r[10] == price_kind]
         out.sort(key=lambda k: k.t)
+        return out
+
+    #: ``borrow_lend`` columns: t (read time), symbol (``lend:<CCY>``), apr, utilization, total supply, total borrowed,
+    #: global cap, read_ms (when it became known; null = ``t``). Lives under the pseudo market ``lend`` of the venue.
+    @staticmethod
+    def borrow_inst(venue: str, quote_ccy: str) -> Inst:
+        return Inst(venue, "lend", f"lend:{quote_ccy}")
+
+    def has_table(self, table: str, inst: Inst) -> bool:
+        tag = f"market/{table}/{inst.venue}/{inst.market}/"
+        return any(o["role"] == "market" and o["name"].startswith(tag) for o in self.lock["objects"])
+
+    def borrow_lend(self, venue: str, quote_ccy: str, start: int, end: int) -> list[tuple[int, Borrow]]:
+        """``[(visible_ms, Borrow)]`` of the venue's ``quote_ccy`` pool in ``[start, end)`` by read time, sorted by
+        ``(visible_ms, t)``; ``visible_ms`` = ``read_ms`` (else ``t``), never before ``t``. Empty when the pack has no such table."""
+        inst = self.borrow_inst(venue, quote_ccy)
+        if not self.has_table("borrow_lend", inst):
+            return []
+        rows = self._market_rows("borrow_lend", inst, start, end)
+        if rows:
+            self.log.note("borrow_lend", inst, rows[0][0], rows[-1][0])
+        out = []
+        for r in rows:
+            borrowed, cap = D(r[5]), D(r[6])
+            cap_used = borrowed / cap if borrowed is not None and cap is not None and cap > 0 else None
+            vis = max(r[0], r[7]) if len(r) > 7 and r[7] is not None else r[0]
+            out.append((vis, Borrow(r[0], D(r[2]), D(r[3]), cap_used)))
+        out.sort(key=lambda x: (x[0], x[1].t))
         return out
 
     def bbo(self, inst: Inst, start: int, end: int) -> list[Bbo]:
@@ -626,7 +668,7 @@ class Pack:
                         for r in self._read(o["name"]):
                             if ins and r[1] == ins.funding_instrument_id and first <= r[0] < last + 1:
                                 ch.push(r[0], r)
-            elif table in ("kline_1m", "bbo") and inst is not None:
+            elif table in ("kline_1m", "kline_1h", "kline_1d", "bbo", "borrow_lend") and inst is not None:
                 self._market_rows(table, inst, first, last + 1, ch)
             elif table == "fx":
                 for r in self._read("fx/fx.jsonl.zst"):
@@ -673,6 +715,8 @@ class Pack:
 #: declares less (old builds wrote 0) would make a settlement visible at its settlement instant: it is refused.
 MIN_ASSUMED_DELAY_MS = 60_000
 _KLINE_SPAN_MS = 59_999
+#: ``close_time_ms - t`` of a bar of each interval
+KLINE_SPANS_MS = {"1m": 59_999, "1h": 3_599_999, "1d": 86_399_999}
 
 
 class Pit:
@@ -746,18 +790,20 @@ class Pit:
         self._check(end)
         return self.__pack.fx(start, end)
 
-    def klines(self, inst: Inst, start: int, end: int | None = None, *, price_kind: str = "trade") -> list[Kline]:
-        """1-minute bars that are already closed at ``as_of`` (``close_time_ms <= as_of``): an open bar is not visible.
+    def klines(self, inst: Inst, start: int, end: int | None = None, *, price_kind: str = "trade", interval: str = "1m") -> list[Kline]:
+        """Bars (1-minute by default; ``interval`` ``1h`` / ``1d`` for those tables) that are already closed at ``as_of``
+        (``close_time_ms <= as_of``): an open bar is not visible.
 
-        ``close_time_ms`` must be exactly ``t + 59 999``: a row claiming an earlier close would otherwise leak its
-        close price before the minute ended, so a wrong value is an evidence error.
+        ``close_time_ms`` must be exactly ``t`` + the bar length - 1 ms (59 999 for 1m): a row claiming an earlier close would
+        otherwise leak its close price before the bar ended, so a wrong value is an evidence error.
         """
         end = self.as_of_ms + 1 if end is None else end
         self._check(end)
+        span = KLINE_SPANS_MS[interval]
         out = []
-        for k in self.__pack.klines(inst, start, end, price_kind=price_kind):
-            if k.close_time_ms != k.t + _KLINE_SPAN_MS:
-                raise EvidenceError("evidence.reference", f"kline at {k.t} has close_time_ms {k.close_time_ms}, not t + {_KLINE_SPAN_MS}")
+        for k in self.__pack.klines(inst, start, end, price_kind=price_kind, interval=interval):
+            if k.close_time_ms != k.t + span:
+                raise EvidenceError("evidence.reference", f"kline at {k.t} has close_time_ms {k.close_time_ms}, not t + {span}")
             if k.close_time_ms <= self.as_of_ms:
                 out.append(k)
         return out
@@ -767,6 +813,13 @@ class Pit:
         end = self.as_of_ms + 1 if end is None else end
         self._check(end)
         return [b for b in self.__pack.bbo(inst, start, end) if b.ts_recv_ms is not None and b.ts_recv_ms <= self.as_of_ms]
+
+    def borrow_lend(self, venue: str, quote_ccy: str) -> Borrow | None:
+        """The latest reading of the venue's ``quote_ccy`` pool known at ``as_of`` (visible from its read time), or None
+        (no such table, or no reading yet)."""
+        rows = self.__pack.borrow_lend(venue, quote_ccy, 0, self.as_of_ms + 1)
+        known = [b for vis, b in rows if vis <= self.as_of_ms]
+        return known[-1] if known else None
 
     def instrument_meta(self, inst: Inst) -> dict | None:
         """Metadata as known at ``as_of``: the last snapshot with ``t <= as_of`` (none yet → ``None``); not listed yet →

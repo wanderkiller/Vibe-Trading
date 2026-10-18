@@ -178,6 +178,30 @@ approximations, written into every run card:
 - `taker_fee` from `--fees` (`{venue: {"perp": "0.0005", "spot": …}}`), required: there is no default fee (AlphaKeel's
   `dataset_view` requires the table too); spot legs need a spot fee and spot klines (otherwise only cross_perp).
 
+2026-10-18 additions to the dataset view (each only when the pack holds the data; otherwise the view is the one above, field for
+field; design `docs/plans/2026-10-18-hl-onchain-arb-integration.md` §4.3 in the AlphaKeel repo):
+
+- **coarse bars**: a leg uses the finest series of the pack whose last closed bar is fresh — `kline_1m` (≤ 5 minutes old), else
+  `kline_1h` (≤ 65 minutes), else `kline_1d` (≤ 1 day + 5 minutes); `volume_quote` is the sum over the bars of the last 24 h
+  (1440 / 24 / 1 bars, all present, else null). Freeze the pack with `--market-tables kline_1m,kline_1h,kline_1d` and pass it
+  with `--pack-dir`. On 1h/1d bars `quote_age_ms` is up to the bar's age and the touch is the bar's close (run-card approximations);
+- **history fields** of a perp leg (`funding_mean_7d`, `funding_mean_30d`, `funding_pos_share_30d`): from the official
+  settlements visible at the instant in `[now − W, now)`, hourly rate = `rate / interval hours`; missing when the settlements
+  cover < 0.9 × W hours. The pack's warm-up is still 24 h, so they are missing in the first week / month of a run unless the
+  pack reaches further back;
+- `listed_ms` from the pack's `instrument_meta`; `borrow_apr` / `borrow_util` / `borrow_cap_used` of a perp leg from the pack's
+  `borrow_lend` table (rows `[t, "lend:<CCY>", apr, utilization, total_supply, total_borrowed, global_cap, read_ms?]` under
+  `market/borrow_lend/<venue>/lend/`; the latest reading visible at the instant), else from `--borrow borrow.json`
+  (`{venue: {"apr": …, "util"?: …, "cap_used"?: …}}`, recorded in the run card), else missing. No borrow interest is charged;
+- **equity leg** (`equity_perp`; venue `ibkr`, market `equity`, `{"venue": "ibkr", "market": "equity", "symbol": "NVDA", "base"?,
+  "quote"?, "reference"?}` in `inst.json`): priced by the **index** klines (`price_kind = index`) of the declared Binance perp of
+  the same base (or `reference`), `bid = ask`, only from 10:00 ET to 30 minutes before the NYSE close on trading days
+  (`ir_calendar.py`: holidays and early closes of the paper monitor `stockperp-paper/common.py`, tables end 2027-03-26);
+  `taker_fee = fees.ibkr.equity` (a rate on notional; IBKR's per-share commission is approximated). The pack request leaves
+  equity instruments out and asks for `trade` + `index` klines;
+- `sizing.margin` (portfolio margin) is accepted: decisions are unchanged, legs are booked as isolated margin, and the run card
+  carries a warning — portfolio margin and borrow interest are modelled only by the AlphaKeel research service conservative profile.
+
 Execution is a small separate Decimal simulator (`ir_backtest.Sim`; `sim.Simulator` is bound to scan packs and the engine
 profile): complete fills at the touch, `q8(qty × price × taker_fee)` per fill, funding at each official settlement time on
 open positions `q8(qty × mark × rate)` paid by longs / received by shorts (mark = the settlement's published mark, AlphaKeel

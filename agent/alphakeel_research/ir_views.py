@@ -11,7 +11,7 @@ Pure apart from reading the ``Pit``; standard library only (imported inside the 
 from __future__ import annotations
 
 from collections.abc import Callable
-from decimal import ROUND_HALF_EVEN, Decimal
+from decimal import ROUND_HALF_EVEN, Context, Decimal
 from typing import Any
 
 from .errors import ApiError
@@ -86,17 +86,21 @@ def frame_legs(pit, frame_index: int | None, now_ms: int) -> list[dict]:
 
 
 def pairs_of_legs(legs: list[dict]) -> list[PairView]:
-    """README §4.1a rules 4–5: ordered cross-venue perp pairs and same-venue (spot long, perp short) pairs, by id."""
+    """README §4.1a rules 4–5: ordered cross-venue perp pairs, same-venue (spot long, perp short) pairs and (2026-10-18)
+    ordered cross-venue (equity, perp) and (perp, equity) pairs, by id."""
     out = []
     for a in legs:
         for b in legs:
             la, sb = a["view"], b["view"]
-            if a["base"] != b["base"] or la["quote_ccy"] != sb["quote_ccy"] or sb["market"] != "perp":
+            if a["base"] != b["base"] or la["quote_ccy"] != sb["quote_ccy"]:
                 continue
-            if la["market"] == "perp" and la["venue"] != sb["venue"]:
+            ma, mb = la["market"], sb["market"]
+            if ma == "perp" and mb == "perp" and la["venue"] != sb["venue"]:
                 kind, tag = "cross_perp", "cross"
-            elif la["market"] == "spot" and la["venue"] == sb["venue"]:
+            elif ma == "spot" and mb == "perp" and la["venue"] == sb["venue"]:
                 kind, tag = "spot_perp", "spot"
+            elif (ma, mb) in (("equity", "perp"), ("perp", "equity")) and la["venue"] != sb["venue"]:
+                kind, tag = "equity_perp", "equity"
             else:
                 continue
             pid = f"{tag}:{a['base']}:{la['venue']}:{la['symbol']}>{sb['venue']}:{sb['symbol']}"
@@ -213,10 +217,36 @@ def exit_quoted(p, quoted):
 #
 # Pairs are enumerated exactly as §4.1a rules 4–5 (``pairs_of_legs``): ordered cross_perp pairs, spot_perp only when spot
 # klines are in the frame.
+#
+# 2026-10-18 additions (design docs/plans/2026-10-18-hl-onchain-arb-integration.md §4.3; each only when the pack holds the
+# data, otherwise the view is exactly the one above):
+#
+# * coarse bars: a leg uses the FINEST fresh series of the pack -- 1m (last closed bar at most 5 minutes old), else 1h (at most
+#   65 minutes), else 1d (at most 1 day + 5 minutes); ``volume_quote`` = sum over the bars covering the 24 h ending with that
+#   bar (1440 one-minute / 24 one-hour / 1 one-day bar, all present, else null); ``quote_ms`` = that bar's close time;
+# * ``funding_mean_7d`` / ``funding_mean_30d`` / ``funding_pos_share_30d`` of a perp leg from the official settlements visible
+#   now (``funding_history_fields``); missing when the settlements cover less than 0.9 x the window in hours;
+# * ``listed_ms`` from the pack's ``instrument_meta`` (the snapshot known now); missing without it;
+# * ``borrow_apr`` / ``borrow_util`` / ``borrow_cap_used`` of a perp leg: the latest ``borrow_lend`` reading of the leg's venue and
+#   quote currency visible now, else the request's constants ``borrow.<venue> = {apr, util?, cap_used?}``, else missing;
+# * equity leg (``market = equity``, venue ``ibkr``): ``bid = ask`` = close of the INDEX-price bar (``price_kind = index``) of
+#   the declared Binance perp of the same base (or the instrument's ``reference``), same finest-fresh rule, only inside the NYSE
+#   signal window (``ir_calendar``); its fee is ``fees.ibkr.equity`` (none -> the leg is out); base is the instrument's ``base``
+#   (default: its symbol), quote its ``quote`` (default: the reference's).
 
 DATASET_VIEW = "kline_close_synthetic_bbo"
 DATASET_VOLUME_BARS = 1440
 DATASET_MAX_BAR_AGE_MS = 5 * 60_000
+#: the bar series a leg may use, finest first: ``(interval, bar length ms, bars in 24 h, max age of the last closed bar ms)``
+BAR_SPECS = (("1m", 60_000, 1440, DATASET_MAX_BAR_AGE_MS),
+             ("1h", 3_600_000, 24, 65 * 60_000),
+             ("1d", 86_400_000, 1, 86_400_000 + 5 * 60_000))
+BAR_SPECS_INDEX = {spec[0]: k for k, spec in enumerate(BAR_SPECS)}
+EQUITY_VENUE = "ibkr"
+REFERENCE_VENUE = "binance"  # the venue whose index klines price an equity leg
+HISTORY_WINDOWS = ((7, "funding_mean_7d"), (30, "funding_mean_30d"))  # days, view field
+HISTORY_LOOKBACK_MS = 31 * 86_400_000  # the 30-day window plus one more day for the interval inference of its first row
+HISTORY_MIN_COVERAGE_PCT = 90
 SETTLEMENT_KINDS = ("regular", "special")
 SETTLEMENT_LOOKBACK_MS = 86_400_000  # longest funding interval of the nine venues is 8 h
 KLINE_SPAN_MS = 59_999
@@ -269,9 +299,11 @@ def interval_hours_of(interval_seconds) -> int | None:
 
 
 def dataset_leg(*, venue: str, market: str, symbol: str, base: str, quote_ccy: str, close: Decimal, close_time_ms: int,
-                volume_quote: Decimal | None, settlement: tuple[Decimal, int, int] | None, taker_fee: str) -> dict | None:
+                volume_quote: Decimal | None, settlement: tuple[Decimal, int, int] | None, taker_fee: str,
+                extra: dict | None = None) -> dict | None:
     """One leg of a dataset frame (``{"base", "view": LegView}``). ``settlement`` = ``(rate, t_ms, interval_seconds)`` of
-    the last official settlement visible now (perps); a perp without one, or with an unknown interval, is not a leg."""
+    the last official settlement visible now (perps); a perp without one, or with an unknown interval, is not a leg.
+    ``extra``: the 2026-10-18 view fields (history, borrow, ``listed_ms``) that are present; a missing one is not written."""
     funding = {"funding_rate": None, "interval_hours": None, "next_funding_ms": None}
     if market == "perp":
         if settlement is None:
@@ -286,7 +318,109 @@ def dataset_leg(*, venue: str, market: str, symbol: str, base: str, quote_ccy: s
     return {"base": base, "mark": px, "quote_time": close_time_ms, "view": {
         "venue": venue, "symbol": symbol, "market": market, "quote_ccy": quote_ccy, "bid": px, "ask": px, "bbo": True,
         **funding, "funding_px": px if market == "perp" else None, "volume_quote": _s(volume_quote), "taker_fee": taker_fee,
-        "quote_ms": close_time_ms}}
+        "quote_ms": close_time_ms, **(extra or {})}}
+
+
+def require_borrow(borrow) -> dict:
+    """The request's borrow constants ``{venue: {apr, util?, cap_used?}}`` (decimal text or numbers) as ``{venue: {view
+    field: canonical decimal}}`` -- ``borrow_apr`` always, ``borrow_util`` / ``borrow_cap_used`` when given. None -> ``{}``."""
+    if borrow in (None, {}):
+        return {}
+    if not isinstance(borrow, dict):
+        raise ApiError("request.invalid", "borrow must be {venue: {apr, util?, cap_used?}}", field="borrow")
+    out = {}
+    for v, row in borrow.items():
+        if v not in VENUES or not isinstance(row, dict) or set(row) - {"apr", "util", "cap_used"} or row.get("apr") in (None, ""):
+            raise ApiError("request.invalid", f"borrow.{v}: a known venue with {{apr, util?, cap_used?}} (apr required)", field="borrow")
+        try:
+            vals = {"borrow_" + k: fmt(Decimal(str(row[k]))) for k in ("apr", "util", "cap_used") if row.get(k) not in (None, "")}
+        except ArithmeticError:
+            raise ApiError("request.invalid", f"borrow.{v}: not a decimal", field="borrow") from None
+        out[v] = vals
+    return out
+
+
+def borrow_fields(state, venue: str, constants: dict) -> dict:
+    """``borrow_*`` view fields of a perp leg: the pool reading ``state`` (``packfile.Borrow``) when there is one -- its fields
+    that are None are missing -- else the venue's constants, else nothing."""
+    if state is not None:
+        got = {"borrow_apr": state.apr, "borrow_util": state.util, "borrow_cap_used": state.cap_used}
+        return {k: fmt(x) for k, x in got.items() if x is not None}
+    return dict(constants.get(venue) or {})
+
+
+def listed_ms_at(history: list[dict], now_ms: int) -> int | None:
+    """``listed_ms`` of the ``instrument_meta`` snapshot known at ``now_ms`` (the last with ``t <= now``); None when there is none,
+    it has no listing time, or the contract is listed after ``now`` (same rule as ``Pit.instrument_meta``)."""
+    known = [m for m in history if m["t"] <= now_ms]
+    if not known:
+        return None
+    v = known[-1]["listed_ms"]
+    if v is None or v > now_ms:
+        return None
+    if not isinstance(v, int) or isinstance(v, bool):
+        raise ApiError("evidence.reference", "instrument_meta listed_ms is not an integer")
+    return v
+
+
+_HIST_CTX = Context(prec=60, rounding=ROUND_HALF_EVEN)
+
+
+def funding_history_fields(rows: list[tuple[int, Decimal, int | None]], now_ms: int) -> tuple[dict, int | None]:
+    """``(fields, valid_until_ms)``: the 2026-10-18 history view fields of one perp from its official settlements.
+
+    ``rows`` = ``(t, rate, interval_seconds | None)`` of the settlements visible at ``now_ms``, ascending and unique by ``t``, reaching
+    at least one day before the 30-day window (the interval of a row with a null ``interval_seconds`` is inferred from the gap
+    to the row before it, ``inferred_interval_seconds``; a row with no usable interval is left out). Per window ``W`` days
+    (7, 30): the rows with ``now - W d <= t < now``; ``funding_mean_Wd`` = the arithmetic mean of their ``rate / interval_hours``;
+    the field is missing when their intervals add up to less than 0.9 x ``24 W`` hours. ``funding_pos_share_30d`` = the share of
+    the 30-day rows with ``rate > 0`` (same coverage rule). Values are exact decimals at 60 significant digits.
+
+    ``valid_until_ms``: the result is unchanged for every ``now`` up to and including it, as long as no new settlement becomes
+    visible (the streaming cursor recomputes only then); None = no bound."""
+    items = []  # (t, hourly rate, rate > 0, hours)
+    prev_t = None
+    for t, rate, iv in rows:
+        h = interval_hours_of(iv if iv is not None else inferred_interval_seconds(prev_t, t))
+        if h is not None:
+            items.append((t, _HIST_CTX.divide(rate, Decimal(h)), rate > 0, h))
+        prev_t = t
+    out: dict = {}
+    until: int | None = None
+    future = [x[0] for x in items if x[0] >= now_ms]
+    if future:
+        until = min(future)
+    for days, field in HISTORY_WINDOWS:
+        lo = now_ms - days * 86_400_000
+        win = [x for x in items if lo <= x[0] < now_ms]
+        if win:
+            until = win[0][0] + days * 86_400_000 if until is None else min(until, win[0][0] + days * 86_400_000)
+        if sum(x[3] for x in win) * 100 < HISTORY_MIN_COVERAGE_PCT * 24 * days:
+            continue
+        total = Decimal(0)
+        for x in win:
+            total = _HIST_CTX.add(total, x[1])
+        out[field] = fmt(_HIST_CTX.divide(total, Decimal(len(win))))
+        if days == 30:
+            out["funding_pos_share_30d"] = fmt(_HIST_CTX.divide(Decimal(sum(1 for x in win if x[2])), Decimal(len(win))))
+    return out, until
+
+
+def equity_identity(d: dict, ref_quote: str) -> tuple[str, str]:
+    """``(base, quote)`` of a declared equity instrument: its ``base`` (default its symbol) and ``quote`` (default the quote of
+    the reference perp)."""
+    return str(d.get("base") or d["symbol"]), str(d.get("quote") or ref_quote)
+
+
+def equity_reference(d: dict, decl: list[dict]) -> dict | None:
+    """The declared perp whose index klines price the equity instrument ``d``: its ``reference`` ``{venue, market, symbol}``
+    when given, else the first declared ``binance`` perp (by symbol) with the same base. None when there is none."""
+    if isinstance(d.get("reference"), dict):
+        r = d["reference"]
+        return next((x for x in decl if (x["venue"], x["market"], x["symbol"]) == (r.get("venue"), r.get("market"), r.get("symbol"))), None)
+    base = str(d.get("base") or d["symbol"])
+    return next((x for x in sorted(decl, key=lambda x: x["symbol"])
+                 if x["venue"] == REFERENCE_VENUE and x["market"] == "perp" and x.get("base") == base), None)
 
 
 #: settlement timestamps jitter by a few milliseconds (Binance ``fundingTime`` ...000, ...004, ...005): a gap within this
@@ -314,12 +448,30 @@ def settlement_tuple(last, prev=None) -> tuple[Decimal, int, int | None]:
     return (last.rate, last.t, iv)
 
 
-def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, view: str = DATASET_VIEW) -> list[dict]:
+def _bar_window(bars: list, last, n: int, span_ms: int) -> Decimal | None:
+    """Sum of ``volume_quote`` over the ``n`` bars of ``span_ms`` ending with ``last`` (None unless all ``n`` are there)."""
+    day = [b for b in bars if b.t > last.t - n * span_ms]
+    return sum((b.volume_quote for b in day), Decimal(0)) if len(day) == n else None
+
+
+def _finest_fresh_bar(pit, inst, now_ms: int, price_kind: str):
+    """``(last bar, 24 h quote volume)`` of the finest bar series of ``inst`` whose last closed bar is fresh at ``now_ms``
+    (``BAR_SPECS``); None when no series is."""
+    for interval, span, n, max_age in BAR_SPECS:
+        bars = pit.klines(inst, max(0, now_ms - (n * span + max_age + span)), now_ms + 1, price_kind=price_kind, interval=interval)
+        if bars and now_ms - bars[-1].close_time_ms <= max_age:
+            return bars[-1], _bar_window(bars, bars[-1], n, span)
+    return None
+
+
+def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, view: str = DATASET_VIEW, borrow: dict | None = None) -> list[dict]:
     """The legs of the dataset frame at ``now_ms`` (see the block comment above), in (venue, market, symbol) order.
 
     ``pit_or_pack``: a ``Pit`` whose ``as_of_ms == now_ms`` or a dataset ``Pack`` (wrapped in ``Pit(pack, now_ms)``).
     ``insts``: ``[{venue, market, symbol, base?, quote?}]`` (or ``Inst``). Reads go through the point-in-time reader.
+    ``borrow``: the request's borrow constants (:func:`require_borrow`), used for a perp whose pack has no ``borrow_lend`` table.
     """
+    from . import ir_calendar
     from .packfile import Inst, Pit
 
     if view != DATASET_VIEW:
@@ -330,37 +482,59 @@ def dataset_frame_legs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, vie
         pit = pit_or_pack
     else:
         pit = Pit(pit_or_pack, now_ms)
+    constants = require_borrow(borrow)
     metas = pit.instruments()
     legs = []
     decl = [d if isinstance(d, dict) else d.ref() for d in insts]
     for d in sorted(decl, key=lambda d: (d["venue"], d["market"], d["symbol"])):
         inst = Inst(d["venue"], d["market"], d["symbol"])
-        if inst.venue not in VENUES or inst.market not in ("perp", "spot"):
+        if inst.venue not in VENUES or inst.market not in ("perp", "spot", "equity"):
             continue
-        base, quote = instrument_identity(metas.get(inst), d)
-        if base is None or quote is None:
-            raise ValueError(f"{inst.leg()}: base/quote are not in the pack's instruments table; declare them in the instrument")
+        if inst.market == "equity":
+            ref = equity_reference(d, decl)
+            if ref is None:
+                raise ValueError(f"{inst.leg()}: no declared {REFERENCE_VENUE} perp of base {d.get('base') or d['symbol']} (or a "
+                                 "'reference' instrument) to take the index price from")
+            base, quote = equity_identity(d, instrument_identity(metas.get(Inst(ref["venue"], ref["market"], ref["symbol"])), ref)[1] or "")
+            if not quote:
+                raise ValueError(f"{inst.leg()}: quote is not known (declare it or the reference's)")
+            src, kind = Inst(ref["venue"], ref["market"], ref["symbol"]), "index"
+        else:
+            base, quote = instrument_identity(metas.get(inst), d)
+            if base is None or quote is None:
+                raise ValueError(f"{inst.leg()}: base/quote are not in the pack's instruments table; declare them in the instrument")
+            src, kind = inst, "trade"
         fee = dataset_fee(fees, inst.venue, inst.market)
         if fee is None:
             continue
-        lookback = DATASET_VOLUME_BARS * _MIN_MS + DATASET_MAX_BAR_AGE_MS + _MIN_MS
-        bars = pit.klines(inst, max(0, now_ms - lookback), now_ms + 1, price_kind="trade")
-        if not bars or now_ms - bars[-1].close_time_ms > DATASET_MAX_BAR_AGE_MS:
+        if inst.market == "equity" and not ir_calendar.in_window(now_ms):
             continue
-        last = bars[-1]
-        day = [b for b in bars if b.t > last.t - DATASET_VOLUME_BARS * _MIN_MS]
-        vol = sum((b.volume_quote for b in day), Decimal(0)) if len(day) == DATASET_VOLUME_BARS else None
+        got = _finest_fresh_bar(pit, src, now_ms, kind)
+        if got is None:
+            continue
+        last, vol = got
         st = None
+        extra: dict = {}
         if inst.market == "perp":
-            rows = [s for s in pit.settlements(inst, max(0, now_ms - SETTLEMENT_LOOKBACK_MS), now_ms + 1) if s.event_kind in SETTLEMENT_KINDS]
-            st = settlement_tuple(rows[-1], rows[-2] if len(rows) > 1 else None) if rows else None
+            raw = [s for s in pit.settlements(inst, max(0, now_ms - HISTORY_LOOKBACK_MS), now_ms + 1) if s.event_kind in SETTLEMENT_KINDS]
+            by_t = {s.t: s for s in raw}  # unique by settlement time (a later row replaces an earlier one)
+            rows = [by_t[t] for t in sorted(by_t)]
+            near = [s for s in rows if s.t >= now_ms - SETTLEMENT_LOOKBACK_MS]
+            st = settlement_tuple(near[-1], near[-2] if len(near) > 1 else None) if near else None
+            extra.update(funding_history_fields([(s.t, s.rate, s.interval_seconds) for s in rows], now_ms)[0])
+            extra.update(borrow_fields(pit.borrow_lend(inst.venue, quote), inst.venue, constants))
+        if inst.market != "equity":
+            listed = (pit.instrument_meta(inst) or {}).get("listed_ms")
+            if listed is not None:
+                extra["listed_ms"] = listed
         leg = dataset_leg(venue=inst.venue, market=inst.market, symbol=inst.symbol, base=base, quote_ccy=quote, close=last.close,
-                          close_time_ms=last.close_time_ms, volume_quote=vol, settlement=st, taker_fee=fee)
+                          close_time_ms=last.close_time_ms, volume_quote=vol, settlement=st, taker_fee=fee, extra=extra)
         if leg is not None:
             legs.append(leg)
     return legs
 
 
-def dataset_frame_pairs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, view: str = DATASET_VIEW) -> list[PairView]:
+def dataset_frame_pairs(pit_or_pack, insts: list, now_ms: int, *, fees: dict, view: str = DATASET_VIEW,
+                        borrow: dict | None = None) -> list[PairView]:
     """All candidate pairs of the dataset frame at ``now_ms`` (§4.1a rules 4–5 over :func:`dataset_frame_legs`), by ``id``."""
-    return pairs_of_legs(dataset_frame_legs(pit_or_pack, insts, now_ms, fees=fees, view=view))
+    return pairs_of_legs(dataset_frame_legs(pit_or_pack, insts, now_ms, fees=fees, view=view, borrow=borrow))
