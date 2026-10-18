@@ -29,7 +29,7 @@ def test_the_contract_pin_is_the_v2_protocol_and_vectors():
     for rel in ("validation/protocol.json", "validation/vectors/g1-precheck.json"):
         assert PIN[rel] == hashlib.sha256((Path(contract.__file__).parent / "contract" / rel).read_bytes()).hexdigest()
     p = precheck.load_protocol()
-    assert p["version"] == "2.6"
+    assert p["version"] == "2.7"
     # an optional informational item (3.11, not research-side) never reaches the research-side list
     assert "3.11" not in {i["id"] for i in precheck.research_items(p)}
     stripped = copy.deepcopy(p)
