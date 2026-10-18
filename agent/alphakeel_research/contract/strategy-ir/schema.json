@@ -69,7 +69,8 @@
     "shape": {
      "enum": [
       "cross_perp",
-      "spot_perp"
+      "spot_perp",
+      "equity_perp"
      ]
     },
     "excluded_bases": {
@@ -229,6 +230,31 @@
       }
      ],
      "description": "> 0, or null = runtime value"
+    },
+    "margin": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "mode",
+      "reduce_above",
+      "reduce_to"
+     ],
+     "description": "Optional (2026-10-18). Portfolio-margin bookkeeping; spot_perp only and 0 < reduce_to < reduce_above < 0.95 (README section 3). Absent = isolated margin, not part of the definition.",
+     "properties": {
+      "mode": {
+       "enum": [
+        "portfolio"
+       ]
+      },
+      "reduce_above": {
+       "$ref": "#/$defs/decimal",
+       "description": "daily ratio above which both legs are reduced; < 0.95"
+      },
+      "reduce_to": {
+       "$ref": "#/$defs/decimal",
+       "description": "target ratio after a reduction; 0 < reduce_to < reduce_above"
+      }
+     }
     }
    }
   },
@@ -332,7 +358,8 @@
     "aster",
     "hyperliquid",
     "lighter",
-    "backpack"
+    "backpack",
+    "ibkr"
    ]
   },
   "feature": {
@@ -349,7 +376,15 @@
     "volume_min",
     "quote_age_ms",
     "leg_skew_ms",
-    "price_estimated"
+    "price_estimated",
+    "funding_apr_7d",
+    "funding_apr_30d",
+    "funding_pos_share_30d",
+    "borrow_apr",
+    "borrow_utilization",
+    "borrow_cap_used",
+    "entry_edge",
+    "listing_age_hours"
    ]
   },
   "condition": {
@@ -392,6 +427,12 @@
        "maxItems": 2
       }
      ]
+    },
+    "min_hold_hours": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 4294967295,
+     "description": "Optional (2026-10-18). exit.conditions only (README section 3): the condition does not take part until the position has been held this many hours."
     }
    },
    "if": {

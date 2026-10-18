@@ -2,6 +2,8 @@
 
 日期：2026-10-07。状态：v1 定稿（T1）。方案：`docs/plans/strategy-ir-loop-2026-10-07.md` §2.1–§2.2。
 
+2026-10-18 增补（可选项，缺省不进 id）：`exit.conditions[].min_hold_hours`、`sizing.margin`、形态 `equity_perp`（平台名 `ibkr`、市场 `equity`）、8 个新特征（资金费历史窗口、借贷、入场价差、上线时长）与对应的视图字段。方案：`docs/plans/2026-10-18-hl-onchain-arb-integration.md` §2。
+
 一份 IR 文件（`strategy.json`）就是一个策略的**唯一定义**。Vibe-Trading（Python）与 AlphaKeel（Rust）各自独立实现本文的语义，
 用 `vectors/` 下的共享金标向量证明一致；任何一侧都不得“翻译”另一侧的代码。本文是两侧实现的契约：实现与本文冲突时以本文为准，
 并同时修正实现、`schema.json`、生成器与向量。
@@ -39,8 +41,8 @@
 | `strategy_id` | 字符串，可选 | 自述 id；存在时必须等于计算值（§2）。不进定义。 |
 | `name` | 非空字符串 | 人读名称，进 id。 |
 | `kind` | 字符串 | v1 只接受 `cross_venue_carry`（两腿对冲，AK 执行层 docs/16）；其他值两侧一致地拒绝。 |
-| `universe.pairs` | `"any"` 或 `[[long_venue, short_venue], …]` | 平台名同 `screener::venue::Venue`：`binance okx bybit bitget gate aster hyperliquid lighter backpack`。列表有序（顺序进 id）、非空、不重复；`cross_perp` 要求两平台不同，`spot_perp` 要求相同。 |
-| `universe.shape` | `cross_perp` \| `spot_perp` | 组合形态；与候选的 `kind` 相同才参与。 |
+| `universe.pairs` | `"any"` 或 `[[long_venue, short_venue], …]` | 平台名同 `screener::venue::Venue`：`binance okx bybit bitget gate aster hyperliquid lighter backpack ibkr`（`ibkr` 是股票腿的平台名，只用于 `equity_perp`）。列表有序（顺序进 id）、非空、不重复；`cross_perp` 要求两平台不同，`spot_perp` 要求相同，`equity_perp` 要求两平台不同且恰有一端是 `ibkr`（`[["ibkr","binance"],["binance","ibkr"]]` = 两个方向）；`ibkr` 不许出现在其他形态的列表里。 |
+| `universe.shape` | `cross_perp` \| `spot_perp` \| `equity_perp` | 组合形态；与候选的 `kind` 相同才参与。`equity_perp`（2026-10-18）：一条腿 `market = equity`（正股，平台 `ibkr`）、另一条 `perp`，平台不同，两个方向都合法；股票腿没有资金费（`fund = 0`），`taker_fee` 取 `fees[venue].equity`（按名义比例近似每股佣金）。 |
 | `universe.excluded_bases` | 大写字符串列表 | 不参与的基础币。 |
 | `universe.quote_ccys` | 大写字符串列表，缺省 `["USDT"]` | 允许的计价币（非空、不重复）。缺省值在计算 id 前补上。 |
 | `universe.bases` | 大写字符串列表，可选 | 基础币白名单（非空、不重复）：给出时只有这些基础币能进场（§5 第 2a 步）；缺省 = 不限，且**不补默认值**（缺省的文档 id 不变）。研究只在一组币上做过时必须写它：否则 paper/实盘会在扫描到的任何币上进场（2026-10-09 审查：研究 16 个加密币，paper 第一轮就开了原油与股票永续）。 |
@@ -55,10 +57,11 @@
 | `exit.max_hold_hours` | 整数 ≥ 1 | 最长持有。 |
 | `exit.max_loss` | 十进制串 > 0 | 计价币金额：`net_now ≤ −max_loss` 即平。 |
 | `exit.take_profit` | 十进制串 > 0 或 `null` | 必填（可为 null）。 |
-| `exit.conditions` | 条件列表（OR） | 任一成立即平。 |
+| `exit.conditions` | 条件列表（OR） | 任一成立即平。每条可带 `min_hold_hours`（2026-10-18，整数 ≥ 1，可选）：持有不足该时长时这一条不参与（§5 退出第 4 步）；只作用于特征条件，不影响 `max_hold`/`max_loss`/`take_profit`。缺省不写出、不进 id；只许出现在 `exit.conditions`（入场条件带它 → `ir.invalid`）。它是 G1 1.19 意义上的数值字面量（要么声明参数、要么列入 `fixed_literals`）。 |
 | `sizing.notional_per_leg` | 十进制串 > 0 | 每腿名义（计价币）。原样传给引擎，数量取整归引擎。 |
 | `sizing.max_open` | 整数 1–50 | 同时持仓上限。 |
 | `sizing.leverage` | 十进制串 > 0 或 `null` | 必填（可为 null = 运行环境的值）。 |
+| `sizing.margin` | 对象，可选（2026-10-18） | 组合保证金记账：`{"mode": "portfolio", "reduce_above": 十进制串, "reduce_to": 十进制串}`，只对 `spot_perp` 合法，`0 < reduce_to < reduce_above < 0.95`。缺省 = 逐仓（今天的语义），不进 id。它和 `execution` 一样**只描述记账与执行，不改决策**（§4、§5 不读它），语义见 §5c；`reduce_above`、`reduce_to` 是 G1 1.19 意义上的数值字面量。 |
 | `parameters` | 对象 | 参数名 → `{value, robust: [lo, hi], path}`，供人审阅；见 §3。可为 `{}`。 |
 | `execution` | 对象，可选（2026-10-17） | 进场与平仓的成交方式，见 §5b：`{"entry": {"long": <腿>, "short": <腿>}, "exit": "taker"}`，`<腿>` = `"taker"` 或 `{"maker": {"model": "M1" \| "M2", "timeout_s": 120–3600, "participation"?: 十进制串 (0, 0.25]（缺省 `"0.05"`）, "chase"?: "taker"}}`；每个键都可省略（腿缺省 `"taker"`、`exit` 缺省 `"taker"`）。最多一条腿挂 maker。没有 maker 腿（省略、`{}`、全部 `"taker"`）= 全部 taker，**不进定义**（§2），id 与不写这个段相同。它只描述成交，不改变决策（§4、§5 不读它），其中的数值不是 G1 1.19 的入场/出场字面量。 |
 | `provenance` | 对象 | 自由内容（工具、run_id、研究窗口、试验数、数据审计、研究凭证……）；只检查形状：`tool`（非空字符串）与 `window.start`、`window.end`（字符串）必填。不进 id。可选 `fixed_literals`：路径（写法同 `parameters.*.path`）→ 十进制串，列出入场/出场里**刻意固定**、没有声明成参数的数值字面量；AlphaKeel 判决 G1 1.19 要求每个入场/出场数值字面量要么是声明参数的位置、要么列在这里且值与 IR 一致（0、1、24、60、1000、3600 豁免），值不一致或路径不指向字面量即 FAIL。可选 `research_credential`（研究方的研究服务凭证 id，`/whoami` 的 `credential`）：协议 2.5 起 G1 1.14 要求它是研究服务认识的研究凭证。可选 `data_exposure_end_ms`（整数毫秒）：研究读过的全部数据（含不经研究服务的直接拉取，VT 的 `data_audit` 记录）的最晚终点；协议 2.5 起计入 1.14 的研究视界。 |
@@ -69,26 +72,30 @@
 
 **数字**：金额、比例、阈值一律是**规范十进制字符串**——无指数、无 `+`、无多余前导零、无小数尾零、无 `-0`
 （正则 `^-?(0|[1-9][0-9]*)(\.[0-9]*[1-9])?$` 且不是 `-0`）。因此同一数值只有一种写法、只有一个 id。
-JSON 整数只用于计数、小时、分钟（`horizon_hours`、`candidate_limit`、`cooldown_minutes`、`max_hold_hours`、`max_open`）。
+JSON 整数只用于计数、小时、分钟（`horizon_hours`、`candidate_limit`、`cooldown_minutes`、`max_hold_hours`、`min_hold_hours`、`max_open`）。
 
 ## 2. 规范形式与 `strategy_id`
 
 - `definition` = 文档去掉 `provenance` 与 `strategy_id` 两个顶层键；若 `universe.quote_ccys` 缺省则补 `["USDT"]`；
   `execution` 没有 maker 腿时去掉，有 maker 腿时补全缺省值（`entry.long`/`entry.short` 缺省 `"taker"`、`exit` 缺省 `"taker"`、
-  maker 腿的 `participation` 缺省 `"0.05"`、`chase` 缺省 `"taker"`，都写出）。
+  maker 腿的 `participation` 缺省 `"0.05"`、`chase` 缺省 `"taker"`，都写出）。`exit.conditions[].min_hold_hours` 与 `sizing.margin`
+  缺省时不补默认值、不写出（缺省文档的 id 与 2026-10-18 之前相同）；给出时原样进定义。
 - `canonical` = 键按码点排序、无空白、UTF-8 原样输出、只允许整数的 JSON（与研究契约 docs/37 §2 同一函数：
   Rust `alphakeel_util::canon::canonical_bytes`，Python `json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`）。
 - `strategy_id = "ir-" + sha256_hex(canonical(definition))[:24]`。
 
 推论（`vectors/canonical.json` 逐条验证）：改 `provenance` 不改 id；键顺序不改 id；改任何数值、假设、名称、列表顺序都改 id；
-加一个全部 taker 的 `execution` 不改 id，挂 maker（及其模型、超时、参与率）改 id。
+加一个全部 taker 的 `execution` 不改 id，挂 maker（及其模型、超时、参与率）改 id；给出 `min_hold_hours` 或 `sizing.margin`（及其任一数值）改 id。
 
 ## 3. 校验（两侧一致）
 
 1. 形状：`schema.json`；未知字段、未知特征、未知运算符、未知平台、十进制串不规范 → 拒绝。
 2. `schema` 常量、`kind = cross_venue_carry`。
-3. §1 表中的取值范围；`universe.pairs` 与 `shape` 一致；`excluded_bases`、`quote_ccys` 大写；`bases` 给出时非空、大写、不重复（依次检查 `excluded_bases`、`bases`、`quote_ccys`，报告第一处）。
-4. 条件：`between` ↔ 区间且 `lo ≤ hi`；其他运算符 ↔ 单值。
+3. §1 表中的取值范围；`universe.pairs` 与 `shape` 一致（`cross_perp` 两平台不同、`spot_perp` 相同、`equity_perp` 不同且恰有一端是 `ibkr`，`ibkr` 不许出现在其他形态；违反 → `ir.invalid`，路径 `universe.pairs[i]`）；`excluded_bases`、`quote_ccys` 大写；`bases` 给出时非空、大写、不重复（依次检查 `excluded_bases`、`bases`、`quote_ccys`，报告第一处）。
+4. 条件：`between` ↔ 区间且 `lo ≤ hi`；其他运算符 ↔ 单值。`min_hold_hours`：只许在 `exit.conditions`（入场条件带它 → `ir.invalid`，路径 `entry.conditions[i].min_hold_hours`），
+   值 ≥ 1（0 → `ir.invalid`，路径 `exit.conditions[i].min_hold_hours`）；必须写成 JSON 整数字面量（`6.0`、字符串、负数 → `ir.shape`，与 `timeout_s` 同一条）。
+4b. `sizing.margin`（给出时）：`universe.shape` 不是 `spot_perp` → `ir.invalid`，路径 `sizing.margin`；`reduce_to ≤ 0` 或 `reduce_to ≥ reduce_above` → `ir.invalid`，路径 `sizing.margin.reduce_to`；
+   `reduce_above ≥ 0.95` → `ir.invalid`，路径 `sizing.margin.reduce_above`（依次检查，报告第一处）；`mode` 不是 `"portfolio"`、未知键、缺键 → `ir.shape`。
 5. `parameters`：v1 **不支持占位符**。每个参数用 `path` 指向它描述的字面量，路径语法 `seg(.seg)*`，`seg = name([index])*`，
    第一段只能是 `entry`、`exit`、`sizing`、`assumptions`（例：`entry.conditions[0].value`、`entry.conditions[1].value[0]`、
    `exit.max_hold_hours`、`sizing.notional_per_leg`）。路径必须指向十进制串或整数，且数值等于 `value`；`robust` 满足 `lo ≤ value ≤ hi`。
@@ -105,7 +112,7 @@ JSON 整数只用于计数、小时、分钟（`horizon_hours`、`candidate_limi
 7. 文档带 `strategy_id` 时必须等于 §2 的计算值。
 8. `provenance` 内部不参与 id，可以含浮点数；其它任何位置出现浮点数都拒绝（金额/比例必须是十进制串）。
 
-**错误码（两侧相同，报告第一个失败的规则）**：`ir.shape`（第 1 条）、`ir.schema`、`ir.kind`（第 2 条）、`ir.invalid`（第 3、4、5b、6 条，附路径）、
+**错误码（两侧相同，报告第一个失败的规则）**：`ir.shape`（第 1 条）、`ir.schema`、`ir.kind`（第 2 条）、`ir.invalid`（第 3、4、4b、5b、6 条，附路径）、
 `ir.parameter_path`、`ir.parameter_mismatch`（第 5 条）、`ir.strategy_id_mismatch`（第 7 条）。Rust `IrError::code()` 与 Python
 `IrError.code` 返回同一字符串。
 
@@ -116,9 +123,10 @@ JSON 整数只用于计数、小时、分钟（`horizon_hours`、`candidate_limi
 一个决策时刻 `now_ms` 的输入是一组候选组合（帧）。每个组合：
 
 ```
-PairView { id, base, kind: cross_perp | spot_perp, long: LegView, short: LegView }
-LegView  { venue, symbol, market: perp | spot, quote_ccy, bid, ask, bbo: bool,
-           funding_rate?, interval_hours?, next_funding_ms?, funding_px?, volume_quote?, taker_fee, quote_ms? }
+PairView { id, base, kind: cross_perp | spot_perp | equity_perp, long: LegView, short: LegView }
+LegView  { venue, symbol, market: perp | spot | equity, quote_ccy, bid, ask, bbo: bool,
+           funding_rate?, interval_hours?, next_funding_ms?, funding_px?, volume_quote?, taker_fee, quote_ms?,
+           funding_mean_7d?, funding_mean_30d?, funding_pos_share_30d?, borrow_apr?, borrow_util?, borrow_cap_used?, listed_ms? }
 ```
 
 `?` 字段可缺失或为 `null`，表示“视图里没有”，**不是 0**。`id` 在帧内唯一（筛选器的写法是
@@ -126,10 +134,23 @@ LegView  { venue, symbol, market: perp | spot, quote_ccy, bid, ask, bbo: bool,
 Python 实现用 60 位精度、Rust 用 `rust_decimal`（约 28 位有效数字）：只在第 28 位之后的舍入平局上可能不同，向量不覆盖该情形，视为已知边界。`funding_px` 是平台用来算资金费的名义价格（标记价 / Hyperliquid oracle / Lighter index），对应筛选器 `PerpQuote` 的
 `funding_px` 或 `mark`；`next_funding_ms` v1 特征不用。
 
+**2026-10-18 增补的视图字段**（都可缺失，缺失 = 视图没有，不是 0；由视图构造者负责，AK 数据集视图与 VT 数据集视图各写一遍同一规则）：
+
+| 字段 | 只在 | 定义 |
+| --- | --- | --- |
+| `funding_mean_7d`、`funding_mean_30d` | 永续腿 | 决策时刻可见、结算时间落在 `[now − W, now)` 的官方结算的**小时化费率**（`rate / interval_hours`）按结算的算术平均（`W` = 7 或 30 天）。覆盖不足（结算覆盖的小时数 < 0.9 × W 小时）→ 缺失。 |
+| `funding_pos_share_30d` | 永续腿 | 同一 30 天窗口里 `rate > 0` 的结算个数 / 结算个数；覆盖规则同上。 |
+| `borrow_apr`、`borrow_util`、`borrow_cap_used` | 永续腿 | 该平台计价币（Hyperliquid 为 USDC）借贷池在决策时刻可见的最新状态：年化借款利率、利用率、全局已借 ÷ 全局上限；视图没有就缺失。 |
+| `listed_ms` | 任何腿 | 合约首笔成交（或平台给的上线时间）的毫秒时间戳。 |
+
+扫描帧（AK 扫描档案、在线 paper、跨所执行器）**不提供**这些字段（对应特征不可用）。运行环境给不出它们时，用到这些特征（入场条件、`rank_by`、退出条件）、`sizing.margin` 或
+`equity_perp` 的 IR 必须**拒绝加载**，不得静默当作“不可用”（Rust：`IrDecider::new` 以 `capability.unsupported` 拒绝，运行环境的视图用 `IrDecider::with_view` 声明自己提供哪些能力；
+同 `assumptions.funding_estimate = last_settled`）。
+
 **组合不合法**（不是特征不可用，整对拒绝，原因 `invalid:<code>`）：
 
 - `quote_ccy_mismatch`：两腿 `quote_ccy` 不同。v1 不做 USDC/USDT 换汇（筛选器的 `quote_fx` 不在范围内）。
-- `shape_mismatch`：`cross_perp` 要求两腿都是 `perp` 且平台不同；`spot_perp` 要求做多腿 `spot`、做空腿 `perp`、同一平台。
+- `shape_mismatch`：`cross_perp` 要求两腿都是 `perp` 且平台不同；`spot_perp` 要求做多腿 `spot`、做空腿 `perp`、同一平台；`equity_perp` 要求一条腿 `equity`、另一条 `perp`（任一方向）且平台不同。
 
 ### 4.1a 从扫描帧枚举组合（两侧必须一致）
 
@@ -145,8 +166,10 @@ Python（`Pit`）与 Rust（扫描帧 / `QuoteIndex`）各自从**原始报价**
    **不**回退到抓取时刻：平台没给时 `quote_age_ms`/`leg_skew_ms` 不可用。Rust 扫描帧用 `Obs::exchange_ms`，在线 paper/实盘同一口径），`bbo`
    = 报价行 `bbo`，`funding_px` = 观测行 `funding_px`，缺失时退回报价行 `mark`，再缺失则为空（§4.2 用中间价）。
 4. `cross_perp`：同一 `base`、同一 `quote_ccy`、两个不同平台的永续，**有序**对 (long, short) 都枚举（A>B 与 B>A 是两个组合）。
-   `spot_perp`：同平台、同 `base`、同 `quote_ccy` 的 (spot 多腿, perp 空腿)。`id` 用筛选器写法
-   `cross|spot:BASE:long_venue:long_symbol>short_venue:short_symbol`，以便决策层对比时键相同。
+   `spot_perp`：同平台、同 `base`、同 `quote_ccy` 的 (spot 多腿, perp 空腿)。
+   `equity_perp`（2026-10-18）：同 `base`、同 `quote_ccy`、平台不同的 (equity, perp) 与 (perp, equity) **有序**对都枚举。`id` 用筛选器写法
+   `cross|spot|equity:BASE:long_venue:long_symbol>short_venue:short_symbol`（前缀 `equity:` 给 `equity_perp`），以便决策层对比时键相同。扫描帧没有股票腿（`ibkr` 不是被扫描的平台），
+   所以扫描帧里没有 `equity_perp` 组合；股票腿由研究服务的数据集视图提供（股票腿 `bid = ask` = 参考价，`taker_fee` = `fees[ibkr].equity`）。
 5. 帧内组合按 `id` 升序交给 §5；§5 再按 IR 的 `universe` 过滤。
 
 ### 4.2 公式
@@ -157,7 +180,7 @@ Python（`Pit`）与 Rust（扫描帧 / `QuoteIndex`）各自从**原始报价**
 ```
 mid(X)        = (X.bid + X.ask) / 2
 fpx(X)        = X.funding_px            若视图给出；否则 mid(X)            # 近似，非平台公式
-fund(X)       = 0                                             若 X.market = spot
+fund(X)       = 0                                             若 X.market = spot 或 equity
               = ((X.funding_rate × fpx(X)) × H) / X.interval_hours   若 X.market = perp
                 不可用：perp 腿缺 funding_rate、缺 interval_hours 或 interval_hours = 0
 n             = L.ask                                         # 参考名义：做多腿卖一价
@@ -189,14 +212,21 @@ hourly        = (funding_q / H) / n                           # 未取整
 | `quote_age_ms` | `max(max(0, now_ms − L.quote_ms), max(0, now_ms − S.quote_ms))` | 整数 |
 | `leg_skew_ms` | `|L.quote_ms − S.quote_ms|` | 整数 |
 | `price_estimated` | `not (L.bbo and S.bbo)` | 布尔 |
+| `funding_apr_7d` / `funding_apr_30d`（2026-10-18） | `(m(S) − m(L)) × 8760`；`m(X)` = 永续腿的 `funding_mean_7d` / `funding_mean_30d`，现货/股票腿取 0 | 6 位 |
+| `funding_pos_share_30d` | 唯一永续腿（`spot_perp`、`equity_perp`）的 `funding_pos_share_30d` | 4 位 |
+| `borrow_apr` / `borrow_utilization` / `borrow_cap_used` | 唯一永续腿（`spot_perp`、`equity_perp`）的 `borrow_apr` / `borrow_util` / `borrow_cap_used` | 8 位 |
+| `entry_edge` | `(S.bid − L.ask) / L.ask`：按可成交价开仓的瞬时价差 | 8 位 |
+| `listing_age_hours` | `floor(max(0, now_ms − max(给出 listed_ms 的腿的 listed_ms)) / 3 600 000)` | JSON 整数 |
 
 - 取整一律**银行家舍入**（half-even，`rust_decimal::round_dp` 与 Python `ROUND_HALF_EVEN`），输出去尾零、`-0` 写作 `0`。
   条件与排名比较的是**取整后的值**。
 - 不可用：前九个特征（经济学组）在任一腿 `fund` 不可用或 `n = 0` 时**整组**不可用；`volume_min` 在任一腿缺 `volume_quote`
   时不可用；`quote_age_ms`、`leg_skew_ms` 在任一腿缺 `quote_ms` 时不可用（比筛选器严格：筛选器对单腿缺时间的组合取已知腿）；
   `price_estimated` 总是可用。
+  新增特征各自独立（互不牵连，也不牵连经济学组）：`funding_apr_7d|30d` 在任一**永续**腿缺对应 `funding_mean_*` 时不可用；`funding_pos_share_30d` 与 `borrow_*` 在 `cross_perp`、或那条永续腿缺字段时不可用
+  （另一条腿的同名字段不读）；`entry_edge` 在 `L.ask = 0` 时不可用；`listing_age_hours` 在两腿都没有 `listed_ms` 时不可用（未来的上线时间按 0 小时计）。
 - 未来时间的报价年龄按 0 计（与筛选器相同）；时钟可信度检查（`quote_time_verified`）不在 v1 特征里。
-- 输出文本：十进制特征为规范十进制串，毫秒为 JSON 整数，`price_estimated` 为布尔，不可用为 `null`。
+- 输出文本：十进制特征为规范十进制串，毫秒与 `listing_age_hours` 为 JSON 整数，`price_estimated` 为布尔，不可用为 `null`。`Features` 输出一律含全部 21 个键。
 
 ## 5. 决策语义
 
@@ -219,6 +249,7 @@ Decision { exits: [{position_id, reason}],
 3. `take_profit` 非空、`net_now` 已知且 `net_now ≥ take_profit` → `take_profit`
 4. 在帧里找**第一个**两腿 `(venue, symbol)` 都与持仓相同的组合，算特征；`exit.conditions` 按列表顺序第一个**可用且成立**的条件
    → `condition:<feature>`。组合不在帧里或不合法（§4.1）→ 没有特征退出，只有 1–3。不可用的特征使该条件不成立。
+   带 `min_hold_hours` 的条件在 `now_ms − opened_ms < min_hold_hours × 3 600 000` 时**跳过**（不参与、不算成立；列表里它后面的条件照常检查），持有时长恰好等于该值时参与。
 
 退出不看 `universe`（已开的仓不因宇宙收窄而被迫平仓，只按退出规则）。
 
@@ -302,6 +333,14 @@ Decision { exits: [{position_id, reason}],
   同一 `pair` 两腿相加得到组合的 `net_now`；paper/回测的 Rust 决策器用 `Mark.net_incl_estimated`（同一公式按组合计）。任一腿缺可成交
   报价 → 该组合 `net_now` 未知（null）。
 
+## 5c. 组合保证金 `sizing.margin`（2026-10-18）
+
+决策（§4、§5）不读它，同一帧上带不带 `sizing.margin` 的两个 IR 做出同样的决策。它只描述记账与执行：现货腿全额买入作抵押，永续保证金由借入计价币提供；
+组合比率 `ratio = (20 + 永续维持保证金 + 借款) / (正余额 + 现货数量 × 现货价 × 清算阈值)`；每日 00:00 UTC `ratio > reduce_above` 时按同比例减两腿到 `ratio ≤ reduce_to`；
+`ratio > 0.95` 视为强平（全部接管 + 2% 损失）。LTV、清算阈值（`0.5 + 0.5 × LTV`）、维持保证金率属于运行环境（`--config` / 数据集视图声明），不进 IR。
+谁实现：AlphaKeel 研究服务的保守成交剖面与在线 paper 的账户模型（同一份）；Python 侧（VT）只解析校验，不模拟，运行记录（run card）写明；
+paper 与跨所执行器在支持之前拒绝加载带 `sizing.margin` 的 IR（`capability.unsupported`）。
+
 ## 5b. 执行段 `execution`（2026-10-17）
 
 决策（§4、§5）与执行段无关：进场条件、排名、`fees` 等特征仍按 taker 成本算，同一帧上带不带 `execution` 的两个 IR 做出同样的决策
@@ -324,13 +363,15 @@ Decision { exits: [{position_id, reason}],
 
 - `features.json`：`{pair, assumptions, now_ms} → expected`（特征）或 `error`（`quote_ccy_mismatch` / `shape_mismatch`）。
   覆盖正/负资金费、`funding_px` 与中间价回退、不同结算间隔、缺成交额、缺报价时间、未来报价时间、缺资金费率、无盘口、
-  现货+永续、计价币不同、形态不符、第 8 位银行家舍入、不同持有期。
+  现货+永续、计价币不同、形态不符、第 8 位银行家舍入、不同持有期；2026-10-18 增补：历史窗口 APR（跨所永续、现货/股票腿取 0、永续腿缺字段）、`funding_pos_share_30d` 与 `borrow_*`
+  （取整平局、现货腿字段不读、`cross_perp` 不可用）、`equity_perp` 两个方向与形态错误、`entry_edge` 正/负/`L.ask = 0`、`listing_age_hours`（向下取整、取较晚的上线时间、单腿、未来取 0）。
 - `canonical.json`：`doc → definition_canonical, strategy_id`；含 `same_id_as` / `different_id_from` 标注
   （出处变化、键顺序、自述 id、`quote_ccys` 缺省、数值变化、假设变化、平台对列表及其顺序、`execution` 全部 taker / 空对象 / 缺省值补全 /
-  maker 模型与腿）。带 `error` 的条目是必须拒绝的文档：`doc → error`（错误码），`error_path` 给出时是 `ir.invalid` 的路径（§3 第 5b 条）。
+  maker 模型与腿、`min_hold_hours`、`sizing.margin`、`equity_perp` 文档）。带 `error` 的条目是必须拒绝的文档：`doc → error`（错误码），`error_path` 给出时是 `ir.invalid` 的路径（§3 第 4、4b、5b 条；
+  2026-10-18 增补的错误：入场条件带 `min_hold_hours`、`min_hold_hours` 为 0/小数/字符串、`sizing.margin` 用在 `cross_perp`、`reduce_to ≥ reduce_above`、`reduce_to = 0`、`reduce_above ≥ 0.95`、`mode` 非 `portfolio`、`equity_perp` 的平台对不合法、`ibkr` 用在其他形态、未知特征）。
 - `decisions.json`：`{ir, frame, state, now_ms} → expected`（Decision）。覆盖按排名进场、`candidate_limit`、`max_open`、冷却、
   `one_per_base`（已持仓与同时刻重复）、特征不可用、每一种退出原因、持仓组合不在帧里、宇宙过滤（形态/平台对/基础币白名单/排除币/计价币/非法组合）、
-  `between` 与布尔特征、现货+永续进场。
+  `between` 与布尔特征、现货+永续进场；2026-10-18 增补：`sizing.margin` 不改决策、`min_hold_hours`（未满/恰满/跳过后落到下一条条件、不影响 `max_loss`/`max_hold`）、`equity_perp` 两个方向进场与各类拒绝。
 
 ## 7. 实现
 
@@ -338,6 +379,7 @@ Decision { exits: [{position_id, reason}],
   只依赖 `alphakeel-util` 与 `alphakeel-screener`）。`ir`（类型、`Ir::parse`、`validate`、`strategy_id`）、`features`
   （`LegView`/`PairView`/`Features`、`compute`，经济学直接调用 `screener::score::{funding_over, economics, ratios}`）、
   `decide`（`PositionView`、`State`、`Frame`、`decide`）。全部纯函数。`crates/strategy-ir/tests/it/vectors.rs` 逐项比对三个向量文件。
+  `runtime`：`IrDecider::new` 对扫描帧运行环境拒绝用到历史/借贷/上线特征、`sizing.margin` 或 `equity_perp` 的 IR（§4.1），`IrDecider::with_view(ir, cfg, ViewCapabilities)` 由提供这些数据的运行环境（研究服务数据集视图）声明能力。
   规范 JSON 的唯一实现是 `alphakeel_util::canon`（研究契约 `alphakeel_research_contract::contract::canonical_*` 调用它）。
 - **生成器**：`tools/gen-strategy-ir-vectors.py`（第三份独立实现，只依赖本文）。改规范时：先改本文，再改生成器与两侧实现，
   重新生成向量并让两侧测试通过。
@@ -345,8 +387,10 @@ Decision { exits: [{position_id, reason}],
 
 ## 8. 不在 v1
 
-需要历史序列的特征（z-score、资金费持续性、回本时间 `payback_hours`）、跨计价币换汇、`kind` 以外的策略形态、参数占位符。
-schema 不为它们占位，两侧也不做假实现。
+无限历史序列的特征（任意窗口的 z-score、回本时间 `payback_hours`）、跨计价币换汇、`kind` 以外的策略形态、参数占位符。
+2026-10-18 起特征可以读**有限历史窗口**，但只经视图字段（§4.1：7 天与 30 天的资金费窗口统计、借贷池最新状态、上线时间），公式仍是单时刻的纯函数，
+没有任意长度的序列输入；窗口的计算规则由视图构造者负责（AK 数据集视图与 VT 数据集视图各实现一遍）。
+schema 不为其余项占位，两侧也不做假实现。
 
 **运行时守卫不属于 IR。** 在线 paper（`arb-screen screen --paper-state … --strategy <id>`）与跨所执行器（`arb-screen cross-live run --strategy <id>`）
 加载 IR 时，在 IR 的退出规则之外加一道运行时守卫：任一腿标记价进入强平价的 `paper.liq_buffer` 范围即平仓（与内置规则的
