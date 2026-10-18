@@ -50,6 +50,7 @@ Every command prints one JSON document with references (ids, hashes, paths) and 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import tempfile
@@ -67,11 +68,23 @@ def _out(obj) -> None:
     sys.stdout.write("\n")
 
 
+def _is_inline(v: str | None) -> bool:
+    """True when an argument is inline JSON (starts with ``[`` or ``{`` after stripping), not a file path."""
+    return bool(v) and v.strip()[:1] in ("[", "{")
+
+
+def _source_label(v: str | None) -> str | None:
+    """How a JSON argument is recorded as a source: the path, or a short hash for inline JSON."""
+    if v and _is_inline(v):
+        return "inline:sha256=" + hashlib.sha256(v.strip().encode()).hexdigest()[:12]
+    return v
+
+
 def _load(path: str | None):
     """A JSON file path, or inline JSON (the value starts with ``[`` or ``{``)."""
     if not path:
         return None
-    if path.strip()[:1] in ("[", "{"):
+    if _is_inline(path):
         try:
             return json.loads(path)
         except ValueError:
@@ -141,7 +154,7 @@ def _robustness_inputs(a) -> tuple[str, str, tuple[str, str], tuple[int, int], s
     run = Path(a.run)
     card = _run_card(a.run)
     ir_path = a.ir or str(run / "ir.json")
-    if not Path(ir_path).is_file():
+    if not (_is_inline(ir_path) or Path(ir_path).is_file()):
         raise ApiError("request.invalid", f"{ir_path} does not exist: --run needs the run directory's ir.json (or --ir)", field="ir")
     sid = IR.load(_load(ir_path)).strategy_id
     if sid != card["strategy_id"]:
@@ -160,7 +173,7 @@ def _robustness_inputs(a) -> tuple[str, str, tuple[str, str], tuple[int, int], s
         raise ApiError("request.invalid", "the run card records no pack_dir and no service-frozen pack (research_service.used is not true "
                        "or pack.pack_id is missing): give --pack-dir", field="pack_dir")
     inst = a.instruments or str(run / "instruments.json")
-    if not Path(inst).is_file():
+    if not (_is_inline(inst) or Path(inst).is_file()):
         raise ApiError("request.invalid", f"{inst} does not exist: give --instruments", field="instruments")
     return ir_path, inst, source, window, a.out or str(run / "robustness")
 
@@ -170,7 +183,7 @@ def _robustness_fees(a) -> tuple[dict | None, str | None]:
     card ran on the old implicit default (``fees_source`` ``"default"`` or absent: cards written before the fee table was
     required carry ``0.0005`` on every venue; audit 2026-10-12 R2-D-4 a)."""
     if a.fees:
-        return _load(a.fees), a.fees
+        return _load(a.fees), _source_label(a.fees)
     if not a.run:
         return None, None
     assumptions = _run_card(a.run).get("assumptions") or {}
@@ -296,7 +309,7 @@ def _ir_research(a) -> int:
             card = workflow.ir_backtest(c, _load(a.ir), _load(a.instruments), start_ms=a.start_ms, end_ms=a.end_ms, out_dir=a.out,
                                         cache_dir=a.cache, pack_dir=a.pack_dir, register=not a.no_register,
                                         step_minutes=a.step_minutes, fees=_load(a.fees),
-                                        fees_source=a.fees_source or a.fees, trials=a.trials, trials_evidence=a.trials_evidence,
+                                        fees_source=a.fees_source or _source_label(a.fees), trials=a.trials, trials_evidence=a.trials_evidence,
                                         capital_base=Decimal(a.capital_base) if a.capital_base else None,
                                         accept_partial=a.accept_partial, selection=_selection(a.selection), verbose=a.verbose)
         finally:
@@ -472,7 +485,11 @@ def main(argv: list[str] | None = None) -> int:
             if a.funding != "latest":
                 req["funding_dataset"] = a.funding
             if a.instruments:
-                req = c.dataset_pack_request(start_ms=a.start_ms, end_ms=a.end_ms, instruments=[{k: i[k] for k in ("venue", "market", "symbol") if k in i} for i in _load(a.instruments)],
+                insts = _load(a.instruments)
+                if not isinstance(insts, list) or not all(isinstance(i, dict) for i in insts):
+                    raise ApiError("request.invalid", "--instruments must be a JSON list of {venue, market, symbol}", field="instruments")
+                req = c.dataset_pack_request(start_ms=a.start_ms, end_ms=a.end_ms,
+                                             instruments=[{k: i[k] for k in ("venue", "market", "symbol") if k in i} for i in insts],
                                              funding_dataset=None if a.funding == "latest" else a.funding,
                                              market_tables=[t for t in a.market_tables.split(",") if t],
                                              price_kinds=[t for t in a.price_kinds.split(",") if t] or None,

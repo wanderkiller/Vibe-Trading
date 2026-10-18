@@ -48,3 +48,19 @@ def test_freeze_drops_base_from_instruments(monkeypatch, tmp_path):
     inst = '[{"venue": "binance", "market": "perp", "symbol": "BTCUSDT", "base": "BTC", "quote": "USDT"}]'
     cli.main(["--cache", str(tmp_path), "freeze", "--start-ms", "0", "--end-ms", "1", "--instruments", inst])
     assert seen["instruments"] == [{"venue": "binance", "market": "perp", "symbol": "BTCUSDT"}]
+
+
+@pytest.mark.parametrize("bad", ['[1]', '{"venue": "binance", "market": "spot", "symbol": "X"}', '["BTCUSDT"]'])
+def test_freeze_rejects_non_list_instruments(monkeypatch, tmp_path, capsys, bad):
+    monkeypatch.setattr(cli, "Client", lambda url=None: object())
+    assert cli.main(["--cache", str(tmp_path), "freeze", "--start-ms", "0", "--end-ms", "1", "--instruments", bad]) == 1
+    err = __import__("json").loads(capsys.readouterr().out)["error"]
+    assert err["code"] == "request.invalid" and err["field"] == "instruments"
+
+
+def test_inline_fees_source_is_labelled():
+    import hashlib
+    assert cli._is_inline(' {"a": 1}') and cli._is_inline("[1]") and not cli._is_inline("fees.json") and not cli._is_inline(None)
+    v = ' {"taker": "0.0005"} '
+    assert cli._source_label(v) == "inline:sha256=" + hashlib.sha256(v.strip().encode()).hexdigest()[:12]
+    assert cli._source_label("fees.json") == "fees.json" and cli._source_label(None) is None
