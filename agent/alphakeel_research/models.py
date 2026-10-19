@@ -149,7 +149,9 @@ class DatasetSpec(BaseModel):
     ] = None
     market_tables: Annotated[
         list[str] | None,
-        Field(description="Subset of `kline_1m`, `bbo`, `depth20`, `instrument_meta`."),
+        Field(
+            description='Subset of `kline_1m`, `bbo`, `depth20`, `instrument_meta`, `kline_1h`, `kline_1d`, `borrow_lend` (`borrow_lend` also needs `{venue, market: "lend", symbol: <quote currency>}` entries in `instruments`).'
+        ),
     ] = None
     price_kinds: Annotated[
         list[str] | None,
@@ -451,6 +453,10 @@ class InputAccessTable(StrEnum):
     instruments = "instruments"
     frames = "frames"
     kline_1m = "kline_1m"
+    kline_1h = "kline_1h"
+    kline_1d = "kline_1d"
+    instrument_meta = "instrument_meta"
+    borrow_lend = "borrow_lend"
 
 
 class InputFrames(BaseModel):
