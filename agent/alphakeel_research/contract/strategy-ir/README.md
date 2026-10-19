@@ -143,10 +143,10 @@ Python 实现用 60 位精度、Rust 用 `rust_decimal`（约 28 位有效数字
 | `borrow_apr`、`borrow_util`、`borrow_cap_used` | 永续腿 | 该平台计价币（Hyperliquid 为 USDC）借贷池在决策时刻可见的最新状态：年化借款利率、利用率、全局已借 ÷ 全局上限；视图没有就缺失。 |
 | `listed_ms` | 任何腿 | 合约首笔成交（或平台给的上线时间）的毫秒时间戳。 |
 
-**数据集视图的补充规则**（AK 的数据集视图 `kline_close_synthetic_bbo` 已实现下列全部规则：重复结算排序、结算回看下界与 31 天前移、`funding_pos_share_30d` 分母、股票腿无 `volume_quote`、借贷读数 6 小时、来源缺失拒绝运行、日历范围拒绝；VT 的实现以其自身文档为准。AK 还没有的能力一律以 `capability.unsupported` 拒绝，不静默降级；扫描帧不涉及）：
+**数据集视图的补充规则**（AK 的数据集视图 `kline_close_synthetic_bbo` 已实现下列全部规则：重复结算排序、结算回看下界与「包起点不够早即拒绝」、`funding_pos_share_30d` 分母、股票腿无 `volume_quote`、借贷读数 6 小时、来源缺失拒绝运行、日历范围拒绝；VT 的实现以其自身文档为准。AK 还没有的能力一律以 `capability.unsupported` 拒绝，不静默降级；扫描帧不涉及）：
 
 - 重复结算：同一 `(venue, symbol, t)` 出现多条时，按 (可见时刻, `t`) 排序，后可见的覆盖先可见的。
-- 结算回看下界 = `max(资金费包起点, now − 31 天)`；IR 用到历史特征（`funding_mean_*`、`funding_pos_share_30d`、`funding_apr_*`）时，冻结数据包的窗口起点前移 31 天。
+- 结算回看下界 = `max(资金费包起点, now − 31 天)`；IR 用到历史特征（`funding_mean_*`、`funding_pos_share_30d`、`funding_apr_*`）时，AK 不自动前移：包窗口起点不够早（晚于首个决策 − 31 天）即以 `request.invalid` 拒绝。
 - `funding_pos_share_30d` 的分母 = 窗口内有可用周期（声明的 `interval_hours` 或能从相邻结算推断）的结算个数。
 - 股票腿没有 `volume_quote`（缺失）。
 - 借贷读数最大年龄 6 小时：比决策时刻早超过 6 小时的最新读数视为缺失。

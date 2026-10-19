@@ -2679,7 +2679,11 @@
           "fx",
           "instruments",
           "frames",
-          "kline_1m"
+          "kline_1m",
+          "kline_1h",
+          "kline_1d",
+          "instrument_meta",
+          "borrow_lend"
         ],
         "type": "string"
       },
