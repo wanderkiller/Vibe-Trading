@@ -317,7 +317,7 @@ def test_g3_the_borrow_lookback_days_come_from_the_protocol_and_a_20_day_old_pea
     for bad in ("0", "-3", "2.5", "x"):
         floor, why = with_days(bad)
         assert floor is None and "borrow_lookback_days" in why
-    assert precheck.load_protocol()["version"] == "2.7"
+    assert precheck.load_protocol()["version"] == "2.8"
     thr = precheck._item_threshold(precheck.load_protocol(), "1.14")
     assert (thr["borrow_apr_floor"], thr["borrow_lookback_days"]) == ("0.05", "30")
 

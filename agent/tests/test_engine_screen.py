@@ -437,7 +437,7 @@ def test_coverage_item_1_16_and_the_not_evaluated_list(tmp_path) -> None:
     (rd / "config.json").write_text(json.dumps({"source": "yfinance", "codes": [], "start_date": "2024-01-01", "initial_cash": 1_000_000}))
     absent = screen_engine_run(rd, trials=1)  # no code to check and no run card verdict: not evaluated
     assert "1.16" in absent["not_evaluated"] and "1.16" not in _items(absent)
-    assert absent["not_evaluated"] == ["1.4", "1.5", "1.7", "1.9", "1.10", "1.11", "1.12", "1.13", "1.14", "1.15", "1.16", "1.17", "1.18", "1.19"]
+    assert absent["not_evaluated"] == ["1.4", "1.5", "1.7", "1.9", "1.10", "1.11", "1.12", "1.13", "1.14", "1.15", "1.16", "1.17", "1.18", "1.19", "1.20"]
     assert not set(absent["not_evaluated"]) & set(_items(absent))
     rd = _make_run(tmp_path, "withcard")
     assert _items(screen_engine_run(rd, trials=1))["1.16"] == "PASS"  # evaluated from the ohlcv artifacts
@@ -500,7 +500,7 @@ def test_card_shows_net_return_on_the_capital_base_and_the_g1_basis(tmp_path) ->
     assert "1.4" not in L._ids_text([]) and L._ids_text(["1.4", "1.5", "1.7", "1.9", "1.10", "1.11"]) == "1.4, 1.5, 1.7, 1.9–1.11"
     passed = L.record_engine_run("sess-pass", _make_run(tmp_path, "p", drift=0.0005, seed=1))
     assert passed["evidence_status"] == "passed_screen"
-    assert "通过初筛，1.4, 1.5, 1.7, 1.9–1.15, 1.17–1.19 未评估" in L.render_card("sess-pass", True)
+    assert "通过初筛，1.4, 1.5, 1.7, 1.9–1.15, 1.17–1.20 未评估" in L.render_card("sess-pass", True)
 
 
 # --- review round 2: one crypto classifier, session-wide hold-out guard, no upgrade at render ------------------------------
