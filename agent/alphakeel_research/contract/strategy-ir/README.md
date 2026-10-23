@@ -1,6 +1,6 @@
 # Strategy IR v1（`alphakeel.strategy-ir/1`）规范
 
-日期：2026-10-07。状态：v1 定稿（T1）。方案：`docs/plans/strategy-ir-loop-2026-10-07.md` §2.1–§2.2。
+日期：2026-10-07。状态：v1 定稿（T1）。方案：`docs/archive/plans/strategy-ir-loop-2026-10-07.md` §2.1–§2.2。
 
 2026-10-18 增补（可选项，缺省不进 id）：`exit.conditions[].min_hold_hours`、`sizing.margin`、形态 `equity_perp`（平台名 `ibkr`、市场 `equity`）、8 个新特征（资金费历史窗口、借贷、入场价差、上线时长）与对应的视图字段。方案：`docs/plans/2026-10-18-hl-onchain-arb-integration.md` §2。
 
@@ -237,6 +237,13 @@ hourly        = (funding_q / H) / n                           # 未取整
   （另一条腿的同名字段不读）；`entry_edge` 在 `L.ask = 0` 时不可用；`listing_age_hours` 在两腿都没有 `listed_ms` 时不可用（未来的上线时间按 0 小时计）。
 - 未来时间的报价年龄按 0 计（与筛选器相同）；时钟可信度检查（`quote_time_verified`）不在 v1 特征里。
 - 输出文本：十进制特征为规范十进制串，毫秒与 `listing_age_hours` 为 JSON 整数，`price_estimated` 为布尔，不可用为 `null`。`Features` 输出一律含全部 21 个键。
+
+> **已知不一致（P2-6，不改规范语义与 `strategy_id`）**：§4.1a 第 1 条的帧可见性对未来报价**零容忍**（`quote_ts > now_ms` 不进帧），而 §5a
+> “缺可成交报价时不退出”的新鲜度允许未来至多 5 秒（账本据此不冻结）。Rust 运行时因此会在“账本说可成交、帧里却没有这条腿”的窗口里持有（含
+> `max_hold`/`max_loss`/`take_profit`，只剩强平守卫），进场侧该平台也不产生 `rejected`。持仓评估时 `pair_for` 为空的第二个原因是运行中缺
+> 合约身份 / 计价币 / taker 费率。本版本不改任何判定，只让它可观测：`IrDecider` 把这两类丢腿按轮计入 `Mark.admissions` 的
+> `future_quote` 与 `leg_incomplete`（0 时不写出，旧日志字节不变）。**退役条件**：研究端同意把 §4.1a 与 §5a 的未来容忍对齐（同为 `now_ms + 5000`）
+> 并重生成向量、导出 PIN 之后，删除本段与这两个计数。
 
 ## 5. 决策语义
 
