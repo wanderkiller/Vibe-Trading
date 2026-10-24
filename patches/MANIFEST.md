@@ -580,6 +580,8 @@ layer itself (`patches/`).
 - `agent/src/skills/pair-trading/SKILL.md`
 - `agent/src/skills/cross-market-strategy/SKILL.md`
 - `agent/src/skills/yfinance/SKILL.md`
+- `tools/ci_private_files_gate.py`
+- `tools/test_ci_private_files_gate.py`
 
 **Commits.** `e0245ca9` `220330b0` `1f83ef6f` `83ea7c2a` `9257a920`, `7d8b0772` (T8, `patches/`), `456b918f`
 (upgrade-rehearsal record), `ff1d0f04` (T9b: `alphakeel_b2` in every README, 30 sources; cherry-picked from the
@@ -670,6 +672,7 @@ runs (audit 2026-10-12 D6-1: every production commit 10-05..10-12 was red at thi
 **Upstreamable.** Yes: the readiness line is a defect against upstream's own gate.
 
 **Anchors.**
+- hook `tools/ci_private_files_gate.py`: `ALLOWED_TRACKED_PATHS = frozenset({"AGENTS.md"})` — the fork tracks its root AGENTS.md; upstream gate g (0.1.18) refuses it
 - upstream `tools/ci_env_var_gate.py`: `ALLOWED_PREFIX: str = "agent/src/config/"`
 - upstream `tools/ci_grep_gates.sh`: `E_OUTPUT=$(python tools/ci_env_var_gate.py 2>&1)`
 - upstream `agent/src/config/accessor.py`: `def get_env_config() -> EnvConfig:`

@@ -24,6 +24,10 @@ PRIVATE_DOCUMENT_NAMES = frozenset({
     "notes.md",
 })
 
+# AlphaKeel patch layer (group packaging-docs): this fork tracks one hand-written, repository-root AGENTS.md (project
+# rules shared with Codex); no other internal document is exempt.
+ALLOWED_TRACKED_PATHS = frozenset({"AGENTS.md"})
+
 
 def main(repo_root: Path | None = None) -> int:
     """Check the Git index for internal document paths.
@@ -51,6 +55,8 @@ def main(repo_root: Path | None = None) -> int:
         if not raw_path:
             continue
         name = os.fsdecode(raw_path)
+        if name in ALLOWED_TRACKED_PATHS:
+            continue
         path = PurePosixPath(name)
         if path.parts[0].casefold() == "docs" or path.name.casefold() in PRIVATE_DOCUMENT_NAMES:
             forbidden.append(name)

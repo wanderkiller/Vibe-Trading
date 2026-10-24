@@ -1201,7 +1201,9 @@
     "agent/src/skills/minute-analysis/SKILL.md",
     "agent/src/skills/pair-trading/SKILL.md",
     "agent/src/skills/cross-market-strategy/SKILL.md",
-    "agent/src/skills/yfinance/SKILL.md"
+    "agent/src/skills/yfinance/SKILL.md",
+    "tools/ci_private_files_gate.py",
+    "tools/test_ci_private_files_gate.py"
    ],
    "anchors": [
     {
@@ -1445,6 +1447,12 @@
      "kind": "hook",
      "literal": "\"taker_rate\": 0.0005",
      "note": "crypto config example sets taker_rate (CryptoEngine has no default fee, R2-D-4)"
+    },
+    {
+     "file": "tools/ci_private_files_gate.py",
+     "kind": "hook",
+     "literal": "ALLOWED_TRACKED_PATHS = frozenset({\"AGENTS.md\"})",
+     "note": "the fork tracks its root AGENTS.md; upstream gate g refuses it"
     }
    ]
   },

@@ -29,7 +29,7 @@ def repo(tmp_path: Path) -> Path:
     "docs/plans/design.json",
     "docs",
     "DOCS/private.md",
-    "AGENTS.md",
+    "agent/AGENTS.md",
     "agent/AGENTS.override.md",
     "CLAUDE.md",
     "frontend/CLAUDE.local.md",
@@ -90,3 +90,10 @@ def test_untracking_keeps_local_content_and_clears_failure(repo: Path) -> None:
 def test_missing_git_repository_fails_closed(tmp_path: Path, capsys) -> None:
     assert main(tmp_path) == 2
     assert "check did not run" in capsys.readouterr().out
+
+
+def test_the_fork_may_track_its_root_agents_md(repo: Path) -> None:
+    """AlphaKeel patch layer: the repository-root AGENTS.md is the one exemption."""
+    (repo / "AGENTS.md").write_text("rules\n", encoding="utf-8")
+    _git(repo, "add", "-f", "--", "AGENTS.md")
+    assert main(repo) == 0
