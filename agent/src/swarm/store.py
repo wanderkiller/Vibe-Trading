@@ -17,6 +17,8 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
+from pydantic import ValidationError
+
 from pathlib import Path
 
 from src.config.accessor import get_env_config
@@ -277,11 +279,28 @@ class SwarmStore:
             return []
 
         events: list[SwarmEvent] = []
-        lines = events_file.read_text(encoding="utf-8").strip().splitlines()
-        for line in lines[after_index:]:
+        text = events_file.read_bytes()
+        lines = text.splitlines()
+        # ``append_event`` is not atomic across processes/instances: a reader
+        # (the SSE poll loop, ``_persist_recovery``) can observe a final line
+        # that is still being written, or one cut short by a crashed host. That
+        # unterminated tail is not an event yet, so skip it instead of raising
+        # and killing the stream; the next poll sees it whole.
+        tail_unterminated = bool(text) and not text.endswith(b"\n")
+        for position, line in enumerate(lines[after_index:], start=after_index):
             stripped = line.strip()
-            if stripped:
+            if not stripped:
+                continue
+            try:
                 events.append(SwarmEvent.model_validate_json(stripped))
+            except ValidationError as exc:
+                if (
+                    tail_unterminated
+                    and position == len(lines) - 1
+                    and all(error["type"] == "json_invalid" for error in exc.errors())
+                ):
+                    break
+                raise
         return events
 
     def hydrate_run(self, run: SwarmRun) -> SwarmRun:

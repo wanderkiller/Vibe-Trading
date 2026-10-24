@@ -390,3 +390,83 @@ def test_stream_idle_timeout_allows_a_flowing_stream() -> None:
     )
     assert response.content == "ab"
 
+
+
+def test_only_explicit_provider_waiting_reaches_activity_callback():
+    from langchain_core.messages import AIMessageChunk
+
+    waiting = []
+    response = _client(_FakeStreamingLLM([
+        AIMessageChunk(content=""),
+        AIMessageChunk(content="", additional_kwargs={"provider_waiting": True}),
+        AIMessageChunk(content="final"),
+    ])).stream_chat([{"role": "user", "content": "q"}], on_waiting_chunk=lambda: waiting.append(True))
+    assert waiting == [True]
+    assert response.content == "final"
+
+
+@pytest.mark.parametrize("terminal", [True, False])
+@pytest.mark.parametrize("tool_call", [True, False])
+def test_actual_chat_stream_requires_terminal_metadata(terminal, tool_call):
+    """Replay a clean EOF through the real SDK; truncated JSON is not a call."""
+    import json
+    import httpx
+    from src.providers.llm import ChatOpenAIWithReasoning
+
+    requests = []
+    delta = ({"tool_calls": [{"index": 0, "id": "call-partial", "type": "function",
+              "function": {"name": "write_file", "arguments": '{"path":"a.txt"}'}}]}
+             if tool_call else {"content": "I will now calculate the answer."})
+
+    def respond(request):
+        requests.append(request)
+        packets = [{"id": "offline", "object": "chat.completion.chunk", "created": 0,
+                    "model": "deepseek-v4-pro", "choices": [{"index": 0, "delta": delta,
+                    "finish_reason": None}]}]
+        if terminal:
+            packets.append({**packets[0], "choices": [{"index": 0, "delta": {},
+                            "finish_reason": "tool_calls" if tool_call else "stop"}]})
+        packets.append({**packets[0], "choices": [], "usage": {
+            "prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}})
+        # EOF without [DONE] is intentionally legal only if choice termination
+        # was already observed. An empty chunk/usage packet alone is not proof.
+        body = "".join("data: " + json.dumps(item) + "\n\n" for item in packets)
+        return httpx.Response(200, text=body, headers={"Content-Type": "text/event-stream"})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as transport:
+        adapter = ChatOpenAIWithReasoning(model="deepseek-v4-pro", api_key="offline",
+                  base_url="https://example.invalid/v1", http_client=transport,
+                  stream_usage=True, max_retries=0)
+        adapter._vibe_provider = "deepseek"
+        client = _client(adapter)
+        if terminal:
+            result = client.stream_chat([{"role": "user", "content": "Calculate"}])
+            assert result.has_tool_calls is tool_call
+            assert result.usage_metadata["total_tokens"] == 30
+        else:
+            with pytest.raises(ProviderStreamError, match="terminal finish reason") as error:
+                client.stream_chat([{"role": "user", "content": "Calculate"}])
+            assert error.value.retryable
+            assert error.value.usage_metadata["total_tokens"] == 30
+    assert len(requests) == 1  # No hidden invoke replay after emitted chunks.
+
+
+@pytest.mark.parametrize("status", ["completed", "incomplete"])
+def test_responses_terminal_status_remains_valid(status):
+    """Responses has terminal status rather than Chat Completions finish_reason."""
+    chunk = _FakeChunk(content="Answer")
+    chunk.response_metadata = {"status": status}
+    fake = _FakeStreamingLLM([chunk])
+    fake._llm_type = "openai-chat"
+    assert _client(fake).stream_chat([{"role": "user", "content": "Hi"}]).content == "Answer"
+
+
+def test_cancelled_openai_stream_does_not_require_terminal_metadata():
+    chunk = _FakeChunk(content="Partial")
+    chunk.response_metadata = {}
+    fake = _FakeStreamingLLM([chunk])
+    fake._llm_type = "openai-chat"
+    response = _client(fake).stream_chat(
+        [{"role": "user", "content": "Hi"}], should_cancel=lambda: True)
+    assert response.content == ""
+    assert not fake.invoke_called

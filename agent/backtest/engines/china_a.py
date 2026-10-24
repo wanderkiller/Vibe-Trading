@@ -3,7 +3,8 @@
 Market rules:
   - T+1: cannot sell shares bought today
   - No short selling for retail investors
-  - Price limits: ±10% main board, ±20% ChiNext/STAR, ±5% ST
+  - Ordinary price limits: ±10% main board, ±20% ChiNext/STAR, ±30% Beijing
+    (ST status and listing-day exemptions cannot be inferred from code alone)
   - Minimum lot: 100 shares (odd lots can only be sold, not bought)
   - Commission: ¥5 minimum, 0.025% bilateral
   - Stamp tax: 0.05% sell-side only
@@ -161,15 +162,15 @@ def _price_limit(symbol: str) -> float:
         symbol: Stock code (e.g. 300001.SZ, 688001.SH, 000001.SZ).
 
     Returns:
-        Limit as fraction (0.10, 0.20, or 0.05).
+        Ordinary board limit as fraction (0.10, 0.20, or 0.30).
     """
     code = symbol.split(".")[0] if "." in symbol else symbol
-    # ChiNext (300xxx) / STAR (688xxx): ±20%
-    if code.startswith("300") or code.startswith("688"):
+    # ChiNext (300xxx/301xxx) / STAR (688xxx, 689xxx CDRs): ±20%
+    if code.startswith(("300", "301", "688", "689")):
         return 0.20
-    # ST stocks: ±5% (heuristic: can't fully detect from code alone)
-    # Beijing exchange (8xxxxx): ±30% — simplified to 0.30
-    if code.startswith("8") and len(code) == 6:
+    # Beijing exchange: ±30%. Current codes are 920xxx; legacy 4xxxxx/8xxxxx
+    # codes remain in historical data.
+    if len(code) == 6 and code.startswith(("4", "8", "920")):
         return 0.30
     # Main board: ±10%
     return 0.10

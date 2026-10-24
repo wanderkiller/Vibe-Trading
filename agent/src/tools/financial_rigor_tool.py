@@ -157,8 +157,13 @@ def verify_market_cap(
     """
     p, s, r = _exact(price), _exact(shares), _exact(reported_cap)
     calculated = _CTX.multiply(p, s)
-    deviation = abs(float(calculated - r) / float(r)) * 100 if r != 0 else 0.0
-    if deviation > 5:
+    # A zero reported cap has no percent deviation; it can only match a zero
+    # calculated cap, so a non-zero product fails rather than reading as 0%.
+    deviation = abs(float(calculated - r) / float(r)) * 100 if r != 0 else None
+    if deviation is None:
+        verdict = "pass" if calculated == 0 else "fail"
+        deviation = 0.0 if calculated == 0 else None
+    elif deviation > 5:
         verdict = "fail"
     elif deviation > 1:
         verdict = "warn"
@@ -171,7 +176,7 @@ def verify_market_cap(
         "calculated_market_cap": float(calculated),
         "calculated_market_cap_display": _fmt(float(calculated)),
         "reported_market_cap": float(r),
-        "deviation_pct": round(deviation, 4),
+        "deviation_pct": round(deviation, 4) if deviation is not None else None,
         "verdict": verdict,
     }
 
@@ -263,13 +268,19 @@ def cross_validate(
     per_source: list[dict[str, Any]] = []
     all_consistent = True
     for src, val in values.items():
-        dev = abs(float(val) - median) / median * 100 if median != 0 else 0.0
-        consistent = dev <= tolerance_pct
+        # Against a zero reference only an exactly-zero value agrees; any
+        # other value has no finite percent deviation and is inconsistent.
+        if median != 0:
+            dev = abs(float(val) - median) / abs(median) * 100
+            consistent = dev <= tolerance_pct
+        else:
+            dev = 0.0 if float(val) == 0 else None
+            consistent = dev is not None
         all_consistent = all_consistent and consistent
         per_source.append({
             "source": src,
             "value": float(val),
-            "deviation_pct": round(dev, 4),
+            "deviation_pct": round(dev, 4) if dev is not None else None,
             "consistent": consistent,
         })
     return {
@@ -391,9 +402,15 @@ def three_scenario_valuation(
 
     Returns:
         Dict with the assumptions and a ``scenarios`` list, each carrying its
-        ``future_eps``, ``target_price`` and ``upside_pct``.
+        ``future_eps``, ``target_price`` and ``upside_pct`` (``None`` when the
+        current price is not positive).
+
+    Raises:
+        ValueError: If ``years`` is negative.
     """
     p, eps, shares = _exact(current_price), _exact(current_eps), _exact(shares_billion)
+    if int(years) < 0:
+        raise ValueError(f"years must be >= 0, got {years!r}")
     spec = [
         ("bull", growth_optimistic, pe_optimistic),
         ("base", growth_neutral, pe_neutral),
@@ -412,14 +429,16 @@ def three_scenario_valuation(
         for _ in range(int(years)):
             future_eps = _CTX.multiply(future_eps, _CTX.add(Decimal("1"), g))
         target_price = _CTX.multiply(future_eps, target_pe)
-        upside = float(target_price - p) / float(p) * 100 if p != 0 else 0.0
+        # Upside relative to a non-positive price is undefined; report null
+        # rather than a 0% that reads as "fairly valued".
+        upside = float(target_price - p) / float(p) * 100 if p > 0 else None
         scenarios.append({
             "scenario": name,
             "annual_growth": float(g),
             "target_pe": float(target_pe),
             "future_eps": float(future_eps),
             "target_price": float(target_price),
-            "upside_pct": round(upside, 2),
+            "upside_pct": round(upside, 2) if upside is not None else None,
         })
     result: dict[str, Any] = {
         "current_price": float(p),
@@ -549,7 +568,7 @@ class FinancialRigorTool(BaseTool):
                 result = cross_validate(
                     str(kwargs["field"]), kwargs["source_values"],
                     unit=str(kwargs.get("unit") or ""),
-                    tolerance_pct=float(kwargs.get("tolerance_pct") or 2.0),
+                    tolerance_pct=2.0 if kwargs.get("tolerance_pct") is None else float(kwargs["tolerance_pct"]),
                 )
             elif command == "benford":
                 vals = kwargs.get("values")
@@ -574,7 +593,7 @@ class FinancialRigorTool(BaseTool):
                     kwargs["price"], kwargs["eps"], kwargs["shares"],
                     growth[0], growth[1], growth[2],
                     pe[0], pe[1], pe[2],
-                    years=int(kwargs.get("years") or 3),
+                    years=3 if kwargs.get("years") is None else int(kwargs["years"]),
                     currency=str(kwargs.get("currency") or ""),
                 )
             else:

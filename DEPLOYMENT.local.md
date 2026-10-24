@@ -1,14 +1,14 @@
-# Local deployment for Vibe-Trading 0.1.16
+# Local deployment for Vibe-Trading 0.1.18
 
-This fork includes the upstream v0.1.16 release, the mobile navigation patches,
+This fork includes the upstream v0.1.18 release, the mobile navigation patches,
 Gemini thought-signature replay, and the deployment files used for the verified
 Docker installation.
 
 `Dockerfile.local` follows the upstream Dockerfile and adds Anthropic and
 DeepSeek adapters from `requirements-local-providers-lock.txt`. The overlay
-pins versions and download hashes. Its langchain-core 1.6.3 pin intentionally
-replaces the base lock's 1.6.1 because langchain-anthropic 1.7.2 requires at
-least 1.6.2. The final build runs `pip check`.
+pins versions and download hashes. Since 0.1.18 the base lock itself pins
+langchain-core 1.6.6 (langchain-anthropic 1.7.2 requires at least 1.6.2), so the
+overlay replaces no base pin. The final build runs `pip check`.
 
 `docker-compose.override.yml` selects that Dockerfile, host networking, and a
 127.0.0.1:8899 listener. The host's reverse proxy must forward to that listener.

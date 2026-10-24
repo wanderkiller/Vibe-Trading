@@ -9,6 +9,7 @@ import time
 from contextlib import suppress
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -192,7 +193,19 @@ class ChannelRuntime:
                 include_shell_tools=False,
             )
             attempt_id = result.get("attempt_id") if isinstance(result, dict) else None
-            reply = await self._wait_for_reply(session_id, attempt_id)
+            from src.channels.attempt_progress import AttemptProgress
+
+            events = getattr(self.session_service, "event_bus", None)
+            is_visible = (partial(self.manager.should_send_progress, msg.channel)
+                          if self.manager is not None else None)
+            progress = (AttemptProgress(self.bus, events, msg, session_id, attempt_id,
+                                        is_visible=is_visible)
+                        if events is not None and attempt_id else None)
+            try:
+                reply = await self._wait_for_reply(session_id, attempt_id, progress=progress)
+            finally:
+                if progress is not None:
+                    await progress.close()
             reply_content = reply.content
             try:
                 from src.scheduled_research.proposals import latest_pending_for_session
@@ -233,6 +246,7 @@ class ChannelRuntime:
                         "_channel_runtime": True,
                         "attempt_id": attempt_id,
                         "session_id": session_id,
+                        **{key: msg.metadata[key] for key in ("chat_type", "root_id") if key in msg.metadata},
                         # QQ (and other platforms) need the originating message id
                         # to reply as a passive message; without it, replies are
                         # treated as active messages and rejected for
@@ -355,10 +369,12 @@ class ChannelRuntime:
                 media.append(str(path))
         return media
 
-    async def _wait_for_reply(self, session_id: str, attempt_id: str | None) -> Message:
+    async def _wait_for_reply(self, session_id: str, attempt_id: str | None, *, progress: Any = None) -> Message:
         deadline = time.monotonic() + self.config.reply_timeout_s
         last_assistant: Message | None = None
         while time.monotonic() < deadline:
+            if progress is not None:
+                await progress.poll()
             messages = self.session_service.get_messages(session_id, limit=200)
             for message in reversed(messages):
                 if message.role != "assistant":

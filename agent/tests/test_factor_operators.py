@@ -72,7 +72,7 @@ def _ref_ts_argmin(df: pd.DataFrame, n: int) -> pd.DataFrame:
 
 
 def _ref_decay_linear(df: pd.DataFrame, n: int) -> pd.DataFrame:
-    weights = np.arange(n, 0, -1, dtype=np.float64)
+    weights = np.arange(1, n + 1, dtype=np.float64)
     weights /= weights.sum()
 
     def _apply(arr: np.ndarray) -> float:

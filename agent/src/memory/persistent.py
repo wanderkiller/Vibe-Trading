@@ -15,10 +15,11 @@ from pathlib import Path
 from typing import Generator, List, Optional
 
 from src.agent.frontmatter import parse_frontmatter as _parse_frontmatter
+from src.config.paths import get_runtime_root
 
 logger = logging.getLogger(__name__)
 
-MEMORY_BASE = Path.home() / ".vibe-trading" / "memory"
+MEMORY_BASE = get_runtime_root() / "memory"
 MAX_INDEX_LINES = 200
 MAX_ENTRY_CHARS = 8000
 MAX_RESULTS = 5
@@ -370,7 +371,8 @@ class PersistentMemory:
             try:
                 from src.memory.search_index import get_shared_index
                 index = get_shared_index()
-                matches = index.search(query, max_results=max_results)
+                candidate_limit = max_results
+                matches = index.search(query, max_results=candidate_limit)
 
                 # Auto-rebuild on first empty search if entries exist on disk
                 all_entries = None
@@ -383,7 +385,7 @@ class PersistentMemory:
                         ]
                         index.rebuild_all(entries_data)
                         index._auto_rebuilt = True
-                        matches = index.search(query, max_results=max_results)
+                        matches = index.search(query, max_results=candidate_limit)
 
                 if matches:
                     # Map FTS results back to full entries
@@ -393,6 +395,22 @@ class PersistentMemory:
                     fts_pairs = [
                         (m, entry_map[m.entry_id]) for m in matches if m.entry_id in entry_map
                     ]
+                    # Files are canonical. Keep the FTS ordering but expand the
+                    # candidate window until enough current entries survive,
+                    # or the index is exhausted; a fixed buffer can still be
+                    # filled entirely by externally removed memories.
+                    while (
+                        candidate_limit > 0
+                        and len(matches) == candidate_limit
+                        and len(fts_pairs) < max_results
+                    ):
+                        candidate_limit *= 2
+                        matches = index.search(query, max_results=candidate_limit)
+                        fts_pairs = [
+                            (m, entry_map[m.entry_id])
+                            for m in matches
+                            if m.entry_id in entry_map
+                        ]
                     if fts_pairs:
                         if _is_decay_enabled():
                             # FTS5's rank is more negative for stronger matches;

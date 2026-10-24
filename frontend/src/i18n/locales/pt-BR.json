@@ -1,10 +1,11 @@
 {
   "app": {
-    "version": "v0.1.16"
+    "version": "v0.1.18"
   },
   "charts": {
     "noPriceData": "Ainda não há dados de preço para este símbolo",
     "noCorrelationData": "Escolha pelo menos dois símbolos para comparar",
+    "correlationUndefined": "indefinida (sem variação de preço na janela)",
     "noEquityData": "Ainda não há curva de valor da conta – execute primeiro um backtest"
   },
   "navigation": {
@@ -26,7 +27,9 @@
       "correlation": "Compare como os ativos se movimentam juntos.",
       "scheduled": "Repita uma pesquisa em horários definidos.",
       "runtime": "Confira conexões de corretoras e o estado de execução das operações.",
-      "settings": "Configure modelos, fontes de dados e conexões de corretoras."
+      "settings": "Configure modelos, fontes de dados e conexões de corretoras.",
+      "pixelOffice": "Planeje e atribua tarefas de pesquisa. A atribuição não inicia a execução; os cargos são rótulos e não concedem permissões de negociação.",
+      "paperTrading": "Teste operações diárias com recursos fictícios. Nenhuma ordem é enviada à corretora. Os resultados excluem dividendos em dinheiro e não representam retorno total."
     },
     "instructions": {
       "reports": "Primeiro peça ao assistente um backtest de uma estratégia e abra os resultados aqui. Baixe PDFs e documentos gerados no chat na conversa original.",
@@ -36,7 +39,9 @@
       "correlation": "Informe pelo menos dois códigos de ativos, escolha o período e clique em Calcular.",
       "scheduled": "Informe a instrução de pesquisa, escolha a frequência e salve. O agendador local deve estar habilitado para executar tarefas; a entrega também requer um canal configurado.",
       "runtime": "Primeiro configure uma conexão de corretora em Configurações ou Carteira. As operações disponíveis dependem dos recursos da corretora e da sua autorização.",
-      "settings": "Configure um modelo para começar. Adicione dados ou conexões de corretoras conforme necessário; pesquisas com dados públicos de mercado não exigem conta em corretora."
+      "settings": "Configure um modelo para começar. Adicione dados ou conexões de corretoras conforme necessário; pesquisas com dados públicos de mercado não exigem conta em corretora.",
+      "pixelOffice": "Planeje e atribua tarefas de pesquisa. A atribuição não inicia a execução; os cargos são rótulos e não concedem permissões de negociação.",
+      "paperTrading": "Somente candles diários completos são liquidados. As estratégias leem dias anteriores e executam no fechamento do dia indicado. Aguarde 30 minutos após o fechamento regular; nenhuma execução automática é agendada."
     }
   },
   "layout": {
@@ -66,13 +71,15 @@
     "sidebar": "Barra lateral Vibe-Trading",
     "mainNavigation": "Navegação principal",
     "about": "Sobre",
-    "sessionsLoadFailed": "Não foi possível carregar as conversas."
+    "sessionsLoadFailed": "Não foi possível carregar as conversas.",
+    "pixelOffice": "Escritório pixel",
+    "paperTrading": "Negociação simulada"
   },
   "runtime": {
     "monitorBadge": "Monitor de Runtime",
     "title": "Status do Runtime ao vivo / simulado",
-    "subtitlePre": "Status somente leitura de",
-    "subtitlePost": ". Esta página não autoriza conectores, iniciar ou interromper executores, enviar ou cancelar ordens, nem alterar mandatos.",
+    "subtitlePre": "Consulte o estado dos conectores, os mandatos de negociação e a atividade do executor.",
+    "subtitlePost": " É possível editar a frequência das decisões do modelo e os limites de gastos enquanto o executor estiver parado.",
     "refresh": "Atualizar",
     "unavailableTitle": "Status do runtime indisponível",
     "unavailableHint": "Trate o runtime do conector como indisponível até que o backend forneça um instantâneo do status atual.",
@@ -112,7 +119,7 @@
     "riskHalted": "risco interrompido",
     "riskHaltedDesc": "O kill switch está acionado para este perfil. Trate o runtime do conector como interrompido até que o status seja liberado.",
     "riskActive": "runtime ativo",
-    "riskActiveDesc": "O executor está ativo e há um mandato não expirado. Esta página continua sendo somente de status e leitura.",
+    "riskActiveDesc": "O executor está ativo e seu mandato de negociação ainda é válido.",
     "riskIdle": "pronto, mas ocioso",
     "riskIdleDesc": "A autorização e o mandato estão presentes, mas o executor não está ativo.",
     "riskDormant": "inativo",
@@ -240,16 +247,16 @@
     "deliveryChannelPlaceholder": "telegram, feishu,… (deixe em branco para manter os resultados no aplicativo)",
     "deliveryTargetLabel": "Segmentação do canal",
     "deliveryTargetPlaceholder": "chat / grupo / ID de usuário",
-    "deliveryFormatLabel": "Email report format",
-    "deliveryFormatDefault": "Channel default (plain text)",
-    "deliveryFormatHtml": "HTML email",
-    "deliveryFormatPdf": "PDF attachment",
+    "deliveryFormatLabel": "Formato do relatório por e-mail",
+    "deliveryFormatDefault": "Padrão do canal (texto simples)",
+    "deliveryFormatHtml": "E-mail em HTML",
+    "deliveryFormatPdf": "Anexo em PDF",
     "proposalPdfProtection": "Proteção do PDF por senha",
     "proposalPdfProtectionOn": "Ativada",
     "proposalPdfProtectionOff": "Desativada",
-    "deliveryFormatDefaultHint": "Keeps the existing plain-text delivery behavior.",
-    "deliveryFormatHtmlHint": "Shows the full report as sanitized HTML in the email body.",
-    "deliveryFormatPdfHint": "Attaches the full report as PDF and keeps only a short notice in the body.",
+    "deliveryFormatDefaultHint": "Mantém o comportamento atual de entrega em texto simples.",
+    "deliveryFormatHtmlHint": "Mostra o relatório completo como HTML sanitizado no corpo do e-mail.",
+    "deliveryFormatPdfHint": "Anexa o relatório completo em PDF e mantém apenas um aviso curto no corpo.",
     "deliveryHint": "Desativado por padrão. Um briefing é enviado assim que a execução termina, não quando está agendada.",
     "deliveryTargetRequired": "Escolha um alvo para esse canal ou limpe o canal.",
     "delivery_none": "Entregando para {{channel}} após a próxima execução",
@@ -396,7 +403,10 @@
       "shadowDeltaPrompt": "Execute um backtest de sombra nos últimos 90 dias e analise onde meu PnL divergiu da sombra (violações de regras, saídas antecipadas, sinais perdidos)",
       "shadowReport": "Gerar relatório de sombra",
       "shadowReportDesc": "Relatório compartilhável em oito partes: curva da conta, retorno ajustado ao risco e origem de cada ganho",
-      "shadowReportPrompt": "Renderize o relatório sombra e me forneça o URL – comece com o delta você-vs-sombra"
+      "shadowReportPrompt": "Renderize o relatório sombra e me forneça o URL – comece com o delta você-vs-sombra",
+      "adaptStrategy": "Adaptar estratégia cadastrada",
+      "adaptStrategyDesc": "Manter o sinal e testar outro universo",
+      "adaptStrategyPrompt": "Ajude-me a adaptar uma estratégia cadastrada a outro universo e período. Primeiro liste as estratégias e confira as evidências da original; pergunte pelo ID, ativos, datas e tamanho das posições que faltarem. Preserve o sinal, gere o código da derivada, execute o backtest e relate apenas as evidências atualizadas da própria derivada."
     },
     "taskSubtitle": "Pergunte sobre uma ação, uma estratégia ou seu portfólio — extrairei os dados, analisarei os números e mostrarei cada etapa.",
     "quickActions": "Ações rápidas",
@@ -443,8 +453,10 @@
     "reasoningEffortLow": "Baixo",
     "reasoningEffortMedium": "Médio",
     "reasoningEffortHigh": "Alto",
+    "reasoningEffortXhigh": "Muito alto",
     "reasoningEffortMax": "Máx.",
     "reasoningEffortDesc": "Controla a profundidade do raciocínio nos modelos suportados. Níveis mais elevados podem melhorar análises complexas, mas podem demorar mais; provedores não suportados podem ignorar esta configuração. Nenhum (explícito) envia o campo com o raciocínio desabilitado — alguns modelos OpenAI precisam disso para usar ferramentas.",
+    "reasoningEffortReset": "O modelo selecionado não suporta {{level}}; redefinido para o padrão do provedor.",
     "useDefaultModel": "Usar modelo padrão",
     "useDefaultUrl": "Usar URL padrão",
     "dataSourcesDesc": "Configure fontes de dados externas para o mecanismo de backtesting.",
@@ -517,6 +529,10 @@
         "save": "Salvar configuração",
         "hotApply": "Salvar é aplicado imediatamente — não é preciso reiniciar.",
         "saved": "Configuração do canal salva",
+        "appliedInPlace": "Configurações salvas sem reconectar o canal.",
+        "appliedReset": "Configurações salvas. As conexões dos canais foram reiniciadas.",
+        "appliedOnStart": "Configurações salvas. As alterações serão aplicadas quando os canais iniciarem.",
+        "appliedReconnect": "Configurações salvas. Este canal foi reconectado.",
         "saveFailed": "Falha ao salvar a configuração do canal: {{message}}",
         "test": "Testar conexão",
         "testing": "Testando…",
@@ -863,6 +879,106 @@
             "label": "Sessões por tópico",
             "help": "Dar a cada tópico do grupo sua própria sessão do agente."
           }
+        },
+        "slack": {
+          "bot_token": {
+            "label": "Token do bot (xoxb-)",
+            "help": "O token OAuth do usuário bot do Slack (começa com xoxb-). Armazenado no servidor e nunca devolvido ao navegador."
+          },
+          "app_token": {
+            "label": "Token do app (xapp-)",
+            "help": "O token em nível de aplicativo do Slack (começa com xapp-) com o escopo connections:write, necessário para o Socket Mode. Armazenado no servidor e nunca devolvido ao navegador."
+          },
+          "user_token_read_only": {
+            "label": "Token do usuário somente leitura",
+            "help": "Sinalizador de comportamento, não uma credencial: mantém o acesso por token do usuário como somente leitura."
+          },
+          "reply_in_thread": {
+            "label": "Responder na thread",
+            "help": "Responder em uma thread sob a mensagem original em vez de publicar diretamente no canal."
+          },
+          "react_emoji": {
+            "label": "Emoji de processamento",
+            "help": "Emoji adicionado como reação a uma mensagem recebida enquanto o agente trabalha (padrão eyes)."
+          },
+          "done_emoji": {
+            "label": "Emoji de conclusão",
+            "help": "Emoji adicionado como reação quando a tarefa é concluída (padrão white_check_mark). Deixe vazio para nenhum."
+          },
+          "include_thread_context": {
+            "label": "Incluir contexto da thread",
+            "help": "Anexar as respostas anteriores da thread como contexto na primeira vez que o bot é incluído nela."
+          },
+          "thread_context_limit": {
+            "label": "Limite de contexto da thread",
+            "help": "Número máximo de mensagens da thread incluídas como contexto (padrão 20)."
+          },
+          "allow_from": {
+            "label": "Remetentes permitidos",
+            "help": "Lista de permissão com IDs de usuário do Slack autorizados a falar com o agente. O acesso a DMs e canais também é controlado pela política de DM e pela política de grupos."
+          },
+          "group_policy": {
+            "label": "Política de grupos",
+            "help": "\"mention\" responde apenas quando o bot é mencionado em um canal, \"open\" responde a todas as mensagens do canal, \"allowlist\" responde apenas nos canais listados abaixo."
+          },
+          "group_allow_from": {
+            "label": "Canais permitidos",
+            "help": "IDs dos canais nos quais o bot responde quando a política de grupos é \"allowlist\"."
+          },
+          "group_require_mention": {
+            "label": "Exigir menção nos canais permitidos",
+            "help": "Com a política \"allowlist\", exigir também uma @menção antes de responder nos canais aprovados. Sem efeito para \"mention\" ou \"open\"."
+          }
+        },
+        "discord": {
+          "token": {
+            "label": "Token do bot",
+            "help": "O token do bot obtido no Portal de Desenvolvedores do Discord — não um token de usuário ou OAuth. Armazenado no servidor e nunca devolvido ao navegador."
+          },
+          "allow_from": {
+            "label": "Remetentes permitidos",
+            "help": "Lista de permissão opcional de IDs de usuário do Discord que podem falar com o agente. Deixe vazio para permitir todos."
+          },
+          "allow_channels": {
+            "label": "Canais permitidos",
+            "help": "Lista de permissão opcional de IDs de canais do Discord nos quais o bot responde. Deixe vazio para permitir todos os canais."
+          },
+          "intents": {
+            "label": "Intents do gateway",
+            "help": "Campo de bits de intents do gateway como inteiro (padrão 37377 = GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT). MESSAGE CONTENT é um intent privilegiado que deve ser ativado no Portal de Desenvolvedores, senão o bot não conecta."
+          },
+          "group_policy": {
+            "label": "Política de grupos",
+            "help": "\"mention\" responde apenas quando o bot é mencionado com @ em um canal do servidor, \"open\" responde a todas as mensagens do canal (ainda sujeito às listas de permissão)."
+          },
+          "read_receipt_emoji": {
+            "label": "Emoji de confirmação de leitura",
+            "help": "Emoji adicionado como reação a uma mensagem recebida para confirmá-la de imediato (padrão 👀); removido quando a resposta chega."
+          },
+          "working_emoji": {
+            "label": "Emoji de processamento",
+            "help": "Emoji adicionado como reação enquanto o agente ainda trabalha (padrão 🔧), após o atraso do emoji de processamento."
+          },
+          "working_emoji_delay": {
+            "label": "Atraso do emoji de processamento (s)",
+            "help": "Segundos antes de adicionar o emoji de processamento, para que respostas rápidas nunca o mostrem (padrão 2.0)."
+          },
+          "streaming": {
+            "label": "Respostas em streaming",
+            "help": "Transmitir a resposta editando progressivamente uma única mensagem do Discord em vez de enviar uma mensagem final única."
+          },
+          "proxy": {
+            "label": "URL do proxy",
+            "help": "Proxy HTTP opcional pelo qual passam a conexão ao gateway e as chamadas de API, p. ex. http://host:port."
+          },
+          "proxy_username": {
+            "label": "Usuário do proxy",
+            "help": "Usuário do proxy; informe-o junto com a senha do proxy ou não informe nenhum — um par pela metade é ignorado com um aviso. Armazenado no servidor e nunca devolvido ao navegador."
+          },
+          "proxy_password": {
+            "label": "Senha do proxy",
+            "help": "Senha do proxy; informe-a junto com o usuário do proxy ou não informe nenhum — um par pela metade é ignorado com um aviso. Armazenado no servidor e nunca devolvido ao navegador."
+          }
         }
       },
       "guides": {
@@ -915,6 +1031,16 @@
           "step4": "Copie o App ID e o App Secret em Credenciais e informações básicas e cole-os nos campos acima.",
           "step5": "Crie uma versão e publique o aplicativo (com aprovação do administrador se o seu tenant exigir); em seguida, ative o canal aqui — a aplicação é imediata, sem reiniciar. Em tenants internacionais do Lark, defina o domínio como lark.",
           "docsLabel": "Abrir a plataforma de desenvolvedores do Feishu"
+        },
+        "discord": {
+          "title": "Guia de configuração do Discord",
+          "intro": "Bots do Discord conectam-se ao gateway com um token de bot, então não é preciso IP público nem webhook.",
+          "step1": "Crie uma aplicação no Portal de Desenvolvedores do Discord (discord.com/developers).",
+          "step2": "Abra a página Bot, redefina o token e copie-o.",
+          "step3": "Em Privileged Gateway Intents, ative MESSAGE CONTENT INTENT — os intents padrão o exigem.",
+          "step4": "Gere uma URL de convite OAuth2 com o escopo bot (e applications.commands) e adicione o bot ao seu servidor.",
+          "step5": "Cole o token aqui, clique em “Testar conexão” e ative o canal.",
+          "docsLabel": "Abrir a documentação de desenvolvedores do Discord"
         }
       }
     },
@@ -935,7 +1061,7 @@
       "noMarkets": "Nenhuma fonte de dados de mercado está registrada.",
       "howItWorksTitle": "Como funciona",
       "howItWorks": "Para símbolos detectados automaticamente, as fontes são testadas de cima para baixo; uma fonte que falha passa para a próxima. O salvamento é aplicado imediatamente – não é necessário reiniciar.",
-      "caliberCaveat": "Advertência sobre o calibre: as fontes diferem na base de ajuste – por ex. O Yahoo atende OHLC bruto (não ajustado), enquanto o Tencent/Eastmoney/Tushare/BaoStock atende preços ajustados – portanto, uma cadeia reordenada pode alterar os números de backtest.",
+      "caliberCaveat": "Os ajustes de preços podem variar entre fontes. Confira os ajustes, a origem dos dados e os avisos do relatório; mudar a ordem pode alterar os resultados do backtest.",
       "markets": {
         "a_share": "Ações A (China)",
         "us_equity": "Ações dos EUA",
@@ -945,6 +1071,7 @@
         "ca_equity": "Ações do Canadá",
         "vietnam_equity": "Ações do Vietnã",
         "ar_equity": "Ações da Argentina",
+        "br_equity": "Ações do Brasil (B3)",
         "uk_equity": "Ações do Reino Unido",
         "index": "Índices",
         "crypto": "Criptografia",
@@ -990,7 +1117,7 @@
     "authentication": "Autenticação",
     "apiKey": "Chave de API",
     "tushareTokenDesc": "Usado para ações A da China, futuros, fundos e dados macro. Se não for definido, o projeto volta para o AKShare, quando disponível.",
-    "gildataTokenDesc": "Fonte opcional do Gildata (Hundsun Juyuan) para ações A da China. Quando configurada, entra no final da cadeia de fallback de ações A com candles diários ajustados."
+    "gildataTokenDesc": "Dados opcionais da Gildata: preços diários ajustados de ações A, preços brutos de Hong Kong e índices, valores patrimoniais de fundos não negociados em bolsa e ferramentas de macroeconomia, comunicados e pesquisa da China."
   },
   "qveris": {
     "title": "Mercado de ferramentas QVeris",
@@ -1110,7 +1237,10 @@
     "resumeConnector": "Retomar conector",
     "resumeConnectorTitle": "Limpe o kill switch e reative a atividade do conector",
     "connectorResumed": "Conector retomado",
-    "failedToResumeConnector": "Falha ao retomar o conector."
+    "failedToResumeConnector": "Falha ao retomar o conector.",
+    "tokenUsage": {
+      "live": "tokens"
+    }
   },
   "runDetail": {
     "title": "Detalhes da execução",
@@ -1243,6 +1373,19 @@
     "ddNotRecovered": "Não recuperado",
     "ddDays": "{{count}}d",
     "dashboard": "Painel de pesquisa",
+    "llmUsage": {
+      "tab": "Uso de tokens",
+      "provider": "Provedor",
+      "model": "Modelo",
+      "inputTokens": "Tokens de entrada",
+      "outputTokens": "Tokens de saída",
+      "totalTokens": "Tokens totais",
+      "calls": "Chamadas",
+      "cacheRead": "Tokens de leitura de cache",
+      "cacheCreation": "Tokens de criação de cache",
+      "perIteration": "Detalhe por iteração",
+      "iteration": "Iteração"
+    },
     "positions": {
       "tab": "Posições",
       "weightDistribution": "Distribuição de peso",
@@ -1275,6 +1418,7 @@
         "futures": "Futuros",
         "forex": "Forex",
         "ar_equity": "Ações da Argentina",
+        "br_equity": "Ações do Brasil",
         "uk_equity": "Ações do Reino Unido",
         "vietnam_equity": "Ações do Vietnã",
         "other": "Outro"
@@ -1733,7 +1877,10 @@
     "output": "Saída",
     "waitingForEvents": "Aguardando eventos do agente...",
     "teamStarting": "A equipe está girando – primeiras atualizações em alguns segundos…",
-    "detailsUnavailable": "detalhes indisponíveis"
+    "detailsUnavailable": "detalhes indisponíveis",
+    "tokens": "↑{{input}} ↓{{output}} tokens",
+    "estimated": "estimados",
+    "tokenSourceUnlabeled": "fonte sem rótulo"
   },
   "mandate": {
     "runtimeMandate": "Mandato de runtime do conector",
@@ -2032,7 +2179,7 @@
       "badge": "Somente leitura local · Várias contas",
       "title": "Portfólio",
       "subtitle": "Uma avaliação nas conexões somente leitura habilitadas. Uma conta que não pode ser lida é relatada como um erro e deixada de fora dos totais.",
-      "fxFresh": "USD/CNY {{rate}} · taxa ao vivo",
+      "fxFresh": "USD/CNY {{rate}} · taxa de referência",
       "fxCached": "USD/CNY {{rate}} · taxa em cache",
       "manageAccounts": "Gerenciar contas",
       "exportCsv": "Exportar CSV",
@@ -2047,7 +2194,9 @@
       "errorReconnect": "Falha na reconexão da conta",
       "errorReconnectTimeout": "A autorização do navegador expirou. Reconecte-se e conclua a autorização do corretora imediatamente.",
       "errorSaveSettings": "Não foi possível salvar as configurações do portfólio",
-      "errorExport": "Falha na exportação"
+      "errorExport": "Falha na exportação",
+      "exportResearch": "Exportar snapshot de análise",
+      "researchSnapshotHint": "Exporte esta observação sem credenciais ou números de conta. Reutilize seu ID de snapshot em portfolio_summary."
     },
     "metrics": {
       "total": "Ativos totais",
@@ -2195,6 +2344,30 @@
       "accountDeactivated": " · desativada",
       "accountSave": "Usar esta conta",
       "accountSaved": "Conta salva."
+    },
+    "imports": {
+      "title": "Importar extraETF Investments",
+      "hint": "Apenas posições, sem caixa ou preços em tempo real. A data do arquivo não é a data de observação do preço; os ISINs não têm mercado de negociação definido.",
+      "file": "CSV de Investments",
+      "count": "Número esperado de posições (confirme no extraETF)",
+      "age": "Idade máxima do arquivo (dias)",
+      "overlap": "Selecione fontes sem sobreposição. A visão do extraETF pode incluir contas já conectadas aqui.",
+      "import": "Importar arquivo",
+      "importing": "Importando…",
+      "success": "Importado. Adicione esta exportação pelas fontes disponíveis acima, salve e atualize.",
+      "source": "Importação de arquivo",
+      "mtime": "Arquivo modificado: {{time}}",
+      "expires": "Validade: {{time}}",
+      "tooLarge": "O limite de importação é de 4 MiB."
+    },
+    "rebalance": {
+      "title": "Proposta de alocação",
+      "hint": "Informe percentuais-alvo que somem 100%. As alterações são valores para revisão; não são calculadas ordens, quantidades, impostos ou taxas.",
+      "target": "Meta de {{id}} (%)",
+      "generate": "Calcular proposta",
+      "current": "Valor atual",
+      "targetValue": "Valor-alvo",
+      "change": "Alteração de valor"
     }
   },
   "analysis": {
@@ -2244,5 +2417,141 @@
     "selectedFactor": "Fator selecionado: {{id}}. Apenas este fator será avaliado.",
     "fundamentalsRequirement": "Fatores fundamentalistas exigem demonstrações SEC sem dados futuros e um universo de ações dos EUA (S&P 500).",
     "noEvaluableFactors": "Nenhum fator pôde ser avaliado. Amplie o histórico e verifique os campos necessários e o universo de ações."
+  },
+  "customProviders": {
+    "loadFailed": "Não foi possível carregar os provedores personalizados",
+    "testPassed": "Teste do provedor aprovado",
+    "testFailed": "Falha no teste do provedor",
+    "saved": "Provedor salvo no cofre local de credenciais",
+    "saveFailed": "Falha ao salvar o provedor",
+    "activationFailed": "Falha ao ativar o provedor",
+    "title": "Provedores personalizados compatíveis com OpenAI",
+    "description": "Adicione um provedor com API compatível de conclusão de chat. O teste envia uma solicitação curta ao modelo; após o sucesso, a chave é guardada no cofre de credenciais do sistema.",
+    "keyPrivate": "A chave nunca é exibida",
+    "active": "Ativo",
+    "keyStored": "Chave salva",
+    "activate": "Ativar",
+    "empty": "Ainda não há provedores personalizados. Adicione um abaixo e teste antes de salvar.",
+    "add": "Adicionar provedor",
+    "id": "ID do provedor",
+    "idHint": "Letras minúsculas, números, pontos, hífens ou sublinhados.",
+    "label": "Nome de exibição",
+    "labelPlaceholder": "Meu provedor",
+    "baseUrl": "URL base da API",
+    "urlHint": "Use a raiz da API. Não inclua a chave de API na URL.",
+    "model": "Modelo",
+    "key": "Chave de API",
+    "keyPlaceholder": "Insira a chave para este teste",
+    "testing": "Testando…",
+    "test": "Testar conexão",
+    "saving": "Salvando…",
+    "save": "Salvar provedor testado",
+    "saveHint": "Só é possível salvar após um teste bem-sucedido. A ativação exige confirmação separada.",
+    "confirm": "Ativar {{label}} para novas solicitações do agente?",
+    "activated": "{{label}} está ativo",
+    "preview": "Teste aprovado: {{preview}}",
+    "error": "Falha no teste do provedor: {{error}}",
+    "waiting": "O provedor está demorando mais que o normal ({{seconds}} s). A solicitação continuará até o tempo limite do servidor."
+  },
+  "pixelOffice": {
+    "title": "Escritório pixel",
+    "description": "Planeje e atribua tarefas de pesquisa. A atribuição não inicia a execução; os cargos são rótulos e não concedem permissões de negociação.",
+    "refresh": "Atualizar",
+    "loading": "Carregando escritório…",
+    "unavailable": "Escritório indisponível. Tente atualizar.",
+    "floor": "Área do escritório",
+    "taskCount": "Tarefas pendentes: {{count}}",
+    "board": "Quadro de tarefas",
+    "empty": "Ainda não há tarefas.",
+    "assignee": "Responsável",
+    "unassigned": "Sem responsável",
+    "result": "Resultado da conclusão",
+    "complete": "Registrar conclusão",
+    "create": "Criar tarefa",
+    "taskTitle": "Título da tarefa",
+    "instructions": "Instruções",
+    "priority": "Prioridade",
+    "ranksTitle": "Cargos organizacionais",
+    "priorities": {
+      "low": "Baixa",
+      "normal": "Normal",
+      "high": "Alta"
+    },
+    "statuses": {
+      "queued": "Na fila",
+      "assigned": "Atribuída",
+      "completed": "Concluída"
+    },
+    "ranks": {
+      "Operator": "Membro",
+      "Senior": "Sênior",
+      "Lead": "Líder"
+    }
+  },
+  "runnerBudget": {
+    "unavailable": "Estado de custos do modelo indisponível.",
+    "warning": "Chamadas ao modelo custam dinheiro mesmo sem operações.",
+    "summary": "A cada {{minutes}} minutos; até {{turns}} decisões e {{tokens}} tokens por dia UTC.",
+    "dailySummary": "Diariamente às {{time}} ({{timezone}}); substitui o intervalo.",
+    "usage": "Hoje: {{turns}} decisões · {{tokens}} tokens · estimativa {{cost}}.",
+    "estimateUnknown": "São necessários preços e uso medido para estimar o custo diário.",
+    "estimate": "Custo diário projetado: cerca de ${{cost}}, conforme o uso medido.",
+    "configure": "Agenda e limites de gastos do modelo",
+    "interval_seconds": "Intervalo de decisão (segundos)",
+    "max_daily_turns": "Máximo de decisões por dia UTC",
+    "max_daily_tokens": "Máximo de tokens por dia UTC",
+    "max_daily_cost_usd": "Limite diário estimado em USD (opcional)",
+    "input_usd_per_million": "USD por milhão de tokens de entrada (opcional)",
+    "output_usd_per_million": "USD por milhão de tokens de saída (opcional)",
+    "daily_at": "Horário diário (opcional)",
+    "timezone": "Fuso horário",
+    "save": "Salvar configurações",
+    "limitsNote": "Cada decisão usa uma nova conversa. Os limites são verificados após a resposta e podem exceder pelo valor dessa resposta. Uso desconhecido ou excesso aciona a parada de emergência existente.",
+    "pricesNote": "Os preços são estimativas do operador. Use a maior tarifa de entrada/gravação em cache; descontos de cache e chamadas auxiliares não estão incluídos.",
+    "stopToEdit": "Pare o executor antes de alterar as configurações."
+  },
+  "paper": {
+    "title": "Negociação simulada",
+    "description": "Teste operações diárias com recursos fictícios. Nenhuma ordem é enviada à corretora. Os resultados excluem dividendos em dinheiro e não representam retorno total.",
+    "accounts": "Contas",
+    "newAccount": "Nova conta simulada",
+    "eligible": "Disponível a partir de {{date}}; feriados aguardam a próxima sessão disponível.",
+    "cash": "Saldo em dinheiro",
+    "pending": "Aguardando a primeira liquidação",
+    "label": "Nome da conta",
+    "market": "Mercado",
+    "start": "Início",
+    "today": "Hoje",
+    "nextSession": "Próximo pregão",
+    "initialPositions": "Posições iniciais (quantidade e custo médio)",
+    "symbol": "Símbolo (ex.: AAPL.US)",
+    "quantity": "Quantidade",
+    "cost": "Custo médio",
+    "remove": "Remover",
+    "addPosition": "Adicionar posição",
+    "create": "Criar conta",
+    "working": "Processando…",
+    "advance": "Liquidar etapa diária",
+    "executionNote": "Somente candles diários completos são liquidados. As estratégias leem dias anteriores e executam no fechamento do dia indicado. Aguarde 30 minutos após o fechamento regular; nenhuma execução automática é agendada.",
+    "date": "Data de execução",
+    "mode": "Modo de entrada",
+    "orders": "Ordens explícitas",
+    "strategy": "Arquivo de estratégia",
+    "strategyPath": "Caminho na pasta strategies do ambiente",
+    "side": "Lado",
+    "buy": "Comprar",
+    "sell": "Vender",
+    "addOrder": "Adicionar ordem",
+    "emptyOrders": "Sem ordens, apenas avalia a conta. Ordens a mercado executam no fechamento diário; não há simulação intradiária.",
+    "saved": "Registro salvo.",
+    "notSaved": "O registro não mudou. Confira o resultado antes de tentar novamente.",
+    "result": "Resultado da etapa",
+    "price": "Preço",
+    "fee": "Taxa",
+    "history": "Histórico do valor da conta",
+    "nav": "Patrimônio líquido",
+    "us": "Ações dos EUA · USD",
+    "hk": "Ações de Hong Kong · HKD",
+    "cn_a": "Ações A da China · CNY"
   }
 }

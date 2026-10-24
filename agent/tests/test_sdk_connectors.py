@@ -186,6 +186,32 @@ def test_longbridge_invalid_region_rejected() -> None:
         lb.LongbridgeConfig.from_mapping({"region": "moon"})
 
 
+def test_longbridge_quote_context_uses_from_apikey_on_sdk_4(monkeypatch) -> None:
+    """SDK 4.0+ refuses ``Config(...)``; the connector must use the factory."""
+    factory_calls: list[tuple[str, ...]] = []
+    built = object()
+
+    class Sdk4Config:
+        def __new__(cls, *args: object, **kwargs: object) -> "Sdk4Config":
+            raise TypeError("cannot create 'builtins.Config' instances")
+
+        @staticmethod
+        def from_apikey(*args: str) -> object:
+            factory_calls.append(args)
+            return built
+
+    fake_openapi = SimpleNamespace(
+        Config=Sdk4Config, QuoteContext=lambda config: config
+    )
+    monkeypatch.setattr(lb, "_require_openapi", lambda: fake_openapi)
+    cfg = lb.LongbridgeConfig(
+        app_key="k", app_secret="s", access_token="t", _credential_source="environment"
+    )
+
+    assert lb._quote_context(cfg) is built
+    assert factory_calls == [("k", "s", "t")]
+
+
 def test_longbridge_with_overrides_preserves_atomic_credentials() -> None:
     cfg = lb.LongbridgeConfig(
         app_key="atomic-key",
@@ -823,6 +849,52 @@ def test_binance_positions_resyncs_simple_earn_read(monkeypatch) -> None:
 def test_futu_trd_env_mapping() -> None:
     assert ft.FutuConfig(profile="paper").trd_env_name == "SIMULATE"
     assert ft.FutuConfig(profile="live-readonly").trd_env_name == "REAL"
+
+
+def test_futu_saved_filter_trdmarket_survives_every_profile(monkeypatch, tmp_path) -> None:
+    """A market saved in futu.json must not be overwritten by a profile.
+
+    ``build_config`` applies profile config after the saved file. Hard-coding
+    ``filter_trdmarket`` to HK on every profile therefore forces the HK trade
+    context even for a US-only account. The saved market stays, while the
+    profile still selects the paper/live environment.
+    """
+    from src.trading.connectors.futu.profiles import FUTU_PROFILES
+
+    monkeypatch.setattr(ft, "get_runtime_root", lambda: tmp_path)
+    (tmp_path / "futu.json").write_text(
+        json.dumps({"filter_trdmarket": "US", "profile": "paper"}),
+        encoding="utf-8",
+    )
+
+    assert len(FUTU_PROFILES) == 4
+    for profile in FUTU_PROFILES:
+        cfg = ft.build_config(profile.config, None)
+        assert cfg.filter_trdmarket == "US", profile.id
+        assert cfg.profile == profile.config["profile"]
+
+
+def test_futu_filter_trdmarket_defaults_to_hk(monkeypatch, tmp_path) -> None:
+    """With no saved market, every Futu profile still opens the HK default."""
+    from src.trading.connectors.futu.profiles import FUTU_PROFILES
+
+    monkeypatch.setattr(ft, "get_runtime_root", lambda: tmp_path)
+    for profile in FUTU_PROFILES:
+        cfg = ft.build_config(profile.config, None)
+        assert cfg.filter_trdmarket == "HK", profile.id
+
+
+def test_futu_filter_trdmarket_override_beats_saved_file(monkeypatch, tmp_path) -> None:
+    """An explicit override still wins over the saved market."""
+    from src.trading.connectors.futu.profiles import FUTU_PROFILES
+
+    monkeypatch.setattr(ft, "get_runtime_root", lambda: tmp_path)
+    (tmp_path / "futu.json").write_text(
+        json.dumps({"filter_trdmarket": "US"}),
+        encoding="utf-8",
+    )
+    cfg = ft.build_config(FUTU_PROFILES[0].config, {"filter_trdmarket": "SG"})
+    assert cfg.filter_trdmarket == "SG"
 
 
 def test_futu_classification() -> None:

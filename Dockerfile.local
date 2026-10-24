@@ -54,7 +54,7 @@ COPY agent/ agent/
 RUN pip install --no-cache-dir --no-deps -e .
 
 # Deployment adapters, pinned separately from the upstream dependency locks.
-# The core version exception is documented in this overlay; pip check verifies
+# The overlay no longer replaces any base pin; pip check verifies
 # the complete environment after all three locks are installed.
 COPY requirements-local-providers-lock.txt requirements-local-providers-lock.txt
 RUN pip install --no-cache-dir --require-hashes --no-deps -r requirements-local-providers-lock.txt \
@@ -68,7 +68,7 @@ FROM python:3.11-slim@sha256:e031123e3d85762b141ad1cbc56452ba69c6e722ebf2f042cc0
 
 LABEL org.opencontainers.image.title="Vibe-Trading" \
     org.opencontainers.image.description="Natural-language finance research AI agent with backtesting" \
-    org.opencontainers.image.version="0.1.16" \
+    org.opencontainers.image.version="0.1.18" \
     org.opencontainers.image.source="https://github.com/HKUDS/Vibe-Trading" \
     org.opencontainers.image.licenses="MIT"
 

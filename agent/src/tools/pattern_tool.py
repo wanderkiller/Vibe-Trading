@@ -39,6 +39,7 @@ def find_peaks_valleys(close: pd.Series, window: int = 5) -> dict:
 
     values = close.values.astype(float)
     peaks, valleys = [], []
+    last_peak = last_valley = -1
 
     for i in range(window, n - window):
         seg = values[i - window : i + window + 1]
@@ -47,10 +48,17 @@ def find_peaks_valleys(close: pd.Series, window: int = 5) -> dict:
         seg = seg[~np.isnan(seg)]
         if len(seg) == 0:
             continue
+        # A flat top or bottom ties across adjacent bars; report it once, at
+        # its first bar, so one plateau is not read as two separate extrema.
+        tied_prev = values[i] == values[i - 1]
         if values[i] == np.max(seg):
-            peaks.append(i)
+            if not (tied_prev and last_peak == i - 1):
+                peaks.append(i)
+            last_peak = i
         if values[i] == np.min(seg):
-            valleys.append(i)
+            if not (tied_prev and last_valley == i - 1):
+                valleys.append(i)
+            last_valley = i
 
     return {"peaks": peaks, "valleys": valleys}
 
@@ -402,9 +410,41 @@ class PatternTool(BaseTool):
     repeatable = True
 
     def execute(self, **kwargs) -> str:
-        """Run pattern detection."""
-        return run_pattern(
-            run_dir=kwargs["run_dir"],
-            patterns=kwargs.get("patterns", "all"),
-            window=kwargs.get("window", 10),
-        )
+        """Run pattern detection.
+
+        Model-supplied arguments are normalised first: an explicit JSON ``null``
+        means "use the default", ``patterns`` may be a list, and ``window`` must
+        be an integer (a numeric string is accepted). Anything else is reported
+        as a JSON error instead of raising out of the tool.
+        """
+        run_dir = kwargs.get("run_dir")
+        if not isinstance(run_dir, str) or not run_dir.strip():
+            return json.dumps({"status": "error", "error": "run_dir is required"}, ensure_ascii=False)
+
+        patterns = kwargs.get("patterns")
+        if patterns is None or patterns == "":
+            patterns = "all"
+        elif isinstance(patterns, (list, tuple)):
+            patterns = ",".join(str(p) for p in patterns)
+        elif not isinstance(patterns, str):
+            return json.dumps(
+                {"status": "error", "error": "patterns must be a string or a list of names"},
+                ensure_ascii=False,
+            )
+
+        window_raw = kwargs.get("window")
+        if window_raw is None or window_raw == "":
+            window = 10
+        else:
+            try:
+                if isinstance(window_raw, bool) or isinstance(window_raw, (list, dict)):
+                    raise ValueError
+                if isinstance(window_raw, float) and not window_raw.is_integer():
+                    raise ValueError
+                window = int(window_raw)
+            except (TypeError, ValueError, OverflowError):
+                return json.dumps(
+                    {"status": "error", "error": f"window must be an integer, got {window_raw!r}"},
+                    ensure_ascii=False,
+                )
+        return run_pattern(run_dir=run_dir, patterns=patterns, window=window)

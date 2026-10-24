@@ -5,6 +5,13 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### AlphaKeel patch layer — upstream v0.1.18 (2026-10-24)
+
+Local patch layer only. The series is merged onto upstream v0.1.18 (`patches/BASE`); upstream's own changes are listed
+in the `[0.1.18]` section below. Re-derived hooks: the agent loop's grounding release moved to `loop_grounding.py` (the
+card notes travel in `GroundingDecision`), the tool-thread context copy moved to `tool_lifecycle.py`, and the
+grounding figure checks now live in `figures_checks.py` beside the declared-check registry.
+
 ### AlphaKeel patch layer — wave 2 · vt (2026-10-13)
 
 Local patch layer only. Resolves the round-2 residuals of the "2026-10-12 (end-to-end audit)" section except `run_assumptions.fee_source`
@@ -91,141 +98,1791 @@ Local patch layer only (`patches/MANIFEST.md`); not an upstream release note.
   `alphakeel_b2` bars must read `funding_visible_rate`, and `ir backtest`
   callers must pass `--fees`.
 
-### Maintenance — 2026-10-08
 
-- Optional AES-256 protection for Email PDF reports (#1709): Web, CLI
-  playbooks and Agent proposals persist only the boolean choice. Confirmations
-  show it, and creation or confirmation refuses an unconfigured password.
-  The private Email setting is translated in all nine UI languages.
-- KIS order and fill reads query KRX, SOR and NXT, deduplicate records and fail
-  incomplete venue reads (#1726). An explicitly expired token is refreshed
-  once, including HTTP 200 business errors and 401/403 replies; other business
-  errors remain failures.
-- Derived formulas parse the complete expression after a descriptive label
-  while retaining operand evidence and arithmetic validation (#1728).
-
-### Maintenance — 2026-10-07
-
-- Move volatile workspace state outside the system prompt (#1708, resolves
-  #1707); align local daily dates across markets (#1710) and distinguish bare
-  equity tickers from explicit crypto pairs (#1711).
-- A-share benchmarks follow the declared exchange suffix (#1712), and loader
-  suites share the live health checker’s OHLCV contract (#1725, resolves #1723),
-  including Binance and a catalog assertion for newly registered sources.
-- OU lag pairs retain gaps (#1713), walk-forward validation skips empty purged
-  training folds (#1714), undefined correlations remain missing (#1715), and
-  risk X-ray returns do not bridge missing observations (#1717).
-- CDS premium legs include the final stub (#1716); style exposure excludes
-  incomplete rows and reports unmatched weight (#1718); Heston rejects
-  nonfinite inputs and invalid integration bounds (#1719); options Sortino
-  uses the full return sample for downside deviation (#1727).
-- Session search respects a zero limit (#1720), and archive audit diagnostics
-  use the shared ledger walker to report malformed records (#1721).
-
-### Added
-
-- **Editable scheduled delivery and rich Email reports** (#1649, #1680).
-  Choose a configured channel and destination, edit existing schedules, and
-  select plain text, sanitized HTML or a PDF attachment for Email across Web,
-  CLI playbooks and agent proposals. Confirmation surfaces show the format. Format edits
-  persist, active sends cannot be overwritten, and desktop PDF delivery uses
-  the packaged renderer when native libraries are unavailable, with embedded
-  CJK/Arabic fonts and tested multiline/table pagination. Email PDF delivery
-  also supports optional AES-256 password protection using an operator-managed
-  Email channel secret; scheduled jobs store only the boolean choice.
-- **Structured backtest summaries and paged artifact reads** (#1646, #1647,
-  resolves #1644 and #1645). Complete scalar metrics, structured metrics and
-  validation accompany endpoint-preserving equity previews and OHLCV paths.
-  `read_run_artifact` streams manifest-listed CSV pages within the actual
-  tool-result limit, with resumable offsets and bounded metadata. Grounding
-  accepts only shown rows of unchanged engine tables, preserving run identity
-  and excluding model-written files and escaped symlinks.
-
-- **Grounding validation records fired declared checks** (#1661, with the
-  registry substrate from #1628, thanks @he-yufeng). Validation artifacts name
-  the registered checks behind their findings; the existing private/listed
-  identity rule is unchanged.
-- **Public loader-health failures carry sanitized warning evidence** (#1643,
-  thanks @cgycorey). Reports retain up to three bounded loader warnings while
-  continuing to fail unavailable sources. Structured and quoted credentials
-  are redacted; warnings containing filesystem paths are omitted in full.
-
-- **Feishu joins the guided Web UI channel setup** (#1572, thanks
-  @shadowinlife). The Feishu panel gets field hints and a setup guide in all
-  nine locales. **Test connection** is a standalone probe that requests a
-  tenant access token from feishu.cn or larksuite.com, whichever the config
-  names, without starting the bot. `stop()` now closes the lark WebSocket and
-  stops its dedicated event loop, so a hot reload no longer leaves the old
-  connection answering messages beside the new one.
+## [0.1.18] — 2026-10-21
 
 ### Changed
 
-- **An MCP tool result reaches the agent once, not four times** (#1634, thanks
-  @zeus229). A structured result used to arrive as `data`, an identical
-  `structured_content`, a text block restating it and the joined `text`. Only
-  exact copies of `data` are dropped, and only from what the agent reads;
-  `MCPServerAdapter.call_tool` still returns every surface to programmatic
-  callers, and error or text-only results are unchanged.
-- **Tool-result helpers moved out of `loop.py`** into `src/agent/tool_results.py`
-  (#1636, thanks @Jackzigen), the first extraction of the loop split. The
-  moved functions are byte-identical and `loop` still exports them; their log
-  records now come from the `src.agent.tool_results` logger.
+- Reduce agent request overhead with on-demand tool schemas while keeping the
+  complete tool catalog and existing execution permissions. Ordinary backtests
+  no longer request extra attribution automatically. Automatic summary titles
+  remain available after the first chat exchange.
+- Preserve oversized tool results in readable run artifacts and stop Swarm from
+  clearing new observations before the model sees them. Context pressure uses
+  the model window and includes tool schemas.
+- **README credits cover every cycle again**: contributor lines for the
+  0.1.13, 0.1.15, 0.1.16 and 0.1.17 cycles in all seven READMEs, each PR
+  attribution checked against GitHub. The data-tools list counts the 29
+  read-only data tools the MCP server serves (it said 22). The 0.1.13 notes
+  above credit ModelScope (#1011) to @yrk111222 and #676 to the session
+  lifecycle entry it fixed.
 
 ### Fixed
 
-- **Channel settings and delivery** (#1681, #1508). Unchanged nullable form
-  values no longer block saving or testing. Email authentication requires a
-  configured receiving authserv-id and sender-domain alignment; comments and
-  duplicate headers cannot pass as authenticated results. The guided setup
-  exposes the trust setting in all nine interface languages.
-- **Research continuity and output access** (#1682, #1688, #1679, #1676,
-  #1639). Memory snippets retain real spacing and match markers, goal evidence
-  preserves exact tool-call provenance, export refusals explain allowed-root
-  configuration, macro results report both observation and delivery limits,
-  and skill-file deletion follows resolved auxiliary-directory boundaries.
-- **Risk and portfolio mathematics** (#1659, #1658, #1657, #1656, #1653).
-  Attribution rejects non-finite inputs, VaR transitions preserve missing
-  observations, implied volatility meets its price tolerance, monthly risk
-  requests obtain sufficient default history, and turnover prices signed
-  reversals plus cash liquidation and reentry.
-- **Local data, updates and broker restrictions** (#1651, #1655, #1581,
-  #1585). Local ranges include the entire end day, CLI updates retain the VCS
-  installation source, SDK position-pricing fixes retain contributor ancestry,
-  and unsupported Robinhood option orders remain gated even when remotely
-  annotated read-only. Options execution remains unimplemented (#1435).
+- Keep the custom-endpoint guard lazy-loaded for minimal installations and align
+  the Windows desktop MCP lock with the updated package requirement.
+- Include compaction, cancelled responses and failed streams in usage accounting;
+  stop further work when a research goal exhausts its token budget. Forward the
+  configured output cap to both DeepSeek adapters.
+- Redact credentials before tool results reach model context or replay caches,
+  and reject incomplete compatible-provider streams instead of releasing a
+  truncated answer or tool call.
+- **`vibe-trading-mcp --transport http` reclaims its sessions**
+  (CVE-2026-59951 / GHSA-84m7-p3x7-pcfv). `mcp` is now `>=1.30.0` instead of
+  capped below 1.30: an idle session closes after 30 minutes, at most 10,000
+  exist and an ended session is dropped, so a client can no longer grow
+  server memory without bound. 0.1.15–0.1.17 held the cap because 1.30's
+  RFC 8414 issuer check refused IBKR's OAuth metadata; IBKR's
+  protected-resource document now names the same issuer as its metadata
+  (checked 2026-10-21) and Robinhood's already did. The Docker lock pins
+  `mcp` 1.30.0.
+- **Custom model endpoints are checked again on every connection**. Saving a
+  profile resolved its host once; a name that later re-resolved to a private
+  address (DNS rebinding), or a redirect to one, was not checked again. The
+  provider test and the running model now resolve each direct connection
+  once, refuse it unless every address is public and connect to the address
+  they checked (TLS still verifies the host name). When an environment proxy
+  carries the request the proxy resolves the name, so this check does not
+  apply there.
+- **Custom providers can be saved behind fake-IP proxies**. Clash, Surge and
+  sing-box in TUN mode answer every lookup from 198.18.0.0/15, which 0.1.17
+  refused, so no custom provider could be saved on such a host. A looked-up
+  198.18.x address is accepted now (the proxy resolves the real name); the
+  same address written into the URL is still refused.
+- **Grounding reads the run's own files under the names models use**. A
+  figures-block ref naming the active run as `run_dir/…` or by its directory
+  name (`20261021_…/artifacts/metrics.csv`) resolves to that run's
+  engine-written file, and a sign written before a currency mark
+  (`−$1,847.78`, `(−$5.00)`, `PnL: -$3.20`) is the number's sign in both prose
+  and declarations. A live DeepSeek backtest report had its final value,
+  trade count and losing trade's PnL cut for these two reasons. Model-written
+  files and paths outside the run still never resolve, and a hyphen joining
+  two figures (`$10-$20`) or a spaced one (`$10 - $20`) is not a sign.
+- **Correlation analysis puts bare Beijing, Shanghai-fund and B-share codes on
+  their exchange**. `920xxx` resolved to `.SZ`, as did Shanghai `5xxxxx`
+  funds and `9xxxxx` B shares; the rule now matches the Tushare fallback's
+  (4/8/920 → `.BJ`, 5/6/9 → `.SH`, otherwise `.SZ`).
+- **A timed-out background command is reported as a timeout on macOS**.
+  macOS answers EPERM rather than ESRCH when a process group holds only
+  exited, unreaped processes, so the final kill of a timed-out tree raised
+  and the task was marked `error` on a loaded host.
+- **Paper accounts say when nothing can be settled yet**. Advancing an
+  account before its first session closed reported a date range that ran
+  backwards ("between 2026-10-21 and 2026-10-20"); it now names the first
+  execution date and the settlement time in the market's time zone.
+- **The sdist carries what its tests need**: the test packages'
+  `__init__.py` files and CSV / JSON fixtures, and no untracked
+  `test_e2e_*.py` harness.
 
-- **Strategy-file writes no longer crash on missing model provenance fields**
-  (#1673, closes #1672, thanks @tomaszkubiak-courses). Each writing turn records
-  the provider-reported model or falls back to the configured model.
-- **Monte Carlo path metrics include starting capital** (#1664, thanks
-  @MetaAviator). Both actual and shuffled paths include the first trade's
-  return and loss against the initial high-water mark when computing Sharpe
-  and maximum drawdown.
-- **Report audits retain accounting negatives and their units** (#1663,
-  closes #1660, thanks @he-yufeng). ASCII and fullwidth parentheses, inner or
-  outer units and currency marks retain the negative sign. Malformed pairs
-  and non-finite or oversized values are rejected without losing the labels
-  of subsequent values on the same line.
-- **Indonesian tool documentation matches the registry** (#1671, thanks
-  @he-yufeng), including `get_southbound_flow` and the measured tool counts.
+## [0.1.17] — 2026-10-21
+
+Rolls up 638 commits / 228 merged pull requests since 0.1.16, plus 41 pull
+requests whose work landed through maintainer commits, from 33 contributors.
+
+The headline is daily paper trading. A `paper_trade_step` tool for the agent
+and MCP, and saved paper accounts through `vibe-trading paper`,
+`/api/paper-accounts` and a Web page, match orders or a strategy against
+completed daily bars without ever reaching a broker; saved accounts move
+forward only. Most of
+the rest of the cycle is correctness, and much of it has one shape: a value
+that cannot be computed now says so instead of turning into a plausible
+number. A profit factor with no losing trade, an undefined correlation, a
+factor benchmark with too few IC observations, an upside at a zero price and
+an unbounded ratio come back as `null` or a refusal rather than 0; a missing
+price no longer bridges a return pair, a VaR transition or a lag pair; an
+after-close SEC filing no longer reaches the IC a bar early; and a misspelled
+backtest setting is reported in the run card instead of silently ignored.
+Brazil (B3) joins as a market, the Alpha Zoo grows from 462 to 478 factors,
+Slack and Discord join the guided channel setup, scheduled reports can
+arrive by Email as HTML or a password-protectable PDF, token usage shows in
+Run Detail, chat and swarm, a `claude-cli` provider runs the agent on a local
+Claude Code login, and the Web UI adds Persian and Turkish for 11 languages.
+
+### Added
+
+- **Daily paper trading with saved accounts** (#1939, thanks @shadowinlife). A
+  new `paper_trade_step` agent and MCP tool matches explicit orders, or the
+  per-day orders of a strategy file, against completed daily bars for `cn_a`,
+  `hk` and `us`; nothing in it can reach a broker order path. The same
+  stateless step is served as `vibe-trading paper step` and
+  `POST /api/paper-trade/step`. Saved paper accounts are built on it and
+  reachable three ways: `vibe-trading paper create|list|show|history|advance`,
+  authenticated REST under `/api/paper-accounts` (list, create, read,
+  history, `POST .../{id}/advance`) and a **Paper trading** page in the Web
+  sidebar in all eleven UI languages.
+  An account starts from the cash and positions you enter, today or at the
+  next session, and moves forward only: an advance settles sessions whose
+  regular close is at least 30 minutes past and carries the revision it read,
+  so a stale or concurrent request is refused (HTTP 409 over REST) instead of
+  committing twice, and a failed step leaves the ledger unchanged. Ledgers
+  live in `<runtime_root>/paper-trading/accounts.db`; there is no background
+  scheduler. A strategy under `<runtime_root>/strategies/` runs in a child
+  process that sees only bars strictly before the execution day and the ledger
+  after earlier fills; orders fill at that day's close, and any strategy
+  failure discards the whole call. Matching is daily-close and all-or-none,
+  with simplified fees, price limits, board lots and A-share T+1. Execution
+  prices must be raw: adjusted or unknown price calibers and non-finite prices
+  are rejected, A-shares need a complete ClickHouse trading calendar, and a
+  split-like jump returns `PAPER_DATA_NOT_READY` rather than rescaling
+  holdings. Corporate-action reconciliation and cash dividends are not
+  modelled and NAV is not total return; intraday, margin, options and
+  cross-market phases remain open under #1938.
+
+- **Live runner model calls have their own cadence and daily budget**
+  (closes #1854). Safety checks still run every minute, but a model
+  decision now defaults to every 15 minutes, each in a fresh conversation,
+  with at most 26 decisions and 1,000,000 reported tokens per broker per
+  UTC day; an optional once-daily time, timezone and operator-priced USD
+  limit are set in Runtime → Model schedule and spending limits, the chat
+  runner panel, `vibe-trading connector runner-settings` or
+  `GET`/`PUT /live/runner/settings`. Spending history survives restarts.
+  Limits are checked after each provider response, so one response can
+  overshoot; estimates ignore cache discounts and auxiliary calls and are
+  not a provider billing cap. Exhaustion or missing usage trips the
+  existing kill switch and its cancel/flatten behaviour, and a decision
+  left unfinished by a crash is blocked for inspection.
+
+- **Strategy adaptation runs from preparation to evidence**. A registered
+  strategy with adequate, non-stale evidence can be adapted to a new name,
+  universe, date window and position sizing through `adapt_strategy` (agent
+  and MCP), `vibe-trading strategy-evidence adapt`, authenticated `POST
+  /api/strategy-adaptations` and a Web welcome prompt. The SDM child keeps the
+  parent's signal, entry and exit definitions and gets its own run directory,
+  SignalEngine and backtest; it never inherits parent metrics. Refreshing with
+  `scope=strategies` (`strategy-evidence refresh --scope strategies`, or `POST
+  /api/strategy-adaptations/evidence`) replaces only the named strategies'
+  evidence, and refuses an adapted run unless its config, code, metrics,
+  equity and trades match the hashes sealed in its run card. The hash binds
+  evidence to the persisted run; it does not certify that the generated code
+  implements its description.
+
+- **extraETF holdings exports feed the portfolio, with allocation proposals**.
+  `vibe-trading portfolio import-extraetf`, `POST
+  /api/portfolio/imports/extraetf` and **Portfolio → Manage accounts → Import
+  extraETF Investments** store an Investments CSV as a local source. The whole
+  import fails on an unreadable row, a holdings count that differs from the
+  one you confirm, a missing price, a future file time or an export older than
+  the freshness limit you choose; transactions, dividend and X-Ray exports are
+  refused. `Portfolio ID` keeps accounts apart when they hold the same ISIN.
+  Totals are exported quantity × price and exclude cash and assets absent from
+  the export. EUR joins USD, CNY and HKD as a display currency, valued at
+  Frankfurter reference rates whose date is shown apart from the fetch time.
+  An allocation proposal (`portfolio rebalance --snapshot-id`, `POST
+  /api/portfolio/rebalance`, `portfolio_summary(snapshot_id=...,
+  target_weights=...)`, or the Web page) shows value changes for target
+  percentages that total 100%; it creates no orders, quantities, tax or fee
+  estimates, and an incomplete snapshot or stale cached rates cannot produce
+  one. Imported holdings stay out of historical risk tools until their trading
+  venue is resolved.
+
+- **Portfolio research can stay on one snapshot** (#1769, thanks @zeus229).
+  `portfolio_summary` returns `snapshot_id` and `read_identity` and accepts a
+  `snapshot_id` back, so a multi-step analysis keeps reading the same stored
+  observation after a later refresh. `vibe-trading portfolio show
+  --snapshot-id ID` and `GET /api/portfolio/analysis-context?snapshot_id=`
+  read the same way, and the Web Portfolio page exports the sanitized research
+  snapshot it displays as JSON. An unknown snapshot, one valued under an older
+  valuation version, or one containing a source that is no longer enabled is
+  reported as unavailable and never replaced by newer data.
+
+- **mStock (India) read-only connector** (#1675, thanks @Jackzigen). The
+  `mstock-live-rest-readonly` profile sends only GET requests for the Type B
+  holdings, net-position and fund-summary resources, with the API key and
+  current session token kept in the connection's OS credential vault; it never
+  logs in, refreshes a session or calls an order endpoint, and both order
+  entry points refuse before any network call. Holdings and net positions stay
+  separate books. Fund limits are shown raw because they are not cash or net
+  liquidation, so the profile withholds `account.read` and is not a portfolio
+  source. `connector account` and `connector positions` gain
+  `--connection-id`. Tests replay the documented reply shapes; no real mStock
+  account was available.
+
+- **Five example options strategies and a candidate study** (#1774, thanks
+  @mdb1230). The options-strategy skill ships covered call, cash-secured put,
+  iron condor, volatility-gated short strangle and protective put
+  `OptionsSignalEngine`s, and `agent/scripts/options_candidates_backtest.py`
+  picks one parameter per strategy on 2016–2020 SPY/QQQ, then reports 2021
+  onward on SPY, QQQ, AAPL and MSFT with those parameters fixed. This is
+  research code for choosing what to paper-trade; no engine changed and no
+  order path exists.
+
+- **Custom OpenAI-compatible model endpoints** (#1264, thanks @Emad211).
+  Settings gains a custom-provider manager and the CLI gains `vibe-trading
+  provider custom list|add|activate`. A profile is saved only after a test
+  chat completion with the same URL, model and key succeeded in the last five
+  minutes; the key goes to the OS credential vault (the `[keyring]` extra),
+  never to the profile JSON or argv, and activation needs an explicit
+  confirmation. An active profile cannot be edited: save the changed endpoint
+  under a new id. Base URLs carrying credentials, and hosts that are or
+  resolve to any non-public address (loopback, private, link-local, reserved,
+  or the shared 100.64.0.0/10 range that holds Alibaba Cloud's metadata
+  service), are refused, so a model served on localhost cannot be registered
+  this way. The host is checked when the profile is tested and saved; a name
+  that later re-resolves to a private address is not re-checked. The test is
+  a real request and may be billed. `LANGCHAIN_MAX_TOKENS`, when set, now caps
+  output tokens on the OpenAI-compatible adapter. The PR's per-channel
+  configuration API was not merged; channel settings stay where 0.1.16 put
+  them.
+
+- **Persian and Turkish join the Web UI, which now has 11 languages** (#1264,
+  #1616, thanks @Emad211 and @bygordon130-hub). Persian (`fa`, right-to-left)
+  and Turkish (`tr`) are registered in `SUPPORTED_LANGUAGES` and the language
+  switcher, and all 11 locale files carry the same keys. The Turkish file
+  arrived with English placeholders and UTF-8 decoded as Windows-1252; both
+  were replaced before release, and a test now rejects copied-English Turkish
+  strings and that mojibake in `tr` and `fa`. The custom-provider strings,
+  first merged in English in every locale, are translated in all 11. Chat
+  messages, the composer and error lines take their direction from their own
+  text, so a Persian or Arabic message reads right-to-left inside an English
+  UI and the reverse. Some strings are still English in some locales.
+
+- **Pixel Office, a shared manual research-task board** (#1616, thanks
+  @bygordon130-hub). The `/pixel-office` page, the `vibe-trading office` CLI,
+  authenticated `GET /api/pixel-office` and `POST /api/pixel-office/actions`,
+  and the `pixel_office` agent tool share one transactional SQLite board
+  (`pixel-office.sqlite3` under the runtime root, mode 0600), so separate
+  processes see the same tasks. Tasks are created, assigned to a role,
+  completed with a required result, and roles carry Operator / Senior / Lead
+  ranks. Assigning a task does not start an agent or place an order, ranks
+  grant no trading permission, and a recorded result is not an execution
+  audit. The PR proposed a JSON file plus browser state; the merge replaced it
+  with this shared store. The unsigned Windows review installer now builds the
+  bundled Python backend before packaging.
+
+- **Scheduled jobs are edited in place, with channel-aware destinations**
+  (#1649, thanks @zeus229). `PATCH /scheduled-runs/{id}` and the Scheduled
+  page change a job's prompt, cadence, timezone, end date and delivery without
+  deleting it, so its id and history stay. A job that is running, or whose
+  delivery is being sent, refuses edits with 409. Each channel adapter
+  describes the destination it accepts (label, placeholder, input type), and
+  Telegram suggests numeric private-chat ids already in its `allow_from`; a
+  suggestion only fills the manual target field. Changing the destination
+  clears the old delivery receipt but keeps the session link, and a
+  timezone-only edit does not move an interval schedule's next run.
+
+- **Scheduled Email reports as HTML or a PDF attachment** (#1680, thanks
+  @zeus229). Email delivery takes a format: plain text (the default),
+  sanitized HTML (Markdown rendered by mistune and cleaned by `nh3`), or a PDF
+  attachment with a short notice in the body. It is chosen on the Web
+  Scheduled page, in CLI playbooks (`--delivery-format`) and in agent
+  proposals, whose confirmations show it. A PDF that fails to render fails the
+  send instead of going out as plain text. Where WeasyPrint's native libraries
+  are missing, the PDF comes from the bundled ReportLab renderer with embedded
+  fonts, so desktop installs get PDFs too. A scheduled send now fails visibly
+  when the Email channel lacks consent or an SMTP host instead of being
+  skipped with a log line. The format selector is translated in every UI
+  locale.
+
+- **Password-protected PDF reports** (#1709, thanks @zeus229). An operator
+  sets a private `pdf_password` on the Email channel; a PDF Email job can then
+  request protection, and the attachment is encrypted with AES-256 through
+  `pypdf`. Web, CLI playbooks (`--protect-pdf`) and agent proposals store only
+  the yes/no choice, a job config containing `pdf_password` is rejected,
+  confirmations show the choice, and creating, editing or confirming a
+  protected job without a configured password is refused. An encryption
+  failure never echoes the password.
+
+- **The agent can save a report as a real PDF**. Before this, `write_file`
+  wrote Markdown text into a file named `.pdf`. A `.pdf` path now renders the
+  Markdown into a paginated PDF with ReportLab, without Pango or Cairo. Text
+  uses a bundled Noto Sans CJK subset (`VibeCJK-Regular.ttf`, OFL) covering
+  Latin, Greek, Cyrillic, CJK, kana and Hangul; Arabic lines are shaped with
+  `arabic-reshaper` and `python-bidi` (now base dependencies) in
+  matplotlib's DejaVu Sans and wrap across pages without clipping. A
+  character neither font covers fails the render instead of printing empty
+  boxes, and the write is atomic, so a failed render leaves an existing file
+  untouched. The result carries the path, the real byte count and an
+  authenticated `/api/reports/{id}` link, which the reply adds even when the
+  model leaves it out and the Web chat downloads; IM channels that accept
+  files receive the PDF as an attachment, taken only from this attempt's
+  staged reports, never from a path the model wrote. Staged copies live
+  under `generated_reports/` in the runtime root; if staging fails, the
+  written file is kept and the result reports `download_error`. The bundled
+  font adds about 19.9 MB to the package.
+
+- **Shadow Account reports render a PDF without WeasyPrint** (#1683, thanks
+  @he-yufeng). When WeasyPrint is missing or fails, the report renders the
+  same eight sections and charts through ReportLab in a simpler layout, and
+  only then falls back to HTML-only; the payload's `engine` can now read
+  `reportlab`. A process no longer loses the fallback after its first render
+  on a host without a CJK font. The PR used Helvetica when no CJK font was
+  found; the bundled font is now tried first, and a host where no embeddable
+  font loads gets HTML-only, because an unembedded face can print blank pages.
+
+- **Feishu joins the guided Web UI channel setup** (#1572, closes #1614,
+  thanks @shadowinlife). The Feishu panel gets field hints and a setup guide
+  in every UI locale. **Test connection** is a standalone probe that requests
+  a tenant access token from feishu.cn or larksuite.com, whichever the
+  config's domain names, without starting the bot. `stop()` now closes the
+  lark WebSocket and stops its dedicated event loop, so a hot reload no longer
+  leaves the old connection answering messages beside the new one.
+
+- **Slack and Discord join the guided Web UI channel setup** (#1757, #1758,
+  #1764, #1777, closes #1763 and #1776, thanks @shadowinlife). Both get
+  localized forms and read-only credential probes. Slack checks the bot token
+  with `auth.test`, requiring a bot identity so a user token is refused, then
+  the app token and Socket Mode with `apps.connections.open`; only Socket Mode
+  is supported. Discord requires a bot identity from `users/@me`; privileged
+  intents cannot be checked over REST, so the setup guide covers them. The
+  shared token probe, also behind DingTalk, QQ and Feishu, now reports HTTP
+  408 and 429 as a temporary network failure rather than rejected credentials,
+  and a failed probe leaves saved settings unchanged. Discord's allowlists,
+  group policy and emoji settings, and Slack's allowlist and emoji, refresh
+  without reconnecting. #1757 and #1758 landed through #1764.
+
+- **Token usage in Run Detail, chat and swarm** (#1890, closes #1889, thanks
+  @shadowinlife). Run Detail gains a Token usage tab built from the run's
+  existing `llm_usage`, chat shows a live counter from the `llm_usage` stream
+  event (replay cannot double-count), and swarm cards and the dashboard show
+  run and per-agent totals. `GET /swarm/runs/{id}` now returns token totals,
+  provider and model, and swarm workers record prompt-cache tokens and whether
+  a count is provider-reported or estimated; an estimate is labelled as one
+  and a missing label reads "unlabeled". A reported zero stays zero beside a
+  nonzero count, and a missing cache field is never shown as 0. These are
+  token counts, not cost or cross-run totals.
+
+- **`get_southbound_flow` serves the Stock-Connect net flow that is still
+  published** (#1486, closes #1483, thanks @shadowinlife). The new read-only
+  agent and MCP tool returns market-wide southbound daily net buy into Hong
+  Kong, split into the Shanghai and Shenzhen channels, in 100M HKD. Eastmoney's
+  datacenter report is the primary source; Eastmoney's `NET_DEAL_AMT` arrives
+  in million HKD and is scaled to the envelope unit, and a rejected report is
+  an error rather than an empty history. The keyless fallback is HKEX's
+  official daily statistics (Buy minus Sell turnover), which serves only the
+  latest trading day. There is deliberately no Tushare path: its southbound
+  fields now carry the cumulative stock, not a daily flow.
+
+- **Gildata research tools and off-exchange fund NAV** (#1485, thanks
+  @sambazhu). With `GILDATA_TOKEN` set, three tools wrap Gildata's
+  natural-language endpoint: `get_cn_macro_series` (China macro, regional and
+  industry series), `get_cn_announcements` (A-share, HK and fund
+  announcements) and `search_broker_reports`. Each echoes the vendor APIs its
+  query was routed to and returns at most 200 rows (default 50);
+  `GILDATA_SRV_TOOL_URL` overrides the endpoint. `get_fund_nav` returns unit,
+  accumulated and adjusted NAV for funds such as `110022.OF`, and only those
+  three NAV fields count as price evidence for grounding. The Gildata loader
+  now also serves Hong Kong equities, stamped `raw`, and CN indices, each
+  resolved only when the vendor's `ref_code` matches the symbol exactly. It
+  stays at the tail of each chain so paid quota is spent last. Without a token
+  none of this registers.
+
+- **Run cards flag backtests that may sit inside the model's training data**
+  (#1618, closes #1613, thanks @lorenzozanee). Strategy writes record the
+  provider and model that produced `config.json` and `code/signal_engine.py`,
+  and the run card shows them. Set `model_training_cutoff` (an ISO date) in
+  `config.json`: a window ending before it is marked as exposed, and an unset
+  or invalid cutoff is reported as unknown and treated as exposed. No cutoff
+  is inferred from the model name. `vibe-trading alpha bench --strict` takes
+  `--training-cutoff` to start the out-of-sample segment after that date, and
+  now returns an error instead of `ok` when no alpha rows qualify.
+
+- **Loader-health reports say why a source came back empty** (#1643, #1698,
+  thanks @cgycorey). The weekly public loader-health lane attaches up to three
+  of the loader's own warnings to an unhealthy row, so an anti-bot refusal and
+  a broken loader no longer look identical. The report is a public artifact:
+  each message is capped at 200 characters, URLs and credential-shaped values
+  are redacted (including a labelled `Authorization: Bearer token: VALUE`),
+  and a warning that contains a filesystem path is omitted in full. The
+  health tests now register real loaders before stubbing one, so running a
+  single test no longer reaches the network.
+
+- **A free BaoStock fallback for A-share `val:*` panels** (#1799, thanks
+  @Jackzigen). Without a Tushare token, or when Tushare returns nothing for a
+  field, `val:pe_ttm`, `val:pb` and `val:ps_ttm` come from BaoStock's daily
+  `peTTM` / `pbMRQ` / `psTTM`. `val:pe` and `val:dv_ttm` have no BaoStock
+  counterpart and stay NaN rather than being filled from another field. A
+  BaoStock outage or login failure degrades to NaN panels, not an exception.
+  Token holders see no change.
+
+- **Hong Kong orders are sized on each symbol's board lot** (#1813, thanks
+  @alexwan02). A backtest config may carry `hk_lot_sizes: {symbol: lot}`;
+  `00700.HK`, `0700.HK` and `700.hk` share one entry and five-digit counters
+  such as `80700.HK` stay distinct. Any HK symbol without a configured lot is
+  sized on 100 shares and listed under `lot_assumptions` in the run metrics,
+  also when no table is given. Mixed-market runs carry each sub-engine's
+  assumptions under `market_diagnostics`.
+
+- **Brazil (B3) market data and an opt-in ZimaOS template** (#1783, thanks
+  @incorpore). A `.SA` symbol is market `br_equity`, quoted in BRL and served
+  by `yahoo` → `yfinance` → `b3_cotahist` → `local`, with `BOVA11.SA` as the
+  default benchmark. The Brazil engine applies configurable B3 fees, R$0.01
+  ticks and a default lot of one share (`br_lot_size=100` for round lots); it
+  does not model income tax, stock-borrow cost or settlement cash locks.
+  `python -m src.br_data sync` stores official B3 COTAHIST, CVM, Banco
+  Central and Tesouro Direto data outside the checkout, and the
+  `get_br_market_data` agent tool reads it. COTAHIST bars are raw, and CVM
+  statements are latest revisions, not point-in-time inputs. `zimaos/` holds
+  a Compose file and a fork publishing example that each need explicit setup;
+  upstream gains no scheduled publishing job.
+
+- **A complete pip + Telegram quick start in the README** (#1954). It covers
+  installing the Telegram extra, sender authorization with `allow_from`,
+  matching the API port between `serve` and `channels start`, and recovering
+  when `vibe-trading channels` is missing because the package was installed
+  into a different environment.
+
+- **Thirteen fundamental and valuation factors** (#1787, #1788, thanks
+  @shadowinlife). Ten read point-in-time SEC XBRL filings: accruals,
+  book-to-market, cash-to-assets, CFO yield, earnings growth, FCF yield,
+  leverage, operating margin, revenue growth and ROA. Growth is year over year
+  through a 365-day as-of lag, and earnings growth divides by the absolute
+  prior value, so a loss turning into a profit reads as growth. Three read a
+  new `val:*` namespace of daily A-share valuation data (`fund_pb`,
+  `fund_ps_ttm`, `fund_dividend_yield`). Those are keyed by trade date and
+  attached only on the CSI 300 universe; a nonpositive P/B or P/S is excluded
+  rather than ranked as cheap. XOM keeps its current SEC filer, and filings by
+  its pre-reorganisation filer that predate the change extend its history.
+  Basic shares never stand in for missing diluted shares, and
+  price-times-diluted-shares ratios are valuation proxies, not reported market
+  capitalisation.
+
+- **Industry-neutral A-share value factors** (#1802, closes #1789, thanks
+  @shadowinlife). `fund_pb_ind_neutral`, `fund_ps_ttm_ind_neutral` and
+  `fund_dividend_yield_ind_neutral` z-score each name against its Shenwan
+  (SW2021) level-1 peers on each date instead of the whole cross-section. A
+  CSI 300 benchmark attaches a point-in-time sector tag built from Tushare
+  `index_member_all` membership dates, and only when at least 90% of names
+  carry a label. A name with no label, or a group too small for a statistic,
+  stays NaN; there is no fallback to a whole-market z-score. Membership is
+  point-in-time, but the SW2021 taxonomy itself is applied retroactively, and
+  each factor's notes say so. With #1787 and #1788 the registry holds 478
+  factors, 20 of them fundamental (462 and 4 in 0.1.16).
+
+- **Factor benchmarks at a longer horizon** (#1801, #1802, thanks
+  @shadowinlife).
+  `alpha bench --horizon N` (1 to 252, also on the tool and MCP wrapper)
+  measures IC against N-bar forward returns, sampled without overlap and
+  anchored at the end of the panel; a missing close never bridges the
+  horizon. `horizon=1` is the previous next-bar formula. Result envelopes now
+  state their horizon, sampling and `universe_excluded` list. SEC-fundamental
+  factors requested on a universe other than the S&P 500 are listed as
+  excluded instead of failing the whole run, and `alpha compare` shows them
+  as skipped with the reason. The alive/dead thresholds were calibrated on
+  daily IC and are not re-derived for N > 1.
+
+- **Factor benchmarks feed `fund:*` factors their SEC inputs**. Benchmarks
+  now load each selected factor's declared fundamental fields as
+  point-in-time SEC panels; before, those inputs never reached the benchmark.
+  This needs the S&P 500 universe. The S&P 500 price panel goes through the
+  shared fallback chain and reports requested, fetched and missing
+  instruments and the price sources used.
+
+- **Factor neutralisation and PCA in the quant library** (#1817, thanks
+  @BHhhh-123). `neutralization.neutralize_factor` regresses a factor on named
+  numeric and categorical controls (OLS or WLS) separately at every time on
+  the panel, at any bar frequency. Controls are either all required or
+  selected greedily on coverage, rank and sample size, and every time records
+  what was dropped and the exposure before and after. `pca_factors` fits
+  cross-sectional PCA per time. Neither function fills, pools or resamples
+  rows, and a rank-deficient time is skipped instead of being demeaned. The
+  caller has to supply exposures known at that time. The finishing commit
+  rescales inputs before squaring so very large or very small units neither
+  overflow nor change the answer, keeps covariance PCA in common units, and
+  breaks equal-loading sign ties by input order. Reachable through
+  `quantlib_call` and MCP.
+
+- **Technical indicators can be read as of a date** (#1768, thanks @zeus229).
+  `technical_indicators` accepts an optional `end_date` (strict `YYYY-MM-DD`;
+  anything else is an error) as the acquisition boundary. Every response
+  carries `read_identity`: the boundary mode, requested end date, bar count,
+  serving provenance and a SHA-256 fingerprint of the exact interval, dates,
+  closes and volumes used, so two reads can be shown to have used the same
+  bars.
+
+- **A `claude-cli` provider that runs on the local Claude Code login**
+  (#1804, closes #1800, thanks @alexwan02). Each turn runs one
+  `claude -p --restricted --strict-mcp-config --tools ""` subprocess that only
+  picks the next step (call tools or answer); Vibe-Trading executes the tools
+  itself, so the evidence ledger, the grounding gate and swarm delivery checks
+  run as they do for any other provider. No API key is needed.
+  `CLAUDE_CLI_DENY_TOOL_PREFIXES` (default `trading_,etoro_`) hides tools from
+  the model and `CLAUDE_CLI_BASH_POLICY` (default `python-only`, or `off`)
+  limits bash to `python` scripts and read-only listing commands; refused calls
+  are fed back at most three times. Both are convenience filters, not a
+  security boundary: a Python script can still do anything, and live orders
+  stay behind the mandate gate. Settings lists the models the login can run
+  and offers only the reasoning efforts the chosen model accepts. A decision
+  can take minutes, so the provider emits a waiting signal every second;
+  the idle timeout no longer discards an answer still on its way, the stop
+  button kills the child process, and progress consumers see `llm_waiting`.
+
+- **The backtest tool returns a structured summary** (#1646, closes #1644,
+  thanks @shadowinlife). A successful result carries `summary`: the run
+  card's scalar metrics, `structured_metrics` and `validation`, run metadata,
+  an equity preview of at most 50 points with the first and last bar always
+  kept, and artifact paths including each symbol's `ohlcv_<CODE>.csv`. The
+  metrics no longer reach the model only as JSON inside a `stdout` cut to its
+  last 2,000 characters. A missing or corrupt run card omits the summary and
+  leaves the run successful, as does one whose artifacts resolve outside the
+  run directory. When the envelope would exceed the 10,000-character
+  tool-result cap, logs are dropped first, then the preview is thinned, and
+  anything still omitted is named in the result.
+
+- **`read_run_artifact` reads run artifacts as structured pages** (#1647,
+  closes #1645, thanks @shadowinlife). An agent and MCP tool with three
+  modes: `rows` (offset pages of whole records with `next_offset`),
+  `downsample` (equal-stride sample, endpoints kept) and `meta` (columns, row
+  count, size and the run card's sha256 for the file). Aliases (`equity`,
+  `trades`, `metrics`, `positions`, `target_positions`, `ohlcv:<CODE>`,
+  `run_card`) resolve by a fixed map; any other path is served only if the
+  run card's artifact manifest lists it, and paths or symlinks that leave the
+  run directory are refused. Pages fit the same 10,000-character cap the agent
+  and swarm apply, CSVs are scanned without loading the whole table, and
+  zero-padded codes such as `000001` stay strings. Rows shown this way ground a
+  report only while the file is an unchanged engine-written table; a file the
+  model wrote never does.
+
+- **Grounding checks are declared in one registry, and each validation names
+  the checks that fired** (#1628, #1661, #1691, thanks @he-yufeng). Each
+  check has a stable name, its issue codes, a description, a severity and a
+  phase. Fifteen are declared: the identity, answer and declaration checks
+  from these PRs, plus the per-figure role checks (observed, derived,
+  proposed, cited, count) and the price-provenance checks, which a
+  maintainer follow-up registered. Every attempt recorded in
+  `grounding_evidence.json` carries `fired_checks` and `check_findings`,
+  taken from the predicates that actually returned a finding, so role checks
+  that share `numeric_claim_conflict` do not implicate each other.
+  Predicates and their order moved unchanged, so verdicts are the same.
+  `CONTRIBUTING.md` describes how to add a check with its passing and failing
+  answer pair.
+
+- **The session iteration cap is configurable** (#1833, thanks @sambazhu).
+  `VIBE_TRADING_AGENT_MAX_ITERATIONS` sets how many ReAct iterations a session
+  run (Web UI, API) may take before it stops with "reached max iterations".
+  The default stays 50 and values below 1 are rejected. The no-progress
+  budget and spending limits still apply.
+
+### Changed
+
+- **The live runtime scheduler runs on the shared scheduler kernel** (#1899,
+  thanks @shadowinlife). It keeps its public surface, its interval and
+  one-shot job syntax and its sleep-until-the-earliest-deadline wakeups; the
+  mandate gate, kill switch and market-hours layers are unchanged. A second
+  concurrent `stop()` now waits for the first one's teardown instead of
+  returning at once.
+
+- **Broker connector documentation and tests** (#1770, #1793, #1809,
+  closes #1724, thanks @lorenzozanee, @alexwan02 and @he-yufeng). The broker bring-up
+  checklist in `CONTRIBUTING.md` asks for options evidence: write-side
+  argument names and types recorded apart from read shapes, unsupported shapes
+  kept gated, and supported ones tested against mandate caps on premium ×
+  multiplier. The `readonly` field on nine SDK connector configs is documented
+  as what it is: the order methods do not read it, and order access is decided
+  by the connector profile. IBKR's pool reset test no longer depends on test
+  order.
+
+- **Tencent, Eastmoney and AKShare A-share prices move to the multiplicative
+  forward-adjusted basis when they can** (#1551, closes #1541, thanks
+  @he-yufeng). These sources serve dividend-additive qfq series, so returns on
+  them are not total returns. The loaders now also fetch the raw series and,
+  when `qfq - raw` forms valid per-action plateaus, rebuild the series with
+  `(prev_close - dividend) / prev_close` factors and stamp it
+  `split_dividend`. Any inconsistency (misaligned calendars, drifting
+  offsets, implausible dividends, a failed raw fetch) keeps the additive
+  series with its stamp and warning. A window with no corporate action keeps
+  its static stamp, and the series is anchored at the window's end, so
+  absolute levels depend on the requested range while returns do not.
+
+- **mootdx is retired from the default A-share chain and the public canary**
+  (#1730, closes #1729, thanks @he-yufeng). The TDX servers stopped answering
+  mootdx's protocol in 2026-07, and every automatic A-share fetch spent about
+  ten seconds there before falling through. The loader stays registered for
+  explicit `source="mootdx"`. A saved source-order override that still lists
+  it is no longer a permutation of the default chain, so it is ignored with a
+  warning and the default order applies.
+
+- **Every per-loader test suite checks the health lane's OHLCV contract**
+  (#1725, closes #1723, thanks @Jackzigen). `agent/tests/loader_contract.py`
+  holds the column, index, dtype, finiteness and OHLC-ordering checks the
+  loader-health lane applies, and each loader's canonical-frame test calls
+  it, so a drifting source fails its own suite instead of waiting for the
+  weekly run.
+
+- **An MCP tool result reaches the agent once, not up to four times** (#1634,
+  thanks @zeus229). A structured result used to arrive as `data`, an
+  identical `structured_content`, a text block restating it and the joined
+  `text`. Only exact copies of `data` are dropped, and only from what the
+  agent reads; `MCPServerAdapter.call_tool` still returns every surface to
+  programmatic callers, and error or text-only results are unchanged.
+
+- **The system prompt is byte-stable across runs** (#1708, closes #1707,
+  thanks @Jackzigen). The workspace state (the run directory and tool
+  counters) changed the system prompt on every turn and tool call, which
+  invalidated a provider's prefix cache from that point on. The state now
+  rides in the first user message inside an `<agent-state>` envelope, next to
+  `<recalled-memories>`; the token count is the same.
+
+- **`loop.py` is split into modules, first slices** (#1636, #1631, #1662,
+  thanks @Jackzigen, @he-yufeng and @Mikesad). Tool-result helpers moved to
+  `src/agent/tool_results.py`, context compaction and message repair to
+  `src/agent/context_compact.py`, and LLM usage accounting to
+  `src/agent/llm_usage.py`, byte-identical and re-exported from `loop`. Log
+  records from the moved code now come from the `src.agent.tool_results` and
+  `src.agent.llm_usage` loggers. A test that monkeypatches `loop.X` no longer
+  reaches a function that now lives elsewhere; patch the module that holds it.
+
+- **`loop.py` is split into modules, remaining slices** (#1641, #1678, #1791,
+  thanks @Jackzigen). The final-status ladder moved to `run_outcome.py`, the
+  tuning getters and `TOKEN_THRESHOLD` to `tuning.py`, and written-file
+  tracking with its pending-write directive to `write_targets.py`.
+  Maintainer follow-ups moved the tool-call lifecycle (`tool_lifecycle.py`,
+  still logging as `src.agent.loop`), per-turn streaming callbacks
+  (`loop_streaming.py`) and final-answer grounding orchestration
+  (`loop_grounding.py`). `loop.py` went from 3,761 lines at 0.1.16 to 1,628.
+  One stated difference: the `degraded` flag on the end event and result now
+  comes only from success branches, so a run cancelled or stalled between a
+  fallback release and the status decision is no longer marked degraded.
+
+- **Scheduled research, the Brazil data sync and memory consolidation run on
+  one scheduler kernel** (#1893, thanks @shadowinlife). `agent/src/scheduling/`
+  holds the trigger grammar, the next-due arithmetic (pinned by 133 golden
+  vectors recorded before the move) and a tick loop with bounded retry backoff.
+  The scheduled-research executor uses it, and its REST contract is unchanged.
+  The FastAPI lifespan now owns the scheduler, and the unused `cron_service`
+  parameter is gone. The live-trading scheduler was not part of this change.
+  The kernel also adds protected `system:` jobs. They are seeded at startup,
+  a user cannot create an id with that prefix, and REST and CLI refuse to edit
+  or delete one. Both system jobs are opt-in and need
+  `VIBE_TRADING_ENABLE_SCHEDULER=1`:
+  - `system:memory-consolidation` runs daily at 04:00 UTC when
+    `VT_MEMORY_CONSOLIDATION` is on. `VT_MEMORY=on/full` does not turn it on,
+    and it does nothing unless `VT_MEMORY_GC` is also on.
+  - `system:br-data-sync` needs `VIBE_BR_SYNC_ENABLED=1` and replaces
+    `python -m src.br_data daemon`, which now prints a migration notice and
+    exits 0. `VIBE_BR_SYNC_TIME` sets the slot only when the job is first
+    seeded, and the first sync waits for that slot. The ZimaOS sidecar
+    container is gone. Its Compose file leaves both flags off by default
+    (`068ec3bd`; the PR had turned them on).
+
+  Since `068ec3bd`, a source that fails inside the sync fails the attempt, so
+  the scheduler's retry budget applies. Before, the sync was recorded as a
+  success. Before downgrading to a version without system jobs, delete the
+  `system:` rows from `scheduled_research_jobs.json`. Older readers reject
+  those rows and quarantine the whole file.
+
+- **A chat message can be up to 100,000 characters** (#1701, thanks @mminkus).
+  The limit used to be 5,000 characters, while scheduled-run prompts had no
+  limit. A longer message was refused before reaching the model, the Web UI
+  showed only "Failed to send message, please retry", and the 422 response
+  repeated the whole prompt. Since `f6e72428`, the 422 returns a short
+  `message_too_long` body naming the limit, without the prompt. The Web
+  composer checks the length before sending, counting code points as the
+  server does. Goal prompts stay limited to 5,000 characters.
+
+- **Agent chat loads small run previews instead of full runs** (#1853, closes
+  #1852, thanks @alexwan02). `GET /runs/{run_id}/preview` returns only the
+  metrics, the first 1,000 equity points and whether the run deserves a card.
+  Agent chat requests previews for a whole session at once. Before, it fetched
+  each full run one at a time; the PR measured about 70 MB for a session with
+  one backtest card.
+  `GET /runs/{run_id}` now builds and encodes its response off the event loop,
+  so other requests no longer stall; its bytes are unchanged. One run type
+  loses its chat card: a run whose only output was price data that the full
+  response rebuilt online, with no metrics, equity, trades, positions,
+  validation, strategy, price or OHLCV files and no run card.
+
+- **Dependency updates** (#1665, #1666, #1667, #1668, #1692). Python:
+  46 packages in `requirements-lock.txt` moved, including `langchain` 1.4.3,
+  `langchain-core` 1.6.6, `langchain-openai` 1.6.7, `fastapi` 0.142.2,
+  `starlette` 1.7.0, `uvicorn` 0.54.0, `pyjwt` 2.15.1 and `akshare` 1.19.1.
+  The loader-health environment uses `baostock` 0.9.4. Frontend: React 19.3,
+  Vite 8.3, react-router 8.4 and Vitest 5.0.2, with `@vitest/coverage-v8`
+  moved to 5.0.2 to match.
+  CI: the Docker build actions, `cloudflare/wrangler-action` 4.1.3 and
+  `actions/upload-artifact` 7.0.1. `uuid-utils` stays at 0.17.0 because 1.0.0
+  (#1670, not merged) conflicts with the `uuid-utils<1.0` requirement of
+  `langchain-core` and `langsmith`.
+
+- **Docker image pins move past known advisories**. `requirements-lock.txt`
+  and `requirements-channels-lock.txt`, which the Docker image installs with
+  `--require-hashes`, now pin `aiohttp` 3.14.5, `certifi` 2026.10.19,
+  `urllib3` 2.8.0, `multidict` 6.9.1 and `pillow` 13.0.0 (`ccxt` 4.5.89
+  comes along so the newer `certifi` resolves). A plain `pip install`
+  already resolved newer releases. `mcp` stays below 1.30 for the IBKR OAuth
+  constraint, so CVE-2026-59951 (Streamable HTTP sessions are never
+  reclaimed) remains open for `vibe-trading-mcp --transport http`.
+
+- **For contributors running the suite: symlink tests skip where symlinks are
+  unavailable** (#1803, thanks @hunters1011-ctrl). Three positions/sectors API
+  tests used to fail on Windows hosts that refuse to create symlinks
+  (WinError 1314). They now skip there and still run everywhere else.
+
+- **Channel edits to live-read settings apply without reconnecting** (#1737,
+  closes #1734 and #1736, thanks @shadowinlife). Each adapter declares the
+  settings it reads per message (allowlists, emoji and similar); an edit that
+  changes only those refreshes the running channel in place. The comparison
+  uses validated values, so a full Web form echoing unchanged connection
+  fields does not count as an edit. A refresh copies only the declared fields
+  and keeps connection state resolved at login, such as WeChat's authenticated
+  server address, and Signal refreshes its writable `dm` / `group` policies
+  rather than its computed allowlist. The Web result now says whether the
+  channel was refreshed, reconnected, restarted with the others, or will pick
+  the change up when channels start, in every UI locale. When a hot swap
+  degrades to a full reset, the reason is returned with URL userinfo and old
+  and new secret values removed, and a best-effort notice goes to the changed
+  channel's last chat.
+
+- **Channel status records runtime failures** (#1738, closes #1735, thanks
+  @shadowinlife). A failure to start a channel, to send after the last retry,
+  or to stop the old adapter during a reload is recorded on that channel's
+  status entry as a one-line `error` of at most 200 characters with URL
+  userinfo removed, plus `error_context` (`start`, `send` or `reload_stop`)
+  and `error_at`. The traceback stays in the log. A successful rebuild clears
+  it.
+
+- **New channels are checked against the authoring contract** (#1630, thanks
+  @he-yufeng). A test walks every discovered channel and fails when one leaves
+  a `BaseChannel` abstract unimplemented, has a scalar config key without a
+  field hint, or has a credential-shaped key that would reach the browser
+  unmasked. `CONTRIBUTING.md` gains an "Adding a Channel" recipe.
+
+- **Web UI navigation is grouped and explains each page**. The sidebar groups
+  pages into everyday research, specialized analysis and automation & setup,
+  with plainer names ("Research assistant", "Backtest reports", "Trading
+  status"). Every page except the chat has a collapsible "How to use" panel,
+  and the welcome screen offers three editable starter tasks (research a
+  stock, test a strategy, review holdings). Math and code highlighting load
+  only for completed answers. API requests time out after 120 seconds
+  (`VITE_API_TIMEOUT_MS` at build time; 15 seconds for the session list) and
+  say whether a timed-out write may still be processing; writes are never
+  retried automatically. Session-list, rename and delete failures are shown
+  instead of ignored.
+
+- **Analysis pages keep their work across navigation**. Alpha Zoo, Correlation
+  and Options Lab keep their inputs for the browser session. An Alpha Zoo
+  evaluation runs as a server job the page can reconnect to after leaving or
+  reloading; a resubmitted request with the same id returns the existing job
+  rather than starting another, and a job lost to a server restart says so.
+  Before running, the page states each universe's data requirements: CSI 300
+  needs a Tushare token and permissions, S&P 500 uses public data, and
+  BTC-USDT is refused as a single asset.
+
+- **The runtime page lists connectors by status** (#1845, thanks @alexwan02).
+  Connected connectors come first, then those needing attention, then the
+  rest; peers keep the backend's alphabetical order, so the 15-second poll
+  never reshuffles them. Only the order changes. The page header no longer
+  calls the page read-only, since model cadence and spending limits can be
+  edited there while a runner is stopped.
+
+- **Report rendering dependencies** (#1680, #1683, #1709, thanks @zeus229 and
+  @he-yufeng). The base install now requires `mistune`, `nh3` (previously only
+  in extras), `pypdf`, `reportlab`, `arabic-reshaper` and `python-bidi`. The
+  Docker image adds `fonts-noto-core` and `fonts-noto-cjk` so WeasyPrint
+  renders CJK and Arabic reports.
+
+- **Update the Windows desktop PyJWT pin to 2.15.1**. This matches the main
+  lock and includes the fix for
+  [GHSA-ffc3-869f-jxw9](https://github.com/jpadilla/pyjwt/security/advisories/GHSA-ffc3-869f-jxw9).
+  Artifact hashes are verified against PyPI; other Windows dependency pins
+  stay unchanged.
+
+### Fixed
+
+#### The grounding gate
+
+- **Indexed and container field refs resolve, and a miss lists the refs that
+  would work** (#1633, thanks @zeus229). `a.0.b` and `a[0].b` now name the
+  same evidence element; an unindexed field still selects none. When a
+  `call::field` ref matches nothing, the correction lists exact
+  `call_id::path[i]` refs, value matches first. A ref naming a container lists
+  its numeric descendants that hold the figure's value, and a tool name shared
+  by several calls ranks those calls by value match, most recent first.
+  These are hints only: no hint authorizes a value, and a maintainer
+  follow-up keeps them to the figure's own instrument and to the element an
+  indexed ref names.
+
+- **A ref naming no call of the session gets real refs to copy** (#1638,
+  thanks @zeus229). A `scope::field` ref whose scope names no call, tool or
+  run stays rejected, now with the `unknown_call_id` reason and up to five
+  exact `call_id::field` candidates. The system prompt tells the model to copy
+  `tool_call_id` verbatim instead of inventing a short alias. A maintainer
+  follow-up applies the same instrument and figure-kind limits a real ref
+  has, so a candidate is never one that would be refused.
+
+- **A correction keeps the figures that already passed** (#1702, thanks
+  @he-yufeng). The correction prompt listed only what failed, and a model
+  facing 65 issues rewrote whole numeric sections as prose, deleting valid
+  Risk X-Ray values and a benchmark table that had no issue. It now also
+  lists up to 24 measured figures that checked clean and tells the model to
+  keep them as written. A value that fails anywhere in the draft is not
+  listed, and bare integers never are. When more than 24 issues exist, the
+  prompt says how many are not shown and that unlisted figures are not
+  assumed to pass.
+
+- **Only the engine's own output grounds a backtest report** (#1685, thanks
+  @cgycorey). The active run's `metrics.csv` could credit an earlier run's
+  Sharpe to the current call; that archived copy now counts only when its
+  manifest names the full directory the call declared and the exact call id,
+  and a model-written manifest is ignored. A `metrics.csv` or `metrics.json`
+  the model wrote is no longer engine evidence, a date cell with an explicit
+  year must match that year, and a resolver step that failed, was refused or
+  came back empty no longer erases a locked or conflicting identity.
+
+- **A derived figure's ref must name evidence that exists** (#1835, #1837,
+  thanks @zeus229). A comma- or semicolon-separated ref is resolved member by
+  member, and an empty or unknown member fails with `no_evidence` instead of
+  falling back to every value in the session. A single ref that names no call,
+  tool, field, artifact or observed symbol is refused the same way rather
+  than borrowing a coincidentally equal value. Unattributed multi-symbol
+  arithmetic keeps its `no_symbol` diagnostic.
+
+- **Derived notes after a label parse, and process metadata is not evidence**
+  (#1728, #1767, thanks @zeus229). A note such as `scenario result: 125 /
+  10000 * 100` was not evaluable because only the full-width `：` was a
+  separator; the ASCII `:` now is too. Top-level `exit_code`, `returncode`,
+  `elapsed_seconds` and `duration_seconds` of a code-running tool's result are
+  no longer recorded as observed values, so a backtest's runtime cannot
+  ground a figure.
+
+- **Percent-named fields are read as percentage points** (#1823, closes #1820,
+  thanks @he-yufeng). A-share rows carry `changepercent` values that are
+  already points, so `0.52 - 1.41` refused the correct "-0.89%" and passed
+  "-89%". When every data operand anchors only to fields named `percent`,
+  `pct` or ending in `%`, the result is read in points; an operand whose
+  value also appears under a plain field keeps the fraction reading. A
+  maintainer follow-up converts the operands before evaluating, so ratios and
+  compound factors of two point values come out right.
+
+- **Every data operand of a derived figure must be observed.** Only added or
+  subtracted terms were checked, so a numerator or denominator the session
+  never fetched could pass. A chosen multiplier or divisor (a discount factor,
+  a weight) now needs a `count` declaration and its value and label on the
+  same visible line of the answer. Literal 1 and square or cube exponents are
+  structural, and an explicit trailing `*100` on a percent claim is read as a
+  unit conversion without exempting any other operand.
+
+- **Instrument identity survives matrices and ticker-keyed results** (#1850,
+  #1851, thanks @zeus229). In a square Markdown matrix with an empty top-left
+  header (a correlation table), each row's symbol is taken from its first
+  cell, bold removed, when the row and column symbol sets are complete,
+  unique and equal; anything else stays unscoped. A result keyed by
+  instrument (`risk_contribution_pct.ABC.US`) keeps each value's instrument
+  and exact ref, so the same number cannot ground a claim about another
+  instrument. List-indexed scalars such as `positions[0].contribution_pct`
+  keep their indexed-ref meaning.
+
+- **A figure that names its currency must match evidence in that currency**
+  (#1905, thanks @ThreeTima). An ISO code or an unambiguous mark (`€`, `£`,
+  `₩`, `₹`, 人民币, 美元, 円) fixes the figure's currency for observed,
+  derived and proposed checks, and SEC XBRL amounts carry their declared unit
+  (CHF, NZD, BRL, ARS and VND included). A scaled amount such as `1.2B USD`
+  keeps its code. Bare `$` and `¥` stay ambiguous and match any currency.
+
+#### Agent loop, providers and swarm
+
+- **A restored read-only result stays visible until the model has seen it**
+  (#1635, thanks @zeus229). Compaction could clear a result replayed from
+  the run cache before the next model request carried it, so the restore was
+  wasted. Replayed results are now held back from microcompaction, text
+  collapse and the summary layer until one successful model request has
+  included them.
+
+- **Writing a strategy file no longer fails with `AttributeError`** (#1673,
+  closes #1672, thanks @tomaszkubiak-courses). After the model-provenance
+  writer landed, every run that wrote a strategy file crashed reading
+  `_active_model_id`. The loop now sets it from the runtime snapshot and,
+  before each batch of tool calls, from the provider-reported model, falling
+  back to the configured one. This regression never reached a release.
+
+- **Codex tools may omit optional arguments** (#1785, thanks @zeus229). The
+  Codex Responses endpoint treats a tool without an explicit `strict` as
+  strict, so the model filled every optional property, sending `""` for an
+  optional string. Tool schemas now go out with `strict: false`.
+
+- **Skills load and save under the names they advertise** (#1797, closes
+  #1795; #1858, closes #1855; thanks @Shizoqua). Two section headings that
+  differ only by case could not be loaded, and the path the error suggested
+  repeated the error; an exact-case match is now tried first. Saving a skill
+  whose own frontmatter carried another name left it unreachable under its
+  slug and let each lookup append a duplicate; the `name:` line is now
+  rewritten to the slug on every save, and a fallback read never duplicates
+  a loaded skill.
+
+- **Research-goal evidence keeps its provenance inside the run** (#1688;
+  #1895, closes #1894; thanks @zeus229 and @Shizoqua). The goal tool and
+  skill tell the model to copy a result's `tool_call_id` verbatim and never
+  to use a ledger `evidence_id` (`ev_...`) as a grounding ref;
+  `tool_call_id` stays optional for manual evidence. An absolute artifact
+  path outside the current run directory is now rejected, as a relative
+  escape already was, instead of being verified against another run's file.
+
+- **Each swarm task gets its own artifact directory** (#1455, thanks
+  @Shizoqua). Artifacts were keyed by agent alone, so when one agent ran
+  several tasks, a later task could read an earlier task's `report.md` back
+  as its own output. They now live under `artifacts/<agent>/<task>/`, and
+  earlier tasks' reports, summaries and message logs stay in place;
+  sequential and parallel runs are covered through the real runtime.
+
+- **Swarm presets take their variables from the prompt** (#1674, thanks
+  @Mikesad). Seven presets ran on fixed defaults whatever was asked: a copper
+  request ran every commodity worker on gold, a bearish options request used
+  a neutral view, and crypto, factor, event, fund and macro prompts were
+  replaced the same way. These variables are now extracted from the prompt,
+  an explicit duration ("3 months", "两周") is used as stated, and
+  `run_swarm` accepts a `variables` object whose values override extraction.
+  Prompts that match nothing keep the old defaults.
+
+- **A half-written last line no longer breaks a swarm event stream** (#1908,
+  thanks @rudycelekli). `read_events` raised on an `events.jsonl` whose final
+  line was still being appended or was cut short by a crash, which killed the
+  SSE stream and run recovery. An unterminated last line that is not yet
+  valid JSON, including a cut UTF-8 sequence, is skipped until the next poll;
+  a complete invalid line still raises.
+
+#### Market data and loaders
+
+- **`get_northbound_flow` stops returning an empty success off a dead feed**
+  (#1484, closes #1481, thanks @shadowinlife). Eastmoney's northbound
+  endpoint still answers but has carried no net flow since HKEX's 2024
+  disclosure change. When both its realtime and history sides are empty or
+  all zero, the tool now uses the Tushare fallback or returns `ok: false`
+  naming both failures. The fallback no longer multiplies every row by 100:
+  values stay in million CNY, rows before 2024-08-19 are net buy, and later
+  rows, which are turnover, come back under `turnover_*` fields with their
+  net-flow fields `null`.
+
+- **Daily fund-flow fallback covers empty responses and labels its source**
+  (#1954). An A-share daily request now tries Tushare when Eastmoney returns
+  no usable rows, not only when the request or symbol resolution fails. Each
+  symbol names the provider that served it, and a batch served by both
+  reports `mixed`. Tushare's `main` is now large plus super-large net flow;
+  `net_mf_amount`, which is total net flow, is returned separately as
+  `net_total`. A missing or non-finite buy or sell amount stays `null`
+  instead of becoming zero, and the result states its methodology because
+  provider bucket definitions differ. Minute requests never fall back to
+  daily data, and a missing token or permission remains a per-symbol error.
+
+- **A blocked Stooq costs one request** (#1637, #1640, closes #1648, thanks
+  @cgycorey). Once Stooq refuses the client, the loader stops requesting
+  further symbols instead of only silencing its warning, so the fallback
+  chain moves on at once. The refusal is detected from the response before
+  parsing: the proof-of-work page, a 403 or 429, or the plain-text daily-hits
+  message. Concurrent callers serialize on the check, and the latch lasts 300
+  seconds instead of the life of the process. A 5xx is still a per-symbol
+  failure and `N/D` is still "no data".
+
+- **FMP and Tiingo series never mix adjusted and raw prices** (#1684, #1689,
+  thanks @cgycorey and @he-yufeng). The price basis is decided once per
+  response from bars that can actually be emitted. A bar whose adjusted
+  prices are missing or invalid is dropped, with a warning, rather than
+  filled with raw prices beside adjusted neighbours. Bars with unparseable
+  dates or non-positive prices are dropped too. Each frame carries its actual
+  `adjustment` stamp, the loader cache keeps it (the cache format version
+  was raised, so older entries are refetched), and tests pin the stamp on both paths and through a
+  warm cache hit.
+
+- **Local data files load every bar they should** (#1651, #1825, #1819,
+  thanks @rudycelekli and @he-yufeng). The end-date filter is half-open at the
+  next midnight, so bars stamped in the last fractional second of the end day
+  are no longer dropped. A Parquet file whose dates live on a
+  `DatetimeIndex` loads with or without a configured `date_format`; before,
+  setting a format silently dropped every bar. An explicitly mapped date
+  column takes precedence over the index, which also removes a crash when
+  both share a name.
+
+- **The opt-in loader cache follows changes to local sources** (#1650,
+  #1747, #1879, thanks @rudycelekli). Local cache entries are keyed by the
+  file, query, date format and column mapping as well as the range, so
+  repointing a symbol no longer serves the previous source's bars. Correcting
+  or deleting a CSV, Parquet or DuckDB file (including a DuckDB WAL change)
+  refreshes the entry on the next fetch, reusing the same cache paths. Cache
+  metadata that is missing, malformed or unusable is a cache miss that the
+  loader repairs, not an exception. An edit that preserves every observed
+  filesystem identity field is still not detected.
+
+- **The Longbridge loader works on SDK 4.0 and later** (#1805, #1847, thanks
+  @alexwan02). SDK 4 refuses `Config(app_key, app_secret, access_token)`, so
+  every Longbridge fetch failed and auto mode fell through even with valid
+  credentials. The loader and the trading connector now share one helper that
+  uses `Config.from_apikey` when the SDK has it, and the initialization error
+  names the exception type. One loader test covers both SDK shapes through
+  windowing and caching.
+
+- **BaoStock 0.9.4 connections keep their timeout.** The bounded connection
+  wrapper accepts the new API-key argument and routes `bs-` keys to the VIP
+  host while staying compatible with 0.9.3.
+
+- **Data tools honour their row limits** (#1676, #1927, thanks @cgycorey and
+  @rudycelekli). `get_macro_series` reports `observations_available`,
+  `truncated`, the effective `limit` and a hint when it caps a series, and
+  trims whole observations to fit the tool-result budget so `count` is what
+  was delivered. A FRED response covering only part of the requested window
+  is an error. `get_fund_nav` clamps an explicit `limit=0` to one row instead
+  of returning the 2,000-row default.
+
+- **Symbol suffixes resolve to the right exchange** (#1907, #1914, thanks
+  @rudycelekli). `get_etf_holdings` treats Yahoo's `510050.SS` like
+  `510050.SH` instead of sending it down the US/SEC path. Symbol search labels
+  Beijing codes (`920xxx` and legacy `4xxxxx` / `8xxxxx`) `.BJ` instead of
+  `.SZ`, and the Tushare fallback no longer maps `920xxx` to `.SH`.
+
+- **RSSHub event enrichment keeps calendar dates and share classes** (#1829,
+  #1830, thanks @rudycelekli). A timezone-aware `as_of` no longer raises, and
+  aware daily bar labels keep their displayed date instead of shifting to the
+  UTC day. Configured `bare` and `exchange_prefix` routes split only the final
+  venue suffix, so `BRK.B.US` requests `BRK.B` rather than `BRK`. Intraday
+  publication instants are not converted between markets.
+
+- **SEC quarterly statements derive fiscal Q4 only for currency flows**
+  (#1917, thanks @rudycelekli). `period="quarter"` built Q4 as FY minus three
+  quarters for every concept, which produced negative weighted-average share
+  counts and EPS figures no filing reports. Q4 is now derived only for
+  three-letter currency units that match across all four periods; share
+  counts, per-share values and dimensionless ratios are left out of the
+  derived row.
+
+- **Correlation matches the data it compares** (#1710, #1711, #1746, #1933,
+  closes #1932, thanks @rudycelekli, @cgycorey and @Jackzigen). Daily
+  histories from sources in different time zones are joined on each source's
+  local calendar date in both correlation and regime analysis. Equity tickers
+  that end like a quote asset (`ABNB`) are no longer routed to crypto
+  sources. `700`, `0700`, `700.HK` and `00700.HK` are one instrument for the
+  duplicate-asset guard, while five-digit counters such as `80700.HK` stay
+  distinct. A pair whose correlation is undefined (a zero-variance leg) is
+  `null` from `/correlation` and `/correlation/analysis`, not 0.0, and the
+  heatmap shows a muted dash with an explanation.
+
+- **Correlation analysis reports per-symbol coverage.**
+  `/correlation/analysis` computes the matrix and the optional regime timeline
+  from one price snapshot, rejects two spellings of the same asset before any
+  fetch, and returns which symbols are missing with every source tried and why
+  it failed. The fetch honours saved source-order overrides and tries Yahoo
+  first for `^`, `=F` and `=X` identifiers.
+
+#### Backtest runner, engines and metrics
+
+- **Profit factor is undefined when no trade lost** (#1602, thanks
+  @davidalmeida90). `profit_factor` and `profit_loss_ratio` were 0.0 for a
+  run whose trades all won, which ranked it below every run with a loss.
+  Both are now `None` (an empty `metrics.csv` cell, `null` in JSON) in the
+  daily metrics and the options engine. A run with no closed trade, or only
+  losing trades, keeps 0.0.
+
+- **Sortino uses zero-target downside deviation over every period** (#1693,
+  #1727, thanks @MetaAviator). The denominator was the sample standard
+  deviation of the losing returns, so equal losses looked riskless and a
+  single loss left the ratio huge or undefined. It is now the root mean square
+  of negative returns divided by the full return count, in the shared metrics
+  and in the options engine.
+
+- **The first bar's result counts against initial capital everywhere**
+  (#1750, #1818, #1844, closes #1749 and #1843, thanks @he-yufeng and
+  @DrDLyuan). The options engine's drawdown peak and the `drawdown` column in
+  `artifacts/equity.csv` start from initial cash, so a first-bar loss shows up
+  and the column agrees with `max_drawdown`. Per-bar returns measure the first
+  bar from initial cash too, so Sharpe and Sortino see it, the `ret` column
+  compounds to `total_return`, and bootstrap validation uses the same series.
+
+- **Calmar stays finite and zero-bar trades count in holding periods**
+  (#1901, #1876, thanks @Bortlesboat and @MetaAviator). Calmar falls back to
+  0.0 when an overflowed annual return makes it non-finite, like the other
+  ratios; `annual_return` itself is unchanged. Completed same-bar trades now
+  count in the average holding period. `avg_holding_days` remains the
+  engine's bar-based measure, not calendar days.
+
+- **Options legs are priced on the run's bar cadence** (#1753, thanks
+  @remote-controlled-man). Historical volatility was always annualised at 252
+  bars a year, so a crypto or hourly options run priced its legs on one
+  cadence and reported metrics on another. Pricing now receives the run's
+  factor. A cross-market run estimates each bar's cadence from the intervals
+  observed up to that bar, so extending a run cannot change earlier option
+  prices.
+
+- **`trades.csv` reports the opening fill and keeps break-even exits**
+  (#1779, #1780, thanks @MetaAviator and @alexwan02). Each entry and exit row
+  carries an `event` column. The entry row shows the price and size of the
+  fill that opened the position, not the weighted cost after later scale-ins;
+  those stay in `fills.jsonl`. Validation and run-artifact readers pick exits
+  by the event column, so zero-PnL exits are no longer dropped. Unmarked
+  older files keep the previous convention.
+
+- **Benchmarks follow the symbol's exchange and the run's source** (#1712,
+  #1781, thanks @rudycelekli and @alexwan02). `.SH`, `.SS`, `.SZ` and `.BJ`
+  symbols take the CSI 300 benchmark whatever the source; local, BaoStock and
+  yfinance runs could fall through to SPY. A source that forbids network
+  fallback, `local` included, fetches its benchmark through that same loader.
+  When the declared benchmark cannot be resolved, the run card says that
+  benchmark-relative metrics were graded against the equal-weight basket.
+
+- **Crypto spellings get crypto rules** (#1740, #1748, #1861, #1862, #1864,
+  closes #1751 and #1863, thanks @he-yufeng, @rudycelekli and @Jackzigen).
+  `BTC/USD`, `ETH/USD` and four other known slash-USD pairs are classified
+  before the forex rule, in backtests, correlation and Agent/MCP data routing,
+  while `XAU/USD` stays forex. Digit-leading bases (`1INCH-USDT`,
+  `1000PEPE-USDT`), separated USDC and BUSD quotes (`BTC-USDC`, `ETH/USDC`)
+  and `BASE-USDT-PERP` perpetuals no longer fall through to A-share rules,
+  where board-lot rounding rejected every order. Signal alignment uses the
+  same classification. The same CI repair reads the alpha-readiness Tushare
+  token through the config layer and treats a whitespace-only token as unset.
+
+- **A-share price limits cover every board's codes** (#1913, thanks
+  @rudycelekli). ChiNext `301xxx` and STAR `689xxx` codes get the ±20% band,
+  and Beijing `920xxx` and legacy `4xxxxx` / `8xxxxx` codes get ±30%; they had
+  fallen back to ±10% and blocked legal fills. ST status and listing-day
+  exemptions still cannot be inferred from a code.
+
+- **Contract specs for Yahoo forex pairs and ICE softs** (#1930, #1944,
+  thanks @wavebyrd). `EURUSD=X`-style symbols, and `.FX` in any case, are
+  normalised before the spread and swap tables are read, so they stop paying
+  the default 2-pip spread and swap. Coffee, sugar and cotton multipliers are
+  dollars per cent (375, 1120, 500), like the grains; they were full contract
+  pounds, a hundred times too large.
+
+- **Backtests warn about config keys that nothing reads** (#1935, #1947,
+  thanks @he-yufeng and @rudycelekli). A key no reader on the backtest path
+  recognises (`initial_capital` instead of `initial_cash`) adds a run-card
+  warning with a did-you-mean hint. A key that only another engine reads,
+  such as `commission_rate` on a crypto run that uses `maker_rate` and
+  `taker_rate`, is named as unused by the selected engine, including the
+  sub-engines of a mixed-market run. Runs still proceed. This resolves #1934.
+
+#### Validation and run artifacts
+
+- **Monte Carlo path metrics start from initial capital** (#1664, thanks
+  @MetaAviator). Actual and shuffled paths both begin at the starting
+  capital, so the first trade's return and loss enter Sharpe and the
+  drawdown high-water mark. Monte Carlo statistics and p-values change
+  accordingly; the chart payload is unchanged.
+
+- **Validation stops inventing returns across missing equity** (#1754,
+  thanks @MetaAviator). Bootstrap and walk-forward returns use only observed
+  adjacent equity values, so a gap no longer becomes a flat return plus one
+  jump. A walk-forward window without observed endpoints or any adjacent
+  return reports an error instead of a zero score.
+
+- **Standalone revalidation reproduces the original run's settings**
+  (#1815, #1915, #1842, thanks @MetaAviator and @rudycelekli).
+  `python -m backtest.validation <run_dir>` uses the saved Monte Carlo,
+  bootstrap and walk-forward parameters and seeds instead of defaults, still
+  running all three tools. The runner records its annualisation factor in
+  `run_card.json` and revalidation reuses it, including `null` for calendar
+  annualisation; older cards reconstruct it from the config and equity
+  timestamps. Reloaded trades recover their entry dates from marked
+  entry/exit pairs, so walk-forward windows group them as the original run
+  did.
+
+#### Quant Library and analysis tools
+
+- **Brinson attribution reads the book, not its liquidation** (#1782, thanks
+  @alexwan02). A run closes every position on its last bar, so the final
+  `positions.csv` row is all zeros. When it is, attribution uses the row
+  before it and the report notes that row's timestamp. It steps back only
+  one row: a book already flat before the close is still reported as flat.
+
+- **Attribution annualises with the run's recorded rate** (#1948, thanks
+  @rudycelekli). When the run card records `annualisation.bars_per_year`,
+  attribution uses it instead of re-deriving the rate from the requested
+  interval, which disagreed for crypto's 365-day year and any run whose
+  served bar spacing differed from the request.
+
+- **Attribution inputs and Carino linking** (#1659, #1943, thanks
+  @rudycelekli). `brinson_fachler` and `carino_factor` reject non-finite
+  weights, returns and tolerances by name instead of returning NaN effects.
+  Carino's near-coincidence branch now compares the two returns relative to
+  the remaining wealth. Two returns close to -100% can differ by a tiny
+  absolute amount while their wealth relatives differ severalfold, and
+  those used to take the limit branch.
+
+- **VaR backtests no longer join observations across a gap** (#1658, thanks
+  @rudycelekli). A pair dropped for a non-finite return or forecast still
+  leaves the coverage counts, and now also breaks the Christoffersen
+  independence transitions. The breaches either side of it are no longer
+  counted as consecutive days.
+
+- **Implied volatility meets its price tolerance** (#1657, thanks
+  @rudycelekli). The bracketing fallback passed `tol`, a price tolerance, to
+  `brentq` as a volatility tolerance. It now solves tightly and returns NaN
+  unless the repriced option is within `tol` of the market price, the same
+  check the Newton path applies.
+
+- **Turnover-aware optimiser and min-weight floor** (#1652, #1653, #1885,
+  thanks @rudycelekli). Turnover is measured on signed holdings: reversing a
+  50% long into a 50% short counts 0.5, both the close and the reopen.
+  Allocations kept without optimisation (all cash, short history, a failed
+  fit) now update the prior holdings the next penalty is measured against.
+  A single-asset book is checked against its per-name and group caps and
+  raises when the allocation exceeds them or is not finite. When a
+  `min_weight` floor cannot be funded by the names above it, the date falls
+  back to equal weights over the active names, keeping their signs and gross
+  exposure, instead of pushing a funding name through zero.
+
+- **Risk X-ray returns and downside deviation** (#1717, #1875, thanks
+  @rudycelekli). Returns are computed per symbol before incomplete dates are
+  dropped, so a missing close no longer becomes a multi-bar move booked as
+  one period. Downside deviation is the zero-target root mean square over all
+  bars, as the backtest's Sortino computes it. The standard deviation of the
+  losing bars alone read zero for a book that lost 1% on every losing bar.
+
+- **Missing observations stay missing in time-series and validation helpers**
+  (#1713, #1714, #1715, thanks @rudycelekli). `fit_ornstein_uhlenbeck` builds
+  lag pairs before dropping missing values, so a gap is no longer fitted as a
+  one-step transition. `purged_walk_forward_splits` skips a fold whose
+  training set purging has emptied, as its contract states. Regime edge
+  density stays unknown on a bar where any pair's correlation is undefined
+  (a constant or missing series) instead of counting that pair as no edge.
+
+- **Grouped purged K-fold purges groups whose labels reach the test block**
+  (#1700, thanks @Shizoqua). `group_purged_kfold_splits` takes
+  `label_end_times`. An earlier group whose labels resolve inside the test
+  block is purged, as is a later group inside the test labels' horizon, and
+  the embargo starts after the furthest test label ends. The finishing commit
+  made the argument keyword-only, so existing positional calls keep their
+  meaning. It also requires contiguous, chronological groups when the
+  argument is given. Without it, only the embargo applies, as before.
+
+- **Event-study fitting stays before the event** (#1920, thanks
+  @rudycelekli). For an event window that opens after the event, for example
+  `(1, 5)`, the estimation window used to end at the window's start and so
+  took in the event day. With `estimation_gap=0` it also took in the days in
+  between. It now ends before both the event and the window, for every
+  normal-return model.
+
+- **Credit, stochastic-volatility and factor-model inputs** (#1716, #1718,
+  #1719, #1928, thanks @rudycelekli). `cds_price` keeps premium dates on the
+  requested frequency and prices a final stub for a fractional maturity.
+  Before, it spread the periods evenly over the tenor.
+  `portfolio_style_exposure` drops an asset with any missing factor exposure
+  and reports its weight as `unmatched_weight`, instead of summing NaN into a
+  zero exposure. `heston_price` rejects non-finite parameters and a
+  nonpositive integration limit before integrating.
+  `factor_risk_decomposition` rejects a specific variance below -1e-8 instead
+  of clipping it to zero idiosyncratic risk.
+
+- **Non-finite bond and Sharpe-summary inputs are refused by name** (#1824,
+  #1821, #1822, thanks @he-yufeng and @rudycelekli). An infinite coupon
+  frequency used to price any bullet bond near par, and an on-coupon-date
+  shortcut in `accrued_interest` turned a NaN face into 0.0. `ytm_solve`
+  checks its price and bracket, `key_rate_duration` its tenors and `dv01` its
+  par amount. `probabilistic_sharpe_ratio` checks all five of its inputs; a
+  NaN benchmark used to come back as NaN "confidence". `expected_maximum_sharpe`
+  refuses NaN or infinite trial counts. #1824 supersedes the narrower reports
+  in #1821 and #1822.
+
+- **Fund math and cash-flow ingestion refuse ambiguous inputs** (#1732,
+  #1739, #1919, thanks @he-yufeng, @Shizoqua and @rudycelekli).
+  `american_waterfall` refuses a bare `as_of` date, which it used to ignore
+  silently; per-deal dates are a mapping. A NaN preferred rate used to hand
+  every profit dollar to the LP as preferred return, and the result still
+  reconciled. Hurdle and waterfall amounts must now be finite. Cash-flow and
+  entity-panel ingestion refuse a single dot followed by exactly three digits
+  (`12.000` is 12 in a US export and 12000 in a European one) unless
+  `decimal_separator` is given. Scientific notation such as `1.2e5` is still
+  accepted.
+
+- **Drawdown duration and three-statement tolerance** (#1784, #1786, thanks
+  @rudycelekli and @remote-controlled-man). `max_drawdown_analysis` dates the
+  peak at the latest visit to the high-water mark before the trough, so
+  revisiting a peak starts a new underwater period. `project_three_statement`
+  applies the caller's `balance_tolerance` inside each projected period too;
+  a widened tolerance used to fail there at the module default.
+
+- **Portfolio-weight and copula numerics** (#1694, #1695, thanks
+  @rudycelekli). Inverse-variance weights no longer overflow on very small
+  positive variances. Inverse-variance weights and HRP reject a non-finite
+  diagonal, and HRP now checks a single-asset matrix as well. A Gaussian
+  copula fitted from a Kendall's tau that rounds to correlation ±1 is nudged
+  back inside the open interval, and its CDF accepts the
+  near-singular covariance.
+
+- **`quantlib_call`, VPIN and options-payoff results** (#1826, #1836, #1897,
+  thanks @rudycelekli). The 5,000-value result budget is enforced while
+  encoding. Before, a long series past the budget still emitted one
+  `<truncated>` string per remaining element. VPIN completes a bucket at a
+  relative tolerance, so scaling volume units no longer changes which buckets
+  count as full. `options_payoff` returns an error envelope when extreme
+  inputs overflow to infinity instead of raising.
+
+- **Report audit keeps the sign of a value** (#1663, #1654, thanks
+  @he-yufeng and @rudycelekli). Accounting parentheses, ASCII or full-width,
+  are negative: `(25.3)亿` is read as -25.3 亿 with its unit, where it used
+  to read as +25.3 with no unit. `-25M`, `−25M`, `-$25M` and `$-25M` keep
+  their minus sign, and `(-25)` is still a negative. In prose a bracketed number
+  without a unit or currency, such as `(2024)`, is skipped as a year.
+  Mismatched brackets, a unit both inside and outside, and non-finite or
+  larger-than-1e15 values are rejected. Reported in #1660.
+
+- **Financial-rigor checks stop reading undefined as agreement** (#1883,
+  #1906, #1921, thanks @rudycelekli). A zero reported market cap matches
+  only a zero product, and against a zero cross-source median only an exact
+  zero agrees. Either way the percent deviation is `null`. A negative median
+  is compared on its magnitude. Before, these read as a 0% deviation. An
+  explicit `tolerance_pct=0` or `years=0` is honoured instead of falling
+  back to 2% and 3 years. Three-scenario upside is `null` at a nonpositive
+  price, where it used to report 0% ("fairly valued"), and negative `years`
+  is an error.
+
+- **Swing-based skill signals no longer fire before the swing is known**
+  (#1873, thanks @rudycelekli). The bundled Elliott-wave and harmonic example
+  engines stamped a signal on the swing bar itself, which is only confirmed
+  `swing_window` bars later. They now replay the swings in order and stamp
+  each signal on its confirmation bar. The optional `pyharmonics` path is
+  unchanged.
+
+- **Pattern tool extrema and arguments** (#1882, #1923, thanks
+  @rudycelekli). A flat top or bottom spanning adjacent bars is one extremum,
+  reported at its first bar. A missing `run_dir`, a list of patterns, a null
+  or non-integer `window` now get a JSON error or their default instead of
+  raising out of the tool.
+
+- **Shadow-account RSI uses Wilder's seeded smoothing** (#1457, thanks
+  @Shizoqua). The first average is the simple mean of the first 14 gains or
+  losses, and the recursion runs from there. The extractor and the scanner
+  share one implementation, so the RSI bounds a profile extracts are the ones
+  the scanner tests.
+
+- **Small-price indicators keep their digits** (#1925, thanks @rudycelekli).
+  MACD and Bollinger values were rounded to 4 and 2 decimals, so a 1.2e-5
+  crypto price came back as zeros. Each nonzero value now keeps at least four
+  significant digits, including a small component next to a larger one;
+  ordinary prices round as before.
+
+- **Hypothesis search and backtest links** (#1720, #1902, thanks @Shizoqua).
+  A search with `limit=0` returns nothing instead of one record, and the
+  `link_backtest` tool forwards its optional `validation` results
+  (walk-forward, Monte Carlo, bootstrap) to the registry instead of dropping
+  them.
+
+#### Alpha Zoo, factors and alpha bench
+
+- **Fundamental factors no longer see after-close filings a bar early**
+  (#1794, thanks @Jackzigen). SEC filings carry only a date and can arrive
+  after the close, so the benchmark IC path now uses fundamental panels one
+  bar later and records `fundamental_pit_lag_bars: 1`. IC measured on
+  same-day filings needs to be rerun. The backtest engine's separate
+  next-bar execution is unchanged.
 
 - **Carhart momentum no longer reads today's price** (#1578, thanks
-  @Shizoqua). `academic_carhart_mom` computed the 12-month return minus the
-  1-month return, which moves with today's close — the opposite of skipping
-  the most recent month. It is now the return from 252 to 21 trading days
-  ago, pinned by a test that moves every close in the skipped month and
-  requires the value to stay put.
-- **Profit factor is undefined when no trade lost** (#1602, thanks
-  @davidalmeida90). With no losing trade, `profit_factor` and
-  `profit_loss_ratio` were reported as 0.0, which ranked a run that never lost
-  below every other run. They are now `None` — an empty `metrics.csv` cell and
-  `null` in JSON — in both the daily metrics and the options engine; a run
-  with no closed trade keeps 0.0.
-- **Stooq's challenge page stops every later request, not just the warning**
-  (#1637, thanks @cgycorey). Once Stooq answers with its anti-bot page, the
-  loader returns no data for every remaining symbol in the process without
-  another throttled request, so the fallback chain moves on at once. A new
-  process probes again.
+  @Shizoqua). `academic_carhart_mom` was the 12-month return minus the
+  1-month return, which moves with today's close, the opposite of skipping
+  the last month. It is now the return from 252 to 21 trading days ago. A
+  test moves every close inside the skipped month and requires the value to
+  stay put. The finishing commit corrected the factor notes, the zoo licence
+  text and a strategy example that taught the old formula under a factor id
+  that does not exist.
+
+- **`decay_linear` weights the newest bar heaviest** (#1912, thanks
+  @rudycelekli). Inside each window the weights ran from n on the oldest bar
+  down to 1 on today, the reverse of the Alpha101 definition. Every factor
+  that calls it changes value (22 Alpha101 and 19 GTJA 191 modules); windows
+  stay causal and the missing-data masks are unchanged.
+
+- **Rolling argmax/argmin ties no longer depend on the backend** (#1898,
+  #1696, thanks @rudycelekli and @Mikesad). Without `bottleneck`, a tie
+  resolved to the oldest bar; it now resolves to the most recent, as
+  `bottleneck` does. `bottleneck` is a core dependency, so most installs
+  already got the most recent bar. The registry test suite also runs on
+  Windows hosts without symlink privileges.
+
+- **Alpha benchmark arguments and environment** (#1806, #1910, #1918, thanks
+  @xaritoku and @rudycelekli). `alpha bench` and `alpha compare` load the
+  `.env` file before reading credentials, as other CLI commands do. `top=0`
+  is rejected instead of quietly becoming 20, and boolean, fractional or
+  non-numeric `top` values return an error envelope. A factor with fewer than
+  two IC observations is skipped with the reason instead of being ranked
+  with a NaN IC standard deviation and an IR of 0.
+
+- **38 GTJA 191 factors show their formula**. Their `formula_latex` read
+  "see body", which the Alpha Library displayed as the formula. It now holds
+  the formula already quoted in each module's docstring. Metadata only; no
+  computation changed.
+
+#### Live trading, brokers and portfolio
+
+- **Live option orders are refused before reaching a broker** (#1585, thanks
+  @lorenzozanee). Robinhood's `place_option_order` is pinned as a write, so a
+  remote read-only annotation cannot pass it through, and the profile says
+  live order placement is equities-only. The mandate gate also refuses every
+  option intent, on both the MCP and SDK paths and even when the mandate lists
+  options, because share-notional limits cannot bound a contract multiplier or
+  maximum loss. Live options execution is not implemented.
+
+- **Direct-SDK positions are priced for the mandate exposure check** (#1581,
+  thanks @Shizoqua). Toss, Dhan, KIS, Zerodha and Shoonya report a position's
+  price as `current_price` or `ltp`, and Futu its value as `market_val`; none
+  was read, and one unpriced position fails the exposure check closed, so
+  every later order on those brokers was refused. A zero or negative price, a
+  boolean, or a non-finite value or total now fails closed as well.
+
+- **The kill-switch sweep survives its own failures, and stopping a runner
+  stops it** (#1703, #1704, thanks @Romzhou). An audit-ledger write that
+  raised used to abort the preemptive cancel/flatten sweep and latch it as
+  fired, so it never ran again; it is now logged and the sweep continues. A
+  resting order without an order id, or a position with a missing, malformed,
+  non-finite, overflowing or boolean quantity or no symbol, is reported as an
+  error instead of being cancelled blindly or closed for NaN shares. `POST
+  /live/runner/stop` used to answer `was_running: false` while the scheduler
+  kept firing ticks, because the driver task returned as soon as the scheduler
+  started; it now lives as long as the scheduler, and stopping it cancels an
+  in-flight agent decision and waits for it to end. Each broker keeps its own
+  runtime job store, migrated from the shared one.
+
+- **US equity live sessions close at 13:00 ET on half-days** (#1706, closes
+  #1705, thanks @he-yufeng): 27 November and 24 December 2026 and 26 November
+  2027. The calendar is still a static two-year table.
+
+- **KIS reads see SOR and NXT fills and recover from a replaced token**
+  (#1726, thanks @passionbull). Order and fill reads asked only the KRX venue,
+  while most retail orders route through SOR, so an account that had traded
+  read as empty. They now query KRX, SOR and NXT and merge the rows, and a
+  venue that fails or a page without a row list fails the read instead of
+  returning a partial one. KIS issues one token per app key, so another
+  process can silently invalidate the cached one; an explicit token-expiry
+  rejection (HTTP error, 401/403 or an HTTP 200 business error) now drops the
+  cache and retries once. Order placement still goes to KRX only.
+
+- **Binance balances survive clock skew, and unpriced assets mark the snapshot
+  incomplete** (#1505, thanks @goatyyc). A balance or Simple Earn read
+  rejected as "ahead of the server" (`-1021`) refreshes the clock offset and
+  retries once. Quotes, bars and symbol search use an unauthenticated client,
+  so a public ticker no longer needs a signed request. Binance's account total
+  is built from priced positions, so a Binance asset without a price now marks
+  the snapshot incomplete and names the asset, and "last complete" reads and
+  history skip such snapshots.
+
+- **Futu reads a saved non-HK market and reports both cost bases** (#1812,
+  #1814, closes #1807, thanks @Frank-zhu2000 and @alexwan02). All four Futu
+  profiles pinned `filter_trdmarket` to HK, hiding a US account saved in
+  `futu.json`; HK is now only the default when nothing is saved. A
+  multi-currency account's balances, which Futu labels `N/A`, carry the HKD
+  they were requested in. Positions add `average_cost`, `pl_ratio_avg_cost`,
+  `unrealized_pl` and `realized_pl` (`None` where Futu reports `N/A`), and the
+  portfolio derives Futu unrealized P&L from the average cost, because Futu's
+  `cost_price` is diluted by realized gains and can turn negative.
+
+- **Futu `HK.00700`-style codes reach the risk x-ray and holdings merge**
+  (#1922, thanks @rudycelekli). Market-prefixed codes are rewritten to the
+  suffix form the loaders use (`00700.HK`, `BRK.B.US`) before risk inputs are
+  built and holdings are merged across brokers. Snapshots valued before this
+  change are hidden from latest and history views until the next refresh
+  rebuilds them.
+
+- **The Portfolio page's holdings and history follow the display currency**
+  (#1810, thanks @rwxyx518-prog). The holdings table's value and P&L columns
+  and the history chart used USD whatever currency was selected. Converted
+  values use the snapshot's own rate and show a dash when that rate is
+  missing, rather than an assumed one.
+
+- **Weekly and monthly risk x-rays annualise per period** (#1656, thanks
+  @rudycelekli). `portfolio_risk_xray` annualised `1W` and `1M` volatility
+  with 252 bars a year; it uses 52 and 12, and `1M` is not read as a minute. A
+  monthly request without a start date fetches 31 months, enough for the
+  minimum sample.
+
+#### Trade journal
+
+- **Mixed-currency journals are reported per currency** (#1811, closes #1808,
+  thanks @Jackzigen). `total_pnl`, `max_drawdown` and dividends summed HKD and
+  USD round-trips without conversion. With more than one settlement currency,
+  `total_pnl`, `total_dividends`, `max_drawdown` and `profit_loss_ratio`
+  become currency-keyed objects with a warning, the overtrading diagnosis is
+  given per currency, and `top_symbols` ranks by trade count with each
+  amount's currency; no FX conversion is applied. Single-currency journals
+  keep scalar values. Drawdown now starts from zero realized P&L, so a losing
+  first close counts.
+
+- **Amounts and symbols parse the way the broker wrote them** (#1766, #1871,
+  #1872, #1881, #1916, thanks @remote-controlled-man and @rudycelekli). A
+  generic `Date,Symbol,Side` journal is claimed as a Futu export only when
+  Futu's `Quantity` or `Amount` column exists, so its quantities and prices
+  are no longer read as zero. Accounting negatives such as `(1,234.50)` and
+  `$(1,234.50)` keep their sign instead of becoming 0. `1.234,56` reads as
+  1234.56 (a comma-only `1,234` is still thousands). Fiat pairs such as
+  `EUR/USD` are no longer classified as crypto, `.US` symbols, share classes
+  like `BF-B.US` included, are US equities, and `.SS` is Shanghai.
+
+- **Dates are combined, ordered and validated before analysis** (#1900, #1941,
+  #1942, thanks @MetaAviator). Separate generic `date` and `time` columns are
+  combined, including Excel serial dates and day fractions, and a time alone
+  never stands in for a missing date. Rows with equal timestamps keep their
+  file order through FIFO matching. A journal with a missing or unreadable
+  date returns an error instead of being analysed or filtered without those
+  rows.
+
+- **FIFO P&L counts reversal fees once, and unbounded ratios are valid JSON**
+  (#1891, #1884, thanks @MetaAviator and @rudycelekli). A fill that closed one
+  side and opened the other charged its whole fee to both; the fee is now
+  split by quantity. A journal with no losing round-trip produced an
+  `Infinity` profit/loss ratio that strict JSON parsers reject; it is `null`.
+  When winners and losers both have zero holding time, the disposition check
+  reports an undefined ratio instead of a bias.
+
+- **Unknown analysis types and filters are rejected** (#1911, #1924, thanks
+  @rudycelekli). An unrecognised `analysis_type` returned an empty `ok`
+  result, and an unrecognised filter returned the whole journal as if it had
+  been applied; both now return an error naming the accepted values (`full`,
+  `profile`, `behavior`, `strategy`; a date range, `symbol=` or `market=`).
+
+#### Strategy store
+
+- **Strategy records keep their trading rules, and declared backtests feed
+  decay monitoring** (#1848, #1849, thanks @alexwan02). `sdm_register` accepts
+  `entry_rules`, `exit_rules` and `position_sizing` (a list is stored one rule
+  per line) instead of dropping them. Nothing used to write `bench_history`,
+  so `sdm_status(decay_check)` and `sdm_decay_scan` always reported
+  insufficient data: a backtest whose `config.json` names an `artifact_id` now
+  records its Sharpe, annual return, max drawdown and Calmar and reports a
+  `bench_record` (`recorded`, `skipped` or `failed`, with a reason). Decay
+  monitoring reads only `initial` and `periodic` rows, so an undeclared rerun
+  (`manual`) cannot move the baseline. Failed runs, runs without trades or
+  metrics, and a measurement already stored, even from a copied directory, are
+  skipped, atomically across connections; a different evaluation window is a
+  new measurement. Bookkeeping errors never fail a successful backtest.
+
+- **SDM decay compares disjoint IC windows** (#1699, thanks @Shizoqua). The
+  baseline and recent windows are the oldest and newest five IC observations;
+  with fewer than ten they overlap (and with five or fewer they are the same
+  window), which pinned `ic_ratio` near 1.0 however far the IC moved.
+  `ic_ratio` is now `null` until ten observations exist.
+
+#### Tools and documents
+
+- **A refused file write names the setting that allows the path** (#1679,
+  thanks @he-yufeng). When `write_file` or `edit_file` refused a path outside
+  the allowed roots, the error said only that the path escaped. Now it lists
+  the allowed roots and names `VIBE_TRADING_ALLOWED_WRITE_ROOTS`; read-side
+  refusals name `VIBE_TRADING_ALLOWED_FILE_ROOTS`. The variable is also
+  documented in `.env.example` and the README. The boundary itself is
+  unchanged. Since `aac03fa6`, on a case-insensitive filesystem a path spelled
+  differently from an allowed root (`dropbox` for `Dropbox`) is accepted when
+  the filesystem confirms it is the same directory. Path names are never
+  case-folded.
+
+- **Skill file removal follows the same rules as skill file writes** (#1639,
+  thanks @Shizoqua). `remove` could delete any file in a skill directory. It
+  is now limited to `references/`, `templates/`, `examples/` and `assets/`,
+  like `write`. Since `8ec3b80f`, both actions also refuse `..` segments and
+  symlinks that resolve outside those directories, and `remove` deletes only
+  regular files, never a directory.
+
+- **`read_file` reports an unreadable directory as a structured error**
+  (#1946, thanks @rudycelekli). Listing a directory inside the allowed roots
+  ran outside the tool's error handler. A permission error therefore escaped
+  instead of returning the usual JSON `status: error`.
+
+- **Document reader keeps more of PDF, Word, PowerPoint and Excel files**
+  (#1838, #1839, #1840, #1841, thanks @rudycelekli).
+  - PDF: with no OCR engine, a page whose native text is shorter than
+    `min_text_per_page` (50) used to be skipped. Its text is now kept, and the
+    result is marked `no_ocr_engine`. If every selected page has only such
+    short text, the read is still refused with the OCR install hint.
+  - Word: paragraphs and tables come out in document order. Before, every
+    table was appended after all paragraphs.
+  - PowerPoint: text inside grouped shapes and tables is read; merged table
+    cells appear once.
+  - Excel: cells holding `NA`, `N/A`, `null` or `NaN` keep that literal text.
+    Only empty cells count as missing.
+
+- **README tables match the code** (#1671, #1733, thanks @he-yufeng and
+  @Jackzigen). The Indonesian README lists `get_southbound_flow` and the
+  current tool counts. The Quant Library contract table in `README.md` had
+  duplicate rows for `credit`, `timeseries`, `factormodel` and
+  `multipletesting`; each now has one row with the newer description.
+
+#### Sessions, memory and search
+
+- **Runtime files stay out of a checkout used as the runtime root**. When
+  `VIBE_TRADING_HOME` points at the repository, `memory_index.db` (moved to
+  the runtime root in this release, and holding memory contents), the paper
+  trading `strategies/` folder and `shadow_reports/` were not git-ignored.
+  They are now, and the guard test also finds names joined onto the runtime
+  root inline or through `*_DIRNAME` constants, not only `*_FILENAME` ones.
+
+- **Session search finds Chinese, Japanese and Korean text** (#1686, thanks
+  @Shizoqua). SQLite's default tokenizer treated a run of East Asian
+  characters as one token, so a query rarely matched anything shorter than the
+  entire run. The ported fix indexes those characters split apart.
+  `aac03fa6` reworked it: ideographs, kana and Hangul are indexed one
+  character per token in a separate `search_content` column; queries become
+  phrase matches; and the stored message keeps its original text for
+  snippets. An existing `sessions.db` is upgraded and reindexed once, on first
+  open.
+
+- **Session search snippets, limits and concurrency** (#1834, #1827, #1828,
+  thanks @rudycelekli). A snippet now centres on the match SQLite actually
+  found and highlights that span in the original text. Before, it highlighted
+  the query wherever the text contained it, so `alpha` lit up inside
+  `alphabet` while `café` (matched by `cafe`) was not highlighted. The result
+  limit now counts distinct conversations. Before, the search read only the
+  first five matching messages per requested conversation, and one chatty
+  conversation could fill them all and hide the others.
+  Index writes and searches on the shared SQLite connection are serialized,
+  so concurrent callers no longer interleave on one cursor.
+
+- **Renamed conversations show their new name in search** (#1832, thanks
+  @rudycelekli). The REST rename and auto-title routes now update the search
+  index's title as well. Auto-titling reloads the session after the model
+  answers, so updates saved meanwhile are kept, and a manual rename made
+  meanwhile is kept with status `kept`.
+
+- **Reconnecting to a session's event stream no longer repeats an event**
+  (#1798, closes #1796, thanks @Shizoqua). An event published between the
+  replay snapshot and the new subscription reached the client twice, once in
+  the replay and once live. Both steps now happen under one lock.
+
+- **Memory search snippets and titles read back as written** (#1682, thanks
+  @Shizoqua). A CJK snippet could show its span twice ("使用用移移动…")
+  because the index stores both single characters and pairs. A title mixing
+  Chinese with a ticker, number or punctuation came back with extra spaces
+  (`比特币A策略` became `比特币 A 策略`). Since `8ec3b80f`, highlights and
+  `...` truncation markers also survive in snippets built only from character
+  pairs.
+
+- **Memory removal, links and recall** (#1697, #1771, #1772, thanks
+  @Shizoqua). `remove()`, which the `remember` tool's `forget` action uses,
+  accepts a filename stem as `find()` already did. Before, it reported "not
+  found" for an entry that `find()` and `vibe-trading memory forget` could
+  see. A blank name is refused (`f6e72428`). Semantic links match
+  two-character identifiers such as `BP` or `GE`; the minimum used to be
+  three. FTS recall skips index rows whose memory file was deleted outside the
+  process. The PR fetched four times the requested count; `54e225de` replaced
+  that with a window that doubles until enough current memories are found or
+  the index runs out.
+
+- **Verifying an archived audit ledger reports a corrupt line instead of
+  crashing** (#1721, thanks @Shizoqua). `verify_chain_with_archives` parsed
+  every segment with a bare `json.loads`, so a damaged line raised
+  `JSONDecodeError`. It now uses the same parser as single-file verification
+  and returns a `malformed_json` break at that line's position across all
+  segments.
+
+#### Credential redaction
+
+- **Environment-style credential names and URL credentials are redacted**
+  (#1765, thanks @cgycorey). `TUSHARE_TOKEN=…`, `AWS_SECRET_ACCESS_KEY=…`
+  and `aws_secret_access_key` lines in `~/.aws/credentials` are now caught.
+  Lowercase identifiers such as `pad_token` and `max_token` are still left
+  alone. `scheme://user:password@host` becomes `scheme://[redacted]@host`, and
+  a password containing `@` is handled. A bare username before `@` is redacted
+  only when it is a 20-plus-character token, so `git@github.com` stays
+  readable.
+
+- **`Authorization: Basic` and other non-bearer schemes are redacted**
+  (#1846, thanks @cgycorey). The key pattern used to redact the scheme word
+  and leave the base64 `user:password` visible. `Basic`, `Digest`, `Token`,
+  `Negotiate` and `NTLM` values are now redacted, but only right after an
+  `authorization` label, so prose like "basic information" is untouched.
+
+- **More secret formats are redacted** (#1874, #1866, #1867, #1868, #1869,
+  #1870, thanks @rudycelekli). #1874 combined the five smaller PRs. These are
+  now redacted:
+  - unlabelled GitHub fine-grained (`github_pat_`), GitLab (`glpat-`), npm,
+    Hugging Face, Stripe (`sk_`/`rk_` live and test), Google API (`AIza`) and
+    AWS `ASIA` keys;
+  - PEM and PGP private-key blocks, including a block cut off before its END
+    line, which is redacted to the end of the text;
+  - `Cookie:` and `Set-Cookie:` header values;
+  - fields named like `cookie` or `private_key` in structured payloads.
+
+  Public keys and certificates are left as they are, and running redaction
+  twice changes nothing. Since `47de62de`, a quoted header such as
+  `curl -H "Cookie: a=\"x\"; b=y"` is redacted up to its closing quote.
+
+- **Telegram bot tokens, Slack and Discord webhook URLs, Groq and NVIDIA keys
+  are redacted** (#1880, thanks @rudycelekli). The Telegram token is caught
+  inside `https://api.telegram.org/bot<token>/…`, which HTTP error messages
+  repeat in full. For a webhook URL, only the secret last path segment is
+  replaced. The PR accepted only 8–10 digit Telegram bot ids and lowercase
+  `hooks.slack.com`. `2c00cd20` widened that to any length of numeric id, to
+  GovSlack (`hooks.slack-gov.com`) and to webhook hostnames in any letter case.
+
+#### CLI, API and scheduling
+
+- **`vibe-trading update` leaves a Git install alone** (#1655, thanks
+  @rudycelekli). An install made from a Git URL was treated as a PyPI wheel,
+  so the update replaced the user's chosen revision with a released wheel. The
+  command now detects `vcs_info` in the install metadata, reports the newer
+  PyPI version and tells the user to update from the original source.
+
+- **The terminal dashboard matches parallel tool results to the right call**
+  (#1859, closes #1856, thanks @Shizoqua). When several calls to the same tool
+  ran at once, progress and results were matched by tool name and recency, so
+  results could be swapped between calls. They are now matched by call id.
+  Since `47de62de`, a result whose id matches no step gets its own step and no
+  longer completes a different call that is still running.
+
+- **CLI limits and number formatting** (#1886, #1926, thanks @rudycelekli).
+  `vibe-trading list --limit` and `memory search --limit` reject zero and
+  negative values instead of passing them on. Token counts, abbreviated
+  numbers and durations switch unit when rounding reaches the next one:
+  999,950 tokens shows as `1.0M tokens` instead of `1000.0k tokens`, 999.6 ms
+  as `1.0s`, and 59.96 s as `1m 00s` instead of `60.0s`.
+
+- **A cancelled upload leaves no partial file** (#1945, thanks @rudycelekli).
+  If the upload request was cancelled while a chunk was being read, the
+  half-written file stayed in the uploads directory with no reference to it.
+  The file is now deleted and the cancellation is re-raised.
+
+- **More runtime files follow `VIBE_TRADING_HOME`** (#1896, #1904, #1887,
+  thanks @rudycelekli). These paths were fixed to `~/.vibe-trading` and now
+  use the runtime root:
+  - persistent memory and its search index (`memory/`, `memory_index.db`);
+  - autopilot run directories;
+  - the alpha-bench panel cache and reports;
+  - the Gildata code cache.
+
+  The Shadow Account report route also reads from the runtime root, which is
+  where the report writer saves. Report links therefore work again when
+  `VIBE_TRADING_HOME` is set. Existing files under `~/.vibe-trading` are not
+  moved, and the memory paths are read when the process starts.
+
+#### Channels and scheduled delivery
+
+- **IM channels show agent progress again, without repeated lines** (#1878,
+  thanks @alexwan02). Channel replies now forward the attempt's status lines
+  (working, waiting for the model, using a tool, checking the figures), tool
+  hints and opt-in reasoning while the agent runs, so Feishu's streaming card
+  and other streaming channels update again (reported in #1792). Only those
+  labels go out: answer drafts and tool results stay private, and the final
+  answer still passes grounding first. #1878 applies the channel's own
+  visibility settings before deduplicating, so hidden tool hints no longer
+  break the dedupe and a chat no longer stacks one "Waiting for the model" per
+  tool round.
+
+- **Streamed replies are no longer lost or split** (#1860, #1903, #1929,
+  closes #1857, thanks @Shizoqua). Telegram (#1860) and Matrix (#1903) dropped
+  the whole answer when the live preview message could never be created; they
+  now send the accumulated reply as a new message. CI installs the `matrix`
+  extra so the Matrix test runs instead of skipping. WeCom (#1929) generated a
+  new stream id for every chunk, so progress and the final answer arrived as
+  unrelated messages; one id now covers each reply.
+
+- **Email sender authentication cannot be satisfied by forged headers**
+  (#1508, thanks @Shizoqua). SPF and DKIM checks read only the single
+  `Authentication-Results` header bearing the configured
+  `trusted_authserv_id`; with none configured, or with two matching headers,
+  verification fails closed. A pass counts only when its domain equals the
+  From domain or an aligned `dmarc=pass` is in the same header, and comments
+  or quoted text cannot pose as results. The receiving provider must strip
+  forged copies bearing its id; the id is not a signature. The guided Email
+  setup exposes the setting, and a blank one rejects inbound mail while SPF or
+  DKIM checks are on. The PR described trusting the topmost header; what
+  shipped selects by configured id instead.
+
+- **URL credentials in channel settings are neither leaked nor erased**
+  (#1742, #1744, thanks @cgycorey). Status and config redaction strips
+  `user:password@` even when the port is malformed or out of range or the URL
+  is followed by punctuation, where it used to return the URL untouched
+  (#1741). Saving or testing a form that echoes the redacted URL keeps the
+  stored credential instead of overwriting it (#1743); a different URL or a
+  clear flag still applies. Connection-test and reset messages, including
+  raised SDK exceptions, are scrubbed too.
+
+- **Unchanged empty fields no longer block channel saves** (#1681, thanks
+  @zeus229). A nullable setting such as Email's `post_action` was submitted by
+  the form as an empty string and rejected with a 422 on unrelated edits. An
+  empty value now maps back to null where the adapter's default is null, for
+  both Save and Test.
+
+#### Web UI and locales
+
+- **Run trades list every trade, newest first** (#1865, #1877, #1831, thanks
+  @alexwan02 and @he-yufeng). The Trades tab and its CSV download used the
+  first 500 rows of `trade_log`, which dropped the newest trades of a long
+  run; they now use the full `trades.csv` rows (#1865). Rows sort newest first
+  with a header toggle, keeping same-time fills in engine order, and the
+  symbol filter lists codes in order (#1877). #1831 removes a race in the
+  Settings effort-level test that intermittently failed frontend CI; the
+  component is unchanged.
 
 ## [0.1.16] — 2026-09-29
 
@@ -2564,7 +4221,7 @@ Rolls up 408 commits / 162 merged pull requests since 0.1.12.
   instead of a pip upgrade that would silently replace the dev install.
 - **ModelScope** joins the built-in providers through its official
   OpenAI-compatible hosted-inference endpoint, default `Qwen/Qwen3.5-27B`
-  (#1011, thanks @honginp).
+  (#1011, thanks @yrk111222).
 - **Live model discovery** in Settings (#924, thanks @QCYTSN) — configured
   providers are queried on demand with stable warning codes and five-locale
   controls, and each reply records and reloads the immutable provider/model/
@@ -2629,10 +4286,10 @@ Rolls up 408 commits / 162 merged pull requests since 0.1.12.
   advisory; Electron transitive advisories were patched separately.
 - Daily price bands are judged **at execution time** — from a pre-fill base
   price against the prospective fill price — never from the decision bar's own
-  close (#676, thanks @tyj147454413-cmd).
+  close.
 - A session runs **one attempt at a time** (a second concurrent send is refused
   with HTTP 409), and a user stop is its own terminal state distinct from a
-  failure, both live and on reload.
+  failure, both live and on reload (#676, thanks @tyj147454413-cmd).
 - Trace redaction is now **sink-aware**: `content` is released only in the
   tool-RESULT sink and stays redacted in the fail-closed ARGUMENTS sink used by
   tool-call arguments and the live audit ledger (`env` is never released);

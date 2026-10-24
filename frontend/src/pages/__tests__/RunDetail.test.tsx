@@ -252,6 +252,68 @@ describe("RunDetail page", () => {
     expect(screen.getByRole("columnheader", { name: "Time" })).toHaveClass("ps-4");
   });
 
+  it("lists every trade newest first and toggles the order from the time header", async () => {
+    const allTrades = Array.from({ length: 501 }, (_, i) => ({
+      timestamp: new Date(Date.UTC(2024, 0, 1 + i)).toISOString().slice(0, 10),
+      code: "3988.HK",
+    }));
+    // Out of order, and past the 500-row trade_log preview.
+    const shuffled = [...allTrades.slice(250), ...allTrades.slice(0, 250)];
+    apiMock.getRun.mockResolvedValue({
+      status: "success",
+      run_id: "long-run",
+      prompt: "Long run",
+      trade_log: shuffled.slice(0, 500),
+      artifacts_trades_csv: shuffled,
+    });
+    apiMock.getRunCode.mockResolvedValue({});
+
+    renderRunDetail("/runs/long-run");
+    await screen.findByText("Long run");
+    fireEvent.click(screen.getByRole("tab", { name: "Trades" }));
+
+    const firstRowTime = () => within(screen.getAllByRole("row")[1]).getAllByRole("cell")[0].textContent;
+    const timeHeader = screen.getByRole("columnheader", { name: "Time" });
+    expect(screen.getByText("501 trades")).toBeInTheDocument();
+    expect(timeHeader).toHaveAttribute("aria-sort", "descending");
+    expect(firstRowTime()).toBe(allTrades[500].timestamp);
+
+    fireEvent.click(within(timeHeader).getByRole("button"));
+
+    expect(timeHeader).toHaveAttribute("aria-sort", "ascending");
+    expect(firstRowTime()).toBe(allTrades[0].timestamp);
+  });
+
+  it("lists trade symbols in code order whichever way the trades are sorted", async () => {
+    apiMock.getRun.mockResolvedValue({
+      status: "success",
+      run_id: "multi",
+      prompt: "Multi symbol run",
+      artifacts_trades_csv: [
+        { timestamp: "2024-01-01", code: "00700.HK", side: "BUY" },
+        { timestamp: "2024-01-02", code: "02328.HK", side: "BUY" },
+        { timestamp: "2024-01-03", code: "00005.HK", side: "BUY" },
+        { timestamp: "2024-01-04", code: "00700.HK", side: "SELL" },
+      ],
+    });
+    apiMock.getRunCode.mockResolvedValue({});
+
+    renderRunDetail("/runs/multi");
+    await screen.findByText("Multi symbol run");
+    fireEvent.click(screen.getByRole("tab", { name: "Trades" }));
+
+    const symbolOptions = () => within(screen.getByRole("combobox", { name: "Symbol" }))
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    const expected = ["All symbols", "00005.HK", "00700.HK", "02328.HK"];
+    expect(symbolOptions()).toEqual(expected);
+
+    const timeHeader = screen.getByRole("columnheader", { name: "Time" });
+    fireEvent.click(within(timeHeader).getByRole("button"));
+
+    expect(symbolOptions()).toEqual(expected);
+  });
+
   it("pads and scroll-wraps run-card key/value and artifact tables", async () => {
     apiMock.getRun.mockResolvedValue({
       status: "success",

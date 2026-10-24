@@ -44,6 +44,12 @@ def _signal_posix_process_group(process: subprocess.Popen[str], sig: int) -> Non
         os.killpg(process.pid, sig)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # macOS answers EPERM, not ESRCH, when every member of the group has
+        # exited but is not yet reaped (verified 2026-10-21). The group is our
+        # own, so nothing is left to signal; letting it raise turned a timed-out
+        # command into status "error" on a loaded host.
+        pass
 
 
 def _taskkill_windows_process_tree(process: subprocess.Popen[str]) -> None:

@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from src.agent.grounding import GroundingLedger
+from tests.grounding_parameter_helpers import declared_parameter
 from src.agent.grounding.figures import Figure, parse_figures_block, scan_figures, strip_figures_block
 
 pytestmark = pytest.mark.unit
@@ -171,6 +172,29 @@ def test_an_iso_code_glued_to_digits_is_a_currency_mark(tmp_path: Path) -> None:
     assert _figures("成本 USD100")[0].currency is True
     # A code inside a longer identifier is not a currency mark.
     assert _shapes("见 XUSD100 与 SMA20") == {}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Cost USD100", "USD"),
+        ("Cost 100 JPY", "JPY"),
+        ("Cost 100 EUR", "EUR"),
+        ("Cost €100", "EUR"),
+        ("Cost £100", "GBP"),
+        ("Cost 100 CNY", "CNY"),
+        ("Cost 100 人民币", "CNY"),
+        ("Cost ¥100", None),
+        ("Cost $100", None),
+        ("Cost 100 shares", None),
+    ],
+)
+def test_currency_identity_is_preserved(
+    text: str, expected: str | None
+) -> None:
+    [figure] = _figures(text)
+
+    assert figure.currency_code == expected
 
 
 # ---------------------------------------------------------------------------
@@ -482,10 +506,10 @@ def test_every_figures_block_declares_and_every_one_is_stripped(tmp_path: Path) 
     assert stripped == HDR + "\n\n第一档 0.646 元。"
 
     ledger = _ledger(tmp_path)
-    passed = ledger.validate_final_answer(HDR + _block(HDR_ROW) + "\n\n第一档 0.646 元。" + _block("0.646 | derived | 0.666 × 0.97 | c1"))
-    refused = ledger.validate_final_answer(HDR + _block(HDR_ROW) + "\n\n第一档 0.700 元。" + _block("0.700 | derived | 0.666 × 0.97 | c1"))
+    passed = ledger.validate_final_answer(HDR + declared_parameter("97%") + _block(HDR_ROW) + "\n\n第一档 0.646 元。" + _block("0.646 | derived | 0.666 × 0.97 | c1"))
+    refused = ledger.validate_final_answer(HDR + declared_parameter("97%") + _block(HDR_ROW) + "\n\n第一档 0.700 元。" + _block("0.700 | derived | 0.666 × 0.97 | c1"))
     assert passed.valid, passed.issues
-    assert passed.released_text == HDR + "\n\n第一档 0.646 元。"
+    assert passed.released_text == HDR + "\n\nChosen coefficient: 97%." + "\n\n第一档 0.646 元。"
     assert _values(refused) == ["0.700"]
     assert "```" not in refused.released_text
 

@@ -762,7 +762,7 @@ def test_a_timeout_kills_the_child_process_group(tmp_path, monkeypatch) -> None:
     import sys
     import time
 
-    from src.agent import loop
+    from src.agent import tuning as loop
     from src.tools import alphakeel_research_tool as tool
 
     pid_file = tmp_path / "grandchild.pid"

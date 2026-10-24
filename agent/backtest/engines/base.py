@@ -44,6 +44,7 @@ from backtest.metrics import (
     by_symbol_stats,
     calc_fill_turnover_series,
     calc_metrics,
+    period_returns,
 )
 from backtest.models import EquitySnapshot, FillRecord, Position, TradeRecord
 from backtest.rebalance_mask import (
@@ -114,7 +115,9 @@ def _run_card_data_sources(config: Dict[str, Any], loader: Any) -> List[str]:
 
 # ─── Market detection (lightweight, for signal alignment only) ───
 
-_CRYPTO_RE = _re.compile(r"^[A-Z]+-USDT$|^[A-Z]+/USDT$", _re.I)
+_CRYPTO_RE = _re.compile(
+    r"^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+-USDT$|^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+/USDT$", _re.I
+)
 # Forex / metals in their explicit Yahoo notations, plus the bare-6-char
 # whitelist for XAUUSD / XAGUSD / XPTUSD / XPDUSD and G10 currencies. Mirrors
 # ``backtest.engines._market_hooks._MARKET_PATTERNS`` so the ffill-limit
@@ -131,9 +134,12 @@ _FX_RE = _re.compile(
 
 def _detect_market_for_align(code: str) -> str:
     """Lightweight market detection for ffill_limit calculation."""
-    if _CRYPTO_RE.match(code):
+    from backtest.engines._market_hooks import _detect_market
+
+    market = _detect_market(code.strip().upper())
+    if market == "crypto":
         return "crypto"
-    if _FX_RE.match(code):
+    if market == "forex":
         return "forex"
     return "equity"
 
@@ -281,6 +287,14 @@ def _align(
 
     # Use int64 view for O(log n) searchsorted lookups
     dates_i8 = dates.values.view("i8")
+    # Daily panels usually share one calendar. Direct placement avoids two
+    # binary-search passes per symbol over an already identical grid. Reuse
+    # each irregular calendar's mapping for both prices and shifted signals.
+    row_indexes = {
+        c: slice(None) if ns_index[c].equals(dates)
+        else np.searchsorted(dates_i8, ns_index[c].asi8)
+        for c in codes
+    }
 
     # ffill with limit to avoid masking long suspensions (e.g. 3-week halt)
     # Cross-market needs larger limit (Chinese New Year can be 9-10 bars)
@@ -290,8 +304,7 @@ def _align(
     close_arr = np.full((n_dates, n_codes), np.nan)
     for j, c in enumerate(codes):
         series = data_map[c]["close"]
-        row_idx = np.searchsorted(dates_i8, indexes[j].asi8)
-        close_arr[row_idx, j] = series.values
+        close_arr[row_indexes[c], j] = series.values
 
     # Vectorized ffill with limit using pandas (C-optimized internals)
     _tmp = pd.DataFrame(close_arr)
@@ -330,8 +343,7 @@ def _align(
         shifted_vals[0] = 0.0
         shifted_vals[1:] = sig_vals[:-1]
         # Place into unified grid via searchsorted
-        row_idx = np.searchsorted(dates_i8, ns_index[c].asi8)
-        pos_arr[row_idx, j] = shifted_vals
+        pos_arr[row_indexes[c], j] = shifted_vals
 
     # Vectorized ffill with limit using pandas (C-optimized)
     _tmp = pd.DataFrame(pos_arr)
@@ -971,6 +983,7 @@ class BaseEngine(ABC):
         )
         bench_ret = ret_df.mean(axis=1) if ret_df.shape[1] > 0 else pd.Series(0.0, index=dates)
         benchmark_metadata = {}
+        benchmark_warning: str | None = None
 
         # ── External benchmark fetch ──────────────────────────────────────────
         bench_ticker = config.get("benchmark")
@@ -1006,6 +1019,16 @@ class BaseEngine(ABC):
                         window_ret if window_ret is not None else bench_result.total_ret
                     ),
                 }
+            else:
+                # The equal-weight basket stands in for the declared benchmark,
+                # so every benchmark-relative metric (excess_return,
+                # information_ratio, tracking_error, benchmark_beta) is graded
+                # against something the caller did not ask for. Say so.
+                benchmark_warning = (
+                    f"declared benchmark {bench_ticker!r} could not be resolved; "
+                    "benchmark-relative metrics are graded against the "
+                    "equal-weight basket of the traded symbols instead"
+                )
         # ── External benchmark fetch ──────────────────────────────────────────
 
         bench_equity = self.initial_capital * (1 + bench_ret).cumprod()
@@ -1151,6 +1174,10 @@ class BaseEngine(ABC):
             card_warnings.append(config["_run_card_caliber_warning"])
         if config.get("_run_card_annualisation_warning"):
             card_warnings.append(config["_run_card_annualisation_warning"])
+        if config.get("_run_card_unrecognized_config_warning"):
+            card_warnings.append(config["_run_card_unrecognized_config_warning"])
+        if benchmark_warning:
+            card_warnings.append(benchmark_warning)
         from backtest.run_card import write_run_card
         write_run_card(
             run_dir,
@@ -2013,6 +2040,8 @@ class BaseEngine(ABC):
             commission=entry_commission + order.exit_commission,
             entry_margin=order.released_margin,
             exit_margin=exit_margin,
+            open_price=before.open_price,
+            open_size=before.open_size,
         ))
         self._record_fill(
             symbol=before.symbol,
@@ -2053,6 +2082,8 @@ class BaseEngine(ABC):
             leverage=order.leverage,
             entry_bar_idx=self._bar_idx,
             entry_commission=order.commission,
+            open_price=order.price,
+            open_size=order.size,
         )
         self._record_fill(
             symbol=order.symbol,
@@ -2146,6 +2177,8 @@ class BaseEngine(ABC):
             commission=pos.entry_commission + exit_comm,
             entry_margin=margin,
             exit_margin=exit_margin,
+            open_price=pos.open_price,
+            open_size=pos.open_size,
         ))
         self._record_fill(
             symbol=symbol,
@@ -2251,9 +2284,12 @@ class BaseEngine(ABC):
         for code, df in data_map.items():
             df.to_csv(out / f"ohlcv_{code}.csv")
 
-        # Equity curve
-        port_ret = equity_series.pct_change().fillna(0.0)
-        peak = equity_series.cummax()
+        # Equity curve. Same cash-seeded returns as calc_metrics, so the ret
+        # column compounds back to total_return and agrees with drawdown.
+        port_ret = period_returns(equity_series, self.initial_capital).fillna(0.0)
+        # Same high-water mark as calc_metrics: the account holds initial_capital
+        # before the first recorded bar, so a loss on that bar is a drawdown too.
+        peak = equity_series.cummax().clip(lower=float(self.initial_capital))
         dd = (equity_series - peak) / peak.replace(0, 1)
         eq_df = pd.DataFrame({
             "ret": port_ret,
@@ -2273,21 +2309,28 @@ class BaseEngine(ABC):
         target_out.index.name = "timestamp"
         target_out.to_csv(out / "target_positions.csv")
 
-        # Trades (compatible format)
+        # Trades (compatible format): two rows per round trip, entry then exit.
+        # The entry row is the opening fill as executed. A TradeRecord's
+        # entry_price is the weighted cost after any scale-ins while its
+        # entry_time stays on the first open, so pairing those two would
+        # report a fill that never happened. Scale-ins stay in fills.jsonl.
         trade_rows = []
         for t in self.trades:
             # Entry event
+            entry_price = t.entry_price if t.open_price is None else t.open_price
+            entry_qty = t.size if t.open_size is None else t.open_size
             trade_rows.append({
                 "timestamp": str(t.entry_time.date()) if hasattr(t.entry_time, "date") else str(t.entry_time),
                 "code": t.symbol,
                 "side": "buy" if t.direction == 1 else "sell",
-                "price": round(t.entry_price, 4),
-                "qty": round(t.size, 6),
+                "price": round(entry_price, 4),
+                "qty": round(entry_qty, 6),
                 "reason": "signal",
                 "pnl": 0.0,
                 "holding_days": 0,
                 "holding_bars": 0.0,
                 "return_pct": 0.0,
+                "event": "entry",
             })
             # Exit event
             try:
@@ -2305,11 +2348,12 @@ class BaseEngine(ABC):
                 "holding_days": hold_days,
                 "holding_bars": t.holding_bars,
                 "return_pct": round(t.pnl_pct, 2),
+                "event": "exit",
             })
 
         trade_cols = [
             "timestamp", "code", "side", "price", "qty", "reason", "pnl",
-            "holding_days", "holding_bars", "return_pct",
+            "holding_days", "holding_bars", "return_pct", "event",
         ]
         pd.DataFrame(trade_rows or [], columns=trade_cols).to_csv(out / "trades.csv", index=False)
 

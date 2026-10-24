@@ -24,8 +24,8 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any
+from typing import NotRequired
 from typing import TypedDict
-from urllib.parse import urlsplit, urlunsplit
 
 from src.channels.registry import load_channel_class
 
@@ -54,6 +54,12 @@ class FieldHint(TypedDict):
             submission on it (verified against ``ChannelConfigPanel.tsx``).
         help_key: i18n key for the frontend label, or ``None`` when the
             channel has no hand-written label.
+        choices: Optional closed set of valid values. When present (and
+            non-empty) the frontend widget renders a ``<select>`` instead of a
+            free-text input; option labels render the raw enum strings. Absent
+            for every pre-existing hint — the contract extension is additive,
+            and only the Slack and Discord ``group_policy`` hints carry
+            choices today.
     """
 
     key: str
@@ -61,6 +67,7 @@ class FieldHint(TypedDict):
     secret: bool
     required: bool
     help_key: str | None
+    choices: NotRequired[list[str]]
 
 
 def _dingtalk_hints() -> list[FieldHint]:
@@ -240,11 +247,137 @@ def _websocket_hints() -> list[FieldHint]:
     ]
 
 
+# Drift pin: these literals mirror the policy strings the adapter branches on
+# in ``SlackChannel._should_respond_in_channel`` ("open"/"mention"/"allowlist")
+# and ``_is_allowed`` ("allowlist") in slack.py — there is no pydantic enum, so
+# this list plus its contract test is the only cross-reference. Route-side enum
+# enforcement (422 on a value outside ``choices``) is deferred to a later PR.
+_SLACK_GROUP_POLICY_CHOICES = ["open", "mention", "allowlist"]
+
+
+def _slack_hints() -> list[FieldHint]:
+    """Return the hand-written Slack field hints (``enabled`` excluded).
+
+    ``required`` decision: :meth:`SlackChannel.start` (slack.py) logs
+    "bot/app token not configured" and returns without connecting when either
+    ``bot_token`` or ``app_token`` is missing, so both credentials are marked
+    required — consistent with the DingTalk/Feishu credential precedent, and
+    safe because ``required`` is a decorative affordance (see
+    :class:`FieldHint`).
+
+    ``user_token_read_only`` carries an audited ``secret=False`` subtraction
+    from :data:`SECRET_KEY_RE`: the key name contains "token" but the value is
+    a plain behavior bool, so the fail-safe regex masked it and made it
+    uneditable — the same over-match class as websocket's ``token_ttl_s``
+    (module docstring).
+
+    ``mode`` and ``webhook_path`` are deliberately excluded: socket is the
+    only transport :meth:`SlackChannel.start` accepts (any other mode logs
+    "Unsupported mode" and returns), so they stay file-configured — the
+    Feishu precedent, where transport knobs are not exposed either.
+    Hand-written hints replace derived ones, so unlisted keys simply do not
+    render in the form while still traveling in GET ``values``.
+    """
+    specs = (
+        ("bot_token", "password", True, True),
+        ("app_token", "password", True, True),
+        ("user_token_read_only", "bool", False, False),
+        ("reply_in_thread", "bool", False, False),
+        ("react_emoji", "text", False, False),
+        ("done_emoji", "text", False, False),
+        ("include_thread_context", "bool", False, False),
+        ("thread_context_limit", "text", False, False),
+        ("allow_from", "list", False, False),
+        ("group_policy", "text", False, False),
+        ("group_allow_from", "list", False, False),
+        ("group_require_mention", "bool", False, False),
+    )
+    return [
+        {
+            "key": key,
+            "type": widget,
+            "secret": secret,
+            "required": required,
+            "help_key": f"{_HELP_KEY_PREFIX}.slack.{key}",
+            **(
+                {"choices": list(_SLACK_GROUP_POLICY_CHOICES)}
+                if key == "group_policy"
+                else {}
+            ),
+        }
+        for key, widget, secret, required in specs
+    ]
+
+
+# Drift pin: these literals mirror the ``group_policy: Literal["mention",
+# "open"]`` declaration on ``DiscordConfig`` and the strings the adapter
+# branches on in ``DiscordChannel._should_respond_in_group`` in discord.py —
+# the pydantic Literal is not a shared constant, so this list plus its
+# contract test is the only cross-reference. Route-side enum enforcement
+# (422 on a value outside ``choices``) is deferred to a later PR.
+_DISCORD_GROUP_POLICY_CHOICES = ["mention", "open"]
+
+
+def _discord_hints() -> list[FieldHint]:
+    """Return the hand-written Discord field hints (``enabled`` excluded).
+
+    ``required`` decision: :meth:`DiscordChannel.start` (discord.py) logs
+    "bot token not configured" and returns without connecting when ``token``
+    is empty, so the bot token is marked required — consistent with the
+    DingTalk/Feishu/Slack credential precedent, and safe because ``required``
+    is a decorative affordance (see :class:`FieldHint`).
+
+    ``secret`` decision: ``token``, ``proxy_username`` and ``proxy_password``
+    are true credentials whose key names already match :data:`SECRET_KEY_RE`,
+    so every hand-written flag agrees with the fail-safe regex and Discord
+    carries no audited ``secret=False`` subtraction (unlike slack's
+    ``user_token_read_only``) — the test-side ``_AUDITED_NON_SECRETS`` list
+    stays untouched.
+
+    ``intents`` is a gateway intent bitfield integer, not a credential: the
+    default 37377 is GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES |
+    MESSAGE_CONTENT, and MESSAGE_CONTENT is a privileged intent that must be
+    enabled in the Discord Developer Portal or the gateway rejects the
+    connection.
+    """
+    specs = (
+        ("token", "password", True, True),
+        ("allow_from", "list", False, False),
+        ("allow_channels", "list", False, False),
+        ("intents", "text", False, False),
+        ("group_policy", "text", False, False),
+        ("read_receipt_emoji", "text", False, False),
+        ("working_emoji", "text", False, False),
+        ("working_emoji_delay", "text", False, False),
+        ("streaming", "bool", False, False),
+        ("proxy", "text", False, False),
+        ("proxy_username", "password", True, False),
+        ("proxy_password", "password", True, False),
+    )
+    return [
+        {
+            "key": key,
+            "type": widget,
+            "secret": secret,
+            "required": required,
+            "help_key": f"{_HELP_KEY_PREFIX}.discord.{key}",
+            **(
+                {"choices": list(_DISCORD_GROUP_POLICY_CHOICES)}
+                if key == "group_policy"
+                else {}
+            ),
+        }
+        for key, widget, secret, required in specs
+    ]
+
+
 FIELD_HINTS: dict[str, list[FieldHint]] = {
     "dingtalk": _dingtalk_hints(),
+    "discord": _discord_hints(),
     "email": _email_hints(),
     "feishu": _feishu_hints(),
     "qq": _qq_hints(),
+    "slack": _slack_hints(),
     "websocket": _websocket_hints(),
 }
 
@@ -343,21 +476,20 @@ def _mask(value: Any, *, reveal_suffix: bool = True) -> dict[str, Any]:
     return {"set": True, "masked": masked}
 
 
+# A URL's userinfo (``user:password@``) lives in its authority, before the
+# last '@'. Matching it textually rather than through urllib.parse keeps a
+# malformed or out-of-range port from defeating the strip: ``urlsplit(...).port``
+# raises on those, and the fail-open fallback returned the credential.
+# The authority is matched as text, so the userinfo group tolerates whitespace
+# inside it (``pass word@host``) instead of stopping at the first space.
+_URL_USERINFO_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.\-]*://)(?:[^/?#]*@)?(\S*)")
+
+
 def _strip_url_userinfo(value: Any) -> Any:
     """Return a URL string without embedded credentials; non-URLs pass through."""
     if not isinstance(value, str) or "://" not in value:
         return value
-    try:
-        parts = urlsplit(value)
-        if parts.username is None and parts.password is None:
-            return value
-        host = parts.hostname or ""
-        port = parts.port  # raises ValueError on a malformed port
-        if port is not None:
-            host = f"{host}:{port}"
-        return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))
-    except ValueError:
-        return value
+    return _URL_USERINFO_RE.sub(lambda match: match.group(1) + match.group(2), value)
 
 
 def split_values_secrets(

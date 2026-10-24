@@ -46,6 +46,8 @@ _TRADING_DAYS = {
     "india_broker": 252,
     # Korean equity (KRX)
     "pykrx": 252,
+    # Brazilian equity (B3)
+    "b3_cotahist": 252,
 }
 # mt5 is a forex/CFD feed: 24x5 sessions → 260 trading days, 24h intraday bars.
 # US equity (yfinance-style): 6.5h sessions → 390 1m bars/day.
@@ -73,6 +75,8 @@ _BARS_PER_DAY = {
             "india_broker": 375,
             # Korean equity (6.5h session, 09:00-15:30 KST)
             "pykrx": 390,
+            # Brazilian equity (B3, 7h session 10:00-17:00 BRT; daily-only loader)
+            "b3_cotahist": 420,
             },
     "5m":  {"yfinance": 78,  "yahoo": 78,  "finnhub": 78,  "alphavantage": 78,
             "tiingo": 78,  "fmp": 78,  "stooq": 78,  "longbridge": 78,
@@ -84,6 +88,8 @@ _BARS_PER_DAY = {
             "mt5": 288, "tickerall": 288,
             "india_broker": 75,
             "pykrx": 78,
+            # Brazilian equity (B3, 7h session 10:00-17:00 BRT; daily-only loader)
+            "b3_cotahist": 84,
             },
     "15m": {"yfinance": 26,  "yahoo": 26,  "finnhub": 26,  "alphavantage": 26,
             "tiingo": 26,  "fmp": 26,  "stooq": 26,  "longbridge": 26,
@@ -95,6 +101,8 @@ _BARS_PER_DAY = {
             "mt5": 96, "tickerall": 96,
             "india_broker": 25,
             "pykrx": 26,
+            # Brazilian equity (B3, 7h session 10:00-17:00 BRT; daily-only loader)
+            "b3_cotahist": 28,
             },
     "30m": {"yfinance": 13,  "yahoo": 13,  "finnhub": 13,  "alphavantage": 13,
             "tiingo": 13,  "fmp": 13,  "stooq": 13,  "longbridge": 13,
@@ -106,6 +114,8 @@ _BARS_PER_DAY = {
             "mt5": 48, "tickerall": 48,
             "india_broker": 13,
             "pykrx": 13,
+            # Brazilian equity (B3, 7h session 10:00-17:00 BRT; daily-only loader)
+            "b3_cotahist": 14,
             },
     "1H":  {"yfinance": 7,   "yahoo": 7,   "finnhub": 7,   "alphavantage": 7,
             "tiingo": 7,   "fmp": 7,   "stooq": 7,   "longbridge": 7,
@@ -117,6 +127,8 @@ _BARS_PER_DAY = {
             "mt5": 24, "tickerall": 24,
             "india_broker": 7,
             "pykrx": 7,
+            # Brazilian equity (B3, 7h session 10:00-17:00 BRT; daily-only loader)
+            "b3_cotahist": 7,
             },
     "4H":  {"yfinance": 2,   "yahoo": 2,   "finnhub": 2,   "alphavantage": 2,
             "tiingo": 2,   "fmp": 2,   "stooq": 2,   "longbridge": 2,
@@ -128,6 +140,8 @@ _BARS_PER_DAY = {
             "mt5": 6, "tickerall": 6,
             "india_broker": 2,
             "pykrx": 2,
+            # Brazilian equity (B3, 7h session 10:00-17:00 BRT; daily-only loader)
+            "b3_cotahist": 2,
             },
     "1D":  {"yfinance": 1,   "yahoo": 1,   "finnhub": 1,   "alphavantage": 1,
             "tiingo": 1,   "fmp": 1,   "stooq": 1,   "longbridge": 1,
@@ -139,6 +153,8 @@ _BARS_PER_DAY = {
             "mt5": 1, "tickerall": 1,
             "india_broker": 1,
             "pykrx": 1,
+            # Brazilian equity (B3, 7h session 10:00-17:00 BRT; daily-only loader)
+            "b3_cotahist": 1,
             },
 }
 
@@ -330,6 +346,7 @@ def win_rate_and_stats(trades: List[TradeRecord]) -> Dict[str, Optional[float]]:
         Dict with win_rate, profit_loss_ratio, max_consecutive_loss,
         avg_holding_bars, profit_factor. profit_loss_ratio and profit_factor
         are ``None`` when no trade lost, since both divide by the losses.
+        Average holding bars includes valid zero-duration completed trades.
     """
     if not trades:
         return {
@@ -365,7 +382,9 @@ def win_rate_and_stats(trades: List[TradeRecord]) -> Dict[str, Optional[float]]:
         else:
             cur_consec = 0
 
-    hold_bars = [t.holding_bars for t in trades if t.holding_bars > 0]
+    # A completed same-bar trade has a valid zero duration and still counts
+    # in the per-trade average. Keep excluding invalid negative durations.
+    hold_bars = [t.holding_bars for t in trades if t.holding_bars >= 0]
     avg_holding = float(np.mean(hold_bars)) if hold_bars else 0.0
 
     return {
@@ -521,6 +540,22 @@ def calc_fill_turnover_series(
     return (traded_margin / denominator).replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
 
+def period_returns(equity_curve: pd.Series, initial_cash: float) -> pd.Series:
+    """Per-bar returns seeded with the pre-first-bar cash mark.
+
+    The account holds ``initial_cash`` before the first recorded bar, so the
+    first return measures that bar's fill from cash rather than starting the
+    series at a hard zero. ``prod(1 + r) - 1`` then reproduces
+    ``equity[-1] / initial_cash - 1`` exactly, which is what ``total_return``
+    and the drawdown path already assume. When the first bar carries no fill
+    (equity == cash) the seed is 0 and the series matches a plain pct_change.
+    """
+    ret = equity_curve.pct_change(fill_method=None)
+    if len(ret) and np.isfinite(initial_cash) and initial_cash > 0:
+        ret.iloc[0] = equity_curve.iloc[0] / float(initial_cash) - 1.0
+    return ret
+
+
 def calc_metrics(
     equity_curve: pd.Series,
     trades: List[TradeRecord],
@@ -558,7 +593,7 @@ def calc_metrics(
     else:
         bpy = bars_per_year
 
-    port_ret = equity_curve.pct_change().fillna(0.0)
+    port_ret = period_returns(equity_curve, initial_cash).fillna(0.0)
     # Equity that touches zero then recovers (100 → 0 → 50) yields non-finite
     # pct_change values; options metrics already skip risk ratios in that case.
     returns_finite = bool(np.isfinite(port_ret.to_numpy(dtype=float, copy=False)).all())
@@ -602,6 +637,8 @@ def calc_metrics(
     max_dd = float(dd.min())
 
     calmar = ann_ret / abs(max_dd) if abs(max_dd) > 1e-10 else 0.0
+    if not np.isfinite(calmar):
+        calmar = 0.0
 
     # Sortino (Sortino & Price, the AlphaKeel definition): downside deviation sqrt(mean(min(r, 0)^2)) over all returns,
     # target 0. None when undefined (no downside, non-finite returns) — the old "std of the negative returns, else 1e-10"

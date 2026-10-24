@@ -631,7 +631,8 @@ def factor_risk_decomposition(
 
     Raises:
         ValueError: If weights or matrices are empty, contain non-finite values,
-            or share no common assets or factors.
+            share no common assets or factors, or a specific variance is
+            negative.
     """
     w_series = pd.Series(portfolio_weights, dtype=float)
     if w_series.empty:
@@ -681,6 +682,13 @@ def factor_risk_decomposition(
         spec_var_s = pd.Series(specific_variances, dtype=float)
         if not np.isfinite(spec_var_s.values).all():
             raise ValueError("specific_variances contains non-finite values")
+        # Same tolerance as the factor_cov PSD check: clip rounding noise, but a
+        # genuinely negative variance is bad input, not zero idiosyncratic risk.
+        negative = spec_var_s[spec_var_s < -1e-8]
+        if not negative.empty:
+            raise ValueError(
+                f"specific_variances must be non-negative, got {negative.to_dict()}"
+            )
         d = spec_var_s.reindex(assets, fill_value=0.0).clip(lower=0.0)
     else:
         d = pd.Series(0.0, index=assets, dtype=float)

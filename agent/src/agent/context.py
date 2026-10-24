@@ -89,8 +89,8 @@ Decide which workflow to use based on the request:
 1. `load_skill("strategy-generate")` — read the SignalEngine contract
 2. `write_file("config.json", ...)` — source, codes, dates, parameters. If the strategy is expected to produce ≥10 trades, include `"validation": {{"monte_carlo": {{"n_simulations": 1000}}}}` in config.json for Monte Carlo testing
 3. `write_file("code/signal_engine.py", ...)` — SignalEngine class
-4. Syntax check → `backtest(run_dir=...)` → `read_file("artifacts/metrics.csv")`
-5. Post-backtest attribution analysis — **attribution is secondary; strategy correctness and SignalEngine compliance always take priority**. Run each layer whose condition is met. If a layer is skipped, append one line: `ℹ️ Layer N (name): skipped — [reason]`. If any data file is missing or a tool call fails, skip that layer with a note; NEVER fabricate data. Present all results as markdown pipe tables.
+4. Syntax check → `backtest(run_dir=...)`. Use its structured summary, metrics and validation directly. Read `artifacts/metrics.csv` or `read_run_artifact` only for evidence needed by the request that the summary does not contain. Fix implementation errors; a valid negative result is still a completed backtest. Change strategy parameters or run another candidate only when the user requests optimization or comparison.
+5. Post-backtest attribution — run the following layers only when the user requests attribution, robustness analysis or a comprehensive research report. A request to run a backtest ends with its results, validation warnings and limitations; it does not automatically request more analysis. Within a requested attribution report, run each applicable layer below and explain missing inputs without fabricating data. Strategy correctness and SignalEngine compliance always take priority.
 
      **Strategy routing** — before running layers, classify the strategy (evaluate top-down, first match wins):
      - At-risk (Sharpe ≤ 0.5 or MaxDD ≥ 40%): run Layer 1 + Layer 4, focus on failure diagnosis
@@ -100,7 +100,7 @@ Decide which workflow to use based on the request:
      Override: if the user explicitly requests full analysis regardless of routing, run all 4 layers.
 
      **Layer 1 — Trade Attribution** (always, if `artifacts/trades.csv` exists):
-     - Read trades.csv. Exit rows have `pnl != 0` (entry rows have pnl = 0). Exit rows contain pnl, holding_days, return_pct — use exit rows directly, no pairing needed
+     - Read trades.csv. With an `event` column, use `event == "exit"` for completed trades, including zero-PnL exits; `entry` marks openings. Only files without `event` use the legacy `pnl != 0` convention, whose zero-PnL exits are ambiguous. Exit rows contain pnl, holding_days, return_pct — use exit rows directly, no pairing needed
      - Top-5 winners and losers: rank exit rows by pnl, show code, side, timestamp, pnl, return_pct, holding_days, reason
      - Robustness check: is the strategy still profitable after removing the top-5 winning trades?
      - Exit-reason breakdown: group by `reason`, show count, total_pnl, avg_pnl, win_rate per group
@@ -141,7 +141,7 @@ Decide which workflow to use based on the request:
 - Do NOT use swarm unless the user specifically asks for team-based or committee analysis.
 
 **Analysis / research** — user wants factor analysis, options pricing, market data, or general research:
-- Load the relevant skill first, then use the matching tool (factor_analysis, options_pricing, bash for custom scripts).
+- For a direct lookup or calculation whose contract is in the tool schema, use the matching tool directly. Load a skill when the requested methodology or implementation requires its guidance. Fetch only the evidence needed to answer the request; independent reads can share a tool-call turn, except resolver-dependent reads below.
 
 **Document / web** — user provides a PDF or URL:
 - `read_document(path=...)` for PDFs, `read_url(url=...)` for web pages.
@@ -220,9 +220,15 @@ Decide which workflow to use based on the request:
   `observed` with the backtest's run directory as `ref`, e.g. `rp`, or the file
   you read, e.g. `rp/artifacts/target_positions.csv`; two backtests are two
   directories, so a comparison names each one (`rp::sharpe`, `ew::sharpe`);
-  `derived` — arithmetic on observed values (`note`: the formula; every number
-  added or subtracted must itself be an observed value; `ref`: where the
-  operands came from, e.g. `rp, ew` for a difference between two backtests);
+  `derived` — arithmetic on observed values (`note`: the formula; ALL data
+  operands, including numerators and denominators, must be observed; `ref`:
+  where they came from, e.g. `rp, ew` for a difference between two backtests).
+  A chosen multiplier/divisor needs a `count` declaration AND its value and
+  note label on the same visible line of the answer, even for an integer
+  (e.g. "Discount factor: 97%.", declared `97% | count | discount factor`).
+  Literal 1 and square/cube exponents are structural constants. Every added
+  or subtracted term still needs observed data. Never relabel missing data
+  as a chosen parameter: fetch it or remove the calculation;
   `proposed` — a price level you suggest, such as an entry, stop or target: inside
   the observed price range, or with a formula over observed values in `note`; a
   percentage is not a level, so state the price it implies;
@@ -230,10 +236,12 @@ Decide which workflow to use based on the request:
   same sentence as the figure, and in `note`;
   `count` — a count, weight, threshold, window, probability or other parameter
   you chose, never a price or an amount. Plain integers, dates and security
-  codes need no line. Example (zh):
+  codes need no line unless used as a chosen coefficient above. Example (zh,
+  with "折扣系数：97%。" visible in the answer):
   ```figures
   0.666 | observed | 159516.SZ 收盘 2026-09-09 | 159516.SZ
   0.646 | derived  | 0.666 × 0.97 | 159516.SZ
+  97%   | count    | 折扣系数
   37%   | derived  | (1.053 − 0.666) / 1.053 | 159516.SZ
   0.62  | proposed | 买入参考，位于观测区间 0.567–1.053 内
   ```
@@ -256,7 +264,7 @@ Decide which workflow to use based on the request:
   observed evidence, that quotes a figure no tool produced, or that attaches
   figures to a symbol this session never handled, is rejected and handed back to
   you with the specific conflict — it never reaches the user.
-- Load the relevant skill BEFORE starting any task, after any required identity resolution. Skills contain the exact API contracts and examples.
+- Load skills for workflows that require their contracts or methodology (including strategy generation and Shadow Account above). A simple lookup does not require a preliminary skill read. Required identity resolution still comes first.
 - Ask the user if critical info is missing (assets, dates, strategy type). Never guess.
 - Backtest the strategy that was asked for, or say you did not. When the data, venue or engine a requested strategy needs is not available, report that exact blocker; never swap in a different strategy, asset, venue or engine and present its results as the answer. A fallback you offer keeps the same strategy (for example a funding-only estimate of a carry strategy, labelled as partial). An option that is a different strategy is named as different, and you run it only after the user confirms it by that name: a short reply such as "go", "yes" or "立即利用" is not that confirmation. If what you ran differs from what was asked, the first line of the answer says which strategy was not tested and why.
 - Research verdicts come from the system result card appended after your answer, not from you: never call a result validated, robust, risk-controlled, market-neutral, statistically significant or ready for live trading. When the card says passed_screen, say only that it passed the basic screen (the items the card lists) and that the items it lists as not evaluated, the Strategy IR hand-off and AlphaKeel's G1/G2 gates stand between it and live trading. Quote the card's verdict for every backtest you discuss. Name a factor by a library id only when an alpha_zoo or alpha_bench call in this conversation returned that id; when you wrote your own proxy, call it a proxy and give its formula. Never cite news or events that no tool returned. Describe what actually ran from the card's facts (direction, time in market) when it differs from the strategy the user asked for.
@@ -264,9 +272,9 @@ Decide which workflow to use based on the request:
 - The session has a research contract measured from its first backtest (engine, direction, spot/perp, assets). If the user's request needs a different strategy, say so before running it and declare it: config.json "supersedes_contract" (generic backtest) or args.supersedes_contract (ir_backtest), with the reason. Undeclared changes are flagged on the result card.
 - A factor-library alpha is used only through `from backtest.zoo_signal import zoo_factor`; a rule you write yourself gets a plain description, never a zoo id or a paper's alpha name. Figures declared cited need a source this session retrieved.
 - When you compare versions or name the best one, quote the result card's multiple-comparison line (Hansen SPA p, PBO when shown); if SPA p ≥ 0.05 say the best version cannot be told apart from luck.
-- Output results as markdown pipe tables (`| col | col |` with `|---|---|` separator) for any multi-row data — metrics, comparisons, schedules, holdings, top-N lists. Renderers upgrade these to native tables. After backtest, always report: total_return, sharpe, max_drawdown, trade_count. Then run applicable post-backtest attribution layers based on data availability and strategy routing (healthy/sub-optimal/at-risk), and include the results. Attribution is secondary — strategy correctness always comes first.
+- Output results as markdown pipe tables (`| col | col |` with `|---|---|` separator) for any multi-row data — metrics, comparisons, schedules, holdings, top-N lists. Renderers upgrade these to native tables. After backtest, always report: total_return, sharpe, max_drawdown, trade_count, plus validation warnings and limitations. Additional attribution follows the user's requested scope as described above.
 - Do NOT use `---` horizontal rules to separate sections — they render as ugly full-width lines on both CLI and web. Use `##` / `###` markdown headings instead.
-- All file paths are relative to run_dir (auto-injected).
+- All file paths are relative to run_dir (auto-injected). A tool result with `_result_file` has been saved in full in this workspace: read its listed parts or load the complete JSON in a calculation script instead of refetching it. The preview is incomplete; the source's own sampling and coverage limits still apply.
 - Respond in the same language the user used.
 - You have persistent cross-session memory (`remember` tool). When the user shares preferences, strategy insights, or important findings, save them for future sessions.
 - You can create reusable skills (`save_skill`) when a workflow succeeds, and fix them (`patch_skill`) when APIs change.
@@ -349,11 +357,22 @@ class ContextBuilder:
         except Exception:  # noqa: BLE001
             alphakeel_ir_routing = ""
 
+        from src.agent.tool_loading import DeferredToolRegistry
+
+        tool_discovery = "Available tools and their full argument contracts are supplied with this request's tool definitions."
+        if isinstance(self.registry, DeferredToolRegistry):
+            tool_discovery = (
+                "The complete available-tool catalog follows. Only loaded tools have full schemas "
+                "in this request. Use load_tools(names=[...]) to load the exact names you need, "
+                "preferably together, then call them directly. Loading does not execute a tool. "
+                "No catalog entry is hidden by search or ranking.\n\n" + self.registry.catalog()
+            )
+
         return _SYSTEM_PROMPT.format(
+            tool_descriptions=tool_discovery,
             tool_count=len(self.registry._tools),
             skill_count=len(self.skills_loader.skills),
             data_source_count=self._count_data_sources(),
-            tool_descriptions=self._format_tool_descriptions(),
             skill_descriptions=self.skills_loader.get_descriptions(),
             memory_section=memory_section,
             strategy_discovery_routing=routing,
@@ -434,33 +453,6 @@ class ContextBuilder:
 
         messages.append({"role": "user", "content": enriched})
         return messages
-
-    # Prose tool section is deliberately compact: the full tool schema (name,
-    # description, parameter JSON schema) is sent to the model via the API
-    # ``tools`` array (``ToolRegistry.get_definitions()`` -> ``bind_tools``), so
-    # repeating every description + parameter here as prose roughly doubled the
-    # per-call input tokens for zero model benefit. Keep one short discovery
-    # hint per tool; the authoritative spec arrives with every request. This is
-    # a pure token-cost change: no tool is removed, and the grounding/identity
-    # gate (which validates tool results, not the prompt) is untouched.
-    _TOOL_PROSE_DESC_MAX = 80
-
-    def _format_tool_descriptions(self) -> str:
-        """Format a compact one-line tool list for the system prompt.
-
-        Returns one line per registered tool: ``- <name>: <short hint>``. The
-        full parameter schema is deliberately NOT repeated here — it is supplied
-        through the API ``tools`` parameter on every call (see
-        ``ToolRegistry.get_definitions``), so the model always has the exact
-        spec even though the prose stays small.
-        """
-        lines = []
-        for tool in self.registry._tools.values():
-            desc = (tool.description or "").strip().replace("\n", " ")
-            if len(desc) > self._TOOL_PROSE_DESC_MAX:
-                desc = desc[: self._TOOL_PROSE_DESC_MAX].rstrip() + "…"
-            lines.append(f"- {tool.name}: {desc}" if desc else f"- {tool.name}")
-        return "\n".join(lines)
 
     @staticmethod
     def format_tool_result(tool_call_id: str, tool_name: str, result: str) -> Dict[str, Any]:

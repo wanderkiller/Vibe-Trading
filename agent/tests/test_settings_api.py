@@ -83,6 +83,9 @@ def test_extract_model_ids_normalizes_openai_compatible_payloads() -> None:
             },
             "oauth_discovery_unsupported",
         ),
+        # gh_cli used to build "gh_cli_discovery_unsupported", which the response
+        # model rejects; it shares the OAuth code instead.
+        ({"provider": "copilot"}, "oauth_discovery_unsupported"),
     ],
 )
 def test_model_discovery_returns_stable_warning_codes_not_english_prose(
@@ -690,7 +693,7 @@ def test_get_data_source_settings_lists_default_source_orders(
     orders = {entry["market"]: entry for entry in entries}
     assert set(orders) == {
         "a_share", "us_equity", "hk_equity", "india_equity", "kr_equity",
-        "ca_equity", "ar_equity", "vietnam_equity", "uk_equity", "crypto", "futures",
+        "ca_equity", "ar_equity", "br_equity", "vietnam_equity", "uk_equity", "crypto", "futures",
         "fund", "macro", "forex", "index",
     }
     a_share = orders["a_share"]
@@ -718,7 +721,7 @@ def test_update_source_orders_persists_and_hot_applies(
                 {
                     "market": "a_share",
                     "order": [
-                        "tushare", "tencent", "mootdx", "eastmoney",
+                        "tushare", "tencent", "eastmoney",
                         "baostock", "akshare", "gildata", "local",
                     ],
                 },
@@ -736,7 +739,7 @@ def test_update_source_orders_persists_and_hot_applies(
     assert entry["override"][0] == "tushare"
     # ...persisted to the dotenv...
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
-    assert "MARKET_DATA_ORDER_A_SHARE=tushare,tencent,mootdx" in env_text
+    assert "MARKET_DATA_ORDER_A_SHARE=tushare,tencent,eastmoney" in env_text
     # ...synced into the running process env...
     assert os.environ.get("MARKET_DATA_ORDER_A_SHARE", "").startswith("tushare,")
     # ...and hot-applied to the live registry chain.
@@ -757,7 +760,7 @@ def test_update_source_orders_reset_clears_override(
                 {
                     "market": "a_share",
                     "order": [
-                        "tushare", "tencent", "mootdx", "eastmoney",
+                        "tushare", "tencent", "eastmoney",
                         "baostock", "akshare", "gildata", "local",
                     ],
                 },
@@ -811,3 +814,102 @@ def test_update_source_orders_rejects_unknown_market(
     assert response.status_code == 400
     assert "Unknown market" in response.json()["detail"]
     assert not (tmp_path / ".env").exists()
+
+
+def test_claude_cli_model_list_skips_base_url_checks_and_reports_effort_levels(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.providers import claude_cli_models
+
+    observed: dict[str, bool] = {}
+
+    def fake_list(*, refresh: bool = False):
+        observed["refresh"] = refresh
+        return [
+            claude_cli_models.ClaudeCliModel("claude-sonnet-4-6", ("low", "medium", "high", "max")),
+            claude_cli_models.ClaudeCliModel("claude-haiku-4-5-20251001", ()),
+        ]
+
+    monkeypatch.setattr(claude_cli_models, "list_claude_cli_models", fake_list)
+    response = client.post(
+        "/settings/llm/models", json={"provider": "claude-cli", "refresh": True}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["models"] == [
+        "claude-opus-5-5",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
+    ]
+    assert body["source"] == "provider"
+    assert body["effort_levels"] == {
+        "claude-sonnet-4-6": ["low", "medium", "high", "max"],
+        "claude-haiku-4-5-20251001": [],
+    }
+    assert observed == {"refresh": True}
+
+
+def test_claude_cli_model_list_falls_back_when_cli_is_unavailable(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.providers import claude_cli_models
+
+    def failing_list(*, refresh: bool = False):
+        raise RuntimeError("claude model list unavailable")
+
+    monkeypatch.setattr(claude_cli_models, "list_claude_cli_models", failing_list)
+    response = client.post("/settings/llm/models", json={"provider": "claude-cli"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["models"] == ["claude-opus-5-5"]
+    assert body["warning_code"] == "model_list_unavailable"
+    assert body["effort_levels"] is None
+
+
+def _llm_update(provider: str, model: str, effort: str) -> dict:
+    return {
+        "provider": provider,
+        "model_name": model,
+        "base_url": "",
+        "temperature": 0.0,
+        "timeout_seconds": 120,
+        "max_retries": 2,
+        "reasoning_effort": effort,
+    }
+
+
+@pytest.mark.parametrize(
+    ("effort", "status_code"), [("xhigh", 200), ("", 200), ("none", 400)]
+)
+def test_claude_cli_effort_is_validated_against_cli_levels(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    effort: str,
+    status_code: int,
+) -> None:
+    from src.providers import claude_cli
+
+    monkeypatch.setattr(claude_cli, "get_claude_cli_auth_status", lambda: (True, "claude.ai"))
+    response = client.put(
+        "/settings/llm", json=_llm_update("claude-cli", "claude-opus-5-5", effort)
+    )
+
+    assert response.status_code == status_code
+    if status_code == 200:
+        # "" leaves the level unset, so the model's own default applies.
+        assert response.json()["reasoning_effort"] == effort
+        if effort:
+            env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+            assert f"LANGCHAIN_REASONING_EFFORT={effort}" in env_text
+
+
+def test_other_providers_still_reject_xhigh(client: TestClient) -> None:
+    payload = _llm_update("openrouter", "deepseek/deepseek-v4-pro", "xhigh")
+    payload["base_url"] = "https://openrouter.ai/api/v1"
+
+    response = client.put("/settings/llm", json=payload)
+
+    assert response.status_code == 400

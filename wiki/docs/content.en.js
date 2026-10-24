@@ -33,14 +33,14 @@ export const DOCS_STRUCTURE = [
             title: "What is in 0.1.16",
             body: `
               <ul>
-                <li><strong>28 market-data sources</strong> behind one call, with a fallback chain per market. Most markets need no API key.</li>
+                <li><strong>29 market-data sources</strong> behind one call, with a fallback chain per market. Most markets need no API key.</li>
                 <li><strong>11 backtest engines</strong>: China A-shares, global equities, India, Korea, Vietnam, crypto, China futures, global futures, forex, a composite engine for cross-market portfolios, and an options portfolio engine.</li>
                 <li><strong>90 finance skills</strong> in 9 categories, and <strong>30 swarm presets</strong> for committee-style research.</li>
-                <li><strong>Alpha Zoo</strong>: 462 alphas you can benchmark on your own universe with one command.</li>
-                <li><strong>74 MCP tools</strong> for other agents.</li>
-                <li><strong>18 broker connectors</strong>, read-only by default, plus a read-only multi-broker portfolio page.</li>
+                <li><strong>Alpha Zoo</strong>: 478 alphas you can benchmark on your own universe with one command.</li>
+                <li><strong>82 MCP tools</strong> for other agents.</li>
+                <li><strong>19 broker connectors</strong>, read-only by default, plus a read-only multi-broker portfolio page.</li>
                 <li><strong>Checked numbers</strong>: figures in an answer are checked against the tool data of the session before you see them.</li>
-                <li>A web UI in nine languages.</li>
+                <li>A web UI in eleven languages.</li>
               </ul>
             `
           },
@@ -569,7 +569,7 @@ vibe-trading --swarm-retry RUN_ID --swarm-resume   # keep finished tasks</code><
         id: "tools/data-sources",
         title: "Data sources",
         description: "Which source serves which market, symbol formats, and how to pick a source.",
-        lead: "One get_market_data call reaches 28 sources. With source auto, each symbol is routed by its market and walks that market's fallback chain, with the sources least likely to block you first.",
+        lead: "One get_market_data call reaches 29 sources. With source auto, each symbol is routed by its market and walks that market's fallback chain, with the sources least likely to block you first.",
         sections: [
           {
             id: "providers",
@@ -722,7 +722,7 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
       {
         id: "tools/alpha-zoo",
         title: "Alpha Zoo",
-        description: "462 ready-made alphas you can benchmark on your own universe.",
+        description: "478 ready-made alphas you can benchmark on your own universe.",
         lead: "The Alpha Zoo is a registry of published alpha formulas. One command scores a whole zoo on a universe and period and sorts each alpha into alive, reversed or dead.",
         sections: [
           {
@@ -772,7 +772,7 @@ vibe-trading alpha export-manifest</code></pre>
             id: "connectors",
             title: "Connectors",
             body: `
-              <p>18 connectors with 55 profiles. A profile is paper or live, and read-only or order-enabled.</p>
+              <p>19 connectors with 56 profiles. A profile is paper or live, and read-only or order-enabled.</p>
               <table>
                 <thead><tr><th>What orders can do</th><th>Brokers</th></tr></thead>
                 <tbody>
@@ -908,7 +908,7 @@ vibe-trading --max-iter 40 -p "prompt"</code></pre>
         id: "reference/mcp-server",
         title: "MCP server",
         description: "Give Claude Desktop, Cursor, OpenClaw and other MCP clients Vibe-Trading's tools.",
-        lead: "vibe-trading-mcp runs as a stdio subprocess of your MCP client and exposes 74 tools. Research tools work without a model key; run_swarm needs one.",
+        lead: "vibe-trading-mcp runs as a stdio subprocess of your MCP client and exposes 82 tools. Research tools work without a model key; run_swarm needs one.",
         sections: [
           {
             id: "config",

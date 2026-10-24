@@ -10,12 +10,13 @@ import {
   type StoredAgentMessage,
 } from "@/stores/agent";
 import { useSSE } from "@/hooks/useSSE";
-import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type ScheduledResearchProposal, type LiveAction, type LiveHalted, type LLMSettings } from "@/lib/api";
+import { useLlmUsageCounter } from "@/hooks/useLlmUsageCounter";
+import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type ScheduledResearchProposal, type LiveAction, type LiveHalted, type LLMSettings, type RunPreview } from "@/lib/api";
 import {
   extractUploadedAttachments,
 } from "@/lib/attachments";
+import { hasStoredMetrics, runCardFields } from "@/lib/runCards";
 import { buildChatPrompt, MAX_GOAL_CHARS, MAX_MESSAGE_CHARS, promptExceedsLimit, SWARM_PROMPT_PREFIX } from "@/lib/chatPrompt";
-import { isReportWorthyRun } from "@/lib/runReports";
 import type { AgentMessage, SwarmRunStatus, ToolCallEntry } from "@/types/agent";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
 import { WelcomeScreen } from "@/components/chat/WelcomeScreen";
@@ -24,6 +25,7 @@ import { ModelRuntimeBar } from "@/components/chat/ModelRuntimeBar";
 import { ThinkingTimeline } from "@/components/chat/ThinkingTimeline";
 import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
 import { ActivityLine } from "@/components/chat/ActivityLine";
+import { LlmUsageCounter } from "@/components/chat/LlmUsageCounter";
 import { MandateProposalCard } from "@/components/chat/MandateProposalCard";
 import { ScheduledResearchProposalCard } from "@/components/chat/ScheduledResearchProposalCard";
 import { SwarmStatusCard } from "@/components/chat/SwarmStatusCard";
@@ -40,8 +42,10 @@ import {
 } from "@/components/chat/LiveRuntimePanel";
 import {
   applySwarmEvent,
+  buildSwarmStatusFromRunDetail,
   buildSwarmStatusFromStarted,
   buildSwarmStatusFromToolResultPreview,
+  mergeSwarmRunUsage,
 } from "@/lib/swarmStatus";
 import { buildToolTimelineMessages } from "@/pages/agentToolTimeline";
 
@@ -75,6 +79,15 @@ function groupMessages(msgs: StoredAgentMessage[]): MsgGroup[] {
 }
 
 const act = () => useAgentStore.getState();
+
+function hydrateSwarmRunUsage(runId: string): void {
+  void api.getSwarmRun(runId).then((payload) => {
+    const current = act().swarmRuns[runId]
+      ?? buildSwarmStatusFromRunDetail(payload, runId);
+    if (!current) return;
+    act().upsertSwarmStatus(mergeSwarmRunUsage(current, payload));
+  }).catch(() => undefined);
+}
 
 function eventCallId(data: Record<string, unknown>): string | undefined {
   return typeof data.call_id === "string" && data.call_id
@@ -272,6 +285,14 @@ export function Agent() {
   const previousStatusRef = useRef(status);
 
   const { connect, disconnect, onStatusChange } = useSSE();
+
+  /* Live token totals for the in-flight attempt, fed by `llm_usage` events. */
+  const {
+    input: usageInput,
+    output: usageOutput,
+    record: recordLlmUsage,
+    reset: resetLlmUsage,
+  } = useLlmUsageCounter();
 
   const urlSessionId = searchParams.get("session");
   const visibleRuntimeIdentity = runtimeIdentity.sessionId === urlSessionId
@@ -526,6 +547,17 @@ export function Agent() {
     try {
       const msgs = await api.getSessionMessages(sid);
       if (genRef.current !== gen) return;
+      // Every assistant turn owns a run directory, so most of these are plain
+      // replies. Request all previews up front rather than one per message.
+      const previews = new Map<string, Promise<RunPreview | null>>();
+      for (const m of msgs) {
+        const meta = m.metadata as Record<string, unknown> | undefined;
+        const runId = meta?.run_id as string | undefined;
+        const metrics = meta?.metrics as Record<string, number> | undefined;
+        if (m.role !== "user" && runId && !hasStoredMetrics(metrics) && !previews.has(runId)) {
+          previews.set(runId, api.getRunPreview(runId).catch(() => null));
+        }
+      }
       const agentMsgs: StoredAgentMessage[] = [];
       let latestRuntimeIdentity: RuntimeIdentity | null = null;
       for (const m of msgs) {
@@ -594,35 +626,12 @@ export function Agent() {
           if (m.content && m.content !== "Strategy execution completed.") {
             agentMsgs.push({ id: m.message_id + "_ans", type: "answer", content: m.content, elapsed_ms: elapsedMs, timestamp: assistantTs });
           }
-          if (metrics && Object.keys(metrics).length > 0) {
+          if (hasStoredMetrics(metrics)) {
             agentMsgs.push({ id: m.message_id, type: "run_complete", content: "", runId, metrics, timestamp: assistantTs + 1 });
           } else {
-            // Fetch run data to check report-worthiness; show fallback card if fetch fails
-            let fetchedMetrics: Record<string, number> | undefined;
-            let fetchedCurve: Array<{ time: string; equity: number }> | undefined;
-            let showCard = false;
-            try {
-              const runData = await api.getRun(runId);
-              if (isReportWorthyRun(runData)) {
-                fetchedMetrics = runData.metrics;
-                fetchedCurve = runData.equity_curve?.map((e) => ({ time: e.time, equity: Number(e.equity) }));
-                showCard = true;
-              }
-              // succeeded but not report-worthy (plain chat turn) → skip card
-            } catch {
-              // fetch failed (auth/404/network) → can't tell, show link as fallback
-              showCard = true;
-            }
-            if (showCard) {
-              agentMsgs.push({
-                id: m.message_id,
-                type: "run_complete",
-                content: "",
-                runId,
-                metrics: fetchedMetrics,
-                equityCurve: fetchedCurve,
-                timestamp: assistantTs + 1,
-              });
+            const card = runCardFields((await previews.get(runId)) ?? null);
+            if (card) {
+              agentMsgs.push({ id: m.message_id, type: "run_complete", content: "", runId, ...card, timestamp: assistantTs + 1 });
             }
           }
         } else {
@@ -761,6 +770,17 @@ export function Agent() {
         if (act().status !== "streaming") act().setStatus("streaming");
         queueStreamUpdate(String(d.delta || ""), false);
       },
+      llm_waiting: (d) => {
+        touch();
+        replayAttemptSeenRef.current = true;
+        identifyActivity(d, "thinking");
+      },
+      llm_usage: (d) => {
+        touch();
+        replayAttemptSeenRef.current = true;
+        recordLlmUsage(String(d.attempt_id || ""), Number(d.iter || 0), d);
+      },
+
       reasoning_delta: (d) => {
         touch();
         replayAttemptSeenRef.current = true;
@@ -837,6 +857,7 @@ export function Agent() {
           const fallback = buildSwarmStatusFromToolResultPreview(String(d.preview || ""));
           if (fallback && !act().swarmRuns[fallback.runId]) {
             act().upsertSwarmStatus(fallback);
+            hydrateSwarmRunUsage(fallback.runId);
           }
         }
       },
@@ -1038,24 +1059,12 @@ export function Agent() {
 
         // Show RunCompleteCard when the turn produced backtest metrics or a shadow report
         if (runId) {
-          let runMetrics: Record<string, number> | undefined;
-          let runCurve: Array<{ time: string; equity: number }> | undefined;
-          let showCard = false;
-          try {
-            const runData = await api.getRun(runId);
-            if (isReportWorthyRun(runData)) {
-              runMetrics = runData.metrics;
-              runCurve = runData.equity_curve?.map(e => ({ time: e.time, equity: Number(e.equity) }));
-              showCard = true;
-            }
-          } catch {
-            showCard = true; // fetch failed → show link as fallback
-          }
-          if (showCard || shadowId) {
+          const card = runCardFields(await api.getRunPreview(runId).catch(() => null));
+          if (card || shadowId) {
             s.addMessage({
               id: "", type: "run_complete", content: "", runId,
-              metrics: showCard ? runMetrics : undefined,
-              equityCurve: showCard ? runCurve : undefined,
+              metrics: card?.metrics,
+              equityCurve: card?.equityCurve,
               shadowId,
               timestamp: Date.now(),
             });
@@ -1282,6 +1291,7 @@ export function Agent() {
     loadGoalSnapshot,
     markBackgroundCompletion,
     queueStreamUpdate,
+    recordLlmUsage,
     scrollToBottom,
   ]);
 
@@ -1349,6 +1359,12 @@ export function Agent() {
       reset();
     }
   }, [urlSessionId, doDisconnect, loadSessionMessages, setupSSE, scheduleHistoryScroll]);
+
+  /* The live token counter belongs to one session; zero it on a real switch,
+     not on callback-identity churn of the rehydration effect above. */
+  useEffect(() => {
+    resetLlmUsage();
+  }, [sessionId, resetLlmUsage]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -1919,6 +1935,7 @@ export function Agent() {
               <AgentAvatar />
               <div className="flex-1 min-w-0 space-y-2">
                 {activity && <ActivityLine activity={activity} reasoningTail={reasoningTail} />}
+                <LlmUsageCounter input={usageInput} output={usageOutput} />
                 {groundingRound !== null && (
                   <p
                     role="status"

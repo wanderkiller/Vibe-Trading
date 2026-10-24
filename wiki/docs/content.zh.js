@@ -32,14 +32,14 @@ export const DOCS_STRUCTURE = [
             title: "0.1.16 包含什么",
             body: `
               <ul>
-                <li><strong>28 个行情数据源</strong>，一次调用即可，每个市场各有一条回退链。多数市场不需要任何 API key。</li>
+                <li><strong>29 个行情数据源</strong>，一次调用即可，每个市场各有一条回退链。多数市场不需要任何 API key。</li>
                 <li><strong>11 个回测引擎</strong>：A 股、全球股票、印度、韩国、越南、加密货币、国内期货、海外期货、外汇，一个用于跨市场组合的复合引擎，以及一个期权组合引擎。</li>
                 <li><strong>90 个金融技能</strong>，分 9 类；<strong>30 个多智能体团队预设</strong>，用于投委会式研究。</li>
-                <li><strong>Alpha Zoo</strong>：462 个现成因子，一条命令即可在你的股票池上评测。</li>
-                <li><strong>74 个 MCP 工具</strong>，供其他智能体调用。</li>
-                <li><strong>18 个券商连接器</strong>，默认只读；另有只读的多券商持仓页。</li>
+                <li><strong>Alpha Zoo</strong>：478 个现成因子，一条命令即可在你的股票池上评测。</li>
+                <li><strong>82 个 MCP 工具</strong>，供其他智能体调用。</li>
+                <li><strong>19 个券商连接器</strong>，默认只读；另有只读的多券商持仓页。</li>
                 <li><strong>数字核验</strong>：答案里的数字在展示给你之前，会先和本次会话取到的工具数据逐一核对。</li>
-                <li>Web 界面支持九种语言。</li>
+                <li>Web 界面支持十一种语言。</li>
               </ul>
             `
           },
@@ -568,7 +568,7 @@ vibe-trading --swarm-retry RUN_ID --swarm-resume   # 保留已完成的任务</c
         id: "tools/data-sources",
         title: "数据源",
         description: "哪个数据源服务哪个市场、代码格式、如何指定数据源。",
-        lead: "一次 get_market_data 调用可以用到 28 个数据源。source 设为 auto 时，每个代码按所属市场路由，沿该市场的回退链依次尝试，最不容易封禁你的数据源排在最前。",
+        lead: "一次 get_market_data 调用可以用到 29 个数据源。source 设为 auto 时，每个代码按所属市场路由，沿该市场的回退链依次尝试，最不容易封禁你的数据源排在最前。",
         sections: [
           {
             id: "providers",
@@ -721,7 +721,7 @@ vibe-trading run -p "分析我的交易行为，提炼我的影子策略，并�
       {
         id: "tools/alpha-zoo",
         title: "Alpha Zoo",
-        description: "462 个现成因子，可在你自己的股票池上评测。",
+        description: "478 个现成因子，可在你自己的股票池上评测。",
         lead: "Alpha Zoo 是已发表因子公式的注册表。一条命令就能在指定股票池和区间上给整组因子打分，并把每个因子归为有效、反向或失效。",
         sections: [
           {
@@ -771,7 +771,7 @@ vibe-trading alpha export-manifest</code></pre>
             id: "connectors",
             title: "连接器",
             body: `
-              <p>18 个连接器，共 55 个配置档（profile）。每个配置档要么是模拟盘、要么是实盘，要么只读、要么可下单。</p>
+              <p>19 个连接器，共 56 个配置档（profile）。每个配置档要么是模拟盘、要么是实盘，要么只读、要么可下单。</p>
               <table>
                 <thead><tr><th>下单能力</th><th>券商</th></tr></thead>
                 <tbody>
@@ -907,7 +907,7 @@ vibe-trading --max-iter 40 -p "指令"</code></pre>
         id: "reference/mcp-server",
         title: "MCP 服务",
         description: "把 Vibe-Trading 的工具提供给 Claude Desktop、Cursor、OpenClaw 等 MCP 客户端。",
-        lead: "vibe-trading-mcp 作为 MCP 客户端的 stdio 子进程运行，提供 74 个工具。研究类工具不需要模型 key；run_swarm 需要。",
+        lead: "vibe-trading-mcp 作为 MCP 客户端的 stdio 子进程运行，提供 82 个工具。研究类工具不需要模型 key；run_swarm 需要。",
         sections: [
           {
             id: "config",

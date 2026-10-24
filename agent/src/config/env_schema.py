@@ -23,7 +23,7 @@ import os
 import types
 from enum import Enum
 
-from typing import Annotated, Any, Union, get_args, get_origin
+from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
@@ -156,7 +156,8 @@ class LLMConfig(_EnvBase):
     """LLM provider and generation parameters.
 
     Sources: ``src/providers/llm.py``, ``src/providers/chat.py``,
-    ``src/providers/openai_codex.py``, ``src/preflight.py``.
+    ``src/providers/openai_codex.py``, ``src/providers/claude_cli.py``,
+    ``src/preflight.py``.
     """
 
     langchain_provider: str = Field(alias="LANGCHAIN_PROVIDER", default="openai")
@@ -167,6 +168,9 @@ class LLMConfig(_EnvBase):
     # preflight could not tell a missing key from a working one and the failure
     # surfaced as an opaque 401 at the first call instead (#1223).
     anthropic_api_key: str = Field(alias="ANTHROPIC_API_KEY", default="")
+    langchain_max_tokens: int | None = Field(
+        alias="LANGCHAIN_MAX_TOKENS", default=None, gt=0
+    )
     anthropic_max_tokens: int | None = Field(alias="ANTHROPIC_MAX_TOKENS", default=None, gt=0)
     timeout_seconds: int = Field(alias="TIMEOUT_SECONDS", default=120)
     max_retries: int = Field(alias="MAX_RETRIES", default=2)
@@ -179,6 +183,15 @@ class LLMConfig(_EnvBase):
     openai_codex_base_url: str = Field(
         alias="OPENAI_CODEX_BASE_URL",
         default="https://chatgpt.com/backend-api/codex/responses",
+    )
+    claude_cli_path: str = Field(alias="CLAUDE_CLI_PATH", default="")
+    # A convenience filter, not a security boundary: live orders are still bound
+    # by the mandate gate whatever this list hides.
+    claude_cli_deny_tool_prefixes: str = Field(
+        alias="CLAUDE_CLI_DENY_TOOL_PREFIXES", default="trading_,etoro_"
+    )
+    claude_cli_bash_policy: str = Field(
+        alias="CLAUDE_CLI_BASH_POLICY", default="python-only"
     )
     openai_model: str = Field(alias="OPENAI_MODEL", default="")
     vibe_trading_disable_http_proxy: EnvBool = Field(
@@ -216,6 +229,8 @@ class DataConfig(_EnvBase):
         alias="GILDATA_BASE_URL",
         default="https://api.gildata.com/mcp-servers/aidata-assistant-srv-rawapi",
     )
+    # Standard-version (srv-tool) NL research endpoint — see src/tools/gildata_srv.py.
+    gildata_srv_tool_url: str = Field(alias="GILDATA_SRV_TOOL_URL", default="")
     fred_api_key: str = Field(alias="FRED_API_KEY", default="")
     vibe_trading_iwencai_key: str = Field(alias="VIBE_TRADING_IWENCAI_KEY", default="")
     vibe_trading_sec_ua: str = Field(alias="VIBE_TRADING_SEC_UA", default="")
@@ -232,6 +247,28 @@ class DataConfig(_EnvBase):
     vibe_trading_sec_ftd_files: int = Field(alias="VIBE_TRADING_SEC_FTD_FILES", default=1)
     vibe_trading_openalex_mailto: str = Field(alias="VIBE_TRADING_OPENALEX_MAILTO", default="")
     vibe_tw_stock_db: str = Field(alias="VIBE_TW_STOCK_DB", default="")
+    # Brazilian official data (B3 COTAHIST, CVM, BCB, Tesouro Direto), synced
+    # by the one-off CLI ``python -m src.br_data sync`` or by the daily
+    # ``system:br-data-sync`` job (gated by ``vibe_br_sync_enabled`` below)
+    # into one SQLite file. Empty = default
+    # ``~/.vibe-trading/br-data/br_data.db``.
+    vibe_br_data_db: str = Field(alias="VIBE_BR_DATA_DB", default="")
+    # First COTAHIST year a sync downloads (B3 publishes from 1986).
+    vibe_br_cotahist_start_year: int = Field(alias="VIBE_BR_COTAHIST_START_YEAR", default=2015)
+    # First year of CVM fund daily reports / company filings a sync downloads.
+    vibe_br_cvm_start_year: int = Field(alias="VIBE_BR_CVM_START_YEAR", default=2022)
+    # Local time (HH:MM, America/Sao_Paulo) used as the cron slot for the
+    # FIRST seed of the daily sync system job (see ``vibe_br_sync_enabled``).
+    vibe_br_sync_time: str = Field(alias="VIBE_BR_SYNC_TIME", default="21:30")
+    # Opt-in gate for the protected daily-sync system job
+    # (``system:br-data-sync``), read via
+    # src/br_data/scheduling.py. Deliberately not part of any preset, so
+    # enabling the scheduler never silently seeds a daily network sync;
+    # VIBE_BR_SYNC_TIME above drives the first seed's cron slot.
+    vibe_br_sync_enabled: EnvBool = Field(
+        default=False, alias="VIBE_BR_SYNC_ENABLED",
+        description="Enable the daily br-data sync system job",
+    )
     vibe_trading_data_cache: EnvBool = Field(alias="VIBE_TRADING_DATA_CACHE", default=False)
     vibe_trading_data_cache_root: str = Field(alias="VIBE_TRADING_DATA_CACHE_ROOT", default="")
     aliyun_iqs_api_key: str = Field(alias="ALIYUN_IQS_API_KEY", default="")
@@ -249,7 +286,7 @@ class DataConfig(_EnvBase):
     etoro_user_key: str = Field(alias="ETORO_USER_KEY", default="")
     # Per-market source-order overrides (Settings page "source priority").
     # Value: comma-separated permutation of the market's default chain, e.g.
-    # MARKET_DATA_ORDER_A_SHARE=tushare,tencent,mootdx,... Applied by
+    # MARKET_DATA_ORDER_A_SHARE=tushare,tencent,eastmoney,... Applied by
     # backtest.loaders.registry.refresh_source_order_overrides() (which reads
     # os.getenv directly); declared here for visibility/validation parity.
     market_data_order_a_share: str = Field(alias="MARKET_DATA_ORDER_A_SHARE", default="")
@@ -259,6 +296,7 @@ class DataConfig(_EnvBase):
     market_data_order_kr_equity: str = Field(alias="MARKET_DATA_ORDER_KR_EQUITY", default="")
     market_data_order_ca_equity: str = Field(alias="MARKET_DATA_ORDER_CA_EQUITY", default="")
     market_data_order_ar_equity: str = Field(alias="MARKET_DATA_ORDER_AR_EQUITY", default="")
+    market_data_order_br_equity: str = Field(alias="MARKET_DATA_ORDER_BR_EQUITY", default="")
     market_data_order_uk_equity: str = Field(alias="MARKET_DATA_ORDER_UK_EQUITY", default="")
     market_data_order_vietnam_equity: str = Field(alias="MARKET_DATA_ORDER_VIETNAM_EQUITY", default="")
     market_data_order_crypto: str = Field(alias="MARKET_DATA_ORDER_CRYPTO", default="")
@@ -428,6 +466,14 @@ class AgentTuningConfig(_EnvBase):
     # tuned against it means anything under real-token accounting. Read only to
     # warn (src/agent/context_budget.py); compaction ignores it.
     token_threshold: int = Field(alias="TOKEN_THRESHOLD", default=40000)
+    # ReAct loop iteration cap for interactive/web sessions. Heavy pipelines
+    # (multi-layer scoring, batch research) legitimately exceed 50 turns.
+    vibe_trading_agent_max_iterations: int = Field(
+        alias="VIBE_TRADING_AGENT_MAX_ITERATIONS", default=50, ge=1,
+    )
+    vibe_trading_tool_loading: Literal["eager", "lazy"] = Field(
+        alias="VIBE_TRADING_TOOL_LOADING", default="lazy",
+    )
     vibe_trading_context_window: int | None = Field(
         alias="VIBE_TRADING_CONTEXT_WINDOW", default=None, gt=0,
     )
@@ -632,6 +678,17 @@ class MemoryConfig(_EnvBase):
     fts_index_enabled: EnvBool = Field(
         default=False, alias="VT_MEMORY_FTS_INDEX",
         description="Enable SQLite FTS5 search index",
+    )
+
+    # Scheduled consolidation system job (scheduler unification).
+    # Deliberately NOT listed in the preset flag map or the memory flag alias
+    # map above: the preset machinery only touches fields in the alias map, so
+    # VT_MEMORY=on/full can never silently enable a background timer. This
+    # flag is opt-in on its own; the job it gates also no-ops honestly unless
+    # VT_MEMORY_GC is enabled (see src/memory/consolidation.py).
+    consolidation_enabled: EnvBool = Field(
+        default=False, alias="VT_MEMORY_CONSOLIDATION",
+        description="Enable the daily memory-consolidation system job",
     )
 
     @model_validator(mode="before")

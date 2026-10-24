@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.agent.grounding.figures import _CURRENCY_CODES
 from src.agent.grounding.identity import (
     _CANONICAL_SYMBOL_RE,
     _infer_currency,
@@ -28,6 +29,12 @@ _PRICE_FIELDS = {"open", "high", "low", "close", "adj_close", "price"}
 _TIMESTAMP_FIELDS = ("trade_date", "date", "datetime", "timestamp", "time", "index")
 
 _MAX_GENERIC_EVIDENCE = 2_000
+
+#: Top-level fields of a code-running tool's envelope (backtest, bash, ...). They
+#: describe the process, not the market, so they never become observed evidence.
+_ENVELOPE_FIELDS = frozenset(
+    {"exit_code", "returncode", "elapsed_seconds", "duration_seconds"}
+)
 
 # Only these CSV columns count; Volume, Adj Close etc. are ignored so the
 # contradiction check gains no values it would be willing to accept.
@@ -120,6 +127,11 @@ _ANALYSIS_KIND_ALIASES = {
     "annualized_return": "return",
     "return": "return",
     "returns": "return",
+    "correlation_matrix": "correlation",
+    "contribution": "contribution",
+    "contribution_pct": "contribution",
+    "risk_contribution": "contribution",
+    "risk_contribution_pct": "contribution",
     "ic_positive_ratio": "win_rate",
     "var": "tail_risk",
     "var_95": "tail_risk",
@@ -486,6 +498,8 @@ _REGISTERED_PRICE_INDICATORS: dict[str, tuple[str, ...]] = {
 }
 
 
+_FUND_NAV_PRICE_FIELDS = frozenset({"unit_nav", "accumulated_nav", "adjusted_nav"})
+
 def _is_registered_price_indicator(tool: str, path: str) -> bool:
     """Whether a tool registered this leaf as a price-denominated level.
 
@@ -496,10 +510,15 @@ def _is_registered_price_indicator(tool: str, path: str) -> bool:
     Returns:
         True when the tool has a registration whose prefix the path matches.
     """
+    leaf = str(path or "").strip()
+    if tool == "get_fund_nav":
+        # Only this tool's dated, exactly resolved fund rows expose these
+        # levels. A generic nav field or daily growth is not a price.
+        match = re.fullmatch(r"funds\.[0-9]{6}\.OF\.rows\[[0-9]+\]\.([a-z_]+)", leaf)
+        return bool(match and match.group(1) in _FUND_NAV_PRICE_FIELDS)
     prefixes = _REGISTERED_PRICE_INDICATORS.get(str(tool or ""))
     if not prefixes:
         return False
-    leaf = str(path or "").strip()
     for prefix in prefixes:
         if leaf == prefix:
             return True
@@ -578,6 +597,17 @@ def _metric_kind_for_path(path: str) -> str | None:
     kind = _ANALYSIS_KIND_ALIASES.get(leaf)
     if kind is not None:
         return kind
+    # Recognize explicitly named metric maps with ticker-keyed numeric leaves.
+    # A dotted venue suffix (AAPL.US) occupies multiple path components;
+    # only uppercase symbol-shaped components can follow the metric field.
+    parts = str(path or "").split(".")
+    for index, part in enumerate(parts[:-1]):
+        parent_kind = _ANALYSIS_KIND_ALIASES.get(part.casefold())
+        if parent_kind not in {"contribution", "correlation"}:
+            continue
+        labels = parts[index + 1 :]
+        if all(re.fullmatch(r"[A-Z][A-Z0-9]{0,14}", label) for label in labels):
+            return parent_kind
     # Compound leaves ("strategy_max_drawdown"): scan tokens from the right,
     # where English puts the head noun, so "return_vol" is vol, not return.
     # Only the head of a compound leaf says what it measures (#1426):
@@ -596,6 +626,32 @@ def _metric_kind_for_path(path: str) -> str | None:
             kind = None if key in _EXACT_ONLY_ALIASES else _ANALYSIS_KIND_ALIASES.get(key)
             if kind is not None:
                 return kind
+    return None
+
+
+def _keyed_metric_map_kind(path: str) -> str | None:
+    """Identify metric maps with instrument-shaped keys after the metric name.
+
+    Scalar fields such as ``positions[0].contribution_pct`` are not keyed
+    maps and must keep their ordinary indexed evidence references.
+    """
+    parts = str(path or "").split(".")
+    for index, part in enumerate(parts[:-1]):
+        kind = _ANALYSIS_KIND_ALIASES.get(part.casefold())
+        if kind not in {"contribution", "correlation"}:
+            continue
+        if all(re.fullmatch(r"[A-Z][A-Z0-9]{0,14}", key) for key in parts[index + 1 :]):
+            return kind
+    return None
+
+
+def _analysis_symbol_key(key: str) -> str | None:
+    """Return a plausible instrument key, excluding common aggregate labels."""
+    if _CANONICAL_SYMBOL_RE.fullmatch(key) or (
+        re.fullmatch(r"[A-Z][A-Z0-9]{0,14}", key)
+        and key not in {"ALL", "PORTFOLIO", "TOTAL", "UNKNOWN"}
+    ):
+        return _normalize_symbol(key)
     return None
 
 
@@ -635,7 +691,14 @@ def _is_price_kind(record: EvidenceRecord) -> bool:
         amount/turnover leaves.
     """
     return (
-        record.field in _PRICE_FIELDS
+        (
+            record.tool == "get_sec_filings"
+            and record.source == "sec_edgar"
+            and record.field.startswith("data.metric.points[")
+            and record.field.endswith("].val")
+            and record.currency is not None
+        )
+        or record.field in _PRICE_FIELDS
         or _price_field_for_path(record.field) is not None
         or _is_registered_price_indicator(record.tool, record.field)
         or _leaf_name(record.field) in _AMOUNT_FIELDS
@@ -714,12 +777,20 @@ class _EvidenceMixin:
         """Record nested numeric leaves whose key names a metric kind."""
         recorded = 0
 
-        def visit(item: Any, path: str) -> None:
+        def visit(
+            item: Any,
+            path: str,
+            *,
+            metric_map: str | None = None,
+            keyed_symbol: str | None = None,
+            keyed_symbols: tuple[str, ...] = (),
+        ) -> None:
             nonlocal recorded
             if _is_number(item):
                 kind = _metric_kind_for_path(path)
                 if kind is None:
                     return
+                symbol = keyed_symbol if metric_map == "contribution" else None
                 self._analysis_metrics.append(
                     {
                         "metric": kind,
@@ -727,16 +798,48 @@ class _EvidenceMixin:
                         "tool": tool_name,
                         "call_id": call_id,
                         "field": path,
+                        "instrument_scoped": metric_map is not None,
+                        "symbol": symbol,
+                        "instrument_symbols": list(keyed_symbols),
                     }
                 )
                 recorded += 1
                 return
             if isinstance(item, dict):
                 for key, child in item.items():
-                    visit(child, f"{path}.{key}" if path else str(key))
+                    key_text = str(key)
+                    child_path = f"{path}.{key_text}" if path else key_text
+                    parent_kind = _ANALYSIS_KIND_ALIASES.get(key_text.casefold())
+                    child_metric_map = (
+                        parent_kind
+                        if isinstance(child, dict) and parent_kind in {"contribution", "correlation"}
+                        else metric_map
+                    )
+                    child_symbol = keyed_symbol
+                    child_symbols = keyed_symbols
+                    if metric_map == "contribution":
+                        child_symbol = _analysis_symbol_key(key_text)
+                    elif metric_map == "correlation":
+                        child_symbol = None
+                        axis_symbol = _analysis_symbol_key(key_text)
+                        if axis_symbol and axis_symbol not in child_symbols:
+                            child_symbols = (*child_symbols, axis_symbol)
+                    visit(
+                        child,
+                        child_path,
+                        metric_map=child_metric_map,
+                        keyed_symbol=child_symbol,
+                        keyed_symbols=child_symbols,
+                    )
             elif isinstance(item, list):
                 for index, child in enumerate(item):
-                    visit(child, f"{path}[{index}]")
+                    visit(
+                        child,
+                        f"{path}[{index}]",
+                        metric_map=metric_map,
+                        keyed_symbol=keyed_symbol,
+                        keyed_symbols=keyed_symbols,
+                    )
 
         visit(value, field_prefix or "")
         return recorded
@@ -855,6 +958,9 @@ class _EvidenceMixin:
                         field=field_name,
                         value=value,
                         status="observed",
+                        # research-truth: the IR backtest's *_usdt amount columns are USDT, so a "-138.19 USDT" claim
+                        # (figure.currency_code) is checked against them
+                        currency="USDT" if field_name.casefold().endswith("_usdt") else None,
                         artifact=artifact,
                         scope=scope,
                     )
@@ -1057,10 +1163,12 @@ class _EvidenceMixin:
         arguments: Mapping[str, Any],
         payload: dict[str, Any] | None,
         call_id: str,
+        *,
+        tool_name: str = "get_market_data",
     ) -> None:
         """Convert full OHLCV payloads into source-linked evidence rows."""
         if payload is None:
-            self._record_tool_failure("get_market_data", call_id, "malformed JSON result")
+            self._record_tool_failure(tool_name, call_id, "malformed JSON result")
             return
         requested_source = str(arguments.get("source") or "auto")
         provenance = payload.get("_provenance")
@@ -1107,7 +1215,7 @@ class _EvidenceMixin:
                     self._evidence.append(
                         EvidenceRecord(
                             call_id=call_id,
-                            tool="get_market_data",
+                            tool=tool_name,
                             symbol=symbol,
                             source=actual_source,
                             timestamp=timestamp,
@@ -1126,7 +1234,7 @@ class _EvidenceMixin:
                 self._evidence.append(
                     EvidenceRecord(
                         call_id=call_id,
-                        tool="get_market_data",
+                        tool=tool_name,
                         symbol=symbol,
                         source=requested_source,
                         timestamp=None,
@@ -1155,6 +1263,11 @@ class _EvidenceMixin:
         source = str(payload.get("source") or tool_name)
         remaining = _MAX_GENERIC_EVIDENCE
         timestamp_fields = (*_TIMESTAMP_FIELDS, "latest_date", "as_of")
+        data = payload.get("data")
+        metric = data.get("metric") if isinstance(data, dict) else None
+        unit = metric.get("unit") if isinstance(metric, dict) else None
+        unit = unit.strip().upper() if isinstance(unit, str) else None
+        metric_currency = {"RMB": "CNY", "CNH": "CNY"}.get(unit, unit) if unit in _CURRENCY_CODES else None
 
         def visit(value: Any, path: str, timestamp: str | None = None) -> None:
             nonlocal remaining
@@ -1171,7 +1284,13 @@ class _EvidenceMixin:
                         field=path or "value",
                         value=value,
                         status="observed",
-                        currency=_infer_currency(symbol or ""),
+                        currency=(
+                            metric_currency
+                            if tool_name == "get_sec_filings"
+                            and path.startswith("data.metric.points[")
+                            and path.endswith("].val")
+                            else _infer_currency(symbol or "")
+                        ),
                         venue=_infer_venue(symbol or ""),
                     )
                 )
@@ -1213,6 +1332,8 @@ class _EvidenceMixin:
                 )
                 for key, item in value.items():
                     if str(key).casefold() in timestamp_fields:
+                        continue
+                    if not path and str(key).casefold() in _ENVELOPE_FIELDS:
                         continue
                     visit(
                         item,

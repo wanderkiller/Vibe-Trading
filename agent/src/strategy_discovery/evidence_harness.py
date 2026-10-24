@@ -4,10 +4,9 @@ Builds on the artifact readers in :mod:`run_artifacts`; this module owns the
 regime labeling and the per-regime metrics. Conventions:
 
 * Trade counting — engine ``trades.csv`` artifacts hold TWO rows per round
-  trip (entry row ``pnl=0.0`` + exit row with realized pnl); only exit rows
-  are counted, so a round trip contributes exactly one trade. Legacy
-  one-row-per-trade artifacts are detected via the marker column and keep
-  counting every row (see :func:`run_artifacts.read_trade_activity`).
+  trip (``event=entry`` and ``event=exit``); only exits are counted, including
+  zero-PnL exits. Unmarked files keep their legacy PnL-based interpretation
+  (see :func:`run_artifacts.read_trade_activity`).
 * Regime labeling — each bar is labeled by the rolling cumulative benchmark
   return over the trailing ``benchmark_window`` bars ending at that bar
   (``<= bear_threshold`` → bear_market, ``>= bull_threshold`` → bull_market,
@@ -587,7 +586,7 @@ def compute_evidence_for_run(
     return rows
 
 
-def rebuild_evidence(runs: Sequence[Mapping], store: EvidenceStore) -> dict:
+def rebuild_evidence(runs: Sequence[Mapping], store: EvidenceStore, *, scope: str = "all") -> dict:
     """Atomically replace the store contents from a sequence of run specs.
 
     Each mapping needs ``strategy_id`` and ``run_dir``; an optional
@@ -606,12 +605,18 @@ def rebuild_evidence(runs: Sequence[Mapping], store: EvidenceStore) -> dict:
     ``all_rows`` still replaces (clears) the store: a rebuild is a full
     statement of the evidence, not a patch.
 
+    ``scope="strategies"`` replaces only successful strategies' full regime
+    sets, preserving all other evidence and failed retries. The default
+    ``scope="all"`` retains the original full-rebuild semantics.
+
     Eligibility vs sufficiency (plan D4): the hard gates certify run
     ELIGIBILITY from metrics.csv ``trade_count``; the per-regime rows below
     are gated by EVIDENCE SUFFICIENCY (the harness's closed-round-trip
     count). The two counts can disagree (entries without exits); that is
     intentional and documented.
     """
+    if scope not in {"all", "strategies"}:
+        raise ValueError("scope must be all or strategies")
     skipped: list[dict] = []
     all_rows: list[EvidenceRow] = []
     ok_strategies: set[str] = set()
@@ -641,6 +646,9 @@ def rebuild_evidence(runs: Sequence[Mapping], store: EvidenceStore) -> dict:
             )
             continue
         try:
+            from src.strategy_discovery.adaptation_workflow import validate_adapted_run
+
+            validate_adapted_run(strategy_id, run_dir)
             gate_ok, gate_reason = check_run_hard_gates(run_dir)
             if not gate_ok:
                 skipped.append({"run_dir": str(run_dir), "reason": gate_reason})
@@ -670,7 +678,12 @@ def rebuild_evidence(runs: Sequence[Mapping], store: EvidenceStore) -> dict:
         all_rows.extend(rows)
         ok_strategies.add(strategy_id)
 
-    written = store.replace_rows(all_rows)
+    if scope == "strategies":
+        # Replace complete regime sets for successful named runs only. A bad
+        # retry cannot erase earlier valid evidence or another strategy's rows.
+        written = store.replace_rows(all_rows, strategy_ids=sorted(ok_strategies))
+    else:
+        written = store.replace_rows(all_rows)
     return {
         "status": "ok",
         "runs": len(runs),

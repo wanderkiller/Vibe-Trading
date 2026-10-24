@@ -21,7 +21,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
-from backtest.metrics import effective_bars_per_year
+from backtest.metrics import effective_bars_per_year, period_returns
 from backtest.models import TradeRecord
 
 
@@ -179,6 +179,7 @@ def bootstrap_sharpe_ci(
     confidence: float = 0.95,
     bars_per_year: int = 252,
     seed: int = 42,
+    initial_capital: float | None = None,
 ) -> Dict[str, Any]:
     """Resample daily returns to estimate Sharpe confidence interval.
 
@@ -188,6 +189,11 @@ def bootstrap_sharpe_ci(
         confidence: Confidence level (e.g. 0.95 for 95% CI).
         bars_per_year: Annualisation factor.
         seed: Random seed.
+        initial_capital: Starting capital. When given, the first return is
+            measured from this cash mark (the calc_metrics convention), so
+            ``observed_sharpe`` agrees with the report's own Sharpe on paths
+            whose first recorded bar carries real PnL. None keeps the legacy
+            adjacent-pair series.
 
     Returns:
         Dict with observed_sharpe, ci_lower, ci_upper, median_sharpe,
@@ -205,7 +211,17 @@ def bootstrap_sharpe_ci(
     if isinstance(seed, bool) or not isinstance(seed, Integral) or seed < 0:
         return {"error": f"seed must be >= 0, got {seed}"}
 
-    returns = equity_curve.pct_change().replace([np.inf, -np.inf], 0.0).dropna().values
+    if initial_capital is not None:
+        series = period_returns(equity_curve, initial_capital)
+    else:
+        series = equity_curve.pct_change(fill_method=None)
+    # Missing equity is not a flat observation or a one-period recovery return.
+    returns = (
+        series
+        .replace([np.inf, -np.inf], 0.0)
+        .dropna()
+        .values
+    )
     if len(returns) < 5:
         return {"error": "need at least 5 return observations"}
 
@@ -295,13 +311,23 @@ def walk_forward_analysis(
         win_eq = equity_curve.iloc[start_idx:end_idx]
         win_start = indices[start_idx]
         win_end = indices[end_idx - 1]
+        if not np.isfinite(win_eq.iloc[[0, -1]]).all():
+            return {"error": f"window {i + 1} requires observed start and end equity"}
 
         # Per-window trades
         win_trades = [t for t in trades if win_start <= t.entry_time <= win_end]
 
         # Per-window metrics
         ret = float(win_eq.iloc[-1] / win_eq.iloc[0] - 1) if win_eq.iloc[0] > 0 else 0.0
-        win_returns = win_eq.pct_change().replace([np.inf, -np.inf], 0.0).dropna().values
+        # Use only observed adjacent pairs within this window.
+        win_returns = (
+            win_eq.pct_change(fill_method=None)
+            .replace([np.inf, -np.inf], 0.0)
+            .dropna()
+            .values
+        )
+        if not len(win_returns):
+            return {"error": f"window {i + 1} has no observed adjacent equity returns"}
         sharpe = _sharpe(win_returns, bars_per_year)
 
         peak = win_eq.cummax()
@@ -398,6 +424,7 @@ def run_validation(
             n_bootstrap=bs_cfg.get("n_bootstrap", 1000),
             confidence=bs_cfg.get("confidence", 0.95),
             seed=bs_cfg.get("seed", 42),
+            initial_capital=initial_capital,
         )
 
     if "walk_forward" in v_cfg:
@@ -434,10 +461,31 @@ def _load_trades(run_dir: Path) -> List[TradeRecord]:
     if df.empty:
         return []
 
-    # trades.csv has entry+exit row pairs; extract exit rows (they have pnl != 0)
+    # New artifacts identify exits explicitly, including break-even trades.
+    # Unmarked historical/other-engine files retain their legacy convention.
     trades = []
-    exit_rows = df[df["pnl"] != 0].reset_index(drop=True)
-    for _, row in exit_rows.iterrows():
+    exit_mask = df["event"].eq("exit") if "event" in df.columns else df["pnl"].ne(0)
+    exit_rows = df[exit_mask]
+    for row_idx, row in exit_rows.iterrows():
+        exit_time = pd.Timestamp(row.get("timestamp", "2000-01-01"))
+        entry_time = exit_time
+        # BaseEngine emits adjacent entry/exit pairs. Recover entry dates only
+        # from an explicit matching pair; legacy/exit-only files stay unchanged.
+        if "event" in df.columns and row_idx > 0:
+            entry = df.iloc[row_idx - 1]
+            expected_side = {"sell": "buy", "buy": "sell"}.get(row.get("side"))
+            if (
+                entry["event"] == "entry"
+                and entry.get("code") == row.get("code")
+                and expected_side is not None
+                and entry.get("side") == expected_side
+            ):
+                candidate_time = pd.to_datetime(entry.get("timestamp"), errors="coerce")
+                try:
+                    if pd.notna(candidate_time) and candidate_time <= exit_time:
+                        entry_time = candidate_time
+                except TypeError:
+                    pass  # Incompatible timestamp timezones cannot form a pair.
         hold = pd.to_numeric(row.get("holding_bars"), errors="coerce")
         if pd.isna(hold):
             hold = pd.to_numeric(row.get("holding_days", 0), errors="coerce")
@@ -448,8 +496,8 @@ def _load_trades(run_dir: Path) -> List[TradeRecord]:
                 direction=1 if row.get("side") == "sell" else -1,
                 entry_price=0.0,
                 exit_price=float(row.get("price", 0)),
-                entry_time=pd.Timestamp(row.get("timestamp", "2000-01-01")),
-                exit_time=pd.Timestamp(row.get("timestamp", "2000-01-01")),
+                entry_time=entry_time,
+                exit_time=exit_time,
                 size=float(row.get("qty", 0)),
                 leverage=1.0,
                 pnl=float(row.get("pnl", 0)),
@@ -522,10 +570,51 @@ def write_validation_json(path: Path, results: Dict[str, Any]) -> Dict[str, Any]
     return safe_results
 
 
+def _saved_bars_per_year(config: Dict[str, Any], equity: pd.Series, run_dir: Path) -> int | None:
+    """Annualisation factor for a saved run, chosen the way the runner chose it.
+
+    The engine passes the run's ``bars_per_year`` into :func:`run_validation`;
+    Prefer the factor recorded by the runner after checking the served bars.
+    For legacy cards, apply the runner's spacing check to the saved equity
+    index. This is a reconstruction: the original per-symbol price indexes
+    are not available. A config without codes keeps the historical default.
+
+    Args:
+        config: The saved run config.
+        equity: Saved equity observations for the legacy spacing fallback.
+        run_dir: Directory containing the optional run card.
+
+    Returns:
+        Bars per year, or ``None`` for calendar-day annualisation.
+    """
+    card_path = run_dir / "run_card.json"
+    if card_path.exists():
+        card = json.loads(card_path.read_text(encoding="utf-8"))
+        if "annualisation" in card:
+            value = card["annualisation"]["bars_per_year"]
+            if value is None:
+                return None
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError("run-card bars_per_year must be a positive integer or null")
+            return value
+    codes = [code for code in config.get("codes") or [] if isinstance(code, str) and code]
+    if not codes:
+        return 252
+    from backtest.runner import _annualisation_bars, _detect_market, _detect_primary_source
+
+    if len({_detect_market(code) for code in codes}) > 1:
+        return None
+    source = _detect_primary_source(codes, config.get("source", "tushare"))
+    return _annualisation_bars(
+        config.get("interval", "1D"), source, {"equity": equity.to_frame()}, ["equity"]
+    )
+
+
 def main(run_dir: Path) -> Dict[str, Any]:
     """Run all three validations on existing backtest artifacts.
 
     Reads equity.csv, trades.csv, and config.json from run_dir.
+    Runs all three tools with saved validation settings, defaulting missing ones.
 
     Args:
         run_dir: Directory with artifacts/ subdirectory.
@@ -533,7 +622,7 @@ def main(run_dir: Path) -> Dict[str, Any]:
     Returns:
         Validation results dict.
     """
-    # Load config for initial_cash
+    # Load initial cash and saved validation settings.
     config_path = run_dir / "config.json"
     if config_path.exists():
         config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -544,11 +633,16 @@ def main(run_dir: Path) -> Dict[str, Any]:
     equity = _load_equity(run_dir)
     trades = _load_trades(run_dir)
 
-    results = {
-        "monte_carlo": monte_carlo_test(trades, initial_capital),
-        "bootstrap": bootstrap_sharpe_ci(equity),
-        "walk_forward": walk_forward_analysis(equity, trades),
-    }
+    # Standalone validation always runs all tools, even when the original run
+    # enabled only a subset. Reuse dispatcher defaults and parameter guards.
+    settings = {name: {} for name in ("monte_carlo", "bootstrap", "walk_forward")}
+    saved_settings = config.get("validation")
+    if isinstance(saved_settings, dict):
+        settings.update(saved_settings)
+    results = run_validation(
+        {"validation": settings}, equity, trades, initial_capital,
+        _saved_bars_per_year(config, equity, run_dir),
+    )
 
     out = run_dir / "artifacts" / "validation.json"
     safe_results = write_validation_json(out, results)

@@ -69,6 +69,21 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
 # ===================================================================
 
 
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_session_iteration_cap_rejects_nonpositive_values(monkeypatch, value: str) -> None:
+    """A nonpositive cap must not silently become an unlimited loop."""
+    monkeypatch.setenv("VIBE_TRADING_AGENT_MAX_ITERATIONS", value)
+    with pytest.raises(ValidationError):
+        get_env_config()
+
+
+@pytest.mark.parametrize("value", ["2.5", "invalid"])
+def test_session_iteration_cap_uses_safe_default_for_malformed_env(monkeypatch, value: str) -> None:
+    """Unparseable env values follow the shared numeric-default contract."""
+    monkeypatch.setenv("VIBE_TRADING_AGENT_MAX_ITERATIONS", value)
+    assert get_env_config().agent_tuning.vibe_trading_agent_max_iterations == 50
+
+
 class TestEnvConfigDefaults:
     """Verify every field defaults correctly when no env vars are set."""
 
@@ -120,6 +135,7 @@ class TestEnvConfigDefaults:
         assert c.data.fmp_api_key == ""
         assert c.data.gildata_token == ""
         assert c.data.gildata_base_url.endswith("aidata-assistant-srv-rawapi")
+        assert c.data.gildata_srv_tool_url == ""
         assert c.data.fred_api_key == ""
         assert c.data.vibe_trading_iwencai_key == ""
         assert c.data.vibe_trading_sec_ua == ""
@@ -168,6 +184,7 @@ class TestEnvConfigDefaults:
     def test_agent_tuning_defaults(self) -> None:
         c = EnvConfig()
         assert c.agent_tuning.token_threshold == 40000
+        assert c.agent_tuning.vibe_trading_agent_max_iterations == 50
         assert c.agent_tuning.vt_heartbeat_interval_s == 3.0
         assert c.agent_tuning.vt_reasoning_delta_min_interval_s == 1.0
         assert c.agent_tuning.vt_stream_retry_delay_s == 1.0

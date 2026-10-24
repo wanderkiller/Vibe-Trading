@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 import pytest
 
-import src.agent.loop as loop_mod
+import src.agent.tuning as tuning_mod
 from src.providers.chat import LLMResponse, ProviderStreamError
 
 
@@ -43,6 +43,7 @@ class _FlakyLoopLLM:
         timeout: int | None = None,
         idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
+        on_waiting_chunk=None,
     ) -> LLMResponse:
         """Raise the next queued error or return the final response.
 
@@ -127,7 +128,7 @@ def _run(
     from src.memory.persistent import PersistentMemory
     from src.tools import build_registry
 
-    monkeypatch.setattr(loop_mod, "STREAM_RETRY_DELAY_S", 0.0)
+    monkeypatch.setattr(tuning_mod, "STREAM_RETRY_DELAY_S", 0.0, raising=False)
     pm = PersistentMemory()
     agent = AgentLoop(
         registry=build_registry(persistent_memory=pm, include_shell_tools=False),

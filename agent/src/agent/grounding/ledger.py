@@ -28,7 +28,7 @@ from src.agent.grounding.evidence import (
     _price_field_for_path,
 )
 from src.agent.grounding.factor_names import ids_in_text, known_factor_ids
-from src.agent.grounding.figures import Figure, parse_figures_block, scan_figures, strip_figures_block
+from src.agent.grounding.figures import Figure, FiguresBlock, parse_figures_block, scan_figures, strip_figures_block
 from src.agent.grounding.policies import ValidationResult, _PolicyMixin
 from src.agent.grounding.registry import GROUNDING_CHECKS
 from src.agent.grounding.release import (
@@ -331,6 +331,12 @@ class GroundingLedger(
         # any. Not a draft, so it stays out of ``validation_count``.
         self._released: dict[str, Any] | None = None
         self._recovery_rounds = 0
+        # Parsed figures state of the answer under validation. Declared checks
+        # receive only (ledger, content), so the gate stashes it here for the
+        # walk; that is what the registry contract means by figure state
+        # living on the ledger.
+        self._active_block: FiguresBlock | None = None
+        self._active_figures: Sequence[Figure] = ()
         self._symbol_resolution_attempts = 0
         self._price_evidence_attempts = 0
         self._ingested_csvs: set[str] = set()
@@ -594,6 +600,16 @@ class GroundingLedger(
             self.persist()
             return
 
+        if tool_name == "get_br_market_data":
+            # This tool serves B3 identifiers; bare native tickers must not be
+            # mistaken for US symbols by generic evidence ingestion.
+            tickers = arguments.get("tickers")
+            if isinstance(tickers, list):
+                arguments = {**arguments, "tickers": [
+                    str(ticker).strip().upper() if str(ticker).strip().upper().endswith(".SA")
+                    else str(ticker).strip().upper() + ".SA"
+                    for ticker in tickers
+                ]}
         self._track_session_symbols(arguments, result)
         self._track_factor_and_retrieval(tool_name, payload, result, arguments, call_id)
         self._note_model_write(tool_name, arguments, payload)
@@ -603,6 +619,23 @@ class GroundingLedger(
             self._ingest_resolution(arguments, payload, call_id)
         elif tool_name == "get_market_data":
             self._ingest_market_data(arguments, payload, call_id)
+        elif (tool_name == "get_br_market_data" and payload is not None
+              and isinstance(payload.get("data"), dict)
+              and payload["data"].get("action") == "quotes"):
+            data = payload["data"]
+            if data.get("currency") == "BRL":
+                quotes: dict[str, Any] = {"_provenance": {}}
+                for row in data.get("rows", []):
+                    if not isinstance(row, dict) or not row.get("ticker"):
+                        continue
+                    ticker = str(row["ticker"]).strip().upper()
+                    symbol = ticker if ticker.endswith(".SA") else ticker + ".SA"
+                    quotes.setdefault(symbol, []).append({
+                        key: row[key] for key in ("trade_date", "open", "high", "low", "close", "volume")
+                        if key in row
+                    })
+                    quotes["_provenance"][symbol] = {"source": "b3_cotahist", "quote_currency": "BRL"}
+                self._ingest_market_data(arguments, quotes, call_id, tool_name=tool_name)
         elif tool_name == "read_file" and payload is not None:
             self._ingest_engine_table(payload, call_id)
         elif tool_name == "read_run_artifact" and payload is not None:
@@ -701,11 +734,14 @@ class GroundingLedger(
         self._ingest_run_dir_ohlc_csvs()
         block = parse_figures_block(content)
         figures = scan_figures(content, block)
+        self._active_check_findings: list[dict[str, Any]] = []
+        self._active_block = block
+        self._active_figures = figures
         issues: list[dict[str, Any]] = []
         # Free-text heuristics (cited figures, factor names, verdict words) add card notes, never issues.
         self._card_notes = []
         issues.extend(self._validate_identity(content))
-        issues.extend(self._validate_unsourced_symbols(content, figures, block))
+        issues.extend(GROUNDING_CHECKS.run_phase("answer", self, content))
         issues.extend(self._validate_figures(content, block, figures))
         self._card_notes.extend(self._validate_factor_names(content))
         self._card_notes.extend(self._validate_verdict_words(content))
@@ -728,11 +764,10 @@ class GroundingLedger(
                 "valid": result.valid,
                 "issues": issues,
                 "card_notes": [list(note) for note in result.card_notes],
-                # Names let a run card say which declared checks fired without
-                # re-running the gate; inline rules carry codes only until migrated.
-                "fired_checks": GROUNDING_CHECKS.names_for_codes(
-                    {str(issue.get("code") or "") for issue in issues}
-                ),
+                # Attribute the predicates that actually returned a finding;
+                # role checks share issue codes and must not implicate each other.
+                "fired_checks": list(dict.fromkeys(row["name"] for row in self._active_check_findings)),
+                "check_findings": self._active_check_findings,
                 "figures_block": block.raw,
             }
         )

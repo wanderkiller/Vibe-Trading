@@ -1,10 +1,11 @@
 {
   "app": {
-    "version": "v0.1.16"
+    "version": "v0.1.18"
   },
   "charts": {
     "noPriceData": "No price data for this symbol yet",
     "noCorrelationData": "Pick at least two symbols to compare",
+    "correlationUndefined": "undefined (no price variation in window)",
     "noEquityData": "No account-value curve yet — run a backtest first"
   },
   "navigation": {
@@ -26,7 +27,9 @@
       "correlation": "Compare how assets move together.",
       "scheduled": "Repeat a research task on a schedule.",
       "runtime": "Check broker connections and trading runtime status.",
-      "settings": "Configure models, data sources, and broker connections."
+      "settings": "Configure models, data sources, and broker connections.",
+      "pixelOffice": "Plan and assign research tasks. Assignment does not start execution; ranks are labels and grant no trading permissions.",
+      "paperTrading": "Test daily trades with simulated funds. No broker orders are sent. Results exclude cash dividends and are not a total-return record."
     },
     "instructions": {
       "reports": "Ask the research assistant to backtest a strategy first, then open its results here. Download PDFs and other chat-generated documents from the original conversation.",
@@ -36,7 +39,9 @@
       "correlation": "Enter at least two asset symbols, choose a lookback window, then select Compute.",
       "scheduled": "Enter a research instruction, choose its cadence, and save. The local scheduler must be enabled for jobs to run; delivery also needs a configured channel.",
       "runtime": "Configure a broker connection in Settings or Portfolio first. Available trading actions depend on that broker's capabilities and your authorization.",
-      "settings": "Configure a model to start. Add data sources or broker connections as your task needs them; public-market research does not require a broker account."
+      "settings": "Configure a model to start. Add data sources or broker connections as your task needs them; public-market research does not require a broker account.",
+      "pixelOffice": "Plan and assign research tasks. Assignment does not start execution; ranks are labels and grant no trading permissions.",
+      "paperTrading": "Only completed daily bars can settle. Strategies see prior days only and fill at the execution day’s close. Wait until 30 minutes after the regular market close; no background execution is scheduled."
     }
   },
   "layout": {
@@ -66,13 +71,15 @@
     "sidebar": "Vibe-Trading sidebar",
     "mainNavigation": "Main navigation",
     "about": "About",
-    "sessionsLoadFailed": "Cannot load conversations."
+    "sessionsLoadFailed": "Cannot load conversations.",
+    "pixelOffice": "Pixel Office",
+    "paperTrading": "Paper trading"
   },
   "runtime": {
     "monitorBadge": "Runtime Monitor",
     "title": "Live / Paper Runtime Status",
-    "subtitlePre": "Read-only status from",
-    "subtitlePost": ". This page does not authorize connectors, start runners, stop runners, submit orders, cancel orders, or change mandates.",
+    "subtitlePre": "Review connector health, trading mandates and runner activity.",
+    "subtitlePost": " Model cadence and spending limits can be edited while the runner is stopped.",
     "refresh": "Refresh",
     "unavailableTitle": "Runtime status unavailable",
     "unavailableHint": "Treat connector runtime as unavailable until the backend provides a current status snapshot.",
@@ -112,7 +119,7 @@
     "riskHalted": "risk halted",
     "riskHaltedDesc": "The kill switch is tripped for this profile. Treat connector runtime as stopped until status clears.",
     "riskActive": "runtime active",
-    "riskActiveDesc": "Runner is alive and an unexpired mandate is present. This page is still read-only status only.",
+    "riskActiveDesc": "The runner is alive and its trading mandate has not expired.",
     "riskIdle": "ready but idle",
     "riskIdleDesc": "Authorization and mandate are present, but the runner is not alive.",
     "riskDormant": "dormant",
@@ -396,7 +403,10 @@
       "shadowDeltaPrompt": "Run a shadow backtest for the last 90 days and break down where my PnL diverged from the shadow (rule violations, early exits, missed signals)",
       "shadowReport": "Generate Shadow Report",
       "shadowReportDesc": "A shareable 8-part report: your account curve, risk-adjusted return, and where each gain came from",
-      "shadowReportPrompt": "Render the shadow report and give me the URL — lead with the you-vs-shadow delta"
+      "shadowReportPrompt": "Render the shadow report and give me the URL — lead with the you-vs-shadow delta",
+      "adaptStrategy": "Adapt a registered strategy",
+      "adaptStrategyDesc": "Keep its signal, test a new universe",
+      "adaptStrategyPrompt": "Help me adapt a registered strategy to a new universe and date window. First list strategies and inspect the parent evidence; ask me for any missing strategy ID, instruments, dates and sizing. Preserve the signal, generate the child code, backtest it, and report only its own refreshed evidence."
     },
     "taskSubtitle": "Ask about a stock, a strategy, or your portfolio — I'll pull the data, run the numbers, and show every step.",
     "quickActions": "Quick actions",
@@ -443,8 +453,10 @@
     "reasoningEffortLow": "Low",
     "reasoningEffortMedium": "Medium",
     "reasoningEffortHigh": "High",
+    "reasoningEffortXhigh": "Extra high",
     "reasoningEffortMax": "Max",
     "reasoningEffortDesc": "Controls reasoning depth on supported models. Higher levels may improve complex analysis but can take longer; unsupported providers may ignore this setting. None (explicit) sends the field with reasoning disabled — some OpenAI models need that to use tools.",
+    "reasoningEffortReset": "The selected model does not support {{level}}; reset to provider default.",
     "useDefaultModel": "Use default model",
     "useDefaultUrl": "Use default URL",
     "dataSourcesDesc": "Configure external data sources for the backtesting engine.",
@@ -517,6 +529,10 @@
         "save": "Save configuration",
         "hotApply": "Saving applies immediately — no restart needed.",
         "saved": "Channel configuration saved",
+        "appliedInPlace": "Settings saved without reconnecting the channel.",
+        "appliedReset": "Settings saved. Channel connections were restarted.",
+        "appliedOnStart": "Settings saved. Changes will apply when channels start.",
+        "appliedReconnect": "Settings saved. This channel was reconnected.",
         "saveFailed": "Failed to save the channel configuration: {{message}}",
         "test": "Test connection",
         "testing": "Testing…",
@@ -863,6 +879,106 @@
             "label": "Per-topic sessions",
             "help": "Give each group topic its own agent session instead of sharing one session per group."
           }
+        },
+        "slack": {
+          "bot_token": {
+            "label": "Bot token (xoxb-)",
+            "help": "The Slack bot user OAuth token (starts with xoxb-). Stored server-side and never sent back to the browser."
+          },
+          "app_token": {
+            "label": "App token (xapp-)",
+            "help": "The Slack app-level token (starts with xapp-) with the connections:write scope, required for Socket Mode. Stored server-side and never sent back to the browser."
+          },
+          "user_token_read_only": {
+            "label": "User token read-only",
+            "help": "A behavior flag, not a credential: keeps user-token access read-only."
+          },
+          "reply_in_thread": {
+            "label": "Reply in thread",
+            "help": "Reply in a thread under the original message instead of posting directly to the channel."
+          },
+          "react_emoji": {
+            "label": "Working emoji",
+            "help": "Emoji reacted on an incoming message while the agent works (default eyes)."
+          },
+          "done_emoji": {
+            "label": "Done emoji",
+            "help": "Emoji reacted when the task completes (default white_check_mark). Leave empty for none."
+          },
+          "include_thread_context": {
+            "label": "Include thread context",
+            "help": "Prepend earlier replies from the thread as context the first time the bot is pulled into it."
+          },
+          "thread_context_limit": {
+            "label": "Thread context limit",
+            "help": "Maximum number of thread messages included as context (default 20)."
+          },
+          "allow_from": {
+            "label": "Allowed senders",
+            "help": "Allowlist of Slack user IDs permitted to talk to the agent. DM and channel access are further controlled by the DM policy and the group policy."
+          },
+          "group_policy": {
+            "label": "Group policy",
+            "help": "\"mention\" replies only when the bot is @mentioned in a channel, \"open\" replies to all channel messages, \"allowlist\" replies only in the channels listed below."
+          },
+          "group_allow_from": {
+            "label": "Allowed channels",
+            "help": "Channel IDs the bot responds in when the group policy is \"allowlist\"."
+          },
+          "group_require_mention": {
+            "label": "Require mention in allowed channels",
+            "help": "With the \"allowlist\" policy, also require an @mention before replying in approved channels. No effect for \"mention\" or \"open\"."
+          }
+        },
+        "discord": {
+          "token": {
+            "label": "Bot token",
+            "help": "The bot token from the Discord Developer Portal — not a user or OAuth token. Stored server-side and never sent back to the browser."
+          },
+          "allow_from": {
+            "label": "Allowed senders",
+            "help": "Optional allowlist of Discord user IDs that may talk to the agent. Leave empty to allow everyone."
+          },
+          "allow_channels": {
+            "label": "Allowed channels",
+            "help": "Optional allowlist of Discord channel IDs the bot responds in. Leave empty to allow every channel."
+          },
+          "intents": {
+            "label": "Gateway intents",
+            "help": "Gateway intent bitfield as an integer (default 37377 = GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT). MESSAGE CONTENT is a privileged intent that must be enabled in the Developer Portal or the bot fails to connect."
+          },
+          "group_policy": {
+            "label": "Group policy",
+            "help": "\"mention\" replies only when the bot is @mentioned in a server channel, \"open\" replies to all channel messages (still subject to the allowlists)."
+          },
+          "read_receipt_emoji": {
+            "label": "Read receipt emoji",
+            "help": "Emoji reacted on an incoming message right away to acknowledge it (default 👀); removed once the reply arrives."
+          },
+          "working_emoji": {
+            "label": "Working emoji",
+            "help": "Emoji reacted while the agent is still working (default 🔧), added after the working emoji delay."
+          },
+          "working_emoji_delay": {
+            "label": "Working emoji delay (s)",
+            "help": "Seconds to wait before adding the working emoji, so quick replies never show it (default 2.0)."
+          },
+          "streaming": {
+            "label": "Streaming replies",
+            "help": "Stream the reply by progressively editing one Discord message instead of sending a single final message."
+          },
+          "proxy": {
+            "label": "Proxy URL",
+            "help": "Optional HTTP proxy the gateway connection and API calls go through, e.g. http://host:port."
+          },
+          "proxy_username": {
+            "label": "Proxy username",
+            "help": "Username for the proxy; set it together with the proxy password or not at all — a half-specified pair is ignored with a warning. Stored server-side and never sent back to the browser."
+          },
+          "proxy_password": {
+            "label": "Proxy password",
+            "help": "Password for the proxy; set it together with the proxy username or not at all — a half-specified pair is ignored with a warning. Stored server-side and never sent back to the browser."
+          }
         }
       },
       "guides": {
@@ -915,6 +1031,16 @@
           "step4": "Copy the App ID and App Secret from Credentials & Basic Info and paste them into the fields above.",
           "step5": "Create a version and publish the app (admin approval if your tenant requires it), then enable the channel here — it hot-applies with no restart. For international Lark tenants, set domain to \"lark\".",
           "docsLabel": "Open the Feishu Open Platform"
+        },
+        "discord": {
+          "title": "Discord setup guide",
+          "intro": "Discord bots connect over the gateway with a bot token, so no public IP or webhook URL is needed.",
+          "step1": "Create an application in the Discord Developer Portal (discord.com/developers).",
+          "step2": "Open the Bot page, reset the token, and copy it.",
+          "step3": "Under Privileged Gateway Intents, enable MESSAGE CONTENT INTENT — the default intents require it.",
+          "step4": "Generate an OAuth2 invite URL with the bot (and applications.commands) scope and add the bot to your server.",
+          "step5": "Paste the token here, click Test connection, then enable the channel.",
+          "docsLabel": "Open the Discord developer documentation"
         }
       }
     },
@@ -935,7 +1061,7 @@
       "noMarkets": "No market data sources are registered.",
       "howItWorksTitle": "How it works",
       "howItWorks": "For auto-detected symbols, sources are tried top to bottom; a source that fails falls through to the next one. Saving applies immediately — no restart needed.",
-      "caliberCaveat": "Caliber caveat: sources differ in adjustment basis — e.g. Yahoo serves raw (unadjusted) OHLC while Tencent/Eastmoney/Tushare/BaoStock serve adjusted prices — so a reordered chain can change backtest numbers.",
+      "caliberCaveat": "Sources can use different price adjustments. Check the returned adjustment/provenance and run-card warnings; changing source order can change backtest results.",
       "markets": {
         "a_share": "A-Shares (China)",
         "us_equity": "US Equities",
@@ -945,6 +1071,7 @@
         "ca_equity": "Canada Equities",
         "vietnam_equity": "Vietnam Equities",
         "ar_equity": "Argentina Equities",
+        "br_equity": "Brazil Equities",
         "uk_equity": "UK Equities",
         "index": "Indices",
         "crypto": "Crypto",
@@ -990,7 +1117,7 @@
     "authentication": "Authentication",
     "apiKey": "API key",
     "tushareTokenDesc": "Used for China A-share, futures, fund, and macro data. If unset, the project falls back to AKShare where available.",
-    "gildataTokenDesc": "Optional Gildata (Hundsun Juyuan) feed for China A-shares. When set, it joins the tail of the A-share fallback chain with forward-adjusted daily bars."
+    "gildataTokenDesc": "Optional Gildata data: adjusted A-share daily bars, raw HK/index bars, OTC fund NAVs, and China macro, announcement and research tools."
   },
   "qveris": {
     "title": "QVeris Tool Marketplace",
@@ -1110,7 +1237,10 @@
     "resumeConnector": "Resume connector",
     "resumeConnectorTitle": "Clear the kill switch and re-enable connector activity",
     "connectorResumed": "Connector resumed",
-    "failedToResumeConnector": "Failed to resume connector."
+    "failedToResumeConnector": "Failed to resume connector.",
+    "tokenUsage": {
+      "live": "tokens"
+    }
   },
   "runDetail": {
     "title": "Run Detail",
@@ -1243,6 +1373,19 @@
     "ddNotRecovered": "Not recovered",
     "ddDays": "{{count}} d",
     "dashboard": "Research dashboard",
+    "llmUsage": {
+      "tab": "Token Usage",
+      "provider": "Provider",
+      "model": "Model",
+      "inputTokens": "Input tokens",
+      "outputTokens": "Output tokens",
+      "totalTokens": "Total tokens",
+      "calls": "Calls",
+      "cacheRead": "Cache read tokens",
+      "cacheCreation": "Cache creation tokens",
+      "perIteration": "Per-iteration detail",
+      "iteration": "Iteration"
+    },
     "positions": {
       "tab": "Positions",
       "weightDistribution": "Weight distribution",
@@ -1275,6 +1418,7 @@
         "futures": "Futures",
         "forex": "Forex",
         "ar_equity": "Argentina equity",
+        "br_equity": "Brazil equity",
         "uk_equity": "UK equity",
         "vietnam_equity": "Vietnam equity",
         "other": "Other"
@@ -1733,7 +1877,10 @@
     "output": "Output",
     "waitingForEvents": "Waiting for agent events...",
     "teamStarting": "The team is spinning up — first updates in a few seconds…",
-    "detailsUnavailable": "details unavailable"
+    "detailsUnavailable": "details unavailable",
+    "tokens": "↑{{input}} ↓{{output}} tokens",
+    "estimated": "estimated",
+    "tokenSourceUnlabeled": "source unlabeled"
   },
   "mandate": {
     "runtimeMandate": "Connector runtime mandate",
@@ -2032,7 +2179,7 @@
       "badge": "Local read-only · Multi-account",
       "title": "Portfolio",
       "subtitle": "One valuation across the enabled read-only connections. An account that cannot be read is reported as an error and left out of the totals.",
-      "fxFresh": "USD/CNY {{rate}} · live rate",
+      "fxFresh": "USD/CNY {{rate}} · reference rate",
       "fxCached": "USD/CNY {{rate}} · cached rate",
       "manageAccounts": "Manage accounts",
       "exportCsv": "Export CSV",
@@ -2047,7 +2194,9 @@
       "errorReconnect": "Account reconnect failed",
       "errorReconnectTimeout": "Browser authorization timed out. Reconnect and complete the broker authorization promptly.",
       "errorSaveSettings": "Unable to save portfolio settings",
-      "errorExport": "Export failed"
+      "errorExport": "Export failed",
+      "exportResearch": "Export research snapshot",
+      "researchSnapshotHint": "Export this exact observation without credentials or account numbers. Reuse its snapshot ID in portfolio_summary."
     },
     "metrics": {
       "total": "Total assets",
@@ -2195,6 +2344,30 @@
       "accountDeactivated": " · deactivated",
       "accountSave": "Use this account",
       "accountSaved": "Account saved."
+    },
+    "imports": {
+      "title": "Import extraETF Investments",
+      "hint": "Holdings only, without cash or live prices. File modification time is not a price observation; ISINs have no resolved trading venue.",
+      "file": "Investments CSV",
+      "count": "Expected holdings count (confirm in extraETF)",
+      "age": "Maximum file age (days)",
+      "overlap": "Select disjoint sources. An extraETF view may already include accounts connected elsewhere here.",
+      "import": "Import file",
+      "importing": "Importing…",
+      "success": "Imported. Add this export from the available sources above, then save and refresh.",
+      "source": "File import",
+      "mtime": "File modified: {{time}}",
+      "expires": "Expires: {{time}}",
+      "tooLarge": "The import limit is 4 MiB."
+    },
+    "rebalance": {
+      "title": "Allocation proposal",
+      "hint": "Enter target percentages totalling 100%. Changes are amounts for review only; no orders, quantities, taxes or fees are calculated.",
+      "target": "{{id}} target (%)",
+      "generate": "Calculate proposal",
+      "current": "Current value",
+      "targetValue": "Target value",
+      "change": "Value change"
     }
   },
   "analysis": {
@@ -2244,5 +2417,141 @@
     "selectedFactor": "Selected factor: {{id}}. Only this factor will be evaluated.",
     "fundamentalsRequirement": "Fundamental factors need PIT SEC financial statements and a US stock universe (S&P 500).",
     "noEvaluableFactors": "No factors could be evaluated. Try a longer history and check the factor’s required fields and stock universe."
+  },
+  "customProviders": {
+    "loadFailed": "Failed to load custom providers",
+    "testPassed": "Provider test passed",
+    "testFailed": "Provider test failed",
+    "saved": "Provider saved in the local credential vault",
+    "saveFailed": "Provider save failed",
+    "activationFailed": "Provider activation failed",
+    "title": "Custom OpenAI-compatible providers",
+    "description": "Add a provider with a compatible chat-completions API. The test sends a short model request; after it succeeds, the key is saved in the OS credential vault.",
+    "keyPrivate": "Key never displayed",
+    "active": "Active",
+    "keyStored": "Key stored",
+    "activate": "Activate",
+    "empty": "No custom providers yet. Add one below and test it before saving.",
+    "add": "Add provider",
+    "id": "Provider ID",
+    "idHint": "Lowercase letters, numbers, dots, dashes, or underscores.",
+    "label": "Display name",
+    "labelPlaceholder": "My provider",
+    "baseUrl": "API Base URL",
+    "urlHint": "Use the API root. Do not include an API key in the URL.",
+    "model": "Model",
+    "key": "API key",
+    "keyPlaceholder": "Enter key for one-time test",
+    "testing": "Testing…",
+    "test": "Test connection",
+    "saving": "Saving…",
+    "save": "Save tested provider",
+    "saveHint": "Save unlocks only after a successful test. Activation is a separate confirmed action.",
+    "confirm": "Activate {{label}} for new agent requests?",
+    "activated": "{{label}} is now active",
+    "preview": "Test passed: {{preview}}",
+    "error": "Provider test failed: {{error}}",
+    "waiting": "The provider is taking longer than usual ({{seconds}}s). The request will continue until the server timeout."
+  },
+  "pixelOffice": {
+    "title": "Pixel Office",
+    "description": "Plan and assign research tasks. Assignment does not start execution; ranks are labels and grant no trading permissions.",
+    "refresh": "Refresh",
+    "loading": "Loading office…",
+    "unavailable": "Office unavailable. Try refreshing.",
+    "floor": "Office floor",
+    "taskCount": "Open tasks: {{count}}",
+    "board": "Task board",
+    "empty": "No tasks yet.",
+    "assignee": "Assignee",
+    "unassigned": "Unassigned",
+    "result": "Completion result",
+    "complete": "Record completion",
+    "create": "Create task",
+    "taskTitle": "Task title",
+    "instructions": "Instructions",
+    "priority": "Priority",
+    "ranksTitle": "Organizational ranks",
+    "priorities": {
+      "low": "Low",
+      "normal": "Normal",
+      "high": "High"
+    },
+    "statuses": {
+      "queued": "Queued",
+      "assigned": "Assigned",
+      "completed": "Completed"
+    },
+    "ranks": {
+      "Operator": "Operator",
+      "Senior": "Senior",
+      "Lead": "Lead"
+    }
+  },
+  "runnerBudget": {
+    "unavailable": "Model spending state is unavailable.",
+    "warning": "Model calls cost money even when no trades are placed.",
+    "summary": "Every {{minutes}} minutes; up to {{turns}} decisions and {{tokens}} tokens per UTC day.",
+    "dailySummary": "Daily schedule: {{time}} ({{timezone}}); replaces the interval.",
+    "usage": "Today: {{turns}} decisions · {{tokens}} tokens · estimated {{cost}}.",
+    "estimateUnknown": "Daily cost cannot be estimated until prices and measured usage are available.",
+    "estimate": "Projected daily model cost: about ${{cost}}, based on measured usage.",
+    "configure": "Model schedule and spending limits",
+    "interval_seconds": "Decision interval (seconds)",
+    "max_daily_turns": "Maximum decisions per UTC day",
+    "max_daily_tokens": "Maximum tokens per UTC day",
+    "max_daily_cost_usd": "Estimated USD limit per day (optional)",
+    "input_usd_per_million": "Input USD per million tokens (optional)",
+    "output_usd_per_million": "Output USD per million tokens (optional)",
+    "daily_at": "Once daily at (optional)",
+    "timezone": "Schedule timezone",
+    "save": "Save settings",
+    "limitsNote": "Each decision starts a fresh conversation. Usage limits stop after a response and may overshoot by that response. Missing usage or an exceeded budget trips the existing kill switch.",
+    "pricesNote": "Prices are operator estimates. Use the highest applicable input/cache-write rate; cache discounts and auxiliary model calls are not included in the estimate.",
+    "stopToEdit": "Stop the runner before editing these settings."
+  },
+  "paper": {
+    "title": "Paper trading",
+    "description": "Test daily trades with simulated funds. No broker orders are sent. Results exclude cash dividends and are not a total-return record.",
+    "accounts": "Accounts",
+    "newAccount": "New paper account",
+    "eligible": "Eligible from {{date}}; holidays wait for the next available session.",
+    "cash": "Cash",
+    "pending": "Awaiting first session",
+    "label": "Account name",
+    "market": "Market",
+    "start": "Start",
+    "today": "Today",
+    "nextSession": "Next trading session",
+    "initialPositions": "Initial positions (quantity and average cost)",
+    "symbol": "Symbol (e.g. AAPL.US)",
+    "quantity": "Quantity",
+    "cost": "Average cost",
+    "remove": "Remove",
+    "addPosition": "Add position",
+    "create": "Create account",
+    "working": "Working…",
+    "advance": "Settle daily step",
+    "executionNote": "Only completed daily bars can settle. Strategies see prior days only and fill at the execution day’s close. Wait until 30 minutes after the regular market close; no background execution is scheduled.",
+    "date": "Execution date",
+    "mode": "Input mode",
+    "orders": "Explicit orders",
+    "strategy": "Strategy file",
+    "strategyPath": "Path within your runtime strategies folder",
+    "side": "Side",
+    "buy": "Buy",
+    "sell": "Sell",
+    "addOrder": "Add order",
+    "emptyOrders": "No orders means valuation only. Market orders fill at the daily close; this is not an intraday execution simulator.",
+    "saved": "Ledger saved.",
+    "notSaved": "No ledger change. Review the result before retrying.",
+    "result": "Step result",
+    "price": "Price",
+    "fee": "Fee",
+    "history": "Account value history",
+    "nav": "Net asset value",
+    "us": "US equities · USD",
+    "hk": "Hong Kong equities · HKD",
+    "cn_a": "A-shares · CNY"
   }
 }

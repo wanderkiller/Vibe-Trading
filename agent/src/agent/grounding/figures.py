@@ -17,7 +17,7 @@ import html
 import re
 import string
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from typing import Iterable, Sequence
 
@@ -114,6 +114,7 @@ _CURRENCY_CODES = frozenset(
     {
         "USD", "CNY", "CNH", "RMB", "HKD", "JPY", "EUR", "GBP", "KRW", "INR",
         "CAD", "AUD", "SGD", "TWD", "THB", "IRR", "IRT", "USDT", "USDC",
+        "CHF", "NZD", "BRL", "ARS", "VND",
     }
 )
 
@@ -238,6 +239,8 @@ class Figure:
     scale: float = 1.0
     # A currency mark or ISO code touches the digits ("$2050", "0.95 元").
     currency: bool = False
+    # Unambiguous ISO currency identity; None for ambiguous or absent markers.
+    currency_code: str | None = None
     digits: str = ""
     sign: str = ""
     # The span a redaction replaces: the figure plus its glued currency and
@@ -507,7 +510,40 @@ def _numbers(text: str, *, decimal_commas: bool | None = None) -> list[_Token]:
                 body, end = f"{body}.{fraction}", stop
         tokens.append(_Token(match.start(), end, sign, body.replace(",", "")))
         cursor = end
-    return sorted(tokens + protected, key=lambda token: token.start)
+    signed = [
+        replace(token, sign=text[lead]) if not token.sign and lead is not None else token
+        for token in tokens + protected
+        for lead in (_sign_before_currency(text, token.start),)
+    ]
+    return sorted(signed, key=lambda token: token.start)
+
+
+# What may stand before a sign written outside a currency mark ("PnL: -$3.20",
+# "(−$5.00)"): a hyphen after anything else joins two figures ("$10-$20"), and
+# one followed by a space ("$10 - $20") is a range, as "10 - 20" already is.
+_SIGN_BOUNDARY = frozenset("([:=,;|（［：＝，；｜")
+
+
+def _sign_before_currency(text: str, start: int) -> int | None:
+    """Where a sign glued to the left of a number's currency mark stands ("−$1,847.78").
+
+    The minus is normalized to "-" before this is read.
+
+    Args:
+        text: Normalized text.
+        start: Where the number's digits begin.
+
+    Returns:
+        The sign's index, or None when the mark carries no sign or the sign
+        does not stand at a boundary.
+    """
+    mark = _currency_prefix_start(text, start)
+    if mark == start or mark == 0 or text[mark - 1] not in "+-":
+        return None
+    before = text[mark - 2] if mark >= 2 else ""
+    if before and not before.isspace() and before not in _SIGN_BOUNDARY:
+        return None
+    return mark - 1
 
 
 def _writes_decimal_commas(text: str) -> bool:
@@ -711,7 +747,12 @@ def _parse_value(
         tail = ""
     if _is_count_noun(tail):
         tail = ""
-    if not (_is_currency_mark(tail) and _is_currency_mark(field[: token.start].strip())):
+    head = field[: token.start].strip()
+    lead = _sign_before_currency(field, token.start)
+    if lead is not None and not field[:lead].strip():
+        # "−$1,847.78": the sign stands outside the mark and is the number's.
+        head = field[lead + 1 : token.start].strip()
+    if not (_is_currency_mark(tail) and _is_currency_mark(head)):
         return None
     reading = _reading(token.sign, token.digits, unit)
     if reading is None:
@@ -907,6 +948,31 @@ def table_rows(content: str) -> list[TableRow]:
             (position for position, name in enumerate(headers) if name in _SYMBOL_HEADERS),
             None,
         )
+        # A square matrix may use an empty corner and its first column as
+        # the row axis. Infer this identity only for complete, unique axes.
+        if symbol_column is None and len(headers) > 2 and not headers[0].strip():
+            axis = [name.strip().upper() for name in headers[1:]]
+            body = [
+                _table_cells(positions[k][0], positions[k][1])
+                for k in range(block_start + 1, index)
+            ]
+            body = [cells for cells in body if cells and not _is_separator_row(cells)]
+            row_axis = [
+                re.sub(r"^(?:\*\*|__)(.*?)(?:\*\*|__)$", r"\1", cells[0][0])
+                .strip()
+                .upper()
+                for cells in body
+                if len(cells) == len(headers)
+            ]
+            if (
+                len(body) == len(axis) == len(row_axis)
+                and all(len(cells) == len(headers) for cells in body)
+                and all(re.fullmatch(r"[A-Z][A-Z0-9.]{0,19}", x) for x in axis)
+                and len(set(axis)) == len(axis)
+                and len(set(row_axis)) == len(row_axis)
+                and set(axis) == set(row_axis)
+            ):
+                symbol_column = 0
         for line_index in range(block_start + 1, index):
             cells = _table_cells(positions[line_index][0], positions[line_index][1])
             if not cells or _is_separator_row(cells):
@@ -1011,6 +1077,45 @@ def _currency_after(text: str, end: int) -> bool:
             break
         code += char
     return code.upper() in _CURRENCY_CODES
+
+
+def _currency_code_for_figure(text: str, start: int, end: int) -> str | None:
+    """Identify an unambiguous currency immediately adjacent to a number."""
+    head = text[:start].rstrip()
+    tail = text[end:].lstrip()
+
+    # Explicit ISO currency codes take precedence.
+    prefix = _code_before(head)
+    if prefix:
+        return {"CNH": "CNY", "RMB": "CNY"}.get(prefix, prefix)
+
+    suffix = ""
+    for char in tail:
+        if not char.isascii() or not char.isalpha():
+            break
+        suffix += char
+
+    if suffix.upper() in _CURRENCY_CODES:
+        code = suffix.upper()
+        return {"CNH": "CNY", "RMB": "CNY"}.get(code, code)
+
+    # Only unambiguous symbols and words can establish currency identity.
+    if head.endswith("€") or tail.startswith("€"):
+        return "EUR"
+    if head.endswith("£") or tail.startswith("£"):
+        return "GBP"
+    if head.endswith("₩") or tail.startswith("₩"):
+        return "KRW"
+    if head.endswith("₹") or tail.startswith("₹"):
+        return "INR"
+    # Match complete currency units, not the opening of an unrelated word.
+    word = _cjk_run(tail)
+    if word in {"人民币", "美元", "円"}:
+        return {"人民币": "CNY", "美元": "USD", "円": "JPY"}[word]
+    if tail.startswith("원") and (len(tail) == 1 or not tail[1].isalpha()):
+        return "KRW"
+
+    return None
 
 
 def magnitude_suffix(text: str, end: int) -> tuple[float, int]:
@@ -1236,7 +1341,9 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
         cell = next((entry for entry in cells if entry[0] <= start and end <= entry[1]), None)
         row, position = (cell[2], cell[3]) if cell else (None, None)
         structural = row is not None and position in (row.date_column, row.symbol_column)
-        currency = _currency_before(currency_text, token.start) or _currency_after(currency_text, token.end)
+        currency_end = magnitude_suffix(currency_text, token.end)[1]
+        currency = _currency_before(currency_text, token.start) or _currency_after(currency_text, currency_end)
+        currency_code = _currency_code_for_figure(currency_text, token.start, currency_end)
         marked = percent or currency or "." in token.digits or token.grouped
         # A cell that also holds a word is prose set in a table: its plain
         # integer is a count or a horizon, as it would be in a sentence (#1471).
@@ -1261,7 +1368,14 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
                 date_value = row.cells[row.date_column][0] or None
             if row.symbol_column is not None and row.symbol_column < len(row.cells):
                 symbol_value = row.cells[row.symbol_column][0] or None
+                if symbol_value:
+                    symbol_value = re.sub(
+                        r"^(?:\*\*|__)(.*?)(?:\*\*|__)$", r"\1", symbol_value
+                    ).strip()
         mark_end = _currency_suffix_end(text, magnitude_suffix(text, unit_end)[1])
+        # A sign written before the currency mark is cut with the figure.
+        lead = _sign_before_currency(text, token.start) if token.sign else None
+        prefix_start = lead if lead is not None else _currency_prefix_start(text, token.start)
         figures.append(
             Figure(
                 text=content[start:end],
@@ -1276,9 +1390,10 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
                 symbol=symbol_value,
                 scale=1.0 if percent else magnitude_suffix(text, token.end)[0],
                 currency=currency,
+                currency_code=currency_code,
                 digits=token.digits,
                 sign=token.sign,
-                extent=(view.start(_currency_prefix_start(text, token.start)), view.end(mark_end)),
+                extent=(view.start(prefix_start), view.end(mark_end)),
                 fence=next(
                     (info for low, high, info, _ in fences if low <= start and digits_end <= high),
                     None,

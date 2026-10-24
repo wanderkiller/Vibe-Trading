@@ -5,7 +5,9 @@ Mounted by ``agent/api_server.py`` via ``register_settings_routes(app, ...)``.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
+import logging
 import json
 import os
 import sys as _sys
@@ -19,6 +21,8 @@ from pydantic import BaseModel, Field
 
 from src.config.accessor import get_env_value, reset_env_config
 
+logger = logging.getLogger(__name__)
+
 # Agent root (agent/) — resolved from this file's location (agent/src/api/).
 _AGENT_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -26,6 +30,11 @@ _AGENT_DIR = Path(__file__).resolve().parent.parent.parent
 # ---------------------------------------------------------------------------
 # Pydantic models (defined locally -- NO shared modules, per maintainer rule)
 # ---------------------------------------------------------------------------
+
+
+# "none" is an explicit value direct OpenAI needs to allow function tools on
+# gpt-5.6-* models; a provider with its own levels lists them in llm_providers.json.
+DEFAULT_REASONING_EFFORTS = ("none", "low", "medium", "high", "max")
 
 
 class LLMProviderOption(BaseModel):
@@ -41,6 +50,9 @@ class LLMProviderOption(BaseModel):
     api_key_required: bool = True
     auth_type: str = "api_key"
     login_command: Optional[str] = None
+    # Levels the settings form offers and the update route accepts; "" (unset)
+    # is always allowed on top of these.
+    reasoning_efforts: List[str] = Field(default_factory=lambda: list(DEFAULT_REASONING_EFFORTS))
 
 
 class LLMSettingsResponse(BaseModel):
@@ -82,6 +94,7 @@ class ListLLMModelsRequest(BaseModel):
     provider: str = Field(..., min_length=1)
     base_url: Optional[str] = None
     api_key: Optional[str] = None
+    refresh: bool = False
 
 
 ModelDiscoveryWarningCode = Literal[
@@ -98,6 +111,9 @@ class LLMModelsResponse(BaseModel):
     models: List[str]
     source: str
     warning_code: Optional[ModelDiscoveryWarningCode] = None
+    # Model id -> reasoning effort levels it accepts; an empty list means the
+    # model takes no effort setting. Only providers that report it fill this.
+    effort_levels: Optional[Dict[str, List[str]]] = None
 
 
 class SourceOrderEntry(BaseModel):
@@ -169,9 +185,6 @@ def _load_llm_providers() -> List[LLMProviderOption]:
 
 LLM_PROVIDERS = _load_llm_providers()
 LLM_PROVIDER_BY_NAME = {provider.name: provider for provider in LLM_PROVIDERS}
-# "" leaves the setting unset (Off); "none" is an explicit value direct OpenAI
-# needs to allow function tools on gpt-5.6-* models.
-LLM_REASONING_EFFORTS = {"", "none", "low", "medium", "high", "max"}
 LLM_API_KEY_PLACEHOLDERS = {"", "sk-or-v1-your-key-here", "sk-xxx", "xxx", "gsk_xxx"}
 TUSHARE_TOKEN_PLACEHOLDERS = {"", "your-tushare-token"}
 GILDATA_TOKEN_PLACEHOLDERS = {"", "your-gildata-token"}
@@ -314,7 +327,7 @@ async def _list_provider_models(
             provider=provider.name,
             models=fallback,
             source="default",
-            warning_code=f"{provider.auth_type}_discovery_unsupported",
+            warning_code="oauth_discovery_unsupported",
         )
     if provider.api_key_required and not api_key:
         return LLMModelsResponse(
@@ -353,6 +366,33 @@ async def _list_provider_models(
     )
 
 
+async def _list_claude_cli_models(
+    provider: LLMProviderOption, *, refresh: bool
+) -> LLMModelsResponse:
+    """List the models the local Claude Code login can run, with their effort levels."""
+    from src.providers.claude_cli_models import list_claude_cli_models
+
+    try:
+        discovered = await asyncio.to_thread(list_claude_cli_models, refresh=refresh)
+    except RuntimeError as exc:
+        logger.warning("claude-cli model list unavailable: %s", exc)
+        return LLMModelsResponse(
+            provider=provider.name,
+            models=[provider.default_model],
+            source="default",
+            warning_code="model_list_unavailable",
+        )
+    models = [model.model_id for model in discovered]
+    if provider.default_model not in models:
+        models.insert(0, provider.default_model)
+    return LLMModelsResponse(
+        provider=provider.name,
+        models=models,
+        source="provider",
+        effort_levels={model.model_id: list(model.effort_levels) for model in discovered},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Response builders
 # ---------------------------------------------------------------------------
@@ -387,6 +427,28 @@ def _build_llm_settings_response(
             authenticated, auth_status = False, ""
         api_key_configured = authenticated
         api_key_hint = auth_status if authenticated else None
+    elif provider.auth_type == "claude_cli":
+        try:
+            from src.providers.claude_cli import get_claude_cli_auth_status
+
+            authenticated, auth_status = get_claude_cli_auth_status()
+        except Exception:
+            authenticated, auth_status = False, ""
+        api_key_configured = authenticated
+        api_key_hint = auth_status if authenticated else None
+    options = LLM_PROVIDERS
+    if provider_name == "custom":
+        from src.providers.custom_profiles import CustomProviderStore
+
+        active = next((p for p in CustomProviderStore().list_public() if p["active"]), None)
+        active_model = active["model"] if active else env_values.get("LANGCHAIN_MODEL_NAME", "")
+        active_url = active["base_url"] if active else ""
+        provider = LLMProviderOption(name="custom", label="Custom (credential vault)",
+            api_key_env=None, base_url_env="OPENAI_BASE_URL", default_model=active_model,
+            default_base_url=active_url, auth_type="credential_vault", reasoning_efforts=[])
+        env_values = {**env_values, "LANGCHAIN_MODEL_NAME": active_model, "OPENAI_BASE_URL": active_url}
+        api_key_configured, api_key_hint = bool(active and active["api_key_configured"]), None
+        options = [*LLM_PROVIDERS, provider]
     return LLMSettingsResponse(
         provider=provider.name,
         model_name=env_values.get("LANGCHAIN_MODEL_NAME", provider.default_model),
@@ -401,8 +463,29 @@ def _build_llm_settings_response(
         reasoning_effort=env_values.get("LANGCHAIN_REASONING_EFFORT", "").strip().lower(),
         sse_timeout_seconds=host._coerce_int(env_values.get("VIBE_TRADING_SSE_TIMEOUT", "90"), 90),
         env_path=host._project_relative_path(host.ENV_PATH),
-        providers=LLM_PROVIDERS,
+        providers=options,
     )
+
+
+def activate_custom_provider(profile: dict[str, Any], *, store: Any) -> dict[str, Any]:
+    """Activate tested vault metadata through the canonical settings writer.
+
+    Secrets remain in the vault. The runtime resolves model, URL and key from
+    one active profile, so it never pairs another provider's ambient key with
+    the selected endpoint. The caller holds the shared store mutation lock.
+    """
+    updates = {"LANGCHAIN_PROVIDER": "custom", "LANGCHAIN_MODEL_NAME": profile["model"]}
+    previous = store._read()
+    store.activate(profile["id"])
+    try:
+        _persist_settings_updates(updates)
+    except Exception:
+        store._write(previous)
+        raise
+    for key, value in updates.items():
+        os.environ[key] = str(value)
+    reset_env_config()
+    return {"status": "ok", "active_id": profile["id"], "model": profile["model"], "base_url": profile["base_url"]}
 
 
 def _build_source_orders(env_values: Dict[str, str]) -> List[SourceOrderEntry]:
@@ -512,8 +595,11 @@ def _sync_runtime_env(provider: LLMProviderOption, updates: Dict[str, str]) -> N
         else:
             os.environ.pop(key, None)
 
-    if provider.auth_type == "gh_cli":
-        # The Copilot SDK owns credential discovery and transport.
+    if provider.auth_type == "credential_vault":
+        reset_env_config()
+        return
+    if provider.auth_type in {"gh_cli", "claude_cli"}:
+        # The Copilot SDK / Claude Code CLI own credential discovery and transport.
         os.environ.pop("OPENAI_API_KEY", None)
         os.environ.pop("OPENAI_API_BASE", None)
         os.environ.pop("OPENAI_BASE_URL", None)
@@ -611,7 +697,9 @@ def register_settings_routes(
     )
     async def get_llm_settings():
         """Return project-local LLM settings for the Web UI."""
-        return _build_llm_settings_response()
+        # gh_cli / claude_cli providers shell out for their login status; keep
+        # that off the event loop so open SSE streams are not stalled.
+        return await asyncio.to_thread(_build_llm_settings_response)
 
     @app.put(
         "/settings/llm",
@@ -623,6 +711,17 @@ def register_settings_routes(
         host_ref = _host()
         provider_name = payload.provider.strip().lower()
         provider = LLM_PROVIDER_BY_NAME.get(provider_name)
+        if provider_name == "custom":
+            from src.providers.custom_profiles import active_provider_credentials
+
+            active = active_provider_credentials()
+            if (payload.model_name.strip() != active["model"]
+                    or payload.base_url not in (None, active["base_url"])
+                    or payload.api_key or payload.clear_api_key):
+                raise HTTPException(status_code=400, detail="Edit and test a custom provider in the provider manager before activating it")
+            provider = LLMProviderOption(name="custom", label="Custom (credential vault)", api_key_env=None,
+                base_url_env="OPENAI_BASE_URL", default_model=active["model"], default_base_url=active["base_url"],
+                auth_type="credential_vault", reasoning_efforts=[])
         if provider is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported LLM provider"
@@ -641,11 +740,11 @@ def register_settings_routes(
             )
 
         reasoning_effort = (payload.reasoning_effort or "").strip().lower()
-        if reasoning_effort not in LLM_REASONING_EFFORTS:
+        if reasoning_effort and reasoning_effort not in provider.reasoning_efforts:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    "Reasoning effort must be none, low, medium, high, or max, "
+                    f"Reasoning effort must be one of {', '.join(provider.reasoning_efforts)}, "
                     "or empty to leave it unset"
                 ),
             )
@@ -694,7 +793,7 @@ def register_settings_routes(
 
         saved_values = _persist_settings_updates(updates)
         _sync_runtime_env(provider, updates)
-        return _build_llm_settings_response(saved_values)
+        return await asyncio.to_thread(_build_llm_settings_response, saved_values)
 
     @app.post(
         "/settings/llm/models",
@@ -709,6 +808,9 @@ def register_settings_routes(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported LLM provider"
             )
+        if provider.auth_type == "claude_cli":
+            # No HTTP endpoint: the base URL checks below would reject it outright.
+            return await _list_claude_cli_models(provider, refresh=payload.refresh)
 
         current_values = _read_settings_env_values()
         requested_base_url = (payload.base_url or "").strip()

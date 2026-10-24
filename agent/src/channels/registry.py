@@ -21,12 +21,14 @@ logger = logging.getLogger(__name__)
 
 _INTERNAL = frozenset(
     {
+        "attempt_progress",
         "base",
         "bus",
         "config",
         "config_meta",
         "dingtalk_media",
         "dingtalk_probe",
+        "discord_probe",
         "email_probe",
         "feishu_probe",
         "manager",
@@ -35,6 +37,7 @@ _INTERNAL = frozenset(
         "registry",
         "rich_text",
         "runtime",
+        "slack_probe",
         "targets",
         "token_probe",
         "utils",

@@ -13,12 +13,15 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from collections import defaultdict, deque
+from collections.abc import Mapping
 from typing import Any
 
 import pandas as pd
 
+from backtest.engines._market_hooks import code_currency
 from src.agent.tools import BaseTool
 from src.tools.path_utils import safe_user_path
 from src.tools.trade_journal_parsers import (
@@ -76,6 +79,9 @@ def pair_trades_fifo(
 ) -> list[dict[str, Any]]:
     """Pair buys and sells per symbol using FIFO to compute per-roundtrip PnL.
 
+    Reversal fees are shared proportionally between the closing quantity and
+    the remaining opening quantity, so each fee is counted exactly once.
+
     Long lots and short lots are both modelled: a sell that finds no open
     long lot opens a short lot, and a buy first covers open shorts before
     queueing as a long (#16). Short PnL is (entry - cover) x qty.
@@ -94,7 +100,10 @@ def pair_trades_fifo(
 
     Returns:
         List of dicts: symbol, buy_dt, sell_dt, qty, buy_price, sell_price,
-        hold_days, pnl, pnl_pct. Unmatched positions are ignored.
+        hold_days, pnl, pnl_pct, side, currency. ``currency`` is the symbol's
+        settlement currency via :func:`backtest.engines._market_hooks.code_currency`,
+        so downstream sums never mix denominations (#1808). Unmatched
+        positions are ignored.
     """
     longs: dict[str, deque] = defaultdict(deque)
     shorts: dict[str, deque] = defaultdict(deque)
@@ -152,6 +161,7 @@ def pair_trades_fifo(
                     "pnl": round(pnl, 2),
                     "pnl_pct": round(pnl_pct, 4),
                     "side": "short",
+                    "currency": code_currency(row.symbol),
                 })
                 lot["fee"] -= entry_fee
                 lot["qty"] -= consumed
@@ -163,7 +173,7 @@ def pair_trades_fifo(
                     "dt": row.datetime,
                     "qty": remaining,
                     "price": row.price,
-                    "fee": row.fee,
+                    "fee": row.fee * (remaining / row.quantity),
                 })
             continue
 
@@ -203,6 +213,7 @@ def pair_trades_fifo(
                 "pnl": round(pnl, 2),
                 "pnl_pct": round(pnl_pct, 4),
                 "side": "long",
+                "currency": code_currency(row.symbol),
             })
             lot["fee"] -= buy_fee
             lot["qty"] -= consumed
@@ -214,7 +225,7 @@ def pair_trades_fifo(
                 "dt": row.datetime,
                 "qty": remaining,
                 "price": row.price,
-                "fee": row.fee,
+                "fee": row.fee * (remaining / row.quantity),
             })
     return roundtrips
 
@@ -231,12 +242,17 @@ def _compute_profile(df: pd.DataFrame) -> dict[str, Any]:
             dividend cash rows; those are summed into ``total_dividends`` and
             ``total_pnl`` but never counted as trades.
 
+    Monetary metrics and the average-win/average-loss ratio are computed
+    within each settlement currency. Single-currency journals retain scalar
+    values; mixed journals return currency-keyed mappings. Win rate and
+    holding time remain sample-wide because they do not add money amounts.
+
     Returns:
         Dict with avg_holding_days, trade_frequency_per_week, win_rate,
         profit_loss_ratio, total_pnl, total_dividends,
         dividend_rows_missing_cash, max_drawdown,
         top_symbols, market_distribution, hourly_distribution,
-        roundtrips_sample.
+        roundtrips_sample, and currency_warning when mixed.
     """
     if df.empty:
         return {"error": "empty trade journal"}
@@ -245,8 +261,18 @@ def _compute_profile(df: pd.DataFrame) -> dict[str, Any]:
     rts_df = pd.DataFrame(rts)
 
     trades_df = df[df["side"].isin(("buy", "sell"))]
-    dividend_amounts = df.loc[df["side"] == "dividend", "amount"]
-    total_dividends = round(float(dividend_amounts.sum()), 2)
+    # Per-currency dividend split: a dividend settles in its symbol's
+    # currency, so it joins that currency's pool even when the market has no
+    # round-trip in this journal — the cash is real, dropping it would be a
+    # silent omission (#1808).
+    div_rows = df[df["side"] == "dividend"]
+    dividend_amounts = div_rows["amount"]
+    dividends_by_currency: dict[str, float] = {}
+    for symbol, amount in div_rows.groupby("symbol")["amount"].sum().items():
+        cur = code_currency(symbol)
+        dividends_by_currency[cur] = (
+            dividends_by_currency.get(cur, 0.0) + float(amount)
+        )
     # A dividend row that parsed with no cash is almost never a real zero
     # payout — it means the export named its cash column something the parser
     # did not recognise, and the payout would otherwise be booked as 0 with
@@ -259,33 +285,55 @@ def _compute_profile(df: pd.DataFrame) -> dict[str, Any]:
     span_days = max(1, (df["datetime"].max() - df["datetime"].min()).days)
     freq_per_week = round(total_trades / span_days * 7, 2)
 
-    if not rts_df.empty:
-        wins = rts_df[rts_df["pnl"] > 0]
-        losses = rts_df[rts_df["pnl"] < 0]
-        avg_win = wins["pnl"].mean() if len(wins) else 0.0
-        avg_loss = losses["pnl"].mean() if len(losses) else 0.0
-        win_rate = round(len(wins) / len(rts_df), 4)
-        pnl_ratio = round(_safe_div(avg_win, abs(avg_loss)), 2) if avg_loss else float("inf") if avg_win else 0.0
-        avg_hold = round(rts_df["hold_days"].mean(), 2)
-        total_pnl = round(rts_df["pnl"].sum() + total_dividends, 2)
-        # Cumulative PnL → max drawdown
-        cum = rts_df.sort_values("sell_dt")["pnl"].cumsum()
-        running_max = cum.cummax()
-        drawdown = (cum - running_max).min()
-        max_drawdown = round(float(drawdown), 2) if pd.notna(drawdown) else 0.0
-    else:
-        win_rate = pnl_ratio = avg_hold = max_drawdown = 0.0
-        total_pnl = total_dividends
+    currencies = sorted(
+        {rt.get("currency") or "UNKNOWN" for rt in rts}
+        | set(dividends_by_currency)
+    )
+    mixed = len(currencies) > 1
 
+    win_rate = round(sum(rt["pnl"] > 0 for rt in rts) / len(rts), 4) if rts else 0.0
+    avg_hold = round(float(rts_df["hold_days"].mean()), 2) if rts else 0.0
+    pnl_by_currency = {}
+    drawdown_by_currency = {}
+    ratio_by_currency = {}
+    for currency in currencies:
+        pool = sorted((rt for rt in rts if rt["currency"] == currency),
+                      key=lambda rt: rt["sell_dt"])
+        pnl = pd.Series([rt["pnl"] for rt in pool], dtype=float)
+        wins, losses = pnl[pnl > 0], pnl[pnl < 0]
+        avg_win = float(wins.mean()) if len(wins) else 0.0
+        avg_loss = float(losses.mean()) if len(losses) else 0.0
+        ratio_by_currency[currency] = (
+            round(avg_win / abs(avg_loss), 2) if avg_loss
+            else float("inf") if avg_win else 0.0
+        )
+        pnl_by_currency[currency] = round(float(pnl.sum()) + dividends_by_currency.get(currency, 0.0), 2)
+        # The realized-PnL curve starts at zero, before the first close.
+        # Otherwise a losing first trade becomes the peak and disappears.
+        cumulative = pnl.cumsum()
+        drawdown = (cumulative - cumulative.cummax().clip(lower=0)).min()
+        drawdown_by_currency[currency] = round(float(drawdown), 2) if pd.notna(drawdown) else 0.0
+
+    dividend_totals = {cur: round(dividends_by_currency.get(cur, 0.0), 2) for cur in currencies}
+    total_pnl = pnl_by_currency if mixed else next(iter(pnl_by_currency.values()), 0.0)
+    max_drawdown = drawdown_by_currency if mixed else next(iter(drawdown_by_currency.values()), 0.0)
+    pnl_ratio = ratio_by_currency if mixed else next(iter(ratio_by_currency.values()), 0.0)
+    total_dividends = dividend_totals if mixed else next(iter(dividend_totals.values()), 0.0)
+
+    mixed_trade_currencies = len({code_currency(symbol) for symbol in trades_df["symbol"]}) > 1
     top_symbols = (
         trades_df.groupby("symbol")
         .agg(trades=("symbol", "count"), total_amount=("amount", "sum"))
-        .sort_values("total_amount", ascending=False)
+        .sort_values("trades" if mixed_trade_currencies else "total_amount", ascending=False)
         .head(10)
         .round(2)
         .reset_index()
         .to_dict(orient="records")
     )
+
+    if mixed_trade_currencies:
+        for entry in top_symbols:
+            entry["currency"] = code_currency(entry["symbol"])
 
     market_dist = trades_df["market"].value_counts().to_dict()
     hourly_dist = trades_df["datetime"].dt.hour.value_counts().sort_index().to_dict()
@@ -314,6 +362,17 @@ def _compute_profile(df: pd.DataFrame) -> dict[str, Any]:
         "market_distribution": market_dist,
         "hourly_distribution": hourly_dist,
         "roundtrips_sample": roundtrips_sample,
+        **({
+            "currencies": currencies,
+            "total_dividends_by_currency": {
+                cur: round(dividends_by_currency.get(cur, 0.0), 2)
+                for cur in currencies
+            },
+            "currency_warning": (
+                "Journal cash flows span multiple settlement currencies; monetary metrics are "
+                "reported per currency with no FX conversion."
+            ),
+        } if mixed else {}),
     }
 
 
@@ -344,8 +403,18 @@ def _disposition_effect(rts_df: pd.DataFrame) -> dict[str, Any]:
         }
     win_hold = float(wins["hold_days"].mean())
     loss_hold = float(losses["hold_days"].mean())
+    if win_hold == 0 and loss_hold == 0:
+        return {
+            "severity": "low",
+            "ratio_loss_to_win_hold": None,
+            "avg_winner_hold_days": 0.0,
+            "avg_loser_hold_days": 0.0,
+            "evidence": "Both winning and losing roundtrips have zero holding time; "
+            "the ratio is undefined and does not establish a hold-losers-longer tendency.",
+        }
     ratio = loss_hold / win_hold if win_hold > 0 else float("inf")
     severity = _severity(ratio, (1.2, 1.5))
+    ratio_text = f"ratio {ratio:.2f}" if math.isfinite(ratio) else "ratio unbounded because winner holding time is zero"
     return {
         "severity": severity,
         "ratio_loss_to_win_hold": round(ratio, 2),
@@ -353,7 +422,7 @@ def _disposition_effect(rts_df: pd.DataFrame) -> dict[str, Any]:
         "avg_loser_hold_days": round(loss_hold, 2),
         "evidence": (
             f"Losing roundtrips held {loss_hold:.1f}d vs winning "
-            f"{win_hold:.1f}d (ratio {ratio:.2f}). "
+            f"{win_hold:.1f}d ({ratio_text}). "
             + ("Classic disposition pattern." if severity == "high"
                else "Mild hold-losers-longer tendency." if severity == "medium"
                else "Hold times roughly symmetric.")
@@ -500,9 +569,26 @@ def _compute_behavior(df: pd.DataFrame) -> dict[str, Any]:
         return {"error": "empty trade journal"}
     trades_df = df[df["side"].isin(("buy", "sell"))]
     rts_df = pd.DataFrame(pair_trades_fifo(df))
+    currencies = sorted({code_currency(symbol) for symbol in trades_df["symbol"]})
+    if len(currencies) > 1:
+        by_currency = {
+            currency: _overtrading(
+                trades_df[trades_df["symbol"].map(code_currency) == currency],
+                rts_df[rts_df["currency"] == currency] if not rts_df.empty else rts_df,
+            )
+            for currency in currencies
+        }
+        overtrading = {
+            "severity": max((result["severity"] for result in by_currency.values()),
+                            key=("low", "medium", "high").index),
+            "by_currency": by_currency,
+            "evidence": "Activity and realized PnL compared separately by settlement currency; no FX conversion.",
+        }
+    else:
+        overtrading = _overtrading(trades_df, rts_df)
     return {
         "disposition_effect": _disposition_effect(rts_df),
-        "overtrading": _overtrading(trades_df, rts_df),
+        "overtrading": overtrading,
         "chasing_momentum": _chasing_momentum(trades_df),
         "anchoring": _anchoring(trades_df),
     }
@@ -522,6 +608,10 @@ def _apply_filter(df: pd.DataFrame, expr: str) -> pd.DataFrame:
 
     Returns:
         Filtered DataFrame (may be empty).
+
+    Raises:
+        ValueError: For an inverted date range, a field that is not a journal
+            column, or an expression in none of the supported forms.
     """
     expr = expr.strip()
     if not expr:
@@ -555,7 +645,31 @@ def _apply_filter(df: pd.DataFrame, expr: str) -> pd.DataFrame:
         key, val = (p.strip() for p in expr.split("=", 1))
         if key in df.columns:
             return df[df[key].astype(str).str.upper() == val.upper()]
-    return df
+        raise ValueError(f"unsupported filter field {key!r}; use symbol= or market=")
+    # Returning the full journal here would report an unapplied filter as applied.
+    raise ValueError(
+        f"unsupported filter {expr!r}; use 'YYYY-MM[-DD] to YYYY-MM[-DD]', "
+        "'symbol=...' or 'market=...'"
+    )
+
+
+def _json_safe(value: Any) -> Any:
+    """Recursively replace non-finite floats with ``None``.
+
+    A journal with no losing round-trip yields an infinite profit/loss ratio,
+    and ``json.dumps`` would emit the non-standard ``Infinity`` literal that
+    strict JSON parsers reject.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, Mapping):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+_ANALYSIS_TYPES = frozenset({"full", "profile", "behavior", "strategy"})
 
 
 def analyze_trade_journal(file_path: str, analysis_type: str = "full", filter_expr: str = "") -> str:
@@ -573,6 +687,17 @@ def analyze_trade_journal(file_path: str, analysis_type: str = "full", filter_ex
         JSON string. Keys: status, file, format_detected, total_records,
         date_range, market, profile / behavior (when applicable).
     """
+    if not isinstance(analysis_type, str) or analysis_type not in _ANALYSIS_TYPES:
+        return json.dumps(
+            {
+                "status": "error",
+                "error": (
+                    f"Unknown analysis_type {analysis_type!r}. "
+                    f"Expected one of: {', '.join(sorted(_ANALYSIS_TYPES))}"
+                ),
+            },
+            ensure_ascii=False,
+        )
     try:
         path = safe_user_path(file_path)
     except ValueError as exc:
@@ -596,6 +721,14 @@ def analyze_trade_journal(file_path: str, analysis_type: str = "full", filter_ex
         )
 
     df = records_to_dataframe(records)
+    if df["datetime"].isna().any():
+        return json.dumps(
+            {"status": "error", "error": (
+                "Trade journal contains missing or invalid dates. "
+                "Correct the datetime/date values before analysis."
+            )},
+            ensure_ascii=False,
+        )
     try:
         filtered = _apply_filter(df, filter_expr)
     except ValueError as exc:
@@ -625,7 +758,7 @@ def analyze_trade_journal(file_path: str, analysis_type: str = "full", filter_ex
             "note": "Strategy extraction → backtest bridging lands in Phase 4c.",
         }
 
-    return json.dumps(result, ensure_ascii=False, default=str)
+    return json.dumps(_json_safe(result), ensure_ascii=False, default=str, allow_nan=False)
 
 
 def _format_range(df: pd.DataFrame) -> str:
@@ -680,6 +813,6 @@ class TradeJournalTool(BaseTool):
     def execute(self, **kwargs: Any) -> str:
         return analyze_trade_journal(
             file_path=kwargs["file_path"],
-            analysis_type=kwargs.get("analysis_type", "full"),
+            analysis_type=kwargs.get("analysis_type") or "full",
             filter_expr=kwargs.get("filter_expr", ""),
         )

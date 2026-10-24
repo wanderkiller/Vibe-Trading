@@ -17,12 +17,15 @@ from typing import Any
 
 import pandas as pd
 
+from src.market_data import FIAT_CODES as _FIAT_CODES
+
 # Broker CSV/Excel cells often include ISO codes or currency glyphs around the
 # number (Schwab/IBKR "$1,234.56", JP/CN "¥1000"). Commas are already stripped;
 # without stripping these tokens float() fails and we silently store 0.0.
 _CURRENCY_TOKEN_RE = re.compile(
     r"(?i)(?<![A-Za-z])(?:USDT|USDC|USD|EUR|GBP|JPY|CNY|HKD)(?![A-Za-z])|[$€£¥￥]"
 )
+
 
 FormatName = str  # "tonghuashun" | "eastmoney" | "futu" | "generic" | "unknown"
 
@@ -164,6 +167,14 @@ def load_dataframe(path: str | Path) -> pd.DataFrame:
 
 # ---------------- Format detection ----------------
 
+# parse_futu reads its value columns by exact spelling, so a frame carrying
+# none of them cannot be parsed as a Futu export however its headers are
+# capitalised. `Date,Symbol,Side` on its own is an ordinary English journal
+# header and belongs to the case-insensitive generic parser.
+_FUTU_SIDE_COLUMNS = ("Side", "Direction")
+_FUTU_VALUE_COLUMNS = ("Quantity", "Amount")
+
+
 def detect_format(df: pd.DataFrame) -> FormatName:
     """Detect broker format by column-name signature.
 
@@ -180,7 +191,11 @@ def detect_format(df: pd.DataFrame) -> FormatName:
         return "tonghuashun"
     if {"买卖标志", "股票代码"}.issubset(cols) or {"买卖标志", "成交均价"}.issubset(cols):
         return "eastmoney"
-    if {"Date", "Symbol", "Side"}.issubset(cols) or {"Date", "Symbol", "Direction"}.issubset(cols):
+    if (
+        {"Date", "Symbol"}.issubset(cols)
+        and cols.intersection(_FUTU_SIDE_COLUMNS)
+        and cols.intersection(_FUTU_VALUE_COLUMNS)
+    ):
         return "futu"
 
     # Generic: any subset containing time/symbol/side hints
@@ -308,10 +323,26 @@ def _to_float(val: Any, default: float = 0.0) -> float:
         return default
     try:
         s = str(val).strip().replace("\u2212", "-")
-        s = _CURRENCY_TOKEN_RE.sub("", s).replace(",", "").strip()
+        s = _CURRENCY_TOKEN_RE.sub("", s)
+        if "," in s and "." in s and s.rfind(",") > s.rfind("."):
+            # "1.234,56": the rightmost separator is the decimal one, so dots
+            # group thousands. Stripping only commas read it as 1.23456.
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+        s = s.strip()
         if not s:
             return default
+        # Accounting exports write a negative as "(1,234.50)" (optionally
+        # "$(1,234.50)"); without this float() fails and the cell becomes 0.0.
+        negate = s.startswith("(") and s.endswith(")")
+        if negate:
+            s = s[1:-1].strip()
+            if not s or s[0] in "+-":
+                return default
         parsed = float(s)
+        if negate:
+            parsed = -parsed
         return parsed if math.isfinite(parsed) else default
     except (ValueError, TypeError):
         return default
@@ -560,8 +591,9 @@ def parse_generic(df: pd.DataFrame) -> list[TradeRecord]:
                 return colmap[n]
         return None
 
-    dt_col = pick("datetime", "time")
+    dt_col = pick("datetime")
     date_col = pick("date")
+    time_col = pick("time")
     sym_col = pick("symbol", "ticker", "code")
     name_col = pick("name", "instrument")
     side_col = pick("side", "direction", "action")
@@ -586,9 +618,13 @@ def parse_generic(df: pd.DataFrame) -> list[TradeRecord]:
         if dt_col:
             raw_dt = row.get(dt_col, "")
             dt = _generic_datetime_cell(raw_dt)
+        elif date_col and time_col:
+            dt = _generic_split_datetime(row.get(date_col), row.get(time_col))
         elif date_col:
             raw_dt = row.get(date_col, "")
             dt = _generic_datetime_cell(raw_dt)
+        elif time_col:
+            dt = _generic_datetime_cell(row.get(time_col))
         else:
             dt = ""
         symbol = str(row.get(sym_col, "")).strip() if sym_col else ""
@@ -634,6 +670,24 @@ def _fee_currency(column_cell: Any, fee_cell: Any) -> str:
     if m is None or (m.group(1) and m.group(2)):
         return ""
     return (m.group(1) or m.group(2) or "").upper()
+def _generic_split_datetime(date_val: Any, time_val: Any) -> str:
+    """Combine a generic date with a clock string or Excel day fraction."""
+    date = _generic_datetime_cell(date_val)
+    day = pd.to_datetime(date, errors="coerce")
+    # Never let a clock alone replace a missing/invalid date with today.
+    if pd.isna(day) or time_val is None or pd.isna(time_val):
+        return date
+    time = str(time_val).strip()
+    if not time:
+        return date
+    try:
+        fraction = float(time)
+    except ValueError:
+        fraction = None
+    if fraction is not None and 0 <= fraction < 1:
+        combined = day.normalize() + pd.to_timedelta(fraction, unit="D")
+        return combined.strftime("%Y-%m-%d %H:%M:%S")
+    return _generic_datetime_cell(f"{day:%Y-%m-%d} {time}")
 
 
 def _generic_datetime_cell(val: Any) -> str:
@@ -672,10 +726,21 @@ def _infer_market_from_symbol(symbol: str) -> str:
         # LSE names (#1206); without this they landed in "other"
         # and shadow analysis silently degraded to NaN.
         return "uk"
-    if s.endswith(".SH") or s.endswith(".SZ") or s.endswith(".BJ"):
+    if s.endswith((".SH", ".SZ", ".BJ", ".SS")):
+        # .SS is Yahoo's alias for Shanghai.
         return "china_a"
-    if ("-" in s or "/" in s) and any(quote in s for quote in ("USDT", "USDC", "BTC", "USD")):
-        return "crypto"
+    if s.endswith(".US"):
+        # The project's canonical US form (AAPL.US, BF-B.US); checked before
+        # the pair split so a share-class hyphen is not read as a pair.
+        return "us"
+    if "-" in s or "/" in s:
+        legs = [leg for leg in re.split(r"[-/]", s) if leg]
+        if len(legs) == 2 and all(leg in _FIAT_CODES for leg in legs):
+            # EUR/USD, USD-JPY ...: a currency cross, not a crypto pair. The
+            # shadow-account markets have no forex bucket, so it stays "other".
+            return "other"
+        if any(quote in s for quote in ("USDT", "USDC", "BTC", "USD")):
+            return "crypto"
     # Binance-style concatenated pairs (BTCUSDT) are purely alphabetic, so the
     # isalpha() US-equity branch below would mis-label them without this check.
     for quote in ("USDT", "USDC", "BUSD"):
@@ -723,9 +788,9 @@ def parse_file(path: str | Path) -> tuple[FormatName, list[TradeRecord]]:
 
 
 def records_to_dataframe(records: list[TradeRecord]) -> pd.DataFrame:
-    """Convert records to a standardized DataFrame (datetime column parsed)."""
+    """Parse and sort datetimes, retaining source order for equal timestamps."""
     if not records:
         return pd.DataFrame(columns=[f.name for f in TradeRecord.__dataclass_fields__.values()])
     df = pd.DataFrame([asdict(r) for r in records])
     df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-    return df.sort_values("datetime").reset_index(drop=True)
+    return df.sort_values("datetime", kind="stable").reset_index(drop=True)

@@ -296,17 +296,23 @@ def test_ibkr_oauth_registration_uses_browser_headers(tmp_path) -> None:
                 },
                 request=request,
             )
+        # Mirrors IBKR's live documents, fetched 2026-10-21: the protected
+        # resource names https://api.ibkr.com, the issuer every well-known
+        # path reports (until 2026-09 it named https://api.ibkr.com/oauth2,
+        # which mcp>=1.30's RFC 8414 issuer check refuses).
         if url == f"{cfg.url}/.well-known/oauth-protected-resource":
             return httpx.Response(
                 200,
                 json={
                     "resource": cfg.url,
-                    "authorization_servers": ["https://api.ibkr.com/oauth2"],
-                    "scopes_supported": ["mcp.read"],
+                    "authorization_servers": ["https://api.ibkr.com"],
+                    "scopes_supported": ["mcp.read", "mcp.write", "mcp.orders.submit"],
+                    "bearer_methods_supported": ["header"],
                 },
                 request=request,
             )
         if url in {
+            "https://api.ibkr.com/.well-known/oauth-authorization-server",
             "https://api.ibkr.com/.well-known/oauth-authorization-server/oauth2",
             "https://api.ibkr.com/oauth2/.well-known/oauth-authorization-server",
         }:
@@ -508,21 +514,15 @@ def test_stdio_path_unchanged() -> None:
     assert isinstance(transport, StdioTransport)
 
 
-def test_mcp_version_is_capped_below_the_strict_issuer_check() -> None:
-    """The IBKR OAuth path depends on this cap; a silent bump breaks the broker.
+def test_mcp_floor_includes_the_session_reclamation_fix() -> None:
+    """``--transport http`` needs mcp>=1.30 (CVE-2026-59951).
 
-    mcp 1.30.0 enforces RFC 8414 section 3.3 — an authorization server's
-    metadata `issuer` must equal the issuer used to build the well-known URL.
-    IBKR's official MCP server advertises the authorization server
-    ``https://api.ibkr.com/oauth2`` while its metadata (both well-known paths,
-    verified live 2026-09-08) reports ``"issuer": "https://api.ibkr.com"``, so
-    discovery raises ``OAuthFlowError`` before any token is requested and no
-    IBKR connection can be established.
-
-    ``test_ibkr_oauth_registration_uses_browser_headers`` above is the same
-    finding at the fixture level, and its fixture mirrors the live document —
-    so making it pass by editing the fixture would hide a broken broker
-    behind a green suite. This test guards the actual remedy instead.
+    Before 1.30 a stateful Streamable HTTP server never reclaimed sessions:
+    no expiry, a DELETEd session stayed registered and there was no cap, so
+    ordinary short requests grew server memory without bound. 0.1.15-0.1.17
+    capped mcp below 1.30 because 1.30's RFC 8414 issuer check refused IBKR's
+    metadata; IBKR's protected-resource document now names the same issuer
+    (fixture above), so the requirement is a floor again.
     """
     import tomllib
     from pathlib import Path
@@ -533,15 +533,9 @@ def test_mcp_version_is_capped_below_the_strict_issuer_check() -> None:
     dependencies = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][
         "dependencies"
     ]
-    caps = [
-        Requirement(entry)
-        for entry in dependencies
-        if Requirement(entry).name == "mcp"
-    ]
-    assert caps, "the mcp cap is gone from pyproject dependencies"
-    assert not caps[0].specifier.contains("1.30.0"), (
-        f"mcp 1.30.0 satisfies {caps[0]}; IBKR OAuth discovery fails on it"
+    pins = [Requirement(entry) for entry in dependencies if Requirement(entry).name == "mcp"]
+    assert pins, "the mcp requirement is gone from pyproject dependencies"
+    assert not pins[0].specifier.contains("1.29.1"), (
+        f"{pins[0]} admits mcp 1.29.1, which never reclaims HTTP sessions"
     )
-    assert caps[0].specifier.contains("1.29.1"), (
-        f"{caps[0]} excludes the last working version"
-    )
+    assert pins[0].specifier.contains("1.30.0"), f"{pins[0]} excludes the fixed release"

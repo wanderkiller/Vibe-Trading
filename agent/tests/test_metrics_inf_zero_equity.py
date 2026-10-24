@@ -72,7 +72,10 @@ def test_calc_metrics_no_inf_on_all_zero_equity() -> None:
     m = calc_metrics(eq, [], initial_cash=10000.0)
     for key in ("calmar", "annual_return"):
         assert np.isfinite(m[key]), f"{key} is not finite: {m[key]}"
-    assert m["sharpe"] is None and m["sortino"] is None
+    # Per-bar returns are seeded with initial cash (upstream #1843), so the 100% loss on the first bar is a real sample:
+    # the ratios are defined and finite. They are None only when undefined, never inf/NaN.
+    for key in ("sharpe", "sortino"):
+        assert m[key] is None or np.isfinite(m[key]), f"{key} is not finite: {m[key]}"
 
 
 # --------------------------------------------------------------------------- #

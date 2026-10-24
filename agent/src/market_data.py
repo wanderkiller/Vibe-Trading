@@ -30,6 +30,8 @@ _SOURCE_PATTERNS = [
     (re.compile(r"^[A-Z0-9&.\-]+\.(TO|V)$", re.I), "yahoo"),
     # Argentina: BYMA equities and CEDEARs use Yahoo's canonical .BA suffix.
     (re.compile(r"^[A-Z0-9&.\-]+\.BA$", re.I), "yahoo"),
+    # Brazil: B3 equities, FIIs, ETFs and BDRs use Yahoo's canonical .SA suffix.
+    (re.compile(r"^[A-Z0-9]+\.SA$", re.I), "yahoo"),
     # UK: London Stock Exchange (VOD.L, SHEL.L). Yahoo serves the suffix
     # verbatim; without this they fell through to the tushare default and were
     # routed to China-market loaders that cannot resolve them.
@@ -46,8 +48,8 @@ _SOURCE_PATTERNS = [
     # Korea: KOSPI (005930.KS) / KOSDAQ (247540.KQ), 6-digit codes. Served by
     # pykrx (KRX public data, no auth); registry falls back to Yahoo/yfinance.
     (re.compile(r"^\d{6}\.(KS|KQ)$", re.I), "pykrx"),
-    (re.compile(r"^[A-Z]+-USDT$", re.I), "okx"),
-    (re.compile(r"^[A-Z]+/USDT$", re.I), "ccxt"),
+    (re.compile(r"^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+-USDT$", re.I), "okx"),
+    (re.compile(r"^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+/USDT$", re.I), "ccxt"),
     # Iran: Nobitex IRT-quoted crypto pairs (BTCIRT / BTC-IRT). Toman-
     # denominated public UDF endpoint, no auth; explicit-source only (not in
     # the crypto fallback chain — non-IRT pairs would never resolve there).
@@ -66,13 +68,17 @@ _SOURCE_PATTERNS = [
 
 def detect_source(code: str) -> str:
     """Infer the best loader source for a normalized symbol."""
-    for pattern, source in _SOURCE_PATTERNS:
-        if pattern.match(code):
-            return source
     from backtest.engines._market_hooks import _detect_market
     from backtest.loaders.registry import FALLBACK_CHAINS
 
-    market = _detect_market(code)
+    market = _detect_market(code.strip().upper())
+    for pattern, source in _SOURCE_PATTERNS:
+        if pattern.match(code):
+            # XXX/USD also matches known crypto bases. Keep the shared market
+            # classification authoritative over this broad forex-source rule.
+            if source == "mt5" and market == "crypto":
+                continue
+            return source
     if market == "a_share":
         return "tushare"  # Keep the documented fallback for unknown symbols.
     chain = FALLBACK_CHAINS.get(market, [])
@@ -83,7 +89,7 @@ def detect_source(code: str) -> str:
 def normalize_crypto_symbol(code: str) -> str:
     """Normalize USDT spot aliases without changing the requested quote asset."""
     cleaned = code.strip().upper()
-    match = re.fullmatch(r"([A-Z]{2,})[-/]?USDT", cleaned)
+    match = re.fullmatch(r"((?!\d+[-/]?USDT)[A-Z0-9]{2,})[-/]?USDT", cleaned)
     return f"{match.group(1)}-USDT" if match else code
 
 

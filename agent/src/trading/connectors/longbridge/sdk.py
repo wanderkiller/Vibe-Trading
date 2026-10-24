@@ -66,7 +66,9 @@ class LongbridgeConfig:
         profile: ``paper``, ``live-readonly`` or ``live`` (operator-declared).
         region: ``global`` or ``cn`` (host region; not a paper/live signal).
         timeout: Network timeout in seconds.
-        readonly: Always true for this layer; order methods are not exposed.
+        readonly: Not consulted by the order methods. Whether a profile may place or
+            cancel orders is gated first by its ``TradingProfile.readonly`` in the
+            trading service.
     """
 
     app_key: str = field(default="", repr=False)
@@ -668,19 +670,28 @@ def _require_openapi() -> ModuleType:
     )
 
 
-def _build_config(cfg: LongbridgeConfig):
-    openapi = _require_openapi()
-    config_cls = getattr(openapi, "Config")
-    # SDK exposes both a keyword constructor and a ``from_apikey`` factory across
-    # versions; try the direct constructor, fall back to the factory.
-    try:
-        return config_cls(
-            app_key=cfg.app_key,
-            app_secret=cfg.app_secret,
-            access_token=cfg.access_token,
-        )
-    except TypeError:
-        return config_cls.from_apikey(cfg.app_key, cfg.app_secret, cfg.access_token)
+def build_sdk_config(
+    openapi: Any, app_key: str, app_secret: str, access_token: str
+) -> Any:
+    """Build the SDK ``Config`` on any SDK in the supported range.
+
+    From 4.0 the SDK refuses direct ``Config(...)`` construction and only offers
+    ``Config.from_apikey``; 0.2.x has no ``from_apikey``. ``longbridge>=0.2.5``
+    admits both, so pick by capability rather than by version number.
+
+    Args:
+        openapi: The SDK ``openapi`` module.
+        app_key: Longbridge OpenAPI app key.
+        app_secret: Longbridge OpenAPI app secret.
+        access_token: Longbridge OpenAPI access token.
+
+    Returns:
+        The SDK ``Config`` instance.
+    """
+    config_cls = openapi.Config
+    if hasattr(config_cls, "from_apikey"):
+        return config_cls.from_apikey(app_key, app_secret, access_token)
+    return config_cls(app_key, app_secret, access_token)
 
 
 def _require_resolved_config(cfg: LongbridgeConfig) -> None:
@@ -699,13 +710,17 @@ def _require_resolved_config(cfg: LongbridgeConfig) -> None:
 def _trade_context(cfg: LongbridgeConfig):
     _require_resolved_config(cfg)
     openapi = _require_openapi()
-    return getattr(openapi, "TradeContext")(_build_config(cfg))
+    return getattr(openapi, "TradeContext")(
+        build_sdk_config(openapi, cfg.app_key, cfg.app_secret, cfg.access_token)
+    )
 
 
 def _quote_context(cfg: LongbridgeConfig):
     _require_resolved_config(cfg)
     openapi = _require_openapi()
-    return getattr(openapi, "QuoteContext")(_build_config(cfg))
+    return getattr(openapi, "QuoteContext")(
+        build_sdk_config(openapi, cfg.app_key, cfg.app_secret, cfg.access_token)
+    )
 
 
 #: Canonical period token → Longbridge ``Period`` attribute name.

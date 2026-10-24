@@ -216,6 +216,11 @@ class SqliteStrategyStore:
                     created_at      TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS adaptation_bindings (
+                    artifact_id TEXT PRIMARY KEY REFERENCES artifacts(id) ON DELETE CASCADE,
+                    contract TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS decay_snapshots (
                     id              INTEGER PRIMARY KEY AUTOINCREMENT,
                     artifact_id     TEXT NOT NULL
@@ -370,7 +375,7 @@ class SqliteStrategyStore:
     # -- Artifact CRUD ------------------------------------------------------
 
     @_synchronized
-    def register_artifact(self, artifact: Artifact) -> str:
+    def register_artifact(self, artifact: Artifact, *, adaptation_binding: dict | None = None) -> str:
         """Register a new artifact.  Returns the artifact_id."""
         # A brand-new record has no prior validation history, so its implicit
         # "current" state is UNVALIDATED — registering directly with
@@ -436,6 +441,11 @@ class SqliteStrategyStore:
                         artifact.validation_date,
                     ),
                 )
+                if adaptation_binding is not None:
+                    self._conn.execute(
+                        "INSERT INTO adaptation_bindings VALUES (?, ?)",
+                        (artifact_id, _json_dumps(adaptation_binding)),
+                    )
         except sqlite3.IntegrityError as exc:
             if "artifacts.name" in str(exc):
                 raise ValueError(
@@ -452,6 +462,14 @@ class SqliteStrategyStore:
             "SELECT * FROM artifacts WHERE id = ?", (artifact_id,)
         ).fetchone()
         return self._row_to_artifact(row) if row else None
+
+    @_synchronized
+    def get_adaptation_binding(self, artifact_id: str) -> dict | None:
+        """Return the immutable input contract of a prepared adaptation."""
+        row = self._conn.execute(
+            "SELECT contract FROM adaptation_bindings WHERE artifact_id = ?", (artifact_id,)
+        ).fetchone()
+        return json.loads(row["contract"]) if row else None
 
     @_synchronized
     def list_artifacts(
@@ -602,62 +620,126 @@ class SqliteStrategyStore:
 
     # -- Bench history ------------------------------------------------------
 
+    @staticmethod
+    def _bench_values(result: BenchResult) -> dict[str, object]:
+        """Column values of a bench row other than ``id`` and ``created_at``.
+
+        One list serves both the insert and the duplicate check, so a column
+        added to one cannot be missing from the other.
+        """
+        return {
+            "artifact_id": result.artifact_id,
+            "bench_type": result.bench_type,
+            "ic_mean": result.ic_mean,
+            "ic_std": result.ic_std,
+            "ir": result.ir,
+            "ic_positive_ratio": result.ic_positive_ratio,
+            "t_stat": result.t_stat,
+            "sharpe": result.sharpe,
+            "annual_return": result.annual_return,
+            "max_drawdown": result.max_drawdown,
+            "calmar": result.calmar,
+            "category": result.category.value if result.category else None,
+            "train_start": result.train_start,
+            "train_end": result.train_end,
+            "test_start": result.test_start,
+            "test_end": result.test_end,
+            "run_dir": result.run_dir,
+        }
+
     @_synchronized
     def record_bench(self, result: BenchResult) -> int:
         """Record a bench result.  Returns the result ID."""
-        now = _now_iso()
-        created_at = result.created_at or now
-        category_value = result.category.value if result.category else None
-
         with self._write_transaction():
-            cursor = self._conn.execute(
-                """
-                INSERT INTO bench_history (
-                    artifact_id, bench_type, ic_mean, ic_std, ir,
-                    ic_positive_ratio, t_stat, sharpe, annual_return,
-                    max_drawdown, calmar, category,
-                    train_start, train_end, test_start, test_end,
-                    run_dir, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    result.artifact_id,
-                    result.bench_type,
-                    result.ic_mean,
-                    result.ic_std,
-                    result.ir,
-                    result.ic_positive_ratio,
-                    result.t_stat,
-                    result.sharpe,
-                    result.annual_return,
-                    result.max_drawdown,
-                    result.calmar,
-                    category_value,
-                    result.train_start,
-                    result.train_end,
-                    result.test_start,
-                    result.test_end,
-                    result.run_dir,
-                    created_at,
-                ),
-            )
-            return cursor.lastrowid  # type: ignore[return-value]
+            return self._insert_bench(result)
+
+    def _insert_bench(self, result: BenchResult) -> int:
+        """Insert within the caller's transaction."""
+        values = self._bench_values(result)
+        values["created_at"] = result.created_at or _now_iso()
+        columns = ", ".join(values)
+        placeholders = ", ".join("?" for _ in values)
+
+        cursor = self._conn.execute(
+            f"INSERT INTO bench_history ({columns}) VALUES ({placeholders})",
+            list(values.values()),
+        )
+        return cursor.lastrowid  # type: ignore[return-value]
+
+    @_synchronized
+    def record_bench_once(self, result: BenchResult) -> int | None:
+        """Atomically record a measurement, returning None for a duplicate.
+
+        BEGIN IMMEDIATE serializes this check and insert across connections.
+        Directory, timestamp, bench label and grading do not change evidence.
+        """
+        with self._write_transaction():
+            if self.has_bench_result(result):
+                return None
+            return self._insert_bench(result)
 
     @_synchronized
     def get_bench_history(
-        self, artifact_id: str, *, limit: int = 50
+        self,
+        artifact_id: str,
+        *,
+        limit: int = 50,
+        bench_types: Sequence[str] | None = None,
     ) -> Sequence[BenchResult]:
-        """Get bench history for an artifact, newest first."""
+        """Get bench history for an artifact, newest first.
+
+        Args:
+            artifact_id: Artifact whose bench rows are returned.
+            limit: Maximum number of rows.
+            bench_types: When given, only rows of these bench types are
+                returned, and ``limit`` applies after the filter.
+
+        Returns:
+            Matching bench results, newest first.
+        """
+        type_clause = ""
+        params: list[object] = [artifact_id]
+        if bench_types is not None:
+            types = list(bench_types)
+            if not types:
+                return []
+            type_clause = f"AND bench_type IN ({', '.join('?' for _ in types)})"
+            params.extend(types)
+        params.append(limit)
         rows = self._conn.execute(
-            """
+            f"""
             SELECT * FROM bench_history
-            WHERE artifact_id = ?
+            WHERE artifact_id = ? {type_clause}
             ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
-            (artifact_id, limit),
+            params,
         ).fetchall()
         return [self._row_to_bench_result(row) for row in rows]
+
+    @_synchronized
+    def has_bench_result(self, result: BenchResult) -> bool:
+        """Return whether an identical bench row is already stored.
+
+        ``IS`` rather than ``=`` makes two missing values compare equal, so a
+        metric absent from both rows still counts as a match.
+
+        Args:
+            result: Candidate measurement; location, time and grading metadata
+                are ignored.
+
+        Returns:
+            ``True`` when a stored measurement has the same artifact, windows and metrics.
+        """
+        values = self._bench_values(result)
+        for metadata in ("run_dir", "bench_type", "category"):
+            values.pop(metadata)
+        where = " AND ".join(f"{column} IS ?" for column in values)
+        row = self._conn.execute(
+            f"SELECT 1 FROM bench_history WHERE {where} LIMIT 1",
+            list(values.values()),
+        ).fetchone()
+        return row is not None
 
     # -- Decay snapshots ----------------------------------------------------
 

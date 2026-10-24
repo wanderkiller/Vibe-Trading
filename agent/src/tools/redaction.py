@@ -97,7 +97,15 @@ _SENSITIVE_ARG_KEYS = {
     "token",
 } | _PII_EXACT_KEYS
 
-_SENSITIVE_ARG_MARKERS = ("api_key", "authorization", "password", "secret", "token")
+_SENSITIVE_ARG_MARKERS = (
+    "api_key",
+    "authorization",
+    "cookie",
+    "password",
+    "private_key",
+    "secret",
+    "token",
+)
 
 #: Keys that stay sensitive in the ARGUMENTS / audit sink but are released in
 #: the tool-RESULT sink.
@@ -117,15 +125,26 @@ _RESULT_SAFE_KEYS = {"content"}
 #: Exact token-metadata names eligible for a VALUE-SHAPED exemption in every
 #: sink. A familiar name alone is never permission to release its value:
 #: counts must be nonnegative integers (or absent), usage may be a mapping of
-#: counts, and CLOB ids must have the public decimal uint256 shape. Unknown
+#: counts, ``token_source`` must be one of :data:`_TOKEN_SOURCE_LABELS` (or
+#: absent), and CLOB ids must have the public decimal uint256 shape. Unknown
 #: shapes fail closed, including unprefixed secrets no text regex can detect.
 _BENIGN_TOKEN_FIELD_KEYS = {
     "token_budget",
     "token_usage",
+    "token_source",
     "total_input_tokens",
     "total_output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
     "clob_token_id",
 }
+
+#: The closed vocabulary a ``token_source`` provenance label may carry. The
+#: label is a fixed enum, not free text, so any other string fails closed
+#: rather than riding a familiar key name into a trace. ``None`` is the honest
+#: "unlabelled" value and is preserved. Adding a value here is the only way a
+#: new provenance label becomes surfaceable.
+_TOKEN_SOURCE_LABELS = frozenset({"provider", "estimated"})
 
 
 def _fold_key(name: str) -> str:
@@ -310,6 +329,11 @@ def is_sensitive_arg(
                 and len(value) <= 78
                 and int(value) < 2**256
             )
+        if folded == "tokensource":
+            return not (
+                value is None
+                or (isinstance(value, str) and value in _TOKEN_SOURCE_LABELS)
+            )
         if folded == "tokenusage" and isinstance(value, dict):
             return False
         return not (value is None or (type(value) is int and value >= 0))
@@ -383,15 +407,21 @@ def _redact_token_usage(value: Any, *, sink: str) -> Any:
         sink: Sink policy for nested sensitive keys.
 
     Returns:
-        A fresh mapping containing only counts, nulls, and redaction sentinels.
+        A fresh mapping containing only counts, nulls, validated
+        ``token_source`` labels (:data:`_TOKEN_SOURCE_LABELS`), and redaction
+        sentinels.
     """
     if isinstance(value, dict):
-        return {
-            key: _REDACTED
-            if is_sensitive_arg(str(key), sink=sink, value=item)
-            else _redact_token_usage(item, sink=sink)
-            for key, item in value.items()
-        }
+        scrubbed: dict[Any, Any] = {}
+        for key, item in value.items():
+            name = str(key)
+            if is_sensitive_arg(name, sink=sink, value=item):
+                scrubbed[key] = _REDACTED
+            elif _fold_key(name) == "tokensource":
+                scrubbed[key] = item
+            else:
+                scrubbed[key] = _redact_token_usage(item, sink=sink)
+        return scrubbed
     return value if value is None or (type(value) is int and value >= 0) else _REDACTED
 
 
@@ -401,13 +431,18 @@ def _redact_token_usage(value: Any, *, sink: str) -> Any:
 #: scoped to credential field names so a benign number in shell output (a
 #: price, a duration, a timestamp) is never mangled.
 #:
-#: All names are SINGULAR and ``\b``-anchored: a plural is a count or a
-#: collection, never a credential, and matching it mangles routine output
-#: (``tokens: 1204 in / 318 out`` from the LLM usage line, ``api_keys: 3``).
+#: All names are SINGULAR and must start a word: either a ``\b`` boundary, an
+#: UPPERCASE env-style prefix such as ``TUSHARE_``, or the ``aws_`` prefix (see
+#: :data:`_TEXT_KV_PATTERN`).
+#: A plural is a count or a collection, never a credential, and matching it
+#: mangles routine output (``tokens: 1204 in / 318 out`` from the LLM usage
+#: line, ``api_keys: 3``). A lowercase suffix like ``pad_token`` or
+#: ``max_token`` is an ordinary identifier, so it is left alone.
 _TEXT_CREDENTIAL_KEYS = (
     r"api[_-]?key|api[_-]?secret|access[_-]?token|auth[_-]?token"
     r"|refresh[_-]?token|bearer[_-]?token|id[_-]?token|session[_-]?token"
-    r"|client[_-]?secret|secret[_-]?key|private[_-]?key|app[_-]?secret"
+    r"|client[_-]?secret|secret[_-]?access[_-]?key|secret[_-]?key"
+    r"|private[_-]?key|app[_-]?secret"
     r"|passphrase|password|passwd|authorization|secret|token"
 )
 
@@ -422,14 +457,24 @@ _TEXT_VALUE = r"\"[^\"\n]*\"|'[^'\n]*'|[^\s,;{}\[\]()\"']+"
 #: backreference. The negative lookahead keeps the substitution idempotent (an
 #: already-redacted value is skipped) and defers ``Bearer <jwt>`` to
 #: :data:`_TEXT_BEARER_PATTERN`, which would otherwise be consumed as the value
-#: and leave the token body visible.
+#: and leave the token body visible, and skips a scheme word that
+#: :data:`_TEXT_AUTH_SCHEME_PATTERN` already followed with the sentinel.
 #:
 #: Every quantifier applies to a bounded character class, with no nesting and
 #: no overlapping alternatives, so matching stays linear (no ReDoS surface).
 _TEXT_KV_PATTERN = re.compile(
-    r"(?P<q>[\"']?)\b(?P<name>" + _TEXT_CREDENTIAL_KEYS + r")\b(?P=q)"
+    r"(?P<q>[\"']?)"
+    # ``\b`` for a plain name; for an env-style name the label follows an
+    # UPPERCASE segment and ``_`` (``TUSHARE_TOKEN``). The inline ``(?-i:...)``
+    # keeps the uppercase test case-sensitive under IGNORECASE, so ``pad_token``
+    # and ``max_token`` still do not match. ``aws_`` is the one lowercase prefix
+    # accepted, for ``~/.aws/credentials`` names such as ``aws_secret_access_key``.
+    r"(?:\b|(?<=(?-i:[A-Z0-9])_)|(?<=aws_))"
+    r"(?P<name>" + _TEXT_CREDENTIAL_KEYS + r")\b(?P=q)"
     r"(?P<sep>\s*[:=]\s*)"
-    r"(?![\"']?" + re.escape(_REDACTED) + r"[\"']?|bearer\b)"
+    r"(?![\"']?" + re.escape(_REDACTED) + r"[\"']?"
+    r"|(?:bearer|basic|digest|token|negotiate|ntlm)\s+" + re.escape(_REDACTED) +
+    r"|bearer\b)"
     r"(?P<value>" + _TEXT_VALUE + r")",
     re.IGNORECASE,
 )
@@ -439,6 +484,64 @@ _TEXT_KV_PATTERN = re.compile(
 #: second pass cannot match ``Bearer [redacted]``.
 _TEXT_BEARER_PATTERN = re.compile(
     r"\b(?P<scheme>bearer)\s+(?P<value>[A-Za-z0-9._~+/-]+=*)",
+    re.IGNORECASE,
+)
+
+#: ``Authorization: Basic <base64>`` and the other non-bearer schemes. The value
+#: is ``user:password`` in base64, which the key pattern cannot see: it would
+#: redact only the scheme word and leave the credential after it. Matched only
+#: directly after an ``authorization`` label, so prose such as "basic
+#: information" is untouched. Applied before :data:`_TEXT_KV_PATTERN`.
+_TEXT_AUTH_SCHEME_PATTERN = re.compile(
+    r"(?P<head>\bauthorization[\"']?\s*[:=]\s*[\"']?)"
+    r"(?P<scheme>basic|digest|token|negotiate|ntlm)\s+"
+    r"[^\s\"',;{}]+",
+    re.IGNORECASE,
+)
+
+#: URL userinfo (``scheme://user:password@host``). It is a credential with no
+#: key label, so the key-based pattern never reaches it. A password may contain
+#: ``@``, so the match runs to the last ``@`` before a delimiter (whitespace,
+#: path/query/fragment markers, quotes, brackets, commas), and JSON fields after
+#: a URL are left alone. A bare username is redacted only when it is 20+ token
+#: characters (a pasted access token), so ``git@host`` stays readable.
+_TEXT_URL_USERINFO_PATTERN = re.compile(
+    r"(?<=://)"
+    r"(?:[^\s/?#\"'<>(){}\[\],:@]*:[^\s/?#\"'<>(){}\[\],]*"  # user:password
+    r"|[A-Za-z0-9_-]{20,})"                                  # bare token
+    r"@"
+)
+
+#: PEM / PGP private-key blocks (``-----BEGIN RSA PRIVATE KEY----- ... -----END``).
+#: The base64 body has no key label and no recognised prefix, so nothing else
+#: here sees it. The whole block is replaced; a block whose END marker was
+#: truncated (clipped tool output) is redacted to the end of the text, which
+#: fails closed. The body is a lazy run to a fixed terminator or ``\Z``, so a
+#: single scan consumes it and matching stays linear. Public keys and
+#: certificates (``BEGIN PUBLIC KEY`` / ``BEGIN CERTIFICATE``) do not match.
+_TEXT_PRIVATE_KEY_PATTERN = re.compile(
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----"
+    r"[\s\S]*?"
+    r"(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|\Z)"
+)
+
+#: ``Cookie:`` / ``Set-Cookie:`` header lines. A session cookie is a bearer
+#: credential, but its value is a ``name=value; name=value`` list that neither
+#: the key pattern (``cookie`` is not a credential key name) nor the token
+#: shapes can see, so ``curl -H "Cookie: sid=..."`` and a dumped response header
+#: both leaked it. The value runs to the end of the line or the closing quote of
+#: a quoted shell argument. An already-redacted value is skipped, which keeps the
+#: substitution idempotent.
+_TEXT_QUOTED_COOKIE_HEADER_PATTERN = re.compile(
+    r"(?P<quote>[\"'])(?P<head>(?:set-)?cookie[ \t]*:)(?P<sp>[ \t]*)"
+    r"(?:(?:\\.)|(?!(?P=quote))[^\r\n\\])*(?P=quote)",
+    re.IGNORECASE,
+)
+_TEXT_COOKIE_HEADER_PATTERN = re.compile(
+    r"(?P<head>(?<![\w-])(?:set-)?cookie\s*:)"
+    r"(?P<sp>[ \t]*)(?![ \t])"
+    r"(?!\[redacted\])"
+    r"[^\r\n]+",
     re.IGNORECASE,
 )
 
@@ -474,10 +577,35 @@ _TEXT_TOKEN_PATTERN = re.compile(
     r"sk-[A-Za-z0-9_-]{20,}"                 # OpenAI / Anthropic style
     r"|gh[pousr]_[A-Za-z0-9]{30,}"           # GitHub PAT family
     r"|xox[baprs]-[A-Za-z0-9-]{10,}"         # Slack
-    r"|AKIA[0-9A-Z]{16}"                     # AWS access key id
+    r"|(?:AKIA|ASIA)[0-9A-Z]{16}"            # AWS access key id (long/short-lived)
+    r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}"  # Stripe secret / restricted key
+    r"|AIza[A-Za-z0-9_-]{35}"                # Google API key
     r"|pypi-[A-Za-z0-9_-]{16,}"              # PyPI upload token
+    r"|github_pat_[A-Za-z0-9_]{22,}"         # GitHub fine-grained PAT
+    r"|glpat-[A-Za-z0-9_-]{20,}"             # GitLab PAT
+    r"|npm_[A-Za-z0-9]{36}"                  # npm access token
+    r"|hf_[A-Za-z0-9]{30,}"                  # Hugging Face token
+    r"|gsk_[A-Za-z0-9]{20,}"                 # Groq API key
+    r"|nvapi-[A-Za-z0-9_-]{20,}"             # NVIDIA API key
     r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}"  # JWT
     r")(?![A-Za-z0-9_-])"
+)
+
+#: Channel credentials that embed the secret in a URL path or a bare token, so
+#: neither the key-based nor the issuer-prefix patterns see them. The Telegram
+#: bot token (``<numeric id>:<35 chars>``) appears in the request URL
+#: ``https://api.telegram.org/bot<token>/sendMessage``, which HTTP client error
+#: messages echo verbatim; Slack and Discord incoming-webhook URLs are bearer
+#: credentials whose last path segment is the secret. The Telegram body is a
+#: fixed-length class and the webhook secrets are bounded runs, so matching
+#: stays linear.
+_TEXT_TELEGRAM_BOT_TOKEN_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_-])(?:bot)?\d+:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"
+)
+_TEXT_WEBHOOK_URL_PATTERN = re.compile(
+    r"(?P<head>(?i:https://hooks\.slack(?:-gov)?\.com)/(?:services|triggers)/[A-Za-z0-9]+/[A-Za-z0-9]+/"
+    r"|(?i:https://(?:[a-z]+\.)?discord(?:app)?\.com)/api/(?:v\d+/)?webhooks/\d+/)"
+    r"[A-Za-z0-9_-]{20,}"
 )
 
 
@@ -486,10 +614,11 @@ def redact_text(text: object) -> str:
 
     Used for plain-text tool results, shell output, error messages and log
     lines where :func:`redact_payload` is a no-op (it only walks structured
-    keys). Bearer header values and ``key=value`` / ``key: value`` /
-    ``"key": "value"`` credential pairs are replaced with ``'[redacted]'``
-    while the surrounding text — labels, paths, error context — stays
-    readable.
+    keys). Bearer and Basic header values and ``key=value`` / ``key: value`` /
+    ``"key": "value"`` credential pairs are replaced with ``'[redacted]'``,
+    and URL userinfo (``scheme://user:password@host``) becomes
+    ``scheme://[redacted]@host``, while the surrounding text — labels, paths,
+    error context — stays readable.
 
     Args:
         text: Free-form string (or any object coerced via :func:`str`).
@@ -505,8 +634,17 @@ def redact_text(text: object) -> str:
     s = text if isinstance(text, str) else str(text)
     if not s:
         return s
+    s = _TEXT_PRIVATE_KEY_PATTERN.sub(_REDACTED, s)
+    s = _TEXT_QUOTED_COOKIE_HEADER_PATTERN.sub(
+        r"\g<quote>\g<head>\g<sp>" + _REDACTED + r"\g<quote>", s,
+    )
+    s = _TEXT_COOKIE_HEADER_PATTERN.sub(r"\g<head>\g<sp>" + _REDACTED, s)
     s = _TEXT_BEARER_PATTERN.sub(r"\g<scheme> " + _REDACTED, s)
+    s = _TEXT_AUTH_SCHEME_PATTERN.sub(r"\g<head>\g<scheme> " + _REDACTED, s)
+    s = _TEXT_URL_USERINFO_PATTERN.sub(_REDACTED + "@", s)
     s = _TEXT_KV_PATTERN.sub(_sub_credential_pair, s)
+    s = _TEXT_WEBHOOK_URL_PATTERN.sub(r"\g<head>" + _REDACTED, s)
+    s = _TEXT_TELEGRAM_BOT_TOKEN_PATTERN.sub(_REDACTED, s)
     # Bare tokens with no key label in front of them.
     return _TEXT_TOKEN_PATTERN.sub(_REDACTED, s)
 

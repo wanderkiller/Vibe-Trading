@@ -76,6 +76,10 @@ Iron Condor opening signal:
 }
 ```
 
+Ready-made engines for covered call, cash-secured put, iron condor,
+vol-gated short strangle and protective put live in
+`example_signal_engine.py` next to this file.
+
 ## `config.json` Format
 
 ```json

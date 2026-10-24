@@ -345,7 +345,8 @@ def event_study(
             event, but must not exceed ``end``.
         estimation_window: Rows used to fit the normal-return model.
         estimation_gap: Rows left between the estimation window and the event
-            window so the model cannot see the event.
+            window (or the event row, when the window opens after it) so the
+            model cannot see the event.
         model: One of :data:`NORMAL_RETURN_MODELS`.
 
     Returns:
@@ -403,7 +404,10 @@ def event_study(
 
         event_start = position + start
         event_end = position + end
-        estimation_end = position + start - estimation_gap
+        # Anchor the estimation window before the event row as well as the
+        # event window: a window opening after the event (start > 0) must not
+        # pull the event row, or the rows after it, into the fitting sample.
+        estimation_end = position + min(start, 0) - estimation_gap
         estimation_start = estimation_end - estimation_window
 
         if estimation_start < 0:

@@ -23,7 +23,7 @@ _PRIVATE_ASSERTION_RE = re.compile(
 
 
 @grounding_check(
-    name="listed-identity-relabelled-private",
+    name="listed-identity-relabelled-private", phase="identity", order=1,
     code="listed_identity_relabelled_private",
     description=(
         "A locked listed identity (security or fund) was relabelled as "
@@ -52,5 +52,36 @@ def _listed_identity_relabelled_private(ledger: Any, content: str) -> list[dict[
                 f"Locked listed identity {', '.join(symbols)} was relabelled as "
                 "private/unlisted without a conflicting resolver result."
             ),
+        }
+    ]
+
+
+@grounding_check(
+    name="identity-not-locked", phase="identity", order=0,
+    code="identity_not_locked",
+    description=(
+        "A run that named an instrument concluded while its identity stayed unresolved, conflicting, or invalidated."
+    ),
+)
+def _identity_not_locked(ledger: Any, content: str) -> list[dict[str, Any]]:
+    # Only a run that named an instrument can get its identity wrong: the
+    # trigger phrase matches the user message, so "什么是市盈率估值法？" would
+    # otherwise fail every draft. ``ambiguous`` is absent on purpose: a
+    # shortlist is an answer and consumers stay blocked in ``authorize_tool_call``.
+    status = ledger.identity_status
+    if not (
+        ledger._identity_required and ledger._identities and status in {"unresolved", "conflicting", "invalidated"}
+    ):
+        return []
+    return [
+        {
+            "code": "identity_not_locked",
+            "status": status,
+            "value": None,
+            "role": None,
+            "span": None,
+            "symbol": None,
+            "reason": "identity_not_locked",
+            "message": (f"Instrument identity is {status}; a final market conclusion requires locked identity."),
         }
     ]

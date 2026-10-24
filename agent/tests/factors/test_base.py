@@ -147,8 +147,15 @@ def test_delta_positive_shift() -> None:
 def test_decay_linear_weights() -> None:
     df = _frame([[1.0], [2.0], [3.0]])
     out = decay_linear(df, 3)
-    # weights 3,2,1 / 6 applied to [1,2,3] → (1*3 + 2*2 + 3*1)/6 = 10/6
-    assert pytest.approx(out.iloc[2, 0]) == 10.0 / 6.0
+    # newest bar weighted 3: (1*1 + 2*2 + 3*3)/6 = 14/6
+    assert pytest.approx(out.iloc[2, 0]) == 14.0 / 6.0
+
+
+def test_decay_linear_weights_most_recent_bar_heaviest() -> None:
+    df = _frame([[0.0], [0.0], [0.0], [0.0], [10.0]])
+    out = decay_linear(df, 5)
+    # a shock on today's bar carries weight 5/15, not 1/15
+    assert pytest.approx(out.iloc[4, 0]) == 10.0 * 5.0 / 15.0
 
 
 def test_decay_linear_warmup() -> None:

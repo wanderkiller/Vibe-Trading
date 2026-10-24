@@ -1212,3 +1212,22 @@ def test_mt5_ambiguous_catalog_leaves_grounding_unresolved(monkeypatch, tmp_path
     ledger.ingest_tool_result(tool_name="search_symbol", arguments={"query": "XAUUSD"}, result=result, call_id="ambiguous-mt5", success=True)
     assert ledger.identity_status != "locked"
     assert ledger.identity_summary()["authorized_symbols"] == []
+
+
+@pytest.mark.parametrize(
+    "quote_id, expected",
+    [
+        ("0.920002", "920002.BJ"),
+        ("0.830799", "830799.BJ"),
+        ("0.430139", "430139.BJ"),
+        ("0.000001", "000001.SZ"),
+        ("0.300750", "300750.SZ"),
+        ("1.600519", "600519.SH"),
+    ],
+)
+def test_eastmoney_market_zero_splits_beijing_from_shenzhen(quote_id: str, expected: str) -> None:
+    code = quote_id.split(".", 1)[1]
+    row = {"QuoteID": quote_id, "Code": code, "Name": "x", "SecurityTypeName": "A"}
+    candidate = ss._eastmoney_candidate(row)
+    assert candidate is not None
+    assert candidate["symbol"] == expected

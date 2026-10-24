@@ -150,7 +150,60 @@ _CREDENTIAL_SHAPES = (
     ("authorization=raw-token-value", "authorization=[redacted]"),
     ("Authorization: Bearer eyJhbGciOi.J9-_x==", "Authorization: Bearer [redacted]"),
     ("bearer abc123", "bearer [redacted]"),
+    # Basic and other non-bearer schemes: the base64 credential follows the
+    # scheme word, so the pair is redacted together, not just the word.
+    ("Authorization: Basic dXNlcjpwYXNz", "Authorization: Basic [redacted]"),
+    (
+        "Proxy-Authorization: Basic dXNlcjpwYXNz",
+        "Proxy-Authorization: Basic [redacted]",
+    ),
+    ("authorization=Basic dXNlcjpwYXNz", "authorization=Basic [redacted]"),
+    ("Authorization: token ghp_example", "Authorization: token [redacted]"),
+    ('{"Authorization": "Basic dXNlcjpwYXNz"}', '{"Authorization": "[redacted]"}'),
+    # Env-style names: the label is a suffix of a longer identifier, so the
+    # leading word boundary used to reject it (``_`` is a word character).
+    ("TUSHARE_TOKEN=abc123", "TUSHARE_TOKEN=[redacted]"),
+    ("export OPENAI_API_KEY=abc123", "export OPENAI_API_KEY=[redacted]"),
+    ("MY_PASSWORD=hunter2", "MY_PASSWORD=[redacted]"),
+    ("DB_SECRET: abc123", "DB_SECRET: [redacted]"),
+    # Multi-word AWS name: ``secret`` alone is followed by ``_``, so the
+    # trailing word boundary needs the full ``secret_access_key`` alternative.
+    ("AWS_SECRET_ACCESS_KEY=wJalrXUt/K7MDENG", "AWS_SECRET_ACCESS_KEY=[redacted]"),
+    ("secret_access_key: abc123", "secret_access_key: [redacted]"),
+    # Lowercase AWS names, as in ~/.aws/credentials. ``aws_`` is the one
+    # lowercase prefix accepted; other lowercase prefixes stay identifiers.
+    ("aws_secret_access_key = abc123", "aws_secret_access_key = [redacted]"),
+    ("aws_session_token = abc123", "aws_session_token = [redacted]"),
 )
+
+
+#: URL userinfo (``scheme://user:password@host``) carries a credential with no
+#: key label, so the key-based pattern never sees it.
+_URL_USERINFO_SHAPES = (
+    (
+        "connect failed: https://user:hunter2pass@proxy.local:8080/x",
+        "connect failed: https://[redacted]@proxy.local:8080/x",
+    ),
+    (
+        "GET http://bot:tok3n@hooks.example.com/v1 returned 404",
+        "GET http://[redacted]@hooks.example.com/v1 returned 404",
+    ),
+    (
+        # The password may itself contain ``@``; the match runs to the last one.
+        "see https://user:p@ss@host/x",
+        "see https://[redacted]@host/x",
+    ),
+    (
+        # A long token used as the username (no colon) is still a credential.
+        "fetch https://ghp_" + "a" * 36 + "@github.com/org/repo",
+        "fetch https://[redacted]@github.com/org/repo",
+    ),
+)
+
+
+@pytest.mark.parametrize(("raw", "expected"), _URL_USERINFO_SHAPES)
+def test_redact_text_scrubs_url_userinfo(raw: str, expected: str) -> None:
+    assert redact_text(raw) == expected
 
 
 @pytest.mark.parametrize(("raw", "expected"), _CREDENTIAL_SHAPES)
@@ -158,7 +211,10 @@ def test_redact_text_scrubs_credential_shapes(raw: str, expected: str) -> None:
     assert redact_text(raw) == expected
 
 
-@pytest.mark.parametrize("raw", [shape[0] for shape in _CREDENTIAL_SHAPES])
+@pytest.mark.parametrize(
+    "raw",
+    [shape[0] for shape in _CREDENTIAL_SHAPES + _URL_USERINFO_SHAPES],
+)
 def test_redact_text_is_idempotent(raw: str) -> None:
     """Redacting twice must equal redacting once (previews are re-rendered)."""
     once = redact_text(raw)
@@ -176,6 +232,20 @@ def test_redact_text_is_idempotent(raw: str) -> None:
         "no separator after this token",
         "tokens: 1204 in / 318 out",  # plural = a count, not a credential
         "api_keys: 3 configured",
+        "max_tokens=4096 total_input_tokens: 74812",
+        "tokenizer=bert-base version=2",
+        # Lowercase suffixes of longer identifiers are not env-style names.
+        "pad_token=0 eos_token=2 max_token=4096",
+        # Other aws_ names are config, not credentials.
+        "aws_region = us-east-1",
+        "aws_profile=default",
+        # JSON fields after a URL must survive; only real userinfo is scrubbed.
+        '{"url":"https://api.x.com","email":"bob@x.com"}',
+        # A short SSH username is not a credential; keep it readable.
+        "git+ssh://git@github.com/org/repo.git",
+        # ``basic`` and ``authorization`` alone are prose, not a credential.
+        "Show basic information for the backtest",
+        "authorization server returned 200 OK",
     ],
 )
 def test_redact_text_leaves_benign_output_readable(raw: str) -> None:
@@ -194,3 +264,11 @@ def test_redact_text_none_and_empty_and_nonstr_safe() -> None:
     assert redact_text(None) == ""
     assert redact_text("") == ""
     assert redact_text(42) == "42"
+
+
+def test_redact_tool_result_scrubs_basic_authorization_in_stdout() -> None:
+    """A Basic credential in a JSON result's free-text field must not survive."""
+    raw = '{"stdout": "curl -H \'Authorization: Basic dXNlcjpwYXNz\' https://x"}'
+    out = red_mod.redact_tool_result(raw)
+    assert "dXNlcjpwYXNz" not in out
+    assert "Authorization: Basic [redacted]" in out

@@ -174,30 +174,37 @@ class ContextMeter:
         self._estimate = estimator
         self._anchor: Optional[tuple[int, int]] = None
         self.static_tokens: Optional[int] = None
+        self._anchor_schema_tokens: Optional[int] = None
+        self._static_schema_tokens: Optional[int] = None
 
-    def observe(self, input_tokens: Optional[int], messages: list) -> None:
+    def observe(self, input_tokens: Optional[int], messages: list, *, tool_schema_tokens: Optional[int] = None) -> None:
         """Anchor on the real input size of the request just answered.
 
         Args:
             input_tokens: Provider-reported prompt tokens of that request.
             messages: Exactly the messages that request sent.
+            tool_schema_tokens: Estimate of the schemas sent with that request.
         """
         if not isinstance(input_tokens, int) or isinstance(input_tokens, bool) or input_tokens <= 0:
             return
         self._anchor = (input_tokens, self._estimate(messages))
+        self._anchor_schema_tokens = tool_schema_tokens
         if self.static_tokens is None:
             # The first request is the static prompt plus the opening turn(s).
             self.static_tokens = max(0, input_tokens - self._estimate(messages[1:]))
+            self._static_schema_tokens = tool_schema_tokens
 
     def tokens(self, messages: list, tool_schema_tokens: int) -> int:
         """Real-token size the next request would have."""
         if self._anchor is None:
             return self._estimate(messages) + tool_schema_tokens
         anchor_input, anchor_estimate = self._anchor
-        return max(0, anchor_input + self._estimate(messages) - anchor_estimate)
+        schema_delta = 0 if self._anchor_schema_tokens is None else tool_schema_tokens - self._anchor_schema_tokens
+        return max(0, anchor_input + self._estimate(messages) - anchor_estimate + schema_delta)
 
     def static(self, messages: list, tool_schema_tokens: int) -> int:
         """Static prompt size: measured once usage arrives, else estimated."""
         if self.static_tokens is not None:
-            return self.static_tokens
+            schema_delta = 0 if self._static_schema_tokens is None else tool_schema_tokens - self._static_schema_tokens
+            return max(0, self.static_tokens + schema_delta)
         return self._estimate(messages[:1]) + tool_schema_tokens

@@ -61,6 +61,7 @@ VALID_SOURCES: set[str] = {
     "longbridge",
     "mt5",
     "tickerall",
+    "b3_cotahist",
     "local",
     "alphakeel_pack",
     "alphakeel_b2",
@@ -125,6 +126,7 @@ def _ensure_registered() -> None:
             "backtest.loaders.longbridge",
             "backtest.loaders.mt5_loader",
             "backtest.loaders.tickerall_loader",
+            "backtest.loaders.b3_cotahist_loader",
             "backtest.loaders.local_loader",
             "backtest.loaders.alphakeel_pack_loader",
             "backtest.loaders.alphakeel_b2_loader",
@@ -157,7 +159,7 @@ def _ensure_registered() -> None:
 # as if it were Toman — a caliber error of about six orders of magnitude, not a
 # missing-data error. An unreachable Iranian endpoint must be visible.
 _NO_NETWORK_FALLBACK_SOURCES: frozenset[str] = frozenset(
-    {"local", "qveris", "tickerall", "fmp", "nobitex", "wallex", "alphakeel_pack", "alphakeel_b2"}
+    {"local", "qveris", "tickerall", "fmp", "nobitex", "wallex", "alphakeel_pack", "alphakeel_b2", "b3_cotahist"}
 )  # QVERIS-INTEGRATION
 
 
@@ -182,7 +184,11 @@ def is_no_network_fallback_source(source: str) -> bool:
 FALLBACK_CHAINS: dict[str, list[str]] = {
     "a_share": [
         "tencent",
-        "mootdx",
+        # mootdx retired from the default chain 2026-10-08: the TDX quote
+        # servers stopped answering the client protocol mootdx/tdxpy speak
+        # (2026-07, mootdx/mootdx#157) and upstream is dormant, so the slot
+        # only cost ~10s of dead time per miss. The loader stays registered
+        # for explicit source="mootdx" use. See HKUDS/Vibe-Trading#1729.
         "eastmoney",
         "baostock",
         "akshare",
@@ -218,6 +224,9 @@ FALLBACK_CHAINS: dict[str, list[str]] = {
         "yfinance",
         "tushare",
         "longbridge",
+        # Key-gated commercial vendor, same tail-of-chain rationale as the
+        # a_share chain (paid quota only spent when free sources cannot serve).
+        "gildata",
         "local",
     ],
     "india_equity": ["yahoo", "yfinance", "india_broker", "local"],
@@ -226,6 +235,10 @@ FALLBACK_CHAINS: dict[str, list[str]] = {
     "ca_equity": ["yahoo", "yfinance", "local"],
     # Argentina (BYMA .BA): Yahoo public chart first, yfinance fallback.
     "ar_equity": ["yahoo", "yfinance", "local"],
+    # Brazil (B3 .SA): Yahoo public chart (adjusted) first, yfinance second,
+    # then the official B3 COTAHIST files (unadjusted, daily, every listed
+    # instrument) synced by ``vibe-trading br-data sync``.
+    "br_equity": ["yahoo", "yfinance", "b3_cotahist", "local"],
     # UK (LSE .L): direct Yahoo first, SDK fallback second.
     "uk_equity": ["yahoo", "yfinance", "local"],
     # Vietnam (.VN): Yahoo lists HOSE only — HNX and UPCOM are unsupported,
@@ -247,7 +260,7 @@ FALLBACK_CHAINS: dict[str, list[str]] = {
     "forex": ["mt5", "akshare", "yfinance", "local"],
     # Yahoo index symbols (^SPX, ^NDX, ^FTSE, ^VIX, ...): served verbatim by
     # the public chart endpoint, same as the =F/=X conventions.
-    "index": ["yahoo", "yfinance", "local"],
+    "index": ["yahoo", "yfinance", "gildata", "local"],
 }
 
 
@@ -284,6 +297,7 @@ PRICE_CALIBER_BY_SOURCE: dict[str, str] = {
     "sina": "raw",
     "alphavantage": "raw",  # TIME_SERIES_DAILY, not the _ADJUSTED endpoint
     "longbridge": "raw",  # pins AdjustType.NoAdjust
+    "b3_cotahist": "raw",  # B3 COTAHIST files carry traded prices only
 }
 
 #: Per-(source, market) exceptions to the per-source table.
@@ -305,6 +319,9 @@ PRICE_CALIBER_BY_SOURCE_MARKET: dict[tuple[str, str], str] = {
     # and US series are not measured and keep the per-source label.
     ("eastmoney", "a_share"): "split_dividend_additive",
     ("akshare", "a_share"): "split_dividend_additive",
+    # Gildata's HKStockDailyQuotes serves raw traded prices (befadj/aftadj
+    # closes are separate fields, ignored) — measured on 00700.HK.
+    ("gildata", "hk_equity"): "raw",
 }
 
 #: Markets with no corporate-action adjustment concept. Their sources stamp
@@ -458,7 +475,7 @@ def additive_caliber_warning(stamps: dict[str, tuple[str, str]]) -> str | None:
 # Users can reprioritize a market's chain via one env var per market
 # (persisted to ~/.vibe-trading/.env by the Settings page's "source
 # priority" card):
-#     MARKET_DATA_ORDER_A_SHARE=tushare,tencent,mootdx,...
+#     MARKET_DATA_ORDER_A_SHARE=tushare,tencent,eastmoney,...
 # The value must be a permutation of the market's default chain —
 # reordering is allowed, adding/dropping sources is not. Invalid values
 # warn and keep the default chain, so a typo can never silently strip a

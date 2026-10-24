@@ -53,6 +53,47 @@ def _runtime_root_filenames() -> dict[str, str]:
     return found
 
 
+_DIRNAME_CONSTANT = re.compile(r"(^|_)DIRNAME$")
+
+
+def _runtime_root_children() -> dict[str, str]:
+    """Map each name joined directly onto the runtime root to its module.
+
+    The filename-constant scan above misses ``get_runtime_root() / "x.db"``
+    written inline and ``*_DIRNAME`` constants: 0.1.17 moved
+    ``memory_index.db`` to the runtime root and added ``strategies/`` that way,
+    and neither was ignored.
+    """
+    found: dict[str, str] = {}
+    for path in sorted((_AGENT_ROOT / "src").rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "get_runtime_root" not in source:
+            continue
+        module = str(path.relative_to(_REPO_ROOT))
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.BinOp)
+                and isinstance(node.op, ast.Div)
+                and isinstance(node.left, ast.Call)
+                and getattr(node.left.func, "id", getattr(node.left.func, "attr", None)) == "get_runtime_root"
+                and isinstance(node.right, ast.Constant)
+                and isinstance(node.right.value, str)
+            ):
+                found.setdefault(node.right.value.split("/")[0], module)
+        for node in tree.body:
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and _DIRNAME_CONSTANT.search(node.targets[0].id)
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            ):
+                found.setdefault(node.value.value, module)
+    return found
+
+
 def _ignored_root_entries() -> set[str]:
     lines = (_REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     return {line.strip() for line in lines if line.strip().startswith("/")}
@@ -79,4 +120,26 @@ def test_every_runtime_root_file_is_gitignored() -> None:
     assert not missing, (
         "runtime-root files not covered by .gitignore (add a '/<name>' line to "
         f"the runtime block): {missing}"
+    )
+
+
+def test_discovery_sees_inline_runtime_root_children() -> None:
+    """Guard the guard for the inline-join scan."""
+    names = _runtime_root_children()
+
+    assert {"memory_index.db", "strategies", "shadow_reports", "paper-trading"} <= set(names)
+
+
+def test_every_direct_runtime_root_child_is_gitignored() -> None:
+    ignored = _ignored_root_entries()
+
+    missing = {
+        name: module
+        for name, module in _runtime_root_children().items()
+        if f"/{name}" not in ignored and f"/{name}/" not in ignored
+    }
+
+    assert not missing, (
+        "runtime-root paths not covered by .gitignore (add a '/<name>' or "
+        f"'/<name>/' line to the runtime block): {missing}"
     )

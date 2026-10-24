@@ -14,14 +14,22 @@ include docker-compose.yml
 # Developer entry-point template
 include agent/.env.example
 
+# Runtime schema-loading policy
+recursive-include agent/src/agent *.json
+
 # Alpha Zoo factor metadata and per-zoo LICENSE / NOTICE files
 recursive-include agent/src/factors *.yaml *.md
 
-# Tests shipped so dev installs can run `pytest` against the package.
-# Files prefixed with `_` are local debug scripts kept untracked — keep
-# them out of the sdist even if present in the working tree.
-recursive-include agent/tests *.py
+# Tests shipped so dev installs can run `pytest` against the package, with
+# the CSV / JSON fixtures they read. Files prefixed with `_` are local debug
+# scripts and `test_e2e_*.py` local live harnesses, both kept untracked — keep
+# them out of the sdist even if present in the working tree. `_*.py` also
+# matches `__init__.py`, which the package-style test directories need, so it
+# is re-included last.
+recursive-include agent/tests *.py *.csv *.json
 recursive-exclude agent/tests _*.py
+recursive-exclude agent/tests test_e2e_*.py
+recursive-include agent/tests __init__.py
 
 # Strip generated / VCS / editor noise
 global-exclude __pycache__

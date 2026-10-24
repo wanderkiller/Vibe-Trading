@@ -32,6 +32,7 @@ import pytest
 
 from src.agent.grounding import GroundingLedger
 from src.agent.grounding.evidence import ARCHIVE_MANIFEST
+from src.agent.grounding.figures import parse_figures_block, scan_figures
 from src.agent.tool_results import _archive_backtest_result
 
 RP = {
@@ -520,9 +521,13 @@ def test_a_detached_backtests_archived_copy_counts_once_vouched_for(tmp_path: Pa
     assert RP["sharpe"] in recorded
 
 
-def test_the_active_runs_copy_belongs_to_the_backtest_the_archive_names(tmp_path: Path) -> None:
+@pytest.mark.parametrize("ref", ["artifacts/metrics.csv", "run_dir/artifacts/metrics.csv"])
+def test_the_active_runs_copy_belongs_to_the_backtest_the_archive_names(
+    tmp_path: Path, ref: str
+) -> None:
     """The loop copies each finished backtest into the active run; a ref to that
-    copy names the backtest it came from, and only once it has come."""
+    copy names the backtest it came from, and only once it has come. ``run_dir/``
+    names that copy too, never the file of the same name in another run."""
     ledger = GroundingLedger(run_dir=tmp_path, user_message="回测")
     _write_backtest(tmp_path / "rp", RP)
     _write_backtest(tmp_path / "ew", EW)
@@ -537,7 +542,7 @@ def test_the_active_runs_copy_belongs_to_the_backtest_the_archive_names(tmp_path
 
     def copy_says(value: str) -> bool:
         return ledger.validate_final_answer(
-            _declared(f"Sortino {value}。", f"{value} | observed | Sortino | artifacts/metrics.csv")
+            _declared(f"Sortino {value}。", f"{value} | observed | Sortino | {ref}")
         ).valid
 
     archive("ew", "earlier-call")  # an earlier archive: not rp's output, and not credited to rp
@@ -921,3 +926,205 @@ def test_external_symlink_is_not_registered_as_engine_table(tmp_path: Path) -> N
     _backtest(ledger, tmp_path / "rp", "bt-rp")
     _read(ledger, target, "read-sibling")
     assert not any(r.call_id == "read-sibling" for r in ledger._evidence)
+
+
+# ---------------------------------------------------------------------------
+# The active run under a stand-in name (live DeepSeek run, 2026-10-21)
+# ---------------------------------------------------------------------------
+
+# How the engine names a run directory; the model copies it or writes ``run_dir``.
+RUN_NAME = "20261021_195945_86_52d4e2"
+
+
+@pytest.fixture()
+def own_run(tmp_path: Path) -> GroundingLedger:
+    """One backtest written into the active run directory itself, trades read back."""
+    root = tmp_path / RUN_NAME
+    _write_backtest(root, RP)
+    ledger = GroundingLedger(run_dir=root, user_message="回测风险平价")
+    _backtest(ledger, root, "bt-own")
+    _read(ledger, root / "artifacts" / "trades.csv", "read-trades")
+    return ledger
+
+
+_STAND_INS = ["run_dir/artifacts/{file}", f"{RUN_NAME}/artifacts/{{file}}", "run_dir/{file}"]
+
+
+@pytest.mark.parametrize("spelling", ["{file}", "artifacts/{file}", *_STAND_INS])
+def test_the_active_run_named_by_a_stand_in_is_the_file_named_bare(
+    own_run: GroundingLedger, spelling: str
+) -> None:
+    """``run_dir/artifacts/metrics.csv`` grounded nothing while ``metrics.csv`` grounded
+    the same draft: the final value, trade count and trade PnL were all cut. The
+    count sits in a table cell, where an integer is a measurement."""
+    metrics, trades = spelling.format(file="metrics.csv"), spelling.format(file="trades.csv")
+    result = own_run.validate_final_answer(
+        _declared(
+            "期末净值 1,129,817.32，Sortino 1.133，一笔盈利 11,488.33。\n\n"
+            "| 指标 | 数值 |\n|---|---|\n| 交易笔数 | 10 |",
+            f"1,129,817.32 | observed | 期末净值 | {metrics}",
+            f"10 | observed | 交易笔数 | {metrics}",
+            f"1.133 | observed | Sortino | {metrics}",
+            f"11,488.33 | observed | 盈亏 | {trades}",
+        )
+    )
+
+    assert result.valid, result.issues
+
+
+@pytest.mark.parametrize("spelling", ["{file}", *_STAND_INS])
+def test_a_value_the_file_does_not_hold_is_refused_under_every_stand_in(
+    own_run: GroundingLedger, spelling: str
+) -> None:
+    metrics, trades = spelling.format(file="metrics.csv"), spelling.format(file="trades.csv")
+    result = own_run.validate_final_answer(
+        _declared(
+            "期末净值 1,129,900.00，Sortino 1.190，一笔盈利 11,400.00。\n\n"
+            "| 指标 | 数值 |\n|---|---|\n| 交易笔数 | 11 |",
+            f"1,129,900.00 | observed | 期末净值 | {metrics}",
+            f"11 | observed | 交易笔数 | {metrics}",
+            f"1.190 | observed | Sortino | {metrics}",
+            f"11,400.00 | observed | 盈亏 | {trades}",
+        )
+    )
+
+    assert sorted(issue["value"] for issue in result.issues) == [
+        "1,129,900.00", "1.190", "11", "11,400.00",
+    ]
+    assert set(_figure_reasons(result)) == {"not_in_referenced_call"}
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "run_dir/config.json",
+        f"{RUN_NAME}/config.json",
+        "config.json",
+        "run_dir/../outside/artifacts/metrics.csv",
+        f"{RUN_NAME}/../outside/artifacts/metrics.csv",
+        "../outside/artifacts/metrics.csv",
+        "outside/artifacts/metrics.csv",
+    ],
+)
+def test_a_stand_in_reaches_no_model_written_file_and_nothing_outside_the_run(
+    own_run: GroundingLedger, ref: str
+) -> None:
+    """The model's own config.json stays non-evidence, and a sibling directory holding
+    a metrics file of the same name is not the active run."""
+    root = own_run.run_dir
+    config = root / "config.json"
+    config.write_text(json.dumps({"initial_cash": 777777}), encoding="utf-8")
+    own_run.ingest_tool_result(
+        tool_name="write_file",
+        arguments={"path": str(config)},
+        result=json.dumps({"status": "ok", "path": str(config)}),
+        call_id="model-write-config",
+        success=True,
+    )
+    _write_backtest(root.parent / "outside", {"sortino": 1.4567})
+
+    assert own_run._artifact_scope(ref) is None
+    for written in ("777,777.00", "1.4567"):
+        result = own_run.validate_final_answer(
+            _declared(f"数值 {written}。", f"{written} | observed | 数值 | {ref}")
+        )
+        assert not result.valid, (ref, written)
+
+
+# ---------------------------------------------------------------------------
+# A sign written before the currency mark (same live run: "−$1,847.78")
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "values"),
+    [
+        ("Trade three lost −$1,847.78.", [-1847.78]),
+        ("-$3.20", [-3.2]),
+        ("(−$5.00)", [-5.0]),
+        ("PnL: -$3.20", [-3.2]),
+        ("盈亏：−$3.20", [-3.2]),
+        ("+$2.50", [2.5]),
+        ("−HK$1.10", [-1.1]),
+        # A hyphen joining two figures, or a spaced one, is a range, not a sign.
+        ("$10-$20", [10.0, 20.0]),
+        ("$10–$20", [10.0, 20.0]),
+        ("$10 - $20", [10.0, 20.0]),
+        ("a-$5", [5.0]),
+        ("loss of $1,847.78", [1847.78]),
+    ],
+)
+def test_a_sign_before_the_currency_mark_is_the_figures_sign(
+    text: str, values: list[float]
+) -> None:
+    figures = scan_figures(text, parse_figures_block(text))
+
+    assert [figure.value for figure in figures] == values
+    for figure in figures:
+        # The sign is cut with the figure, never left behind by a redaction.
+        written = text[figure.extent[0] : figure.extent[1]]
+        assert written[0] in "+-−" if figure.sign else written[0] not in "+-−", written
+
+
+@pytest.mark.parametrize(
+    ("value", "declared"),
+    [
+        ("−$1,847.78", -1847.78),
+        ("-$3.20", -3.2),
+        ("+$2.50", 2.5),
+        ("−HK$1.10", -1.1),
+        ("$10-$20", None),
+        ("$10 - $20", None),
+        ("x -$5", None),
+    ],
+)
+def test_a_declaration_reads_the_sign_the_prose_reads(value: str, declared: float | None) -> None:
+    """``−$1,847.78 | observed | …`` was ``unparseable_declaration``."""
+    block = parse_figures_block(f"text\n\n```figures\n{value} | observed | trade PnL | trades.csv\n```")
+
+    if declared is None:
+        assert not block.declarations and block.malformed
+    else:
+        assert [item.value for item in block.declarations] == [declared]
+        assert not block.malformed
+
+
+@pytest.mark.parametrize("ref", ["trades.csv", "run_dir/artifacts/trades.csv"])
+def test_a_loss_written_with_its_sign_before_the_mark_grounds(
+    own_run: GroundingLedger, ref: str
+) -> None:
+    """The draft's trade loss was refused or cut although trades.csv holds it."""
+    loss = own_run.validate_final_answer(
+        _declared("一笔亏损 −$17,998.19。", f"−$17,998.19 | observed | 盈亏 | {ref}")
+    )
+    gain = own_run.validate_final_answer(
+        _declared("一笔盈利 +$11,488.33。", f"+$11,488.33 | observed | 盈亏 | {ref}")
+    )
+
+    assert loss.valid, loss.issues
+    assert gain.valid, gain.issues
+
+
+@pytest.mark.parametrize("written", ["+$17,998.19", "$17,998.19"])
+def test_a_loss_written_as_a_gain_is_refused(own_run: GroundingLedger, written: str) -> None:
+    result = own_run.validate_final_answer(
+        _declared(f"一笔交易 {written}。", f"{written} | observed | 盈亏 | trades.csv")
+    )
+
+    assert not result.valid
+    assert _figure_reasons(result) == ["not_in_referenced_call"]
+
+
+def test_a_cut_signed_figure_leaves_no_sign_behind(own_run: GroundingLedger) -> None:
+    draft = _declared(
+        "Sortino 1.133，一笔亏损 −$17,000.00。",
+        "1.133 | observed | Sortino | metrics.csv",
+        "−$17,000.00 | observed | 盈亏 | trades.csv",
+    )
+    validation = own_run.validate_final_answer(draft)
+
+    released = own_run.redacted_release(draft, validation)
+
+    assert released is not None
+    assert "1.133" in released and "17,000.00" not in released
+    assert "−" not in released, released

@@ -37,6 +37,7 @@ class _ContentFilterLoopLLM:
         timeout: int | None = None,
         idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
+        on_waiting_chunk=None,
     ) -> LLMResponse:
         self.calls += 1
         self.messages_history.append(list(messages))
@@ -69,6 +70,7 @@ class _EmptyResponseLoopLLM:
         timeout: int | None = None,
         idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
+        on_waiting_chunk=None,
     ) -> LLMResponse:
         self.calls += 1
         return LLMResponse(content="", content_filter_triggered=False)
@@ -213,6 +215,7 @@ def test_single_empty_response_recovers_with_nudge(
             timeout: int | None = None,
             idle_timeout_s: float | None = None,
             should_cancel: Callable[[], bool] | None = None,
+            on_waiting_chunk=None,
         ) -> LLMResponse:
             self.calls += 1
             self.messages_history.append(list(messages))
@@ -251,7 +254,7 @@ def test_auto_compact_summary_hard_deadline(
     """
     import time
 
-    import src.agent.loop as loop_module
+    import src.agent.tuning as tuning_module
     from src.agent.loop import AgentLoop
     from src.agent.tools import ToolRegistry
     from src.agent.trace import TraceWriter
@@ -270,7 +273,7 @@ def test_auto_compact_summary_hard_deadline(
 
     llm = _HangingSummaryLLM()
     agent = AgentLoop(registry=ToolRegistry(), llm=llm)
-    monkeypatch.setattr(loop_module, "LLM_TIMEOUT_SECONDS", 0.3, raising=False)
+    monkeypatch.setattr(tuning_module, "LLM_TIMEOUT_SECONDS", 0.3, raising=False)
 
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": "sys"},
@@ -322,6 +325,7 @@ class _RatioFilterLoopLLM:
         timeout: int | None = None,
         idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
+        on_waiting_chunk=None,
     ) -> LLMResponse:
         self.calls += 1
         if self.calls <= self._filter_count:

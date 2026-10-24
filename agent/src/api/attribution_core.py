@@ -360,7 +360,7 @@ def _attribution_factor_section(
     dates: List[str],
     portfolio_returns: List[float],
     benchmark_returns: Optional[List[float]],
-    bars_per_year: int,
+    bars_per_year: float,
     notes: List[str],
 ) -> Optional[Dict[str, Any]]:
     """Build the factor section: full-sample OLS plus rolling and cumulative series.
@@ -514,10 +514,22 @@ def _attribution_run_brinson(
 
 
 def _attribution_load_position_weights(run_dir: Path, notes: List[str]) -> Optional[Dict[str, float]]:
-    """Read the last row of ``positions.csv`` as per-symbol weights.
+    """Read the book Brinson should attribute from ``positions.csv``.
 
-    Returns ``None`` (with a skip note) when the artifact is missing or cannot
-    be parsed into at least one weighted symbol column.
+    A run closes every position on its last bar (``end_of_backtest``), so the
+    final row is all zeros by construction and describes the liquidation, not
+    the portfolio. When that row is flat, the row before it is read instead,
+    and the note names its timestamp. Only one row is stepped back: a book that
+    was already flat before the close is reported as flat rather than replaced
+    by some older holding.
+
+    Args:
+        run_dir: Backtest run directory containing ``artifacts/positions.csv``.
+        notes: Report notes; skip and fallback reasons are appended here.
+
+    Returns:
+        Per-symbol weights, or ``None`` (with a skip note) when the artifact is
+        missing or has no weighted symbol column.
     """
     path = run_dir / "artifacts" / "positions.csv"
     try:
@@ -535,12 +547,27 @@ def _attribution_load_position_weights(run_dir: Path, notes: List[str]) -> Optio
     if not symbols:
         notes.append("brinson attribution skipped: positions.csv could not be parsed")
         return None
-    last_row = rows[-1]
-    weights: Dict[str, float] = {}
-    for symbol in symbols:
-        weight = _attribution_finite_float(last_row.get(symbol))
-        weights[symbol] = weight if weight is not None else 0.0
-    return weights
+
+    def _row_weights(row: Dict[str, Any]) -> Dict[str, float]:
+        out: Dict[str, float] = {}
+        for symbol in symbols:
+            weight = _attribution_finite_float(row.get(symbol))
+            out[symbol] = weight if weight is not None else 0.0
+        return out
+
+    weights = _row_weights(rows[-1])
+    if any(weights.values()) or len(rows) < 2:
+        return weights
+    held = _row_weights(rows[-2])
+    if not any(held.values()):
+        # Flat before the close as well: the downstream zero-check reports it.
+        return weights
+    timestamp = str(rows[-2].get(fieldnames[0]) or "").strip()
+    notes.append(
+        "brinson attribution used the positions row before the end-of-backtest "
+        f"liquidation ({timestamp or 'second-to-last row'})"
+    )
+    return held
 
 
 def _attribution_brinson_section(
@@ -760,6 +787,17 @@ def _build_attribution_payload(run_dir: Path) -> Dict[str, Any]:
     if isinstance(raw_codes, list):
         codes = [str(code) for code in raw_codes if str(code).strip()]
     bars_per_year = _attribution_bars_per_year(config.get("interval"))
+    # The run card records the actual source/served-spacing convention, which
+    # can differ from the requested interval (e.g. crypto trades 365 days/year).
+    card = _attribution_load_json(run_dir / "run_card.json") or {}
+    annualisation = card.get("annualisation")
+    if isinstance(annualisation, dict):
+        raw_rate = annualisation.get("bars_per_year")
+        recorded_rate = (
+            None if isinstance(raw_rate, bool) else _attribution_finite_float(raw_rate)
+        )
+        if recorded_rate is not None and recorded_rate > 0:
+            bars_per_year = recorded_rate
 
     # Mirror the factor scan's symlink rejection: a symlinked artifacts dir is
     # treated as having no readable artifacts rather than followed.

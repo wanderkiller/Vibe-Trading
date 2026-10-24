@@ -57,6 +57,10 @@ class TestNormalize:
             ("EURUSD.FX", "EUR/USD"),
             ("gbpjpy", "GBP/JPY"),
             ("usd/jpy", "USD/JPY"),
+            ("EURUSD=X", "EUR/USD"),
+            ("usdjpy=x", "USD/JPY"),
+            ("XAUUSD=X", "XAU/USD"),
+            ("  eurusd.fx  ", "EUR/USD"),
         ],
     )
     def test_normalize(self, raw: str, expected: str) -> None:
@@ -171,6 +175,12 @@ class TestSlippage:
         expected = 150.00 + 0.5 * pip  # half of 1.0 pip spread
         assert slipped == pytest.approx(expected)
 
+    def test_yahoo_notation_uses_pair_spread(self) -> None:
+        """USDJPY=X is USD/JPY: it gets the 1.0 pip spread, not the 2.0 default."""
+        engine = _make_engine(slippage_pips=0.0)
+        slipped = engine.apply_slippage_for_symbol("USDJPY=X", 150.00, 1)
+        assert slipped == pytest.approx(150.00 + 0.5 * 0.01)
+
 
 # ---------------------------------------------------------------------------
 # Swap (overnight rollover)
@@ -191,6 +201,20 @@ class TestSwap:
         swap = _SWAP_LONG.get("EUR/USD", 0)
         expected = initial_capital + 1.0 * swap  # 1 standard lot
         assert engine.capital == pytest.approx(expected, abs=0.1)
+
+    def test_swap_uses_pair_rate_for_yahoo_notation(self) -> None:
+        """EURUSD=X is charged the EUR/USD swap rate, not the -1.0 fallback."""
+        engine = _make_engine()
+        engine.positions["EURUSD=X"] = Position(
+            symbol="EURUSD=X",
+            direction=1,
+            entry_price=1.1050,
+            entry_time=pd.Timestamp("2025-06-10"),
+            size=100000,
+        )
+        initial_capital = engine.capital
+        engine.on_bar("EURUSD=X", _make_bar(), pd.Timestamp("2025-06-10 17:00"))
+        assert engine.capital == pytest.approx(initial_capital + _SWAP_LONG["EUR/USD"])
 
     def test_swap_not_applied_twice_same_day(self) -> None:
         engine = _make_engine()

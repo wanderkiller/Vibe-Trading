@@ -2,7 +2,7 @@
 
 This fork (`wanderkiller/Vibe-Trading`, branch `main`) is upstream
 [HKUDS/Vibe-Trading](https://github.com/HKUDS/Vibe-Trading) plus the patch groups below. The upstream commit the
-series is based on is recorded in [`BASE`](BASE) (today `e1dbea8a`, upstream release 0.1.16, 2026-09-29).
+series is based on is recorded in [`BASE`](BASE) (today `66eb5763`, upstream release 0.1.18, 2026-10-21).
 
 * [`anchors.json`](anchors.json) is the machine-readable form of every group's files and anchors.
 * [`check_patches.py`](check_patches.py) checks them (working tree, `--upstream <ref>`, `--tests`); the test
@@ -17,11 +17,9 @@ patch has to be re-read, not just re-applied). `derived`: a file generated from 
 The anchor lists below mirror `anchors.json`, which is authoritative (and what the checker reads); the file lists
 must match it exactly (the test enforces that).
 
-**History shape.** The series is not linear today: `d9aa82d1`, `98e8248e` and `cc65301e` are merges. A
-`git rebase --onto <new> e1dbea8a` linearises it and drops the merges; two pieces of content exist only in the
-resolution of merge `98e8248e` and are lost by a plain rebase (verified by rebasing onto `e1dbea8a` itself):
-`requirements-local-providers-lock.txt` and the `layout.close`/`layout.menu` keys in `frontend/src/i18n/locales/id.json`.
-UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and this note can go.
+**History shape.** The series is not linear: upgrades are done as a merge of the upstream release into `main` (one
+conflict resolution per upgrade instead of replaying ~200 commits through the same hooked files), so `BASE..main` is
+the series of our own commits on top of the release. The 0.1.18 upgrade (2026-10-24) merged `v0.1.18` into `main`.
 
 | Group | Upstream files touched | Status |
 |---|---|---|
@@ -35,12 +33,12 @@ UPGRADE.md step 5 re-adds them; after the first upgrade the series is linear and
 | `run-card-data-audit` | run_card, loaders/base (exposure hook), backtest_tool (one helper, two call sites), agent/loop (tool threads keep the caller's context) | local-only as written; a generic provenance hook is upstreamable |
 | `alphakeel-handoff` | api_server (one hook), RunDetail (one import, one element), api.ts (one `export`) | local-only (follows the leaf package) |
 | `packaging-docs` | pyproject, SKILL.md, strategy-generate SKILL.md (one bullet), READMEs, .gitignore, .env.example, CHANGELOG (one section) | local-only |
-| `ci-env-gate` | alpha_routes (one line) | upstreamable: upstream's own gate e fails on it |
+| `ci-env-gate` | alpha_routes (none now) | adopted upstream in 0.1.18 (`.tushare_token.strip()`); kept as a regression guard |
 | `grounding-tex-dollar` | grounding/figures (one helper, one call site) | upstreamable: a closing `$$` after a number made it a dollar amount |
 | `strategy-fidelity` | agent/context (one prompt bullet) | upstreamable: the agent ran a different strategy than the one asked for |
 | `ir-validate-all` | none (leaf package and its tool only) | local-only (follows the leaf package) |
 | `research-truth` | tools/__init__ (one session-injected class), grounding/ledger (one tool name), grounding/evidence (one branch, five amount fields), agent/context (one placeholder, one lookup), agent/loop (one helper, two call sites), test_context_attribution_layers (one placeholder) | local-only (follows the leaf package) |
-| `upstream-test-fixes` | _market_hooks (two patterns), alpha_bench_tool (one `getattr`) | upstreamable: two upstream tests are red on upstream main without them |
+| `upstream-test-fixes` | alpha_bench_tool (one `getattr`) | upstreamable: an upstream test is red on upstream main without it (the `_market_hooks` pattern fix was adopted upstream in 0.1.18) |
 | `research-integrity` | validation, backtest_tool, grounding ledger + policies, loop, context, 9 locale labels | partly upstreamable (Monte Carlo, cross-turn grounding, tool-name refs); the rest local-only |
 | `ir-execution` | none (leaf package, its tool and tests only) | local-only (follows the leaf package) |
 | `research-integrity-r2` | crypto + composite engine (one refusal each), read_file_tool (one namespace), engine card column, research contract (ledger, tool arg, card), agent/context (four bullets), two skill notes, factor-name and cited-retrieval gates (grounding ledger, policies, release), `zoo_factor` helper and engine-screen facts, round-trip count for item 1.2, multiple-testing lines on the engine card (`backtest/multiple_testing.py`) | spot-short refusal and the `trials/` namespace are upstreamable in principle; the ledger lineage, card column, research contract, factor-name gate, `zoo_factor` and the retrieval rule for cited figures and the multiple-testing card lines are local-only |
@@ -114,7 +112,7 @@ The `langchain-core==1.6.1` anchor fails when upstream moves that pin; then the 
 - hook `docker-compose.override.yml`: `dockerfile: Dockerfile.local`
 - hook `docker-compose.override.yml`: `ALPHAKEEL_HANDOFF_DIR: /home/vibe/handoff` — the hand-off bind mount and its two variables
 - hook `docker-compose.override.yml`: `init: true` — grandchildren of a timed-out alphakeel_research child (killpg) are reaped by init
-- upstream `requirements-lock.txt`: `langchain-core==1.6.1 \` — the overlay's langchain-core 1.6.3 pin replaces exactly this base pin; a change means regenerating the overlay
+- upstream `requirements-lock.txt`: `langchain-core==1.6.6 \` — the base pin must stay >= 1.6.2 (langchain-anthropic 1.7.2 in the overlay); the overlay carries no langchain-core pin since 0.1.18
 - hook `requirements-local-providers-lock.txt`: `langchain-anthropic==1.7.2`
 - hook `tools/deploy-vt.sh`: `refuse pairing "contract/PIN differs from $AK_PIN"` — the release gate (audit 2026-10-12 D6-1): "Deploy gate" workflow success on the exact commit, commit = AlphaKeel `ci/vibe-trading.ref`, PIN = `ci/vibe-trading.pin`, backup, health + `contract_pin: matched`, rollback; log in `deploy-log.jsonl`
 - hook `tools/deploy-vt.sh`: `--workflow "Deploy gate"` — the gate waits for `.github/workflows/deploy-gate.yml`, not upstream's "CI"
@@ -220,12 +218,12 @@ declares `requires_auth = True`, and `coverage_errors()` only maps public source
 - hook `agent/backtest/loaders/registry.py`: `regex "local",\n    "alphakeel_pack",\n    "alphakeel_b2",\n    "auto",`
 - hook `agent/backtest/loaders/registry.py`: `"backtest.loaders.alphakeel_pack_loader",`
 - hook `agent/backtest/loaders/registry.py`: `"backtest.loaders.alphakeel_b2_loader",`
-- hook `agent/backtest/loaders/registry.py`: `"nobitex", "wallex", "alphakeel_pack", "alphakeel_b2"}`
-- preimage `agent/backtest/loaders/registry.py`: `{"local", "qveris", "tickerall", "fmp", "nobitex", "wallex"}`
+- hook `agent/backtest/loaders/registry.py`: `"nobitex", "wallex", "alphakeel_pack", "alphakeel_b2", "b3_cotahist"}`
+- preimage `agent/backtest/loaders/registry.py`: `{"local", "qveris", "tickerall", "fmp", "nobitex", "wallex", "b3_cotahist"}`
 - upstream `agent/backtest/loader_health.py`: `"local": "operator files, not a public endpoint"`
 - upstream `agent/backtest/loader_health.py`: `def coverage_errors() -> list[str]:` — catalog drift check: every source is canaried or excluded
 - hook `agent/backtest/loader_health.py`: `"alphakeel_pack": "frozen AlphaKeel pack directory`
-- preimage `agent/backtest/loader_health.py`: `EXCLUDED_PUBLIC_SOURCES = {"local": "operator files, not a public endpoint"}`
+- preimage `agent/backtest/loader_health.py`: `"local": "operator files, not a public endpoint",\n    # Reads the local SQLite store`
 - upstream `agent/backtest/metrics.py`: `_TRADING_DAYS = {`
 - upstream `agent/backtest/metrics.py`: `_BARS_PER_DAY = {`
 - upstream `agent/backtest/metrics.py`: `"nobitex": 365, "wallex": 365,`
@@ -308,6 +306,9 @@ settlements through `funding_settlements.attach_settlements` (shared with the `a
 - `agent/tests/test_shadow_account.py`
 - `agent/tests/test_autopilot_tool.py`
 - `agent/tests/test_korea_equity_engine.py`
+- `agent/tests/test_backtest_engine_unused_config.py`
+- `agent/tests/test_backtest_records_bench.py`
+- `agent/tests/test_metrics_holding_period.py`
 
 **Wave 2 (2026-10-13, R2-D-4 b / R2-D-6).** `CryptoEngine` has no default taker fee: `config.taker_rate` is required
 (`taker_rate_of`; a crypto run without it is refused, the rate used is in the metrics), and the strict path's evidence
@@ -369,7 +370,6 @@ would be a separate, optional PR (config switch). The PR would contain `CryptoFu
 - preimage `agent/backtest/engines/_market_hooks.py`: `FUNDING_HOURS = {0, 8, 16}`
 - hook `agent/backtest/engines/_market_hooks.py`: `FUNDING_CASH_RATE_COLUMNS = ("funding_cash_rate", "funding_rate")`
 - hook `agent/backtest/engines/_market_hooks.py`: `payment += size * px * rate` — per-settlement Decimal booking at the published mark, else the most recent close
-- preimage `agent/backtest/engines/_market_hooks.py`: `payment = pos.direction * pos.size * float(price) * total_rate`
 - hook `agent/backtest/engines/crypto.py`: `"funding_estimate": f["funding_estimate"]`
 - upstream `agent/backtest/loaders/ccxt_loader.py`: `funding = cls._fetch_funding_history(exchange, symbol, since_ms, end_ms)`
 - upstream `agent/backtest/loaders/ccxt_loader.py`: `if bracket_artifact is not None:`
@@ -413,6 +413,7 @@ report a statistic built on undefined samples.
 - `agent/tests/test_shadow_account.py`
 - `agent/tests/test_metrics_sortino.py`
 - `agent/tests/test_validation_initial_capital.py`
+- `agent/tests/test_validation_missing_equity.py`
 
 **Commits.** `41f8c94b`; shadow report N/A (audit 2026-10-09).
 
@@ -466,6 +467,7 @@ context so the binding reaches them (as upstream already does for the compaction
 - `agent/backtest/loaders/india_broker_loader.py`
 - `agent/src/tools/backtest_tool.py`
 - `agent/src/agent/loop.py`
+- `agent/src/agent/tool_lifecycle.py`
 - `agent/tests/test_session_data_exposure.py`
 
 **Commits.** `83ea7c2a` `5370ab12`, plus the session-exposure commit on `fix/session-data-exposure`.
@@ -497,10 +499,10 @@ class" field in the run card would be upstreamable.
 - upstream `agent/src/tools/backtest_tool.py`: `state_store = RunStateStore()`
 - hook `agent/src/tools/backtest_tool.py`: `def _note_child_exposure(run_path: Path, config: dict[str, Any]) -> None:`
 - hook `agent/src/tools/backtest_tool.py`: `    _note_child_exposure(run_path, config)\n    state_store = RunStateStore()`
-- upstream `agent/src/agent/loop.py`: `name=f"tool-{tool_name}",`
-- hook `agent/src/agent/loop.py`: `args=(_worker,),`
-- hook `agent/src/agent/loop.py`: `pool.submit(contextvars.copy_context().run, _run, item)`
-- preimage `agent/src/agent/loop.py`: `futures = [pool.submit(_run, item) for item in runnable]`
+- upstream `agent/src/agent/tool_lifecycle.py`: `name=f"tool-{tool_name}",`
+- hook `agent/src/agent/tool_lifecycle.py`: `args=(_worker,),`
+- hook `agent/src/agent/tool_lifecycle.py`: `pool.submit(contextvars.copy_context().run, _run, item)`
+- preimage `agent/src/agent/tool_lifecycle.py`: `futures = [pool.submit(_run, item) for item in runnable]`
 
 ## `alphakeel-handoff` — hand-off of an IR run to AlphaKeel
 
@@ -528,6 +530,8 @@ export there. New files carry everything; the upstream files only get hooks.
 - `frontend/src/i18n/locales/ko.json`
 - `frontend/src/i18n/locales/pt-BR.json`
 - `frontend/src/i18n/locales/zh-CN.json`
+- `frontend/src/i18n/locales/fa.json`
+- `frontend/src/i18n/locales/tr.json`
 
 **Commits.** `e736638b` (backend, tests, patch records), `a0c12108` (button, `RunDetail.tsx` hooks, `api.ts` export, locales), merged in `c830d89f`.
 
@@ -589,7 +593,7 @@ text and re-derive the counts (upstream count + 2 sources, + 1 tool). Until `ff1
 README.md had the `alphakeel_b2` row; every README and SKILL.md now say 30 and list `alphakeel_b2` in the table and
 the `loaders/` tree line.
 - upstream `pyproject.toml`: `[tool.setuptools.packages.find]`
-- upstream `pyproject.toml`: `"backtest" = ["*.py"]`
+- upstream `pyproject.toml`: `"backtest" = ["*.py", "loaders/*.json"]`
 - upstream `pyproject.toml`: `dev = [`
 - hook `pyproject.toml`: `"evals*", "alphakeel_research*"]`
 - hook `pyproject.toml`: `"alphakeel_research" = [`
@@ -635,18 +639,16 @@ the `loaders/` tree line.
 - upstream `README_zh.md`: `` regex (?m)^\| `local` \| `` — source-table row the alphakeel rows follow
 - hook `README_zh.md`: `` | `alphakeel_pack` | ``
 
-## `upstream-test-fixes` — two upstream tests that are red on upstream main
+## `upstream-test-fixes` — an upstream test that is red on upstream main
 
 **Purpose.** `tools/deploy-vt.sh` refuses to rebuild the production container unless the "CI" workflow is green on the
-exact commit, and two upstream tests fail on a pristine upstream checkout (`e532650b`, reproduced locally 2026-10-12):
-`test_explicit_crypto_pairs_stay_crypto[ETH/USD]` (the `^[A-Z]{3}/[A-Z]{3}$` forex rule in `_MARKET_PATTERNS` claimed
-`ETH/USD` before any crypto rule saw it) and `test_alpha_bench_does_not_follow_preexisting_report_symlink` (its registry
-stub has no `.meta` while `_validate_bench_data_requirements` read `registry.get(aid).meta`). Fixes: two slash-form
-crypto patterns ahead of the forex rule (stablecoin quote, or a major crypto base with a USD quote); `getattr(…, "meta",
-None)`. Both are candidates for an upstream PR; drop the group when upstream carries them.
+exact commit, and an upstream test failed on a pristine upstream checkout (`e532650b`, reproduced locally 2026-10-12):
+`test_alpha_bench_does_not_follow_preexisting_report_symlink` (its registry stub has no `.meta` while
+`_validate_bench_data_requirements` read `registry.get(aid).meta`). Fix: `getattr(…, "meta", None)`. A candidate for an
+upstream PR; drop the group when upstream carries it. The second fix of this group (slash-form crypto pairs ahead of
+the forex rule, `ETH/USD`) was adopted by upstream in 0.1.18 and dropped on that upgrade.
 
 **Files.**
-- `agent/backtest/engines/_market_hooks.py` (also in `crypto-funding`)
 - `agent/src/tools/alpha_bench_tool.py` (also in `alpha-bench-universe`)
 
 **Commits.** (this commit; audit 2026-10-12 round-2 D6-1 follow-up).
@@ -673,8 +675,7 @@ runs (audit 2026-10-12 D6-1: every production commit 10-05..10-12 was red at thi
 - upstream `agent/src/config/accessor.py`: `def get_env_config() -> EnvConfig:`
 - upstream `agent/src/config/env_schema.py`: `tushare_token: str = Field(alias="TUSHARE_TOKEN", default="")`
 - upstream `agent/src/api/alpha_routes.py`: `async def alpha_readiness():`
-- hook `agent/src/api/alpha_routes.py`: `configured = bool(get_env_config().data.tushare_token)`
-- preimage `agent/src/api/alpha_routes.py`: `configured = bool(os.getenv("TUSHARE_TOKEN"))`
+- upstream `agent/src/api/alpha_routes.py`: `configured = bool(get_env_config().data.tushare_token.strip())` — upstream adopted the gate in 0.1.18; the group is now only a regression guard
 
 ## `grounding-tex-dollar` — TeX `$`/`$$` is not a dollar mark
 
@@ -802,6 +803,7 @@ robustness sub-runs.
 - `agent/src/agent/grounding/evidence.py`
 - `agent/src/agent/context.py`
 - `agent/src/agent/loop.py`
+- `agent/src/agent/loop_grounding.py`
 - `agent/src/tools/__init__.py`
 - `agent/src/tools/alphakeel_ir_request.py`
 - `agent/src/tools/alphakeel_research_guard.py`
@@ -842,6 +844,7 @@ robustness sub-runs.
 - hook `agent/src/agent/loop.py`: `def _ir_result_card(session_id: str, user_message: str, notes: Any = ()) -> str | None:`
 - hook `agent/src/agent/loop.py`: `card = _ir_result_card(session_id, user_message, grounding_card_notes)  # research-truth: card at the answer`
 - hook `agent/src/agent/loop.py`: `card = _ir_result_card(session_id, user_message)  # research-truth: card at the no-progress answer`
+- hook `agent/src/agent/loop_grounding.py`: `card_notes=card_notes,` — the grounding decision carries the card notes to the loop
 - hook `agent/tests/test_context_attribution_layers.py`: `alphakeel_ir_routing="[test alphakeel routing]",`
 
 ## `research-integrity` — research results the code can vouch for
@@ -1097,7 +1100,7 @@ research contract, factor-name gate, `zoo_factor` helper and prompt bullets are 
 - upstream `agent/backtest/engines/crypto.py`: `def can_execute(self, symbol: str, direction: int, bar: pd.Series) -> bool:`
 - hook `agent/backtest/engines/crypto.py`: `raise ValueError(spot_short_refusal(symbol))`
 - hook `agent/src/agent/context.py`: `- To change an earlier generic backtest, start from its files`
-- upstream `agent/backtest/engines/composite.py`: `self._funding.prepare(data_map, self._crypto_codes(codes))`
+- hook `agent/backtest/engines/composite.py`: `self._funding.prepare(data_map, self._crypto_codes(codes))`
 - hook `agent/backtest/engines/composite.py`: `raise ValueError(spot_short_refusal(symbol))`
 - hook `agent/src/agent/context.py`: `- The session has a research contract measured from its first backtest`
 - hook `agent/src/tools/alphakeel_research_tool.py`: `ledger.record(session_id, run_dir, result, rel, supersedes=supersedes)`

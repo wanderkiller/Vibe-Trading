@@ -15,29 +15,60 @@ class PortfolioSummaryTool(BaseTool):
     name = "portfolio_summary"
     description = (
         "Read the latest sanitized snapshot of the user's locally configured "
-        "read-only brokerage accounts. Returns deterministic totals, account "
+        "read-only brokerage accounts and explicitly imported holdings. Returns deterministic totals, account "
         "allocation, combined holdings, weights, unrealized P/L, data-quality "
         "warnings, and risk_xray_args (symbols + weights) that can be passed "
         "straight to the portfolio_risk_xray tool. A source that failed to "
         "refresh is reported as an error and excluded from the totals, so a "
         "snapshot with complete=false is missing accounts. It never returns "
         "credentials, account numbers, order IDs, personal names, or local "
-        "paths. Use the Web Portfolio refresh button before requesting current "
-        "data."
+        "paths. The result carries snapshot_id and read_identity; pass that "
+        "snapshot_id back to keep a multi-step analysis on the same stored "
+        "observation after a later refresh. Use the Web Portfolio refresh button "
+        "before requesting current data."
     )
-    parameters = {"type": "object", "properties": {}, "required": []}
+    parameters = {
+        "type": "object",
+        "properties": {
+            "snapshot_id": {
+                "type": "string",
+                "description": (
+                    "Optional id of a stored snapshot. When given, read exactly that "
+                    "immutable observation instead of the latest one."
+                ),
+            },
+            "target_weights": {
+                "type": "object", "additionalProperties": {"type": "number"},
+                "description": "Optional user-defined allocation fractions summing to 1, keyed by holdings canonical_id or CASH. Requires snapshot_id. Returns value-only proposals; never sends orders. Do not invent user targets.",
+            },
+        },
+        "required": [],
+    }
     repeatable = True
     is_readonly = True
 
-    def execute(self, **_: Any) -> str:
+    def execute(self, **kwargs: Any) -> str:
         """Return the sanitized portfolio context as a JSON envelope.
 
         Returns:
-            A JSON string with ``status`` ``ok`` and the context, or ``empty``
-            with a hint when no usable snapshot exists.
+            A JSON string with ``status`` ``ok`` and the context, ``empty``
+            with a hint when no usable snapshot exists, or ``error`` when a
+            requested ``snapshot_id`` is unavailable.
         """
-        context = PortfolioService().analysis_context()
+        raw_id = kwargs.get("snapshot_id")
+        snapshot_id = None if raw_id is None else str(raw_id).strip()
+        context = PortfolioService().analysis_context(snapshot_id=snapshot_id)
         if context is None:
+            if snapshot_id is not None:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "error_code": "snapshot_not_found",
+                        "snapshot_id": snapshot_id,
+                        "message": "The requested portfolio snapshot is unavailable or incompatible.",
+                    },
+                    ensure_ascii=False,
+                )
             return json.dumps(
                 {
                     "status": "empty",
@@ -45,4 +76,12 @@ class PortfolioSummaryTool(BaseTool):
                 },
                 ensure_ascii=False,
             )
-        return json.dumps({"status": "ok", "context": context}, ensure_ascii=False)
+        result = {"status": "ok", "context": context}
+        if kwargs.get("target_weights") is not None:
+            if not snapshot_id:
+                return json.dumps({"status": "error", "message": "target_weights requires snapshot_id"})
+            try:
+                result["proposal"] = PortfolioService().rebalance(snapshot_id, kwargs["target_weights"])
+            except ValueError as exc:
+                return json.dumps({"status": "error", "message": str(exc)})
+        return json.dumps(result, ensure_ascii=False)

@@ -117,6 +117,24 @@ class TestTPlusOne:
 
 
 class TestPriceLimits:
+    @pytest.mark.parametrize("symbol,limit", [
+        ("301269.SZ", 0.20), ("689009.SH", 0.20),
+        ("430047.BJ", 0.30), ("920002.BJ", 0.30),
+    ])
+    @pytest.mark.parametrize("direction", [0, 1])
+    def test_new_board_codes_enforce_both_sides_of_band(self, symbol, limit, direction):
+        engine = _make_engine(slippage=0)
+        engine.positions[symbol] = Position(
+            symbol, 1, 100.0, pd.Timestamp("2025-06-09"), 100.0,
+        )
+        sign = 1 if direction == 1 else -1
+        inside = _make_bar(close=100 * (1 + sign * (limit - 0.01)),
+                           pre_close=100, trade_date="2025-06-10")
+        boundary = _make_bar(close=100 * (1 + sign * limit),
+                             pre_close=100, trade_date="2025-06-10")
+        assert engine.can_execute(symbol, direction, inside) is True
+        assert engine.can_execute(symbol, direction, boundary) is False
+
     def test_limit_up_buy_blocked(self) -> None:
         """Mainboard +10% limit-up: can't buy."""
         engine = _make_engine()
@@ -253,6 +271,12 @@ class TestPriceLimit:
             ("300750.SZ", 0.20),   # ChiNext
             ("688001.SH", 0.20),   # STAR Market
             ("830799.BJ", 0.30),   # Beijing
+            ("301269.SZ", 0.20),   # ChiNext 301 segment
+            ("689009.SH", 0.20),   # STAR Market CDR
+            ("430047.BJ", 0.30),   # Beijing legacy 43 segment
+            ("920002.BJ", 0.30),   # Beijing current 920 segment
+            ("002594.SZ", 0.10),   # SZSE main board
+            ("900901.SH", 0.10),   # SSE B-share stays on the default band
         ],
     )
     def test_price_limits(self, symbol: str, expected: float) -> None:

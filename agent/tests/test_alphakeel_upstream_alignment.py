@@ -60,7 +60,7 @@ def test_an_oversized_result_stays_valid_json_with_its_evidence_reference() -> N
 
 @pytest.mark.skipif(not hasattr(__import__("os"), "killpg"), reason="process groups are POSIX")
 def test_a_timeout_returns_and_keeps_the_partial_output(tmp_path, monkeypatch) -> None:
-    from src.agent import loop
+    from src.agent import tuning as loop
     from src.tools import alphakeel_research_tool as tool
 
     monkeypatch.setenv("ALPHAKEEL_RESEARCH_TOKEN", "ak_rs_env-secret")
@@ -156,7 +156,7 @@ def test_oversized_kept_fields_still_fit_the_budget() -> None:
 
 @pytest.mark.skipif(not hasattr(__import__("os"), "killpg"), reason="process groups are POSIX")
 def test_timeout_logs_are_written_only_under_an_allowed_run_root(tmp_path, monkeypatch) -> None:
-    from src.agent import loop
+    from src.agent import tuning as loop
     from src.tools import alphakeel_research_tool as tool
 
     monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(tmp_path / "runs"))

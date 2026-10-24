@@ -793,6 +793,12 @@ if ChatOpenAI is not None:
             is absent, breaking ReAct continuations after a tool call (#39).
             """
             payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+            # LangChain rewrites max_tokens to OpenAI's newer spelling.
+            # DeepSeek documents max_tokens and silently ignores the other
+            # field, leaving its much larger thinking-mode default in force.
+            if "messages" in payload and self._capabilities().name == "deepseek":
+                if "max_completion_tokens" in payload:
+                    payload["max_tokens"] = payload.pop("max_completion_tokens")
             # Models that rejected `temperature` before omit it up front (#1223).
             if str(self.model_name) in _ANTHROPIC_TEMPERATURE_UNSUPPORTED:
                 payload.pop("temperature", None)
@@ -1018,6 +1024,7 @@ def _build_native_deepseek(
     creds = get_llm_credentials("deepseek", model)
     api_key = creds["api_key"]
     base_url = creds["base_url"]
+    output_limit = get_env_config().llm.langchain_max_tokens
     return chat_deepseek(
         model=model,
         temperature=temperature,
@@ -1026,6 +1033,7 @@ def _build_native_deepseek(
         callbacks=callbacks,
         api_key=api_key or None,
         base_url=base_url or None,
+        **({"max_tokens": output_limit} if output_limit is not None else {}),
     )
 
 
@@ -1403,6 +1411,8 @@ def _sync_provider_env() -> None:
     _ensure_dotenv()
     reset_env_config()
     provider = get_env_config().llm.langchain_provider.lower()
+    if provider == "custom":
+        return  # Vault credentials are passed directly, never exported into ambient env.
 
     if provider in {"openai-codex", "openai_codex"}:
         codex_url = get_env_config().llm.openai_codex_base_url
@@ -1412,7 +1422,7 @@ def _sync_provider_env() -> None:
         os.environ.pop("OPENAI_API_KEY", None)
         return
 
-    if provider in {"copilot", "github-copilot"}:
+    if provider in {"copilot", "github-copilot", "claude-cli"}:
         os.environ.pop("OPENAI_API_BASE", None)
         os.environ.pop("OPENAI_BASE_URL", None)
         os.environ.pop("OPENAI_API_KEY", None)
@@ -1668,6 +1678,16 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
             timeout=get_env_config().llm.timeout_seconds,
         )
 
+    if provider == "claude-cli":
+        from src.providers.claude_cli import ClaudeCliLLM
+
+        llm_cfg = get_env_config().llm
+        return ClaudeCliLLM(
+            model=name,
+            timeout=llm_cfg.timeout_seconds,
+            reasoning_effort=llm_cfg.langchain_reasoning_effort.strip().lower(),
+        )
+
     if provider == "anthropic":
         return _build_anthropic(
             model=name,
@@ -1711,6 +1731,8 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
     configured_responses_api = get_env_config().llm.langchain_use_responses_api
     use_responses_api = uses_responses_api(provider, configured_responses_api)
     creds = get_llm_credentials(provider, name)
+    if provider == "custom":
+        name = model_name or creds["model"]
     api_key = creds["api_key"]
     _validate_authorization_credential(
         api_key,
@@ -1751,6 +1773,9 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
         "vibe_provider": provider,
         "vibe_api_key": api_key,
     }
+    langchain_max_tokens = get_env_config().llm.langchain_max_tokens
+    if langchain_max_tokens:
+        kwargs["max_tokens"] = langchain_max_tokens
     if caps.default_headers:
         headers = dict(caps.default_headers)
         if caps.name in {"moonshot", "kimi-coding"}:
@@ -1759,7 +1784,19 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
                 headers["User-Agent"] = custom_ua
         _validate_explicit_headers(headers, source=f"{caps.name} provider configuration")
         kwargs["default_headers"] = headers
-    if get_env_config().llm.vibe_trading_disable_http_proxy:
+    disable_proxy = get_env_config().llm.vibe_trading_disable_http_proxy
+    if provider == "custom":
+        # Imported here: the guard needs httpx/httpcore/anyio, and the
+        # background-tool lifecycle checks import this module without them.
+        from src.providers.endpoint_guard import build_public_only_clients, proxy_applies
+    if provider == "custom" and (disable_proxy or not proxy_applies(creds["base_url"])):
+        # A saved custom endpoint is re-checked on every connection, so a
+        # host that re-resolves to a private address later is refused.
+        sync_client, async_client = build_public_only_clients()
+        kwargs["http_client"] = sync_client
+        kwargs["http_async_client"] = async_client
+        kwargs["vibe_owned_http_clients"] = (sync_client, async_client)
+    elif disable_proxy:
         sync_client, async_client = _build_proxy_free_http_clients()
         kwargs["http_client"] = sync_client
         kwargs["http_async_client"] = async_client

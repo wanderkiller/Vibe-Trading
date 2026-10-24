@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,9 @@ class PortfolioStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_created
                     ON portfolio_snapshots(created_at DESC);
+                CREATE TABLE IF NOT EXISTS portfolio_fx_quotes (
+                    id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS portfolio_fx_cache (
                     base TEXT NOT NULL,
                     quote TEXT NOT NULL,
@@ -120,6 +124,22 @@ class PortfolioStore:
                 return payload
         return None
 
+    def get(self, snapshot_id: str) -> dict[str, Any] | None:
+        """Return one immutable snapshot by id.
+
+        Args:
+            snapshot_id: Exact persisted snapshot identifier.
+
+        Returns:
+            The stored snapshot envelope, or None when the id is absent.
+        """
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT payload FROM portfolio_snapshots WHERE id = ? LIMIT 1",
+                (str(snapshot_id),),
+            ).fetchone()
+        return json.loads(row["payload"]) if row else None
+
     def history(
         self,
         limit: int = 180,
@@ -156,12 +176,20 @@ class PortfolioStore:
             ).fetchall()
         history = []
         for row in rows:
+            payload = json.loads(row["payload"])
             if valuation_version is not None or complete_only:
-                payload = json.loads(row["payload"])
                 if valuation_version is not None and payload.get("valuation_version") != valuation_version:
                     continue
                 if complete_only and not _derived_totals_are_complete(payload):
                     continue
+            total_hkd = None
+            try:
+                usd_hkd = Decimal(str((payload.get("fx") or {}).get("usd_hkd")))
+                usd = Decimal(row["total_usd"])
+                if usd_hkd.is_finite() and usd_hkd > 0 and usd.is_finite():
+                    total_hkd = str(usd * usd_hkd)
+            except (InvalidOperation, ValueError, TypeError):
+                pass  # Historical snapshots without FX stay explicitly unpriced.
             history.append(
                 {
                     "id": row["id"],
@@ -169,6 +197,9 @@ class PortfolioStore:
                     "complete": row["complete"],
                     "total_usd": row["total_usd"],
                     "total_cny": row["total_cny"],
+                    "total_hkd": total_hkd,
+                    "total_eur": (str(Decimal(row["total_usd"]) * Decimal(str(payload["fx"]["rates"]["EUR"])))
+                                  if payload.get("fx", {}).get("rates", {}).get("EUR") else None),
                 }
             )
             if len(history) >= row_limit:
@@ -257,3 +288,15 @@ class PortfolioStore:
                 (base, quote),
             ).fetchone()
         return (str(row["rate"]), str(row["fetched_at"])) if row else None
+
+
+    def save_fx_quote(self, payload: dict[str, Any]) -> None:
+        """Atomically cache a whole observation, preserving its rate date."""
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO portfolio_fx_quotes VALUES (1, ?)", (json.dumps(payload),))
+
+    def load_fx_quote(self) -> dict[str, Any] | None:
+        """Read one complete cached observation, never a mixture of rate dates."""
+        with self._connect() as db:
+            row = db.execute("SELECT payload FROM portfolio_fx_quotes WHERE id = 1").fetchone()
+        return json.loads(row[0]) if row else None

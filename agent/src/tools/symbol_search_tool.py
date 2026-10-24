@@ -160,6 +160,7 @@ _MARKET_BY_SUFFIX: Dict[str, str] = {
     "TO": "ca",
     "V": "ca",
     "BA": "ar",
+    "SA": "br",
     "L": "uk",
     "VN": "vn",
 }
@@ -717,6 +718,10 @@ def _eastmoney_candidate(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     suffix = _EASTMONEY_SUFFIX_BY_MARKET.get(market)
     if not suffix or not code:
         return None
+    # Market 0 also carries the Beijing exchange: 920xxx (current) and
+    # legacy 4xxxxx/8xxxxx codes. Shenzhen codes start with 0/2/3.
+    if suffix == "SZ" and len(code) == 6 and code.startswith(("4", "8", "92")):
+        suffix = "BJ"
 
     symbol = _format_symbol(code, suffix)
     if symbol is None:

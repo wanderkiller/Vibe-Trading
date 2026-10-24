@@ -356,9 +356,9 @@ def _argv(action: str, a: dict[str, Any]) -> list[str]:
 
 
 def _tool_timeout_seconds() -> float | None:
-    """The child process bound: the agent loop's tool timeout (its module-level override, else
+    """The child process bound: the agent loop's tool timeout (the tuning module's override, else
     ``VIBE_TRADING_TOOL_TIMEOUT_SECONDS``); a non-positive value disables it."""
-    from src.agent.loop import _tool_timeout_seconds as loop_tool_timeout
+    from src.agent.tuning import _tool_timeout_seconds as loop_tool_timeout
 
     configured = float(loop_tool_timeout())
     return configured if configured > 0 else None

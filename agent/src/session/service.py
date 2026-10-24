@@ -232,6 +232,11 @@ class SessionService:
         """Return a session by ID."""
         return self.store.get_session(session_id)
 
+    def update_session(self, session: Session) -> None:
+        """Persist session metadata and refresh its search label."""
+        self.store.update_session(session)
+        self._search_index.index_session(session.session_id, session.title)
+
     def list_sessions(self, limit: int = 50) -> list[Session]:
         """List all sessions."""
         return self.store.list_sessions(limit)
@@ -540,11 +545,13 @@ class SessionService:
             ),
         )
 
+        from src.config.accessor import get_env_config
+
         agent = AgentLoop(
             registry=registry,
             llm=llm,
             event_callback=event_callback,
-            max_iterations=50,
+            max_iterations=get_env_config().agent_tuning.vibe_trading_agent_max_iterations,
             persistent_memory=pm,
         )
         self._active_loops[session_id] = agent

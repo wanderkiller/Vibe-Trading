@@ -15,8 +15,9 @@ import { useAgentStore } from "@/stores/agent";
 const apiMock = vi.hoisted(() => ({
   getGoal: vi.fn(),
   getLLMSettings: vi.fn(),
-  getRun: vi.fn(),
+  getRunPreview: vi.fn(),
   getSessionMessages: vi.fn(),
+  autoTitleSession: vi.fn(),
   sseUrl: vi.fn((sid: string) => `/sessions/${sid}/events`),
 }));
 
@@ -47,6 +48,7 @@ describe("Agent activity elapsed clock survives navigation", () => {
   beforeEach(() => {
     useAgentStore.getState().reset();
     sseMock.connect.mockClear();
+    apiMock.autoTitleSession.mockReset().mockResolvedValue({ status: "updated" });
     apiMock.getGoal.mockResolvedValue(null);
     apiMock.getSessionMessages.mockResolvedValue([]);
     apiMock.getLLMSettings.mockResolvedValue({
@@ -67,6 +69,34 @@ describe("Agent activity elapsed clock survives navigation", () => {
       configurable: true,
       value: vi.fn(),
     });
+  });
+
+  it("generates a summary title after the first answer and refreshes the sidebar", async () => {
+    const router = createMemoryRouter(
+      [{ path: "/", element: <Agent /> }],
+      { initialEntries: ["/?session=session-one"] },
+    );
+    render(<RouterProvider router={router} />);
+    await waitFor(() => expect(sseMock.connect).toHaveBeenCalled());
+    act(() => {
+      useAgentStore.getState().addMessage({
+        id: "first-question", type: "user", content: "Hello", timestamp: Date.now(),
+      });
+    });
+    const refresh = vi.fn();
+    window.addEventListener("vibe:sessions-refresh", refresh);
+    try {
+      act(() => {
+        latestHandlers()["attempt.completed"]({
+          attempt_id: "first-attempt", summary: "Hello back", elapsed_ms: 100,
+        });
+      });
+      expect(useAgentStore.getState().messages.some((message) => message.content === "Hello back")).toBe(true);
+      expect(apiMock.autoTitleSession).toHaveBeenCalledWith("session-one");
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+    } finally {
+      window.removeEventListener("vibe:sessions-refresh", refresh);
+    }
   });
 
   it("keeps the running attempt's startedAt when leaving the page and coming back", async () => {
@@ -184,7 +214,7 @@ describe("Agent activity finished while the page was away", () => {
     useAgentStore.getState().reset();
     sseMock.connect.mockClear();
     apiMock.getGoal.mockResolvedValue(null);
-    apiMock.getRun.mockResolvedValue({});
+    apiMock.getRunPreview.mockResolvedValue({ metrics: null, equity_curve: [], report_worthy: false });
     apiMock.getLLMSettings.mockResolvedValue({
       provider: "deepseek",
       model_name: "deepseek-v4-pro",
@@ -285,7 +315,7 @@ describe("Agent completion trusts the backend's attempt start", () => {
     useAgentStore.getState().reset();
     sseMock.connect.mockClear();
     apiMock.getGoal.mockResolvedValue(null);
-    apiMock.getRun.mockResolvedValue({});
+    apiMock.getRunPreview.mockResolvedValue({ metrics: null, equity_curve: [], report_worthy: false });
     apiMock.getSessionMessages.mockResolvedValue([]);
     apiMock.getLLMSettings.mockResolvedValue({
       provider: "deepseek",
@@ -351,4 +381,30 @@ describe("Agent completion trusts the backend's attempt start", () => {
       endedAt: endedSec * 1000,
     });
   });
+  it("keeps explicit provider waiting active but still times out on transport keepalives alone", async () => {
+    const router = createMemoryRouter([{ path: "/", element: <Agent /> }], { initialEntries: ["/?session=session-one"] });
+    render(<RouterProvider router={router} />);
+    await waitFor(() => expect(sseMock.connect).toHaveBeenCalled());
+    await waitFor(() => expect(apiMock.getLLMSettings).toHaveBeenCalled());
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        const store = useAgentStore.getState();
+        store.startActivity("attempt-wait");
+        store.setStatus("streaming");
+      });
+      for (let i = 0; i < 4; i++) {
+        act(() => { vi.advanceTimersByTime(40_000); });
+        act(() => { latestHandlers().llm_waiting({ attempt_id: "attempt-wait", iter: 1 }); });
+      }
+      expect(useAgentStore.getState().status).toBe("streaming");
+      expect(useAgentStore.getState().streamingText).toBe("");
+      for (let i = 0; i < 3; i++) {
+        act(() => { vi.advanceTimersByTime(40_000); });
+        act(() => { latestHandlers().heartbeat({}); });
+      }
+      expect(useAgentStore.getState().status).toBe("idle");
+    } finally { vi.useRealTimers(); }
+  });
+
 });

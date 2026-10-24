@@ -45,6 +45,7 @@ import pandas as pd
 from backtest.loaders.cn_adjust import apply_qfq as _apply_qfq
 from src.agent.tools import BaseTool
 from src.config.accessor import get_env_config
+from src.config.paths import get_runtime_root
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ def _load_universe_panel(
         )
     start, end = _parse_period(period)
 
-    cache_dir = Path.home() / ".vibe-trading" / "cache"
+    cache_dir = get_runtime_root() / "cache"
     cache_path = cache_dir / f"{universe}_{start}_{end}.pkl"
     if use_cache and cache_path.is_file():
         cached = _read_pickle_cache(cache_path)
@@ -469,6 +470,11 @@ def _load_csi300_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
         # Prices are corporate-action adjusted; raw pro.daily is not.
         "price_adjustment": "qfq",
         "dropped_unadjustable": len(dropped),
+        # Sector labels attach later, outside the pickled price panel (see
+        # _attach_sector_column); null/0.0 until then, and they stay that way
+        # when the loader degrades or the coverage gate refuses the tag.
+        "sector_source": None,
+        "sector_coverage": 0.0,
     }
     return panel
 
@@ -703,6 +709,164 @@ def _validate_bench_data_requirements(registry: Any, alpha_ids: list[str], unive
     return columns
 
 
+def _split_alphas_by_universe_support(
+    registry: Any, alpha_ids: list[str], universe: str
+) -> tuple[list[str], list[str]]:
+    """Split the selection into (benchable, excluded) for this universe.
+
+    ``fund:*`` inputs are served from SEC US filings, which only the sp500
+    panel carries; on any other universe the declaring alphas are excluded
+    with disclosure instead of failing the whole bench — the mirror of the
+    sp500 path, where CN ``val:*`` alphas SkipAlpha cleanly on missing
+    columns. ``_validate_bench_data_requirements`` remains the backstop for
+    callers that bypass this split.
+
+    Args:
+        registry: Registry holding the selected factors.
+        alpha_ids: Factors selected for the bench.
+        universe: Requested stock universe.
+
+    Returns:
+        ``(kept, excluded)`` — alphas benchable on this universe, and alphas
+        excluded because they declare ``fund:*`` columns off sp500.
+    """
+    if universe == "sp500":
+        return list(alpha_ids), []
+    kept: list[str] = []
+    excluded: list[str] = []
+    for aid in alpha_ids:
+        columns = (registry.get(aid).meta or {}).get("columns_required", [])
+        if any(str(column).startswith("fund:") for column in columns):
+            excluded.append(aid)
+        else:
+            kept.append(aid)
+    return kept, excluded
+
+
+def _val_columns_required(registry: Any, alpha_ids: list[str], panel: dict) -> list[str]:
+    """Collect declared ``val:*`` columns missing from the panel.
+
+    Args:
+        registry: Registry holding the selected factors.
+        alpha_ids: Factors to evaluate.
+        panel: Observed price panel.
+
+    Returns:
+        Sorted ``val:*`` column names not already present in the panel.
+    """
+    return sorted({column for aid in alpha_ids
+                   for column in (registry.get(aid).meta or {}).get("columns_required", [])
+                   if column.startswith("val:") and column not in panel})
+
+
+def _attach_valuation_columns(
+    enriched: dict, panel: dict, val_columns: list[str], start: str, end: str
+) -> dict:
+    """Attach ``val:*`` columns for a CN universe from tushare ``daily_basic``.
+
+    Daily market data keyed by ``trade_date`` — PIT-safe by construction, no
+    filing lag. Frames are masked to the price panel's own cross-section so a
+    date whose close was membership-masked carries no valuation either.
+
+    Args:
+        enriched: Panel copy being extended.
+        panel: Observed price panel (source of the cross-section mask).
+        val_columns: Declared ``val:*`` columns to attach.
+        start: Period start (YYYY-MM-DD).
+        end: Period end (YYYY-MM-DD).
+
+    Returns:
+        The enriched panel.
+
+    Raises:
+        ValueError: If a declared field is outside the daily_basic whitelist.
+        RuntimeError: If fewer than two stocks have data for a field.
+    """
+    from backtest.loaders.valuation_loader import load_valuation_panel
+
+    close = panel["close"]
+    fields = [column.removeprefix("val:") for column in val_columns]
+    loaded = load_valuation_panel(
+        symbols=list(close.columns), fields=fields, start=start, end=end, index=close.index
+    )
+    for column, field in zip(val_columns, fields):
+        frame = loaded.get(field)
+        if frame is None or frame.notna().any().sum() < 2:
+            raise RuntimeError(
+                f"tushare daily_basic field {field!r} has data for fewer than two "
+                "stocks. Check TUSHARE_TOKEN permissions and CN coverage for this period."
+            )
+        enriched[column] = frame.reindex(index=close.index, columns=close.columns).where(close.notna())
+    enriched["_meta"] = {**enriched.get("_meta", {}), "valuation_source": "tushare_daily_basic"}
+    return enriched
+
+
+# Same gate as _SP500_MIN_SECTOR_COVERAGE, same reasoning: a mostly-unlabelled
+# panel would z-score one big bucket, which is the global cross-section wearing
+# an industry-neutral label. Below the gate the tag stays off and the
+# requires_sector alphas SkipAlpha cleanly.
+_CSI300_MIN_SECTOR_COVERAGE = 0.9
+
+
+def _attach_sector_column(enriched: dict, panel: dict, start: str, end: str) -> dict:
+    """Attach PIT SW2021 L1 industry labels as ``sector`` for a CN universe.
+
+    The csi300 counterpart of the sp500 Wikipedia-GICS attach: labels come
+    from tushare ``index_member_all`` (point-in-time via in_date/out_date),
+    align to the price panel and inherit its PIT membership mask through
+    ``.where(close.notna())`` — the same trick the ``val:*`` attach uses.
+    Attached here, not in ``_load_csi300_panel``, so the labels never enter
+    the pickled price-panel cache. ``sector_coverage`` in ``_meta`` is the
+    fraction of panel columns with at least one non-null label anywhere in
+    the window — per-date coverage can be lower; unlabelled cells stay NaN
+    through ``zscore_by_group``.
+
+    Never raises: no token or a provider failure leaves the tag off (the
+    loader degrades to an all-None frame; ``RuntimeError`` on a missing token
+    is caught here) and ``_meta`` keeps ``sector_source=None`` as disclosure.
+
+    Args:
+        enriched: Panel copy being extended.
+        panel: Observed price panel (source of the cross-section mask).
+        start: Period start (YYYY-MM-DD).
+        end: Period end (YYYY-MM-DD).
+
+    Returns:
+        The enriched panel, with ``sector`` and updated ``_meta`` when the
+        coverage gate passes.
+    """
+    from backtest.loaders.industry_loader import load_industry_frame
+
+    close = panel["close"]
+    try:
+        labels = load_industry_frame(
+            symbols=list(close.columns), start=start, end=end, index=close.index
+        )
+    except Exception as exc:  # noqa: BLE001 — enrichment, never fatal to the bench
+        logger.warning(
+            "csi300: industry loader failed (%s); benching without the sector tag", exc
+        )
+        return enriched
+
+    sector = labels.reindex(index=close.index, columns=close.columns).where(close.notna())
+    coverage = float(sector.notna().any(axis=0).mean()) if sector.shape[1] else 0.0
+    if coverage < _CSI300_MIN_SECTOR_COVERAGE:
+        logger.warning(
+            "csi300: sector coverage %.1f%% below %.0f%% — leaving the tag off so "
+            "industry-neutralized alphas skip rather than z-score one bucket",
+            coverage * 100,
+            _CSI300_MIN_SECTOR_COVERAGE * 100,
+        )
+    else:
+        enriched["sector"] = sector
+    enriched["_meta"] = {
+        **enriched.get("_meta", {}),
+        "sector_source": "tushare index_member_all SW2021 L1" if "sector" in enriched else None,
+        "sector_coverage": round(coverage, 4),
+    }
+    return enriched
+
+
 def _prepare_bench_panel(registry: Any, alpha_ids: list[str], panel: dict, universe: str, period: str) -> dict:
     """Load only the declared PIT fundamental inputs for the selected factors.
 
@@ -710,42 +874,115 @@ def _prepare_bench_panel(registry: Any, alpha_ids: list[str], panel: dict, unive
         registry: Registry holding the factors being evaluated.
         alpha_ids: Selected factor identifiers.
         panel: Observed price panel; never mutated or filled with invented values.
-        universe: Stock universe; SEC fundamentals currently cover US stocks.
+        universe: Stock universe; SEC fundamentals currently cover US stocks,
+            ``val:*`` daily valuation columns and the PIT ``sector`` tag cover
+            the CN universe only — other universes skip them and declaring
+            alphas SkipAlpha.
         period: Requested historical period.
 
     Returns:
-        A panel including the required fundamental columns.
+        A panel including the required fundamental columns and, when a
+        selected csi300 alpha declares ``requires_sector``, the ``sector``
+        label frame.
 
     Raises:
-        ValueError: If SEC inputs are requested for a non-US universe.
+        ValueError: If SEC inputs are requested for a non-US universe, or a
+            ``val:`` field is outside the daily_basic whitelist.
         RuntimeError: If fewer than two stocks have the required financial inputs.
     """
     columns = [column for column in _validate_bench_data_requirements(registry, alpha_ids, universe) if column not in panel]
-    if not columns:
+    val_columns = _val_columns_required(registry, alpha_ids, panel) if universe == "csi300" else []
+    needs_sector = (
+        universe == "csi300"
+        and "sector" not in panel
+        and any((registry.get(aid).meta or {}).get("requires_sector") for aid in alpha_ids)
+    )
+    if not columns and not val_columns and not needs_sector:
         return panel
-    from backtest.loaders.fundamentals_loader import load_fundamental_panel
 
     start, end = _parse_period(period)
     close = panel["close"]
-    fields = [column.removeprefix("fund:") for column in columns]
-    loaded = load_fundamental_panel(symbols=list(close.columns), fields=fields, start=start, end=end, pit=True, index=close.index)
     enriched = dict(panel)
-    for column, field in zip(columns, fields):
-        frame = loaded.get(field)
-        if frame is None or frame.notna().any().sum() < 2:
-            raise RuntimeError(f"SEC field {field!r} has data for fewer than two stocks. Check SEC connectivity and filing coverage for this period.")
-        enriched[column] = frame.reindex(index=close.index, columns=close.columns)
-    enriched["_meta"] = {**panel.get("_meta", {}), "fundamental_source": "sec", "fundamental_pit": True}
+    if columns:
+        from backtest.loaders.fundamentals_loader import load_fundamental_panel
+
+        fields = [column.removeprefix("fund:") for column in columns]
+        loaded = load_fundamental_panel(symbols=list(close.columns), fields=fields, start=start, end=end, pit=True, index=close.index)
+        for column, field in zip(columns, fields):
+            frame = loaded.get(field)
+            if frame is None or frame.notna().any().sum() < 2:
+                raise RuntimeError(f"SEC field {field!r} has data for fewer than two stocks. Check SEC connectivity and filing coverage for this period.")
+            # Date-only SEC filings can arrive after close(t). IC uses them
+            # on t+1; the engine's separate next-bar execution is unchanged.
+            enriched[column] = frame.reindex(index=close.index, columns=close.columns).shift(1)
+        enriched["_meta"] = {**enriched.get("_meta", {}), "fundamental_source": "sec", "fundamental_pit": True, "fundamental_pit_lag_bars": 1}
+    if val_columns:
+        enriched = _attach_valuation_columns(enriched, panel, val_columns, start, end)
+    if needs_sector:
+        enriched = _attach_sector_column(enriched, panel, start, end)
     return enriched
 
 
-def _compute_forward_returns(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Next-bar forward simple returns from close, aligned to factor timestamp."""
+# Cap for the tool-level bench horizon parameter: 252 bars ≈ one trading year.
+# Beyond that a typical bench period leaves almost no non-overlapping IC
+# samples, so the t-stat stops meaning anything.
+_MAX_HORIZON = 252
+
+
+def _validate_horizon(value: Any) -> int:
+    """Validate the bench ``horizon`` parameter (integer, 1.._MAX_HORIZON).
+
+    ``None`` is treated as "not supplied" and defaults to 1, matching how
+    ``run_alpha_bench`` tolerates absent optional kwargs.
+    """
+    if value is None:
+        return 1
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(
+            f"horizon must be an integer between 1 and {_MAX_HORIZON}, got {value!r}"
+        )
+    if not 1 <= value <= _MAX_HORIZON:
+        raise ValueError(
+            f"horizon must be an integer between 1 and {_MAX_HORIZON}, got {value}"
+        )
+    return value
+
+
+def _compute_forward_returns(panel: dict[str, pd.DataFrame], horizon: int = 1) -> pd.DataFrame:
+    """Forward simple returns over ``horizon`` bars, aligned to the factor timestamp.
+
+    ``horizon=1`` keeps the historical next-bar formula byte-for-byte. For
+    ``horizon=h > 1`` the return at row t is ``close[t+h]/close[t] - 1``,
+    sampled non-overlapping and end-anchored (see the inline comment) so the
+    naive-iid t-stat downstream stays honest.
+    """
+    if isinstance(horizon, bool) or not isinstance(horizon, int) or horizon < 1:
+        raise ValueError(f"horizon must be an integer >= 1, got {horizon!r}")
     close = panel.get("close")
     if close is None:
         raise ValueError("panel missing 'close' — cannot derive forward returns")
-    # Next-period return aligned to current row (use t+1 close, shift back).
-    fwd = close.pct_change(fill_method=None).shift(-1)
+    if horizon == 1:
+        # Next-period return aligned to current row (use t+1 close, shift back).
+        fwd = close.pct_change(fill_method=None).shift(-1)
+        return fwd
+    # h-bar return aligned to row t: close[t+h]/close[t] - 1. Deliberately no
+    # pct_change/ffill anywhere: a NaN close at t or t+h must yield a NaN
+    # return, so halted names never bridge a return across a missing bar.
+    fwd = (close.shift(-horizon) / close) - 1
+    # Sample non-overlapping windows anchored to the END of the frame: keep
+    # row t iff (n_rows - 1 - t) % h == 0, so the most recent complete window
+    # is always sampled. Overlapping h-bar windows share h-1 bars of price
+    # data, which autocorrelates consecutive ICs and inflates the naive-iid
+    # t-stat by ~sqrt(h); keeping every h-th row removes that dominant
+    # mechanical inflation, so the existing t_stat/categorise math is a
+    # defensible approximation (standard monthly-IC practice). Residual
+    # autocorrelation from persistent factor exposures is not modeled.
+    n_rows = len(fwd.index)
+    if n_rows:
+        positions = np.arange(n_rows)
+        drop = ((n_rows - 1 - positions) % horizon) != 0
+        if drop.any():
+            fwd.iloc[drop] = np.nan
     return fwd
 
 
@@ -760,9 +997,9 @@ def _bench_one_alpha(
 
     factor_df = registry.compute(alpha_id, panel)
     ic_series = compute_ic_series(factor_df, return_df)
-    if ic_series.empty:
+    if len(ic_series) < 2:
         raise RuntimeError(
-            f"{alpha_id}: IC series empty — insufficient overlap between factor and returns"
+            f"{alpha_id}: insufficient IC observations (need at least 2)"
         )
     ic_mean = float(ic_series.mean())
     ic_std = float(ic_series.std())
@@ -1019,7 +1256,7 @@ def _render_html_manual(ctx: dict[str, Any]) -> str:
 
 
 def _default_output_dir() -> Path:
-    return Path.home() / ".vibe-trading" / "reports"
+    return get_runtime_root() / "reports"
 
 
 def run_alpha_bench(**kwargs: Any) -> dict[str, Any]:
@@ -1036,9 +1273,23 @@ def run_alpha_bench(**kwargs: Any) -> dict[str, Any]:
     except ValueError as exc:
         return {"status": "error", "error": str(exc)}
 
-    top_n = int(kwargs.get("top", 20) or 20)
-    if top_n <= 0:
-        return {"status": "error", "error": "top must be > 0"}
+    top_raw = kwargs.get("top")
+    if top_raw is None:
+        top_n = 20
+    else:
+        try:
+            if isinstance(top_raw, bool) or (isinstance(top_raw, float) and not top_raw.is_integer()):
+                raise ValueError
+            top_n = int(top_raw)
+        except (TypeError, ValueError, OverflowError):
+            return {"status": "error", "error": "top must be an integer > 0"}
+        if top_n <= 0:
+            return {"status": "error", "error": "top must be > 0"}
+
+    try:
+        horizon = _validate_horizon(kwargs.get("horizon", 1))
+    except ValueError as exc:
+        return {"status": "error", "error": str(exc)}
 
     output_dir_raw = kwargs.get("output_dir") or str(_default_output_dir())
     output_dir = Path(output_dir_raw).expanduser().resolve()
@@ -1071,6 +1322,25 @@ def run_alpha_bench(**kwargs: Any) -> dict[str, Any]:
             "error": "no alphas matched the selection (registry empty or filters too narrow)",
         }
 
+    alpha_ids, universe_excluded = _split_alphas_by_universe_support(registry, alpha_ids, universe)
+    if not alpha_ids:
+        return {
+            "status": "error",
+            "error": (
+                f"all {len(universe_excluded)} selected alphas require SEC US filings "
+                f"(fund:* inputs); the {universe!r} universe cannot serve them. "
+                "Choose the S&P 500 universe."
+            ),
+            "universe_excluded": universe_excluded,
+        }
+    if universe_excluded:
+        logger.info(
+            "alpha_bench: %d alpha(s) excluded on %s — fund:* inputs need SEC US filings (sp500): %s",
+            len(universe_excluded),
+            universe,
+            ", ".join(universe_excluded[:10]),
+        )
+
     # Load panel — W4 universe loader fetches constituents + OHLCV (+ amount, vwap).
     try:
         _validate_bench_data_requirements(registry, alpha_ids, universe)
@@ -1087,7 +1357,7 @@ def run_alpha_bench(**kwargs: Any) -> dict[str, Any]:
 
     try:
         panel = _prepare_bench_panel(registry, alpha_ids, panel, universe, period)
-        return_df = _compute_forward_returns(panel)
+        return_df = _compute_forward_returns(panel, horizon=horizon)
     except Exception as exc:
         return {"status": "error", "error": f"forward returns failed: {exc}"}
 
@@ -1130,13 +1400,18 @@ def run_alpha_bench(**kwargs: Any) -> dict[str, Any]:
     except OSError as exc:
         return {"status": "error", "error": f"failed to write report: {exc}"}
 
-    return {
+    envelope: dict[str, Any] = {
         "status": "ok",
         "report_path": str(report_path),
         "n_alphas_tested": len(results),
         "n_skipped": len(failures),
+        "horizon": horizon,
+        "forward_return_sampling": "non_overlapping" if horizon > 1 else "daily",
         "top": top,
     }
+    if universe_excluded:
+        envelope["universe_excluded"] = universe_excluded
+    return envelope
 
 
 class AlphaBenchTool(BaseTool):
@@ -1175,6 +1450,16 @@ class AlphaBenchTool(BaseTool):
                 "type": "integer",
                 "default": 20,
                 "description": "Report the top-N alphas ranked by IR.",
+            },
+            "horizon": {
+                "type": "integer",
+                "default": 1,
+                "description": (
+                    "Forward-return horizon in bars. 1 = next-bar (default). "
+                    "h>1 computes h-bar forward returns and samples IC rows "
+                    "non-overlapping (end-anchored); 21 ≈ monthly, the "
+                    "conventional horizon for fundamental factors. Range 1-252."
+                ),
             },
             "output_dir": {
                 "type": "string",

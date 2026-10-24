@@ -72,7 +72,7 @@ BADGE_ORDER = ("skills", "brokers", "presets", "alphas", "engines", "quantlib")
 # each other, which they did while all five were uniformly wrong — eToro
 # shipped as the 13th connector and the pin stayed at 12. Same again for
 # KIS, Upbit, Toss and Scalable Capital, which landed together as 15-18.
-EXPECTED_BROKERS = 18
+EXPECTED_BROKERS = 19
 
 
 def _read(name: str) -> str:
@@ -291,7 +291,7 @@ def test_repo_tree_states_the_real_mcp_count(name: str) -> None:
 # Environment variables that make a credential-gated tool register. The
 # repository-tree line has always carried the keyless registry size (the count a
 # fresh install sees), so those gates are closed while measuring it.
-_CREDENTIAL_GATES = ("FRED_API_KEY", "VIBE_TRADING_IWENCAI_KEY", "QVERIS_API_KEY", "VIBE_TW_STOCK_DB")
+_CREDENTIAL_GATES = ("GILDATA_TOKEN", "FRED_API_KEY", "VIBE_TRADING_IWENCAI_KEY", "QVERIS_API_KEY", "VIBE_TW_STOCK_DB")
 
 
 @functools.lru_cache(maxsize=1)

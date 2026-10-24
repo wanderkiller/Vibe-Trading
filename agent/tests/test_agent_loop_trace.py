@@ -79,7 +79,8 @@ def test_tool_call_trace_redacts_args_and_structured_results(tmp_path: Path) -> 
     result_payload = json.loads(tool_result["result"])
     assert result_payload["authorization"] == "[redacted]"
     assert result_payload["nested"]["api_key"] == "[redacted]"
-    assert messages[0]["content"].count("secret-token") == 1
+    assert "secret-token" not in messages[0]["content"]
+    assert json.loads(messages[0]["content"])["symbol"] == "AAPL"
 
 
 class _LongAnswerResponse:
@@ -100,6 +101,7 @@ class _LongAnswerLLM:
         timeout: int | None = None,
         idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
+        on_waiting_chunk=None,
     ) -> _LongAnswerResponse:
         del messages, tools, on_reasoning_chunk
         if on_text_chunk:

@@ -7,9 +7,11 @@ no new dependencies.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-from datetime import datetime, timedelta
+import math
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import pandas as pd
@@ -141,6 +143,20 @@ def _compute_volume_stats(
     return {"latest": latest, "sma_20": sma, "ratio_20": ratio}
 
 
+def _dataset_fingerprint(
+    close: pd.Series, volume: pd.Series | None, interval: str
+) -> str:
+    """SHA-256 of the exact bars (date, close, volume) the indicators use."""
+    volumes = volume.tolist() if volume is not None else []
+    volumes += [None] * (len(close) - len(volumes))
+    bars = [
+        [str(label), float(price), None if pd.isna(vol) else float(vol)]
+        for label, price, vol in zip(close.index, close, volumes)
+    ]
+    canonical = json.dumps([interval, bars], separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _compute_sma(close: pd.Series, period: int) -> float | None:
     """Simple moving average over the last *period* bars."""
     if len(close) < period:
@@ -177,6 +193,33 @@ def _compute_rsi(close: pd.Series, period: int = _RSI_PERIOD) -> float | None:
     return float(100.0 - (100.0 / (1.0 + rs)))
 
 
+def _round_keeping_precision(value: float, min_decimals: int, reference: float | None = None) -> float:
+    """Round to ``min_decimals`` places, widening for tiny magnitudes.
+
+    A fixed 2- or 4-decimal round collapses the output of a sub-penny asset
+    (e.g. a 1.2e-5 crypto price) to 0.0. Keep at least four significant digits
+    of each nonzero value, using ``reference`` only if it requires more
+    precision; ordinary prices keep ``min_decimals``. Python's decimal-place
+    count can exceed 15 for tiny floats without claiming more significant
+    digits than the input carries.
+
+    Args:
+        value: Indicator value to round.
+        min_decimals: Minimum number of decimal places.
+        reference: Optional scale of the related indicator.
+
+    Returns:
+        Rounded value with at least four significant digits when nonzero.
+    """
+    if not math.isfinite(value) or value == 0:
+        return round(value, min_decimals)
+    ref = abs(value)
+    if reference is not None and math.isfinite(reference) and reference != 0:
+        ref = min(ref, abs(reference))
+    decimals = max(min_decimals, 3 - math.floor(math.log10(ref)))
+    return round(value, decimals)
+
+
 def _compute_macd(
     close: pd.Series,
     fast: int = _MACD_FAST,
@@ -191,10 +234,12 @@ def _compute_macd(
     macd_line = ema_fast - ema_slow
     signal_line = macd_line.ewm(span=signal, adjust=False).mean()
     histogram = macd_line - signal_line
+    macd_last = float(macd_line.iloc[-1])
+    signal_last = float(signal_line.iloc[-1])
     return {
-        "macd_line": round(float(macd_line.iloc[-1]), 4),
-        "signal_line": round(float(signal_line.iloc[-1]), 4),
-        "histogram": round(float(histogram.iloc[-1]), 4),
+        "macd_line": _round_keeping_precision(macd_last, 4, reference=macd_last),
+        "signal_line": _round_keeping_precision(signal_last, 4, reference=macd_last),
+        "histogram": _round_keeping_precision(float(histogram.iloc[-1]), 4, reference=macd_last),
     }
 
 
@@ -208,10 +253,12 @@ def _compute_bollinger(
         return None
     sma = close.rolling(window=period).mean()
     std = close.rolling(window=period).std()
+    middle = float(sma.iloc[-1])
+    spread = num_std * float(std.iloc[-1])
     return {
-        "upper": round(float(sma.iloc[-1] + num_std * std.iloc[-1]), 2),
-        "middle": round(float(sma.iloc[-1]), 2),
-        "lower": round(float(sma.iloc[-1] - num_std * std.iloc[-1]), 2),
+        "upper": _round_keeping_precision(middle + spread, 2, reference=middle),
+        "middle": _round_keeping_precision(middle, 2, reference=middle),
+        "lower": _round_keeping_precision(middle - spread, 2, reference=middle),
     }
 
 
@@ -229,9 +276,10 @@ class TechnicalIndicatorTool(BaseTool):
         "Compute common technical indicators (RSI, MACD, Bollinger Bands, "
         "SMA, EMA) plus latest/20-bar volume statistics for a trading symbol "
         "(volume.unit is the serving source's declared unit -- lots or shares -- "
-        "or null when undeclared). "
-        "Uses the project's data loaders "
-        "to fetch price history, then computes indicators locally."
+        "or null when undeclared). Returns read_identity with the acquisition "
+        "boundary, serving provenance and a fingerprint of the exact bars used. "
+        "Uses the project's data loaders to fetch price history, then computes "
+        "indicators locally."
     )
     parameters = {
         "type": "object",
@@ -255,6 +303,14 @@ class TechnicalIndicatorTool(BaseTool):
                     "More bars = more accurate long-term indicators (SMA 200)."
                 ),
                 "default": _DEFAULT_LOOKBACK,
+            },
+            "end_date": {
+                "type": "string",
+                "description": (
+                    "Optional YYYY-MM-DD acquisition boundary. Omit it for the "
+                    "current local date. The boundary pins the requested period; "
+                    "read_identity.dataset_fingerprint identifies the exact bars used."
+                ),
             },
         },
         "required": ["symbol"],
@@ -287,10 +343,22 @@ class TechnicalIndicatorTool(BaseTool):
             lookback = _DEFAULT_LOOKBACK
         lookback = max(10, min(lookback, _MAX_LOOKBACK))
 
-        # Fetch enough bars to cover the longest indicator window + buffer.
-        end_date = datetime.now().strftime("%Y-%m-%d")
+        # One clock read per call, or an explicit zero-padded YYYY-MM-DD boundary.
+        end_date_raw = str(kwargs.get("end_date") or "").strip()
+        if end_date_raw:
+            try:
+                reference_date = date.fromisoformat(end_date_raw)
+            except ValueError:
+                reference_date = None
+            if reference_date is None or reference_date.isoformat() != end_date_raw:
+                return json.dumps(
+                    {"ok": False, "error": "end_date must use YYYY-MM-DD"}
+                )
+        else:
+            reference_date = datetime.now().date()
+        end_date = reference_date.isoformat()
         days = lookback * _CALENDAR_DAYS_PER_BAR.get(interval, 2)
-        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        start_date = (reference_date - timedelta(days=days)).isoformat()
 
         try:
             data = fetch_market_data(
@@ -375,6 +443,15 @@ class TechnicalIndicatorTool(BaseTool):
                 "interval": interval,
                 "latest_close": latest_close,
                 "latest_date": latest_date,
+                "read_identity": {
+                    "mode": "pinned_boundary" if end_date_raw else "latest_boundary",
+                    "requested_end_date": end_date,
+                    "bar_count": len(close),
+                    "dataset_fingerprint": _dataset_fingerprint(
+                        close, volume, interval
+                    ),
+                    "provenance": provenance if isinstance(provenance, dict) else None,
+                },
                 "indicators": indicators,
             },
             ensure_ascii=False,

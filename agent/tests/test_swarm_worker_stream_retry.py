@@ -67,7 +67,7 @@ class _FlakyChatLLM:
         """No-op: the stub owns no HTTP client."""
         return self
 
-    def stream_chat(self, messages, tools=None, on_text_chunk=None, timeout=None) -> LLMResponse:
+    def stream_chat(self, messages, tools=None, on_text_chunk=None, timeout=None, on_waiting_chunk=None) -> LLMResponse:
         """Raise the next queued error or return the final response.
 
         Args:
@@ -193,3 +193,15 @@ def test_non_retryable_4xx_fails_without_retry(monkeypatch, tmp_path):
     assert result.status == "failed"
     assert "LLM call failed at iteration 0" in (result.error or "")
     assert llm.calls == 1
+
+
+def test_failed_stream_usage_survives_retry_and_worker_failure(monkeypatch, tmp_path):
+    """Paid partial calls stay in totals, even if no deliverable is released."""
+    usage = {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}
+    errors = [ProviderStreamError(provider="deepseek", model="test-model",
+              original=ConnectionError("incomplete stream"), usage_metadata=usage)
+              for _ in range(2)]
+    result = _run(monkeypatch, tmp_path, _FlakyChatLLM(errors, LLMResponse(content=FINAL_TEXT)))
+    assert result.status == "failed"
+    assert result.input_tokens == 200
+    assert result.output_tokens == 40

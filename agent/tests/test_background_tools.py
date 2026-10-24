@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.tools import background_tools
+from tests.module_os_helpers import patch_module_os
 from src.tools.background_tools import BackgroundManager
 
 
@@ -345,3 +346,35 @@ def test_timeout_kills_descendant_and_reaps_shell(
     assert processes[0].poll() is not None
     time.sleep(1.0)
     assert not orphan_marker.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group regression")
+def test_signalling_a_group_that_only_holds_unreaped_children_is_not_an_error() -> None:
+    """macOS answers EPERM for a group whose members exited but are unreaped."""
+    import subprocess
+
+    process = subprocess.Popen(["sh", "-c", "exit 0"], start_new_session=True)
+    try:
+        time.sleep(0.5)
+        background_tools._signal_posix_process_group(process, __import__("signal").SIGKILL)
+    finally:
+        process.wait()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group regression")
+def test_timeout_stays_timeout_when_the_final_group_signal_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_killpg = os.killpg
+
+    def killpg(pid: int, sig: int) -> None:
+        if sig == __import__("signal").SIGKILL:
+            raise PermissionError(1, "Operation not permitted")
+        real_killpg(pid, sig)
+
+    monkeypatch.setattr(background_tools, "_COMMAND_TIMEOUT_SECONDS", 0.5)
+    patch_module_os(monkeypatch, background_tools, killpg=killpg)
+    manager = BackgroundManager()
+    task = _execute(manager, "slow", f"{shlex.quote(sys.executable)} -c 'import time; time.sleep(5)'")
+
+    assert task["status"] == "timeout"

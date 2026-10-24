@@ -23,8 +23,8 @@ jobs:
           python-version: '3.11'
           cache: pip
       - name: Install isolated public-source dependencies
-        # mootdx requires an older httpx than the application; do not install
-        # these optional SDKs into the application's dependency environment.
+        # These optional SDKs are pinned tighter than the application's stack;
+        # do not install them into the application's dependency environment.
         run: |
           python -m venv "$RUNNER_TEMP/loader-health-venv"
           "$RUNNER_TEMP/loader-health-venv/bin/python" -m pip install -r tools/requirements-loader-health.txt
@@ -33,7 +33,7 @@ jobs:
         run: '"$RUNNER_TEMP/loader-health-venv/bin/python" -m backtest.loader_health --output "$RUNNER_TEMP/loader-health.json"'
       - name: Retain sanitized health report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: public-loader-health
           path: ${{ runner.temp }}/loader-health.json

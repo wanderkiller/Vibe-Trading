@@ -19,6 +19,7 @@ import pytest
 from pydantic import ValidationError
 
 import src.agent.loop as loop_mod
+import src.agent.tuning as tuning_mod
 import src.swarm.worker as worker_mod
 from src.config.env_schema import AgentTuningConfig, SwarmConfig
 from src.providers.chat import LLMResponse, ProviderStreamError, ToolCallRequest
@@ -71,7 +72,7 @@ class _ScriptedWorkerLLM:
         """No-op: the stub owns no HTTP client."""
         return None
 
-    def stream_chat(self, messages, tools=None, on_text_chunk=None, timeout=None):
+    def stream_chat(self, messages, tools=None, on_text_chunk=None, timeout=None, on_waiting_chunk=None):
         """Play the next scripted entry, or repeat the final response."""
         self.calls += 1
         if self._script:
@@ -324,6 +325,7 @@ class _FlakyLoopLLM:
         timeout: int | None = None,
         idle_timeout_s: float | None = None,
         should_cancel: Callable[[], bool] | None = None,
+        on_waiting_chunk=None,
     ) -> LLMResponse:
         """Raise the next queued error or return the final response."""
         self.calls += 1
@@ -359,8 +361,8 @@ def _run_loop(
 
     sleeps: list[float] = []
     monkeypatch.setattr(loop_mod._time, "sleep", lambda s: sleeps.append(s))
-    monkeypatch.setattr(loop_mod, "STREAM_RETRY_DELAY_S", 1.0)
-    monkeypatch.setattr(loop_mod, "STREAM_RETRY_MAX_DELAY_S", 8.0)
+    monkeypatch.setattr(tuning_mod, "STREAM_RETRY_DELAY_S", 1.0, raising=False)
+    monkeypatch.setattr(tuning_mod, "STREAM_RETRY_MAX_DELAY_S", 8.0, raising=False)
     pm = PersistentMemory()
     agent = AgentLoop(
         registry=build_registry(persistent_memory=pm, include_shell_tools=False),
@@ -428,8 +430,8 @@ def test_loop_non_retryable_error_no_sleep(monkeypatch, tmp_path: Path) -> None:
 
 def test_loop_backoff_helper_escalates_and_caps(monkeypatch) -> None:
     """The loop's capped-exponential helper escalates 1→2→4 and caps at max."""
-    monkeypatch.setattr(loop_mod, "STREAM_RETRY_DELAY_S", 1.0)
-    monkeypatch.setattr(loop_mod, "STREAM_RETRY_MAX_DELAY_S", 8.0)
+    monkeypatch.setattr(tuning_mod, "STREAM_RETRY_DELAY_S", 1.0, raising=False)
+    monkeypatch.setattr(tuning_mod, "STREAM_RETRY_MAX_DELAY_S", 8.0, raising=False)
 
     assert loop_mod._stream_retry_backoff_s(1) == 1.0
     assert loop_mod._stream_retry_backoff_s(2) == 2.0
@@ -495,8 +497,8 @@ def test_loop_cancel_during_retry_delay_returns_without_waiting_it_out(
     from src.memory.persistent import PersistentMemory
     from src.tools import build_registry
 
-    monkeypatch.setattr(loop_mod, "STREAM_RETRY_DELAY_S", 30.0)
-    monkeypatch.setattr(loop_mod, "STREAM_RETRY_MAX_DELAY_S", 30.0)
+    monkeypatch.setattr(tuning_mod, "STREAM_RETRY_DELAY_S", 30.0, raising=False)
+    monkeypatch.setattr(tuning_mod, "STREAM_RETRY_MAX_DELAY_S", 30.0, raising=False)
     pm = PersistentMemory()
     agent = AgentLoop(
         registry=build_registry(persistent_memory=pm, include_shell_tools=False),

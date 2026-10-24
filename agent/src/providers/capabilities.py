@@ -176,6 +176,14 @@ _COPILOT_CAPABILITIES = ProviderCapabilities(
 )
 
 
+# The local Claude Code CLI is driven as a subprocess in ``build_llm``; it has
+# no HTTP endpoint or key of its own. The base-URL variable is never read — the
+# settings UI requires one per provider.
+_CLAUDE_CLI_CAPABILITIES = ProviderCapabilities(
+    "claude-cli", None, "CLAUDE_CLI_BASE_URL"
+)
+
+
 _PROVIDERS: dict[str, ProviderCapabilities] = {
     # ``gpt-5.6-*`` reject function tools on /v1/chat/completions unless the
     # request carries an explicit ``reasoning_effort`` — including the literal
@@ -257,6 +265,7 @@ _PROVIDERS: dict[str, ProviderCapabilities] = {
     "ollama": ProviderCapabilities("ollama", None, "OLLAMA_BASE_URL"),
     "copilot": _COPILOT_CAPABILITIES,
     "github-copilot": _COPILOT_CAPABILITIES,
+    "claude-cli": _CLAUDE_CLI_CAPABILITIES,
     "openai-codex": _OPENAI_CODEX_CAPABILITIES,
     "openai_codex": _OPENAI_CODEX_CAPABILITIES,
     "opencode": _OPENCODE_CAPABILITIES,
@@ -306,6 +315,8 @@ def get_provider_capabilities(
         the explicit provider choice always wins.
     """
     normalized = (provider or "").strip().lower().replace("_", "-")
+    if normalized == "custom":
+        return ProviderCapabilities("custom", None, "OPENAI_BASE_URL", capture_reasoning=True)
     if normalized == "openai-codex":
         return _PROVIDERS["openai-codex"]
     if normalized and normalized != "openai":
@@ -386,6 +397,13 @@ def get_llm_credentials(
         preflight, environment synchronization, and runtime construction all
         consume the same endpoint.
     """
+    normalized_provider = (provider or "").strip().lower().replace("_", "-")
+    if normalized_provider == "custom":
+        from src.providers.custom_profiles import active_provider_credentials
+
+        active = active_provider_credentials()
+        return {"provider": "custom", **active}
+
     caps = get_provider_capabilities(provider, model)
     key_env, base_env = caps.api_key_env, caps.base_url_env
 

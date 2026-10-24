@@ -182,7 +182,8 @@ class SkillsLoader:
         if self._user_skills_dir:
             skill = _load_skill_dir(self._user_skills_dir / name)
             if skill:
-                self.skills.append(skill)
+                if not any(existing.name == skill.name for existing in self.skills):
+                    self.skills.append(skill)
                 return f'<skill name="{name}">\n{skill.body}\n</skill>'
 
         available = ", ".join(s.name for s in self.skills)
@@ -342,7 +343,8 @@ def find_sections(sections: List[SkillSection], wanted: str) -> List[SkillSectio
     parts = [part for part in parts if part]
     if not parts:
         return []
-    key = _normalize_title(parts[-1])
+    leaf_exact = " ".join(parts[-1].replace("#", " ").split())
+    key = leaf_exact.casefold()
     wanted_ancestors = [_normalize_title(part) for part in parts[:-1]]
     if not key:
         return []
@@ -355,6 +357,13 @@ def find_sections(sections: List[SkillSection], wanted: str) -> List[SkillSectio
         return not remaining
 
     for predicate in (
+        # A case-exact match comes first so that submitting the exact
+        # qualified path a prior ambiguous-match error suggested actually
+        # disambiguates, instead of casefolding straight back into the same
+        # tie -- two headings differing only by case (e.g. "Setup"/"setup")
+        # would otherwise report as ambiguous no matter which suggested
+        # path the caller resubmits.
+        lambda title: " ".join(title.replace("#", " ").split()) == leaf_exact,
         lambda title: _normalize_title(title) == key,
         lambda title: _normalize_title(title).startswith(key),
     ):

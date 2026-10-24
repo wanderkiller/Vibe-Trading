@@ -22,6 +22,7 @@ from typing import Any, Callable
 from src.agent.progress import emit_progress
 from src.agent.tools import BaseTool
 from src.security.scanner import with_security_warnings
+from src.tools.ocr import get_ocr_engine, get_ocr_install_hint
 from src.tools.path_utils import safe_document_path
 
 _MAX_CHARS = 15000
@@ -44,7 +45,6 @@ _TEXT_EXTS = {
     ".dockerfile", ".makefile", ".cmake",
 }
 
-from src.tools.ocr import get_ocr_engine, get_ocr_install_hint
 
 _cached_ocr_engine = None
 _cached_ocr_checked = False
@@ -146,12 +146,15 @@ def _read_pdf(path: Path, pages: str, min_text_per_page: int = _MIN_TEXT_PER_PAG
         ocr_pages = 0
         ocr_attempted_pages = 0  # pages where OCR ran but returned empty
         skipped_pages = 0
+        native_text_without_ocr = False
+        qualified_native_pages = 0
         for idx, i in enumerate(targets, start=1):
             if not 0 <= i < total_pages:
                 continue
             page = doc[i]
             text = page.get_textpage().get_text_range().strip()
             if len(text) >= min_text_per_page:
+                qualified_native_pages += 1
                 chunks.append(f"--- Page {i + 1} ---\n{text}")
                 emit_progress(
                     "reading_pdf",
@@ -161,12 +164,22 @@ def _read_pdf(path: Path, pages: str, min_text_per_page: int = _MIN_TEXT_PER_PAG
                 )
                 continue
             if not _ocr_available():
-                skipped_pages += 1
+                if text:
+                    # Enrich an accepted mixed document with available text;
+                    # the qualifying-page gate below preserves OCR refusal.
+                    chunks.append(f"--- Page {i + 1} ---\n{text}")
+                    native_text_without_ocr = True
+                else:
+                    skipped_pages += 1
                 emit_progress(
                     "reading_pdf",
                     current=idx,
                     total=total_targets,
-                    message=f"page {i + 1}/{total_pages} (skipped: no OCR)",
+                    message=(
+                        f"page {i + 1}/{total_pages} (native text only: no OCR)"
+                        if text
+                        else f"page {i + 1}/{total_pages} (skipped: no OCR)"
+                    ),
                 )
                 continue
             bitmap = page.render(scale=300 / 72)
@@ -197,6 +210,13 @@ def _read_pdf(path: Path, pages: str, min_text_per_page: int = _MIN_TEXT_PER_PAG
                 f"extractable text, and no OCR engine is available. {hint}"
             )
         engine = _get_ocr()
+        if native_text_without_ocr and not qualified_native_pages and not ocr_pages:
+            hint = get_ocr_install_hint(engine)
+            return _err(
+                "Selected PDF pages contain only native text below "
+                f"min_text_per_page ({min_text_per_page}), and no OCR engine "
+                f"is available. {hint}"
+            )
 
         # Compute OCR quality metrics
         pages_read = len(targets)
@@ -206,7 +226,7 @@ def _read_pdf(path: Path, pages: str, min_text_per_page: int = _MIN_TEXT_PER_PAG
             if ocr_attempted_pages > 0:
                 # OCR was attempted but returned no usable text
                 quality_flag = "degraded"
-            elif skipped_pages:
+            elif skipped_pages or native_text_without_ocr:
                 quality_flag = "no_ocr_engine"
             else:
                 quality_flag = "no_ocr_needed"
@@ -239,16 +259,23 @@ def _read_pdf(path: Path, pages: str, min_text_per_page: int = _MIN_TEXT_PER_PAG
 def _read_docx(path: Path) -> str:
     try:
         import docx  # type: ignore
+        from docx.text.paragraph import Paragraph
     except ImportError:
         return _err("python-docx not installed; run: pip install python-docx")
 
     doc = docx.Document(str(path))
-    parts: list[str] = [p.text for p in doc.paragraphs if p.text.strip()]
-    for t_idx, table in enumerate(doc.tables, start=1):
-        parts.append(f"\n--- Table {t_idx} ---")
-        for row in table.rows:
-            cells = [c.text.strip().replace("\n", " ") for c in row.cells]
-            parts.append(" | ".join(cells))
+    parts: list[str] = []
+    table_count = 0
+    for block in doc.iter_inner_content():
+        if isinstance(block, Paragraph):
+            if block.text.strip():
+                parts.append(block.text)
+        else:
+            table_count += 1
+            parts.append(f"\n--- Table {table_count} ---")
+            for row in block.rows:
+                cells = [c.text.strip().replace("\n", " ") for c in row.cells]
+                parts.append(" | ".join(cells))
     return _envelope(path, "docx", "\n".join(parts), paragraphs=len(doc.paragraphs), tables=len(doc.tables))
 
 
@@ -271,7 +298,7 @@ def _read_excel(path: Path) -> str:
             total=total_sheets,
             message=f"sheet {name}",
         )
-        df = xls.parse(name, dtype=str)
+        df = xls.parse(name, dtype=str, keep_default_na=False, na_values=[""])
         preview = df.head(100).to_string(index=False)
         parts.append(f"--- Sheet: {name} ({len(df)} rows × {len(df.columns)} cols) ---\n{preview}")
         sheet_info.append({"name": name, "rows": len(df), "cols": len(df.columns)})
@@ -283,19 +310,35 @@ def _read_excel(path: Path) -> str:
 def _read_pptx(path: Path) -> str:
     try:
         from pptx import Presentation  # type: ignore
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
     except ImportError:
         return _err("python-pptx not installed; run: pip install python-pptx")
 
     prs = Presentation(str(path))
     parts: list[str] = []
-    for idx, slide in enumerate(prs.slides, start=1):
-        parts.append(f"--- Slide {idx} ---")
-        for shape in slide.shapes:
-            if shape.has_text_frame:
+    def append_shapes(shapes) -> None:
+        """Append native text once in the existing shape-tree order."""
+        for shape in shapes:
+            if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+                append_shapes(shape.shapes)
+            elif shape.has_table:
+                for row in shape.table.rows:
+                    cells = [
+                        cell.text.strip().replace("\n", " ")
+                        for cell in row.cells
+                        if not cell.is_spanned
+                    ]
+                    if any(cells):
+                        parts.append(" | ".join(cells))
+            elif shape.has_text_frame:
                 for para in shape.text_frame.paragraphs:
                     line = "".join(run.text for run in para.runs).strip()
                     if line:
                         parts.append(line)
+
+    for idx, slide in enumerate(prs.slides, start=1):
+        parts.append(f"--- Slide {idx} ---")
+        append_shapes(slide.shapes)
     return _envelope(path, "pptx", "\n".join(parts), slides=len(prs.slides))
 
 

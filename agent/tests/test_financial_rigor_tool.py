@@ -91,6 +91,35 @@ def test_market_cap_fields() -> None:
     assert out["deviation_pct"] == pytest.approx(0.0839, abs=1e-3)
 
 
+def test_market_cap_zero_reported_cap_fails_against_nonzero_product() -> None:
+    out = verify_market_cap(510, 9.11e9, 0)
+    assert out["verdict"] == "fail"
+    assert out["deviation_pct"] is None
+
+
+def test_market_cap_zero_reported_cap_matches_zero_product() -> None:
+    out = verify_market_cap(0, 9.11e9, 0)
+    assert out["verdict"] == "pass"
+    assert out["deviation_pct"] == 0.0
+
+
+def test_cross_validate_flags_a_value_against_a_zero_median() -> None:
+    out = cross_validate("revenue", {"a": 0, "b": 0, "c": 5})
+    assert out["all_consistent"] is False
+    by_source = {row["source"]: row for row in out["per_source"]}
+    assert by_source["c"]["consistent"] is False
+    assert by_source["c"]["deviation_pct"] is None
+    assert by_source["a"]["consistent"] is True
+
+
+def test_cross_validate_negative_median_uses_magnitude() -> None:
+    out = cross_validate("net_income", {"a": -100, "b": -50, "c": -75})
+    assert out["all_consistent"] is False
+    by_source = {row["source"]: row for row in out["per_source"]}
+    assert by_source["a"]["deviation_pct"] == pytest.approx(33.3333, abs=1e-3)
+    assert by_source["a"]["consistent"] is False
+
+
 # ── verify_valuation ──────────────────────────────────────────────────────
 
 
@@ -277,6 +306,31 @@ def test_execute_three_scenario_validates_growth_shape() -> None:
         growth=[0.1, 0.2], pe=[25, 20, 15],  # growth has only 2 entries
     )
     assert env["status"] == "error"
+
+
+def test_execute_cross_validate_honors_explicit_zero_tolerance() -> None:
+    # tolerance_pct=0 asks for exact agreement; it must not fall back to 2.0.
+    env = _run(command="cross_validate", field="revenue", source_values={"a": 100, "b": 101, "c": 100}, tolerance_pct=0)
+    assert env["tolerance_pct"] == 0.0
+    assert env["all_consistent"] is False
+    by_source = {row["source"]: row["consistent"] for row in env["per_source"]}
+    assert by_source == {"a": True, "b": False, "c": True}
+
+
+def test_execute_cross_validate_omitted_tolerance_defaults_to_two_percent() -> None:
+    for extra in ({}, {"tolerance_pct": None}):
+        env = _run(command="cross_validate", field="revenue", source_values={"a": 100, "b": 101, "c": 100}, **extra)
+        assert env["tolerance_pct"] == 2.0
+        assert env["all_consistent"] is True
+
+
+def test_execute_three_scenario_honors_explicit_zero_years() -> None:
+    # years=0 values the current EPS at the target PE; it must not become 3.
+    env = _run(command="three_scenario", price=100, eps=5, shares=1, growth=[0.1, 0.1, 0.1], pe=[20, 15, 10], years=0)
+    assert env["years"] == 0
+    base = next(s for s in env["scenarios"] if s["scenario"] == "base")
+    assert base["future_eps"] == 5.0
+    assert base["target_price"] == 75.0
 
 
 @pytest.mark.parametrize("value, digit", [
