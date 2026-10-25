@@ -2636,7 +2636,7 @@
       },
       "FamilyCreateRequest": {
         "additionalProperties": false,
-        "description": "`POST /families`: register a hypothesis family (research credentials only; owned by the credential's rotation-chain\nroot). The first out-of-sample review run naming a family binds it to the reviewed IR's lineage (kind and universe).\nThe vault budget is per (chain root, lineage): at most `vault_reviews_per_lineage` distinct IRs (default 1) are ever\nreviewed out of sample per lineage, whatever family they name (`vault.budget`). At most `families_per_30d` families\n(default 10) per chain root per rolling 30 days; each new family is a `vault_family_create` trial in the ledger.",
+        "description": "`POST /families`: register a hypothesis family (research credentials only; owned by the credential's rotation-chain\nroot). The first out-of-sample review run naming a family binds it to the reviewed IR's lineage (kind and universe).\nThe vault budget is per (chain root, lineage): at most `vault_reviews_per_lineage` distinct IRs (default 1) are ever\nreviewed out of sample per lineage, whatever family they name (`vault.budget`); independently of lineage, at most\n`vault_reviews_per_root_per_30d` distinct IRs (default 2) per chain root per rolling 30 days, each accepted review a\n`vault_review` trial in the ledger. At most `families_per_30d` families (default 3) per chain root per rolling 30 days;\neach new family is a `vault_family_create` trial in the ledger.",
         "properties": {
           "description": {
             "$ref": "#/components/schemas/Text"
@@ -5807,7 +5807,7 @@
             "serviceCredential": []
           }
         ],
-        "summary": "Register a hypothesis family (research credentials, owned by the rotation-chain root); bound to the lineage of its first out-of-sample review; the vault budget is per (chain root, lineage), N distinct IRs per lineage ever (403 vault.budget); at most K new families per chain root per 30 days (403 vault.budget), each a ledger trial; an idempotent replay omits vault_budget_remaining",
+        "summary": "Register a hypothesis family (research credentials, owned by the rotation-chain root); bound to the lineage of its first out-of-sample review; the vault budget is per (chain root, lineage), N distinct IRs per lineage ever, and at most M distinct IRs per chain root per 30 days across lineages (403 vault.budget); at most K new families per chain root per 30 days (403 vault.budget), each a ledger trial; an idempotent replay omits vault_budget_remaining",
         "tags": [
           "research"
         ]
