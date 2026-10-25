@@ -625,6 +625,23 @@ class ResultWindow(BaseModel):
     start_ms: Annotated[int, Field(ge=0)]
 
 
+class ReviewVerdictCounts(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    fail: Annotated[int, Field(ge=0)]
+    not_judged: Annotated[int, Field(ge=0)]
+    pass_: Annotated[int, Field(alias="pass", ge=0)]
+
+
+class ReviewVerdictSummary(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    counts: ReviewVerdictCounts
+    passed: bool | None
+
+
 class RunManifestBuilder(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1291,6 +1308,39 @@ class ExecutionProfileSampling(BaseModel):
     )
     drawdown: ExecutionProfileSamplingDrawdown
     valuation: ExecutionProfileSamplingValuation
+
+
+class Family(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    created_ms: int
+    description: Text
+    family_id: Id
+    name: Annotated[str, Field(max_length=128, min_length=1)]
+    vault_budget_remaining: Annotated[
+        int,
+        Field(
+            description="Review runs this family may still be named by: 1 when registered, 0 once a review run used it.",
+            ge=0,
+            le=1,
+        ),
+    ]
+
+
+class FamilyCreateRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    description: Text
+    name: Annotated[
+        str,
+        Field(
+            description="Name of the hypothesis family, unique per credential (1–128 characters). Registering the same name again with the\nsame description returns the existing family; a different description is `idempotency.conflict`.",
+            max_length=128,
+            min_length=1,
+        ),
+    ]
 
 
 class InstrumentRef(BaseModel):
