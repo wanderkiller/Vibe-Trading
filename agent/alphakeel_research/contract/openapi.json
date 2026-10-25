@@ -7787,7 +7787,7 @@
             "serviceCredential": []
           }
         ],
-        "summary": "Create a run: native_strategy, ir_strategy (body.ir = a Strategy IR document), fixed_intent_replay or python_policy; idempotent by key",
+        "summary": "Create a run: native_strategy, ir_strategy (body.ir = a Strategy IR document), fixed_intent_replay or python_policy; idempotent by key; a body field generated_by is refused (request.invalid)",
         "tags": [
           "research"
         ]
@@ -8157,7 +8157,7 @@
             "serviceCredential": []
           }
         ],
-        "summary": "Run status and artifact references",
+        "summary": "Run status and artifact references; generated_by (research|review|runner) is set by the service from the submitting credential's kind (runs recorded before it read as research)",
         "tags": [
           "research"
         ]
@@ -10787,7 +10787,7 @@
             "serviceCredential": []
           }
         ],
-        "summary": "Connection check: credential, scopes, contract and build",
+        "summary": "Connection check: credential, credential_kind (research|review|runner), scopes, contract and build",
         "tags": [
           "research"
         ]
