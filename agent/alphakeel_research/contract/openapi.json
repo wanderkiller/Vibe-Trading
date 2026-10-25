@@ -2597,6 +2597,62 @@
         ],
         "type": "object"
       },
+      "Family": {
+        "additionalProperties": false,
+        "description": "A registered hypothesis family.",
+        "properties": {
+          "created_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "description": {
+            "$ref": "#/components/schemas/Text"
+          },
+          "family_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "vault_budget_remaining": {
+            "description": "Review runs this family may still be named by: 1 when registered, 0 once a review run used it.",
+            "format": "int32",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "family_id",
+          "name",
+          "description",
+          "created_ms",
+          "vault_budget_remaining"
+        ],
+        "type": "object"
+      },
+      "FamilyCreateRequest": {
+        "additionalProperties": false,
+        "description": "`POST /families`: register a hypothesis family (research credentials only). Each family carries one vault budget:\none AlphaKeel review run (1.14) may name it; a second review run naming the same family is refused with `vault.budget`.",
+        "properties": {
+          "description": {
+            "$ref": "#/components/schemas/Text"
+          },
+          "name": {
+            "description": "Name of the hypothesis family, unique per credential (1–128 characters). Registering the same name again with the\nsame description returns the existing family; a different description is `idempotency.conflict`.",
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ],
+        "type": "object"
+      },
       "FeeOverride": {
         "additionalProperties": false,
         "description": "Taker fees (decimal strings, fractions of notional) for one venue.",
@@ -3562,6 +3618,53 @@
         "required": [
           "start_ms",
           "end_ms"
+        ],
+        "type": "object"
+      },
+      "ReviewVerdictCounts": {
+        "additionalProperties": false,
+        "description": "Item counts of the verdict card a review run fed (pass / fail / not judged); no values, names or details.",
+        "properties": {
+          "fail": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "not_judged": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pass": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pass",
+          "fail",
+          "not_judged"
+        ],
+        "type": "object"
+      },
+      "ReviewVerdictSummary": {
+        "additionalProperties": false,
+        "description": "`GET /verdicts/{run_id}/summary`: the restricted projection of an AlphaKeel review result (item 1.14 of the latest\nG1 verdict card recorded after the review run was registered) for the research credential that owns the reviewed\nhypothesis family. `passed` is null until such a card exists (or when 1.14 is not applicable).",
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/ReviewVerdictCounts"
+          },
+          "passed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "passed",
+          "counts"
         ],
         "type": "object"
       },
@@ -5514,6 +5617,196 @@
           }
         ],
         "summary": "Pre-flight: scan archive range, funding dataset, capacity estimate",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research/families": {
+      "post": {
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 16,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FamilyCreateRequest"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Family"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "created"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "accepted"
+          },
+          "206": {
+            "description": "partial content"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "bad request body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "missing, invalid or revoked credential"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not found for this credential"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "state or idempotency conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "expired"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "too large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "request invalid or unsupported"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "a bound was hit; retry later"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "engine failure"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "unavailable or switched off"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "disk"
+          }
+        },
+        "security": [
+          {
+            "serviceCredential": []
+          }
+        ],
+        "summary": "Register a hypothesis family (research credentials); each family has one vault budget: one AlphaKeel review run may name it, a second is 403 vault.budget",
         "tags": [
           "research"
         ]
@@ -7787,7 +8080,7 @@
             "serviceCredential": []
           }
         ],
-        "summary": "Create a run: native_strategy, ir_strategy (body.ir = a Strategy IR document), fixed_intent_replay or python_policy; idempotent by key; a body field generated_by is refused (request.invalid)",
+        "summary": "Create a run: native_strategy, ir_strategy (body.ir = a Strategy IR document), fixed_intent_replay or python_policy; idempotent by key; a body field generated_by is refused (request.invalid); an ir_strategy run of a review credential names family_id (a hypothesis family registered by the research credential of IR provenance.research_credential), one review run per family (403 vault.budget)",
         "tags": [
           "research"
         ]
@@ -10619,6 +10912,186 @@
           }
         ],
         "summary": "Validate an alphakeel.handoff.params/1 package against the rules",
+        "tags": [
+          "research"
+        ]
+      }
+    },
+    "/api/v1/research/verdicts/{run_id}/summary": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewVerdictSummary"
+                }
+              }
+            },
+            "description": "ok"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "created"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "accepted"
+          },
+          "206": {
+            "description": "partial content"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "bad request body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "missing, invalid or revoked credential"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "not found for this credential"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "state or idempotency conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "expired"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "too large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "request invalid or unsupported"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "a bound was hit; retry later"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "engine failure"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "unavailable or switched off"
+          },
+          "507": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "disk"
+          }
+        },
+        "security": [
+          {
+            "serviceCredential": []
+          }
+        ],
+        "summary": "Pass/fail summary of an AlphaKeel review run of this credential's own hypothesis family ({passed, counts} only; 404 otherwise); at most N reads per credential per rolling 7 days (403 vault.budget), each read is a trial in the ledger",
         "tags": [
           "research"
         ]
