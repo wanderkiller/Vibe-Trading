@@ -1319,13 +1319,12 @@ class Family(BaseModel):
     family_id: Id
     name: Annotated[str, Field(max_length=128, min_length=1)]
     vault_budget_remaining: Annotated[
-        int,
+        int | None,
         Field(
-            description="Review runs this family may still be named by: 1 when registered, 0 once a review run used it.",
+            description="Distinct IRs that may still be reviewed out of sample in this family's lineage (the configured per-lineage limit\nwhile the family is not yet bound to a lineage). Omitted when the request was an idempotent replay.",
             ge=0,
-            le=1,
         ),
-    ]
+    ] = None
 
 
 class FamilyCreateRequest(BaseModel):
@@ -1336,7 +1335,7 @@ class FamilyCreateRequest(BaseModel):
     name: Annotated[
         str,
         Field(
-            description="Name of the hypothesis family, unique per credential (1–128 characters). Registering the same name again with the\nsame description returns the existing family; a different description is `idempotency.conflict`.",
+            description="Name of the hypothesis family, unique per credential chain (1–128 characters). Registering the same name again with the\nsame description returns the existing family; a different description is `idempotency.conflict`.",
             max_length=128,
             min_length=1,
         ),
