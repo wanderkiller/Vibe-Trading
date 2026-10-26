@@ -83,7 +83,10 @@ def test_battery_output_has_every_item_and_agrees_with_its_own_facts(tmp_path):
     assert list(got) == ORDER
     f = doc["rating"]["facts"]
     assert got["1.1"]["result"] == "FAIL" and f["days"] < 90  # a 6-hour window
-    assert got["1.2"]["result"] == "FAIL" and f["trades_closed"] < 30
+    assert got["1.2"]["result"] == "FAIL" and f["entries_distinct"] < 30  # protocol 3.0 counts distinct entries
+    rows = [json.loads(x) for x in (tmp_path / "rb" / "runs" / "base" / "trades.jsonl").read_text().splitlines() if x.strip()]
+    assert f["entries_distinct"] == sum(1 for r in rows if r["status"] == "closed")  # a 6-hour window: no open entry reaches 7 days
+    assert doc["statistics"]["bootstrap"] is None or doc["statistics"]["bootstrap"].get("block_rule") == "max_politis_white_median_hold"
     assert got["1.3"]["result"] == ("PASS" if Decimal(f["base_net"]) > 0 else "FAIL")
     assert got["1.4"]["result"] == ("PASS" if Decimal(doc["cost_stress"]["1.5"]["net"]) > 0 else "FAIL")
     bs = doc["cost_stress"]["basis_stress_x2"]  # not_applicable (net null) when the IR reads neither stress feature: 1.5 fails
@@ -129,7 +132,7 @@ def _mutate(path, value, *, filter_on=False):
 
 WRONG_TYPES = [  # (item, path, wrong value, needs a filter under test)
     ("1.1", ("rating", "facts", "days"), 120.0, False), ("1.1", ("rating", "facts", "days"), True, False), ("1.1", ("rating", "facts", "days"), "120", False),
-    ("1.2", ("rating", "facts", "trades_closed"), 45.0, False), ("1.2", ("rating", "facts", "trades_closed"), "45", False),
+    ("1.2", ("rating", "facts", "entries_distinct"), 45.0, False), ("1.2", ("rating", "facts", "entries_distinct"), "45", False),
     ("1.3", ("rating", "facts", "base_net"), 152.3, False), ("1.3", ("rating", "facts", "base_net"), True, False),
     ("1.4", ("cost_stress", "1.5", "net"), 98.1, False), ("1.5", ("cost_stress", "basis_stress_x2", "net"), 120, False),
     ("1.6", ("statistics", "dsr_inputs", "trials"), 7.0, False), ("1.6", ("statistics", "dsr_inputs", "trials"), True, False),
@@ -195,3 +198,66 @@ def test_evaluate_without_an_ir_is_unchanged_and_with_one_appends_1_18_and_1_19(
 def test_permutation_seed_matches_the_shared_derivation_vectors(c):
     # protocol 2.5 (1.12, D4-5): the seed is derived from the strategy id exactly as AlphaKeel derives it
     assert precheck.permutation_seed(c["strategy_id"]) == c["expected"]
+
+
+# --- protocol 3.0 (AlphaKeel WP14a) -----------------------------------------------------------------------------------
+
+def _protocol_with(item_id: str, threshold: dict) -> dict:
+    p = copy.deepcopy(precheck.load_protocol())
+    for item in p["stages"]["validated"]["items"]:
+        if item["id"] == item_id:
+            item["threshold"] = threshold
+    return p
+
+
+def _by_id(rb: dict, protocol: dict, **kw) -> dict:
+    return {g["id"]: g for g in precheck.evaluate(rb, protocol, 0, 0, **kw)}
+
+
+def test_1_2_branches_on_the_threshold_key_not_on_the_version():
+    rb = copy.deepcopy(VECTOR["cases"][0]["robustness"])
+    rb["rating"]["facts"].update(trades_closed=31, entries_distinct=25)
+    v3 = precheck.load_protocol()
+    assert "min_entries" in next(i for i in v3["stages"]["validated"]["items"] if i["id"] == "1.2")["threshold"]
+    assert _by_id(rb, v3)["1.2"]["result"] == "FAIL"  # 25 distinct entries < 30, whatever trades_closed says
+    # a 2.8-or-earlier copy (min_trades) is judged on trades_closed exactly as before, even inside a "3.0" document
+    old = _protocol_with("1.2", {"min_trades": "30"})
+    assert old["version"] == "3.0" and _by_id(rb, old)["1.2"]["result"] == "PASS"
+    # 3.0 key, fact missing: FAIL with a note, never the closed count instead
+    del rb["rating"]["facts"]["entries_distinct"]
+    got = _by_id(rb, v3)["1.2"]
+    assert got["result"] == "FAIL" and "entries_distinct missing" in got["note"] and "never the closed-trade count" in got["note"]
+    assert _by_id(rb, old)["1.2"]["result"] == "PASS"  # the old copy never needed it
+    unknown = _by_id(rb, _protocol_with("1.2", {"min_something": "30"}))["1.2"]
+    assert unknown["result"] == "FAIL" and "unknown 1.2 threshold keys" in unknown["note"]
+
+
+def test_1_8_block_too_long_fails_with_the_cap_and_an_old_block_rule_is_noted():
+    rb = copy.deepcopy(VECTOR["cases"][0]["robustness"])
+    p = precheck.load_protocol()
+    got = _by_id(rb, p)["1.8"]
+    assert got["result"] == "PASS" and "not computed with the protocol 3.0 block" in got["note"]
+    rb["statistics"]["bootstrap"] = {"ci_lower": None, "block_rule": "max_politis_white_median_hold",
+                                     "block_too_long": {"median_hold_days": 21, "days": 60, "block_cap": 20}}
+    got = _by_id(rb, p)["1.8"]
+    assert got["result"] == "FAIL" and got["observed"] == {"median_hold_days": 21, "days": 60, "block_cap": 20}
+    assert "cannot cover the holding period" in got["note"]
+    rb["statistics"]["bootstrap"] = {"ci_lower": 0.0004, "block_rule": "max_politis_white_median_hold"}
+    got = _by_id(rb, p)["1.8"]
+    assert got["result"] == "PASS" and got["note"] is None
+    # the old copy (no block key) reads only ci_lower, as before
+    assert _by_id(rb, _protocol_with("1.8", {"lower_gt": "0"}))["1.8"]["note"] is None
+
+
+def test_1_6_trials_include_is_named_in_the_note_and_the_ledger_count_is_a_floor():
+    rb = copy.deepcopy(VECTOR["cases"][0]["robustness"])
+    p = precheck.load_protocol()
+    got = _by_id(rb, p)["1.6"]
+    assert got["result"] == "PASS" and "trials_include targets_strategy,summary_reads" in got["note"] and "NOT in this local trial count" in got["note"]
+    big = _by_id(rb, p, ledger_trials=10_000)["1.6"]
+    assert big["result"] == "FAIL" and "ledger count 10000 used as a floor" in big["note"]  # the ledger's submissions and reads count
+    thr = dict(next(i for i in p["stages"]["validated"]["items"] if i["id"] == "1.6")["threshold"], trials_include="targets_strategy,factor_trials")
+    odd = _by_id(rb, _protocol_with("1.6", thr))["1.6"]
+    assert "unknown trials_include source(s) factor_trials" in odd["note"]
+    thr.pop("trials_include")
+    assert "trials_include" not in (_by_id(rb, _protocol_with("1.6", thr))["1.6"]["note"] or "")  # an old copy: no note

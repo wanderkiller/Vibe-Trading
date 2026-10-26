@@ -8,6 +8,7 @@ hand-made inputs; the battery end to end on a three-coin fixture market.
 from __future__ import annotations
 
 import json
+import math
 from decimal import Decimal
 
 import pytest
@@ -666,3 +667,23 @@ def test_the_default_oos_window_is_the_gap_before_the_holdout_cutoff() -> None:
     assert _default_oos((0, is_end), is_end + 10 * day + 59_999) == (is_end, is_end + 10 * day)  # whole minutes
     assert _default_oos((0, is_end), is_end + 6 * day) is None  # too short to say anything
     assert _default_oos((0, is_end), None) is None and _default_oos((0, is_end), True) is None
+
+
+def test_protocol_3_entry_rounds_count_rounds_and_the_seven_day_rule_and_the_bootstrap_reports_a_block_too_long():
+    day = 86_400_000
+    end = 100 * day
+    rows = [{"pair_id": "p1", "opened_ms": day, "closed_ms": 2 * day, "status": "closed"},
+            {"pair_id": "p1", "opened_ms": 3 * day, "closed_ms": 4 * day, "status": "closed"},  # same pair again: a second entry
+            {"pair_id": "p2", "opened_ms": end - 7 * day, "closed_ms": None, "status": "open"},  # open exactly 7 days: counts
+            {"pair_id": "p3", "opened_ms": end - 7 * day + 1, "closed_ms": None, "status": "open"}]  # 1 ms short: does not
+    rounds = robustness.entry_rounds(rows)
+    assert M.entries_distinct(rounds, end) == 3 and M.median_hold_days_of_entries(rounds, end) == 1
+    rets = [math.sin(i * 1.3) / 100 for i in range(60)]
+    ok = robustness.protocol_bootstrap(rets, 3, seed=7, resamples=50)
+    assert ok["block_rule"] == "max_politis_white_median_hold" and ok["block_days"] == max(3, math.ceil(M.politis_white_block(rets)))
+    too = robustness.protocol_bootstrap(rets, 21, seed=7, resamples=50)
+    assert too["ci_lower"] is None and too["block_too_long"] == {"median_hold_days": 21, "days": 60, "block_cap": 20}
+    f = {"base_net": "1", "trades_closed": 40, "entries_distinct": 12, "days": 120}
+    assert any(c["id"] == "few_trades" for c in robustness.rate(f)["caps"])  # 12 entries < 30 although 40 closed
+    del f["entries_distinct"]
+    assert not any(c["id"] == "few_trades" for c in robustness.rate(f)["caps"])  # an older battery: closed trades (旧口径)

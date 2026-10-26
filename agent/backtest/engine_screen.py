@@ -312,9 +312,12 @@ def _screen(run_dir: Path, *, trials: int, variant_sharpes: Sequence[float], pro
     def thr(item_id: str, key: str) -> str:
         return by_id[item_id]["threshold"][key]
 
+    k12 = "min_entries" if "min_entries" in by_id["1.2"]["threshold"] else "min_trades"
     checks: list[tuple[str, str, Any, str]] = [  # (id, threshold key, observed, result)
         ("1.1", "min_days", *_pair(precheck._ge(doc, ("days",), thr("1.1", "min_days"), "int", observed_fmt=int))),
-        ("1.2", "min_trades", *_pair(precheck._ge(doc, ("trades",), thr("1.2", "min_trades"), "int", observed_fmt=int))),
+        # protocol 3.0 copies key 1.2 as min_entries (distinct entries); a round trip from open to flat is one entry (positions
+        # still open at the end are not counted: conservative, the 7-day open-entry rule needs hold times this screen lacks)
+        ("1.2", k12, *_pair(precheck._ge(doc, ("trades",), thr("1.2", k12), "int", observed_fmt=int))),
         ("1.3", "net_gt", *_pair(precheck._gt(doc, ("net",), thr("1.3", "net_gt"), "str"))),
         ("1.6", "min_dsr", *_pair(precheck._ge(doc, ("dsr",), thr("1.6", "min_dsr"), "num", observed_fmt=float))),
         ("1.8", "lower_gt", ci_lower, precheck._gt(doc, ("ci",), thr("1.8", "lower_gt"), "num")[0]),

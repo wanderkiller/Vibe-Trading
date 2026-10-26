@@ -239,6 +239,36 @@ every `robust` range and the precheck's 1.9 fails a range narrower than +-20% of
 `trials.jsonl` has a different number of `counted_trial` rows than `trials.distinct_candidate_variants`, one without `inputs.pack_id`,
 and a reconciliation file (`--reconciliation`, else `RUN/reconciliation.json`) whose `pack_id` differs from the robustness in-sample pack.
 
+**Validation protocol 3.0 (AlphaKeel WP14a; research side).** The precheck branches on the threshold keys of the protocol copy, not
+on its version: a copy with `min_entries` (1.2) reads `rating.facts.entries_distinct` (missing = FAIL, never `trades_closed`
+instead); a 2.8-or-earlier copy with `min_trades` reads `trades_closed` exactly as before. A distinct entry is one round of a pair
+from open to close (a pair opened and closed twice is two entries); an entry still open at the window end counts only when held
+>= 7 days (`backtest.alphakeel_metrics.counted_entries`, a line-by-line port of AlphaKeel `stats::counted_entries`). `ir backtest`
+writes `counts.entries_distinct` / `counts.median_hold_days` into the run card (window end = the backtest window end) and
+`ir robustness` writes `rating.facts.entries_distinct` / `median_hold_days` (window end = the IS window end); the net already
+values every open position at the window end (`open_positions_mark`), counted entry or not, as AlphaKeel's net does. Readers of
+an entry count (`screen` 1.2, `metrics.csv` / `review_report.json` `trade_count`, the `few_trades` cap) use `entries_distinct`
+and fall back to `counts.closed` / `trades_closed` labelled 旧口径 (`precheck.LEGACY_ENTRIES_BASIS`, `trade_count_basis`) for a
+card from before 3.0; win rate and the per-run trade counts of the battery tables stay closed-trade counts. The 1.8 bootstrap
+uses the 3.0 block (`statistics.bootstrap.block_rule = max_politis_white_median_hold`): mean block = max(ceil(Politis–White)
+(unavailable: max(2, ceil(cbrt n))), median holding days of the counted entries (>= 1)); above ceil(min(3 sqrt n, n/3)) the
+bound is not computed and `statistics.bootstrap.block_too_long` = {median_hold_days, days, block_cap} makes 1.8 FAIL with that
+observed. The 1.6 note names the `trials_include` sources (targets_strategy submissions, summary reads).
+
+Known deviations from AlphaKeel (the verdict is AlphaKeel's recomputation; these only make the research-side precheck differ):
+- 1.8: AlphaKeel recomputes the bound from the research service's conservative-fill run (its daily equity, its
+  `counts.median_hold_days`); VT's bound comes from the local one-level-fill simulator's daily returns and its own trades, and
+  the resampling RNG differs (Python `random.Random(seed)` vs AlphaKeel's splitmix64), so the bound, and a hold median near the
+  cap, can differ. The Politis–White block itself matches AlphaKeel bit for bit (correctly rounded cbrt, left-fold sums).
+- 1.8 on an older battery: a `robustness.json` without `block_rule` (old block max(2, ceil(cbrt n))) still passes on its reported
+  bound, with a note; re-run `ir robustness` to get the 3.0 block. The engine screen (`backtest.engine_screen`) keeps the old block
+  (it has no holding times) and counts round trips from `fills.jsonl` for `min_entries` (positions open at the end not counted).
+- 1.6 `trials_include`: targets_strategy submissions (`POST /runs`, `POST /trials`) and summary reads are rows of the research-service
+  trial ledger, which this client cannot read. They enter the local trial count only when the caller passes the ledger count
+  (`precheck.evaluate(..., ledger_trials=)`); otherwise the 1.6 note says they were not counted, so the local DSR can only be
+  higher than AlphaKeel's. A factor-trial source does not exist yet (AlphaKeel does not count one either); an unknown source in
+  `trials_include` is named in the note, never silently ignored.
+
 The agent tool exposes the four IR commands as actions `ir_validate`, `ir_review`, `ir_backtest`, `ir_export`.
 
 ## Factor research on a crypto cross-section: the `alphakeel:` alpha-bench universe

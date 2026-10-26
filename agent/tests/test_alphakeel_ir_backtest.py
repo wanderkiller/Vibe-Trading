@@ -1021,7 +1021,7 @@ def test_ir_backtest_without_out_creates_a_vt_run_with_the_list_files(tmp_path, 
     assert set(rr) == {"total_return", "sharpe", "max_drawdown", "trade_count"}
     assert rr["total_return"] == float(ir_backtest.q8(Decimal(card["amounts"]["equity_end"]) / Decimal(card["assumptions"]["capital_base"])))
     assert rr["sharpe"] == card["alphakeel_metrics"]["sharpe_annualised"]
-    assert rr["trade_count"] == card["counts"]["closed"]
+    assert rr["trade_count"] == card["counts"]["entries_distinct"]  # protocol 3.0: distinct entries
     # research-truth B1: upstream's metrics.csv columns (the run page needs all seven), then the USDT amounts
     assert (run / "artifacts" / "metrics.csv").read_text().splitlines()[0] == ",".join(ir_backtest.METRICS_COLUMNS)
 

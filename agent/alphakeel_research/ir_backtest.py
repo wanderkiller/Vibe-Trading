@@ -1261,7 +1261,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
     # statistics: UTC-daily returns over the capital base (AlphaKeel convention)
     import pandas as pd
 
-    from backtest.alphakeel_metrics import alphakeel_metrics, daily_returns
+    from backtest.alphakeel_metrics import alphakeel_metrics, daily_returns, entries_distinct, median_hold_days_of_entries
 
     # every UTC day of the window is a point: a day without any data instant carries the previous day's equity (no
     # valuation that day), instead of silently dropping out and folding its P&L into the next day's return
@@ -1275,6 +1275,13 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
     series = pd.Series([float(daily[d]) for d in days], index=pd.to_datetime(days))
     rets = daily_returns(series, float(capital_base), 0.0)
     ak = alphakeel_metrics(rets, trials=trials or 1)
+    # protocol 3.0 distinct entries (one per round of a pair; an entry still open at the window end only when held >= 7 days)
+    # and their median holding days, as the research service's ``counts.entries_distinct`` / ``counts.median_hold_days``
+    rounds = [(tr.opened_ms, tr.closed_ms) for tr in sim.closed_trades + list(sim.open.values())]
+    entry_counts = {"entries_distinct": entries_distinct(rounds, end_ms)}
+    hold = median_hold_days_of_entries(rounds, end_ms)
+    if hold is not None:
+        entry_counts["median_hold_days"] = hold
     trials_doc = None
     if trials is not None:
         if trials_evidence is None:  # one trial: this run is the only parameter set tried; the evidence is generated
@@ -1312,7 +1319,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                        "non_auditable_sources": []},
         "inputs": cursor.inputs(pack),
         "counts": {**counts, "opened": sim.opened, "closed": sim.closed, "open_at_end": len(sim.open), "funding_events": sim.funding_events,
-                   "funding_unpriced": sim.funding_unpriced, "legs_engine_qty_adjusted": sim.qty_adjusted},
+                   "funding_unpriced": sim.funding_unpriced, "legs_engine_qty_adjusted": sim.qty_adjusted, **entry_counts},
         "amounts": {"realized": _s(sim.realized), "price_pnl_closed": _s(sim.price_pnl), "funding": _s(sim.funding), "fees": _s(sim.fees),
                     "equity_end": _s(final_eq), "unrealized_end": _s(final_eq - sim.realized), "ccy": "USDT"},
         "max_drawdown": {"amount": _s(dd["amount"]), "peak_ms": dd["peak_ms"], "trough_ms": dd["trough_ms"],
@@ -1394,6 +1401,15 @@ METRICS_COLUMNS = ("final_value", "total_return", "annual_return", "max_drawdown
                    "net_usdt", "fees_usdt", "funding_usdt", "price_pnl_usdt", "max_drawdown_usdt", "days")
 
 
+def trade_count_of(card: dict) -> tuple[int, str]:
+    """``(trade_count, basis)`` of a run card: protocol 3.0 distinct entries (``counts.entries_distinct``), or for a card
+    written before them the closed-trade count with ``precheck.LEGACY_ENTRIES_BASIS`` (旧口径)."""
+    from .precheck import entries_count
+
+    n, basis = entries_count(card["counts"])
+    return (int(card["counts"]["closed"]) if n is None else n), basis
+
+
 def metrics_row(out: Path, card: dict) -> dict[str, str]:
     """The ``metrics.csv`` row of a run card, upstream column names (``runs_routes`` / grounding), decimal text."""
     capital = Decimal(card["assumptions"]["capital_base"])
@@ -1402,7 +1418,8 @@ def metrics_row(out: Path, card: dict) -> dict[str, str]:
     days = int(card["metrics"]["days"])
     total = q8(eq / capital)
     sharpe = (card.get("alphakeel_metrics") or {}).get("sharpe_annualised")
-    closed = int(card["counts"]["closed"])
+    closed = int(card["counts"]["closed"])  # win rate: a share of closed trades
+    entries, _basis = trade_count_of(card)
     return {
         "final_value": _s(capital + eq),
         "total_return": _s(total),
@@ -1410,7 +1427,7 @@ def metrics_row(out: Path, card: dict) -> dict[str, str]:
         "max_drawdown": _s(-Decimal(card["max_drawdown"]["fraction_of_capital"])),
         "sharpe": "" if sharpe is None else repr(sharpe),
         "win_rate": _s(_win_rate(out, closed)),
-        "trade_count": str(closed),
+        "trade_count": str(entries),
         "net_usdt": _s(eq),
         "fees_usdt": _s(Decimal(amounts["fees"])),
         "funding_usdt": _s(Decimal(amounts["funding"])),

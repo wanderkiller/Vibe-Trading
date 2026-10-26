@@ -44,6 +44,32 @@ UNIVERSE_GRADE_CAP = "C"
 
 _MISSING = object()
 
+#: protocol 3.0 (WP14a): the 1.6 ``trials_include`` sources and where AlphaKeel counts them. Both are rows of the research-service
+#: trial ledger (``research_run`` per ``POST /runs`` / ``POST /trials``, ``vault_summary_read`` per summary read), which this
+#: client cannot read: they enter the local DSR only through ``ledger_trials`` (the ledger count for the lineage), else the
+#: note says they were not counted here.
+TRIALS_INCLUDE_SOURCES = {
+    "targets_strategy": "targets_strategy submissions (research-service POST /runs and POST /trials)",
+    "summary_reads": "every summary read (research-service vault_summary_read ledger rows)",
+}
+#: protocol 3.0 block rule key value of 1.8 / 3.4
+V3_BLOCK_RULE = "max_politis_white_median_hold"
+#: the label of an entry count that fell back to the closed-trade count (a card / result from before protocol 3.0)
+LEGACY_ENTRIES_BASIS = "closed (旧口径: no counts.entries_distinct, the closed-trade count stands in for distinct entries)"
+
+
+def entries_count(counts: Any) -> tuple[int | None, str]:
+    """``(count, basis)`` of distinct entries in a run card's / service result's ``counts``: ``entries_distinct`` (protocol 3.0:
+    one per round from open to close, an entry still open at the window end only when held >= 7 days), else the legacy
+    ``closed`` count with basis :data:`LEGACY_ENTRIES_BASIS` (an older card); ``(None, ...)`` when neither is an integer.
+    For a count that only stands for fills / closed trades, read ``closed`` directly instead."""
+    c = counts if isinstance(counts, dict) else {}
+    v = c.get("entries_distinct")
+    if isinstance(v, int) and not isinstance(v, bool):
+        return v, "entries_distinct"
+    v = c.get("closed")
+    return (v if isinstance(v, int) and not isinstance(v, bool) else None), LEGACY_ENTRIES_BASIS
+
 
 def protocol_sha256() -> str:
     """sha256 of the packaged protocol, verified against ``contract/PIN`` (``contract.local_pin()`` re-hashes every pinned file)."""
@@ -151,7 +177,25 @@ def _cost_net(rb: dict, t: dict, path: tuple[str, ...]):
                 f"local net {_show(local)}, service-side conservative net (adjusted) {_show(adj)}")
 
 
-def _dsr(rb: dict, t: dict, other: int, trials_floor: int = 0):
+def _trials_include(t: dict, ledger_trials: int | None) -> str | None:
+    """Protocol 3.0 note on the 1.6 trial-count sources (``trials_include``); None for an older copy without the key."""
+    inc = t.get("trials_include")
+    if inc is None:
+        return None
+    names = [x.strip() for x in str(inc).split(",") if x.strip()]
+    unknown = [x for x in names if x not in TRIALS_INCLUDE_SOURCES]
+    known = "; ".join(TRIALS_INCLUDE_SOURCES[x] for x in names if x in TRIALS_INCLUDE_SOURCES)
+    if ledger_trials is None:
+        msg = (f"trials_include {inc}: {known} are counted by AlphaKeel from the research-service trial ledger, which this "
+               "client cannot read; they are NOT in this local trial count (the local DSR can only be higher than AlphaKeel's)")
+    else:
+        msg = f"trials_include {inc}: research-service ledger count {ledger_trials} used as a floor (it already counts {known})"
+    if unknown:
+        msg += f"; unknown trials_include source(s) {', '.join(unknown)}: not counted by this client"
+    return msg
+
+
+def _dsr(rb: dict, t: dict, other: int, trials_floor: int = 0, ledger_trials: int | None = None):
     from backtest import alphakeel_metrics as M
 
     inp = _get(rb, "statistics", "dsr_inputs")
@@ -186,12 +230,50 @@ def _dsr(rb: dict, t: dict, other: int, trials_floor: int = 0):
         return "FAIL", None, "statistics.dsr_inputs.daily_returns is malformed"
     if var < floor_var * (1 - VAR_FLOOR_TOLERANCE):
         return "FAIL", None, f"var_sr below floor: var_sr_used {var} < {floor_var} recomputed from daily_returns"
-    n = max(int(trials), int(trials_floor)) + other
+    floor = max(int(trials_floor), int(ledger_trials or 0))
+    n = max(int(trials), floor) + other
     value = M.psr(s, M.sr0(var, n), te, g3, g4)
+    inc = _trials_include(t, ledger_trials)
     if value is None:
-        return "FAIL", None, "DSR is not defined for these inputs"
+        return "FAIL", None, "DSR is not defined for these inputs" + (f"; {inc}" if inc else "")
     return _res(Decimal(repr(value)) >= Decimal(t["min_dsr"]), round(value, 6),
-                f"trials {max(int(trials), int(trials_floor))} + {other} other registered candidates (floor {int(trials_floor)})")
+                f"trials {max(int(trials), floor)} + {other} other registered candidates (floor {floor})" + (f"; {inc}" if inc else ""))
+
+
+def _entries(rb: dict, t: dict):
+    """1.2 by threshold key (protocol 3.0 copies have ``min_entries``; <= 2.8 copies keep ``min_trades`` on ``trades_closed``)."""
+    facts = ("rating", "facts")
+    if "min_entries" in t:
+        res = _ge(rb, (*facts, "entries_distinct"), t["min_entries"], "int")
+        if res[0] == "FAIL" and res[1] is None:
+            return "FAIL", None, (f"{res[2]}: protocol 3.0 counts distinct entries (re-run ir robustness with this client); "
+                                  "never the closed-trade count instead")
+        return res
+    if "min_trades" in t:
+        return _ge(rb, (*facts, "trades_closed"), t["min_trades"], "int")
+    return "FAIL", None, f"unknown 1.2 threshold keys {sorted(t)} (protocol newer than the client)"
+
+
+def _bootstrap(rb: dict, t: dict):
+    """1.8: the reported stationary-bootstrap lower bound > lower_gt. Protocol 3.0 (``block`` key): a battery whose block rule
+    max(Politis–White, median hold) exceeded the sample's block cap reports ``block_too_long`` instead of a bound = FAIL."""
+    if "block" in t:
+        if t["block"] != V3_BLOCK_RULE:
+            return "FAIL", None, f"unknown 1.8 block rule {t['block']!r} (protocol newer than the client)"
+        boot = _get(rb, "statistics", "bootstrap")
+        too_long = boot.get("block_too_long") if isinstance(boot, dict) else None
+        if isinstance(too_long, dict):
+            obs = {k: too_long.get(k) for k in ("median_hold_days", "days", "block_cap")}
+            return "FAIL", obs, (f"the sample cannot cover the holding period (median hold {obs['median_hold_days']} days, "
+                                 f"{obs['days']} daily returns, block cap {obs['block_cap']})")
+        res = _gt(rb, ("statistics", "bootstrap", "ci_lower"), t["lower_gt"], "num")
+        rule = boot.get("block_rule") if isinstance(boot, dict) else None
+        if rule != V3_BLOCK_RULE:
+            note = (f"the reported bound was not computed with the protocol 3.0 block (block_rule {rule!r}); AlphaKeel recomputes "
+                    "it with max(Politis-White, median hold) on the research-service run")
+            return res[0], res[1], f"{res[2]}; {note}" if res[2] else note
+        return res
+    return _gt(rb, ("statistics", "bootstrap", "ci_lower"), t["lower_gt"], "num")
 
 
 def _pbo(rb: dict, t: dict):
@@ -364,13 +446,13 @@ def _coverage(rb: dict, t: dict):
 
 
 def _item(rb: dict, item: dict, other: int, trials_floor: int = 0, filter_required_by_ir: bool = False,
-          ak_synthetic: bool | None = None) -> tuple[str, Any, str | None]:
+          ak_synthetic: bool | None = None, ledger_trials: int | None = None) -> tuple[str, Any, str | None]:
     i, t = item["id"], item["threshold"]
     facts = ("rating", "facts")
     if i == "1.1":
         return _ge(rb, (*facts, "days"), t["min_days"], "int")
     if i == "1.2":
-        return _ge(rb, (*facts, "trades_closed"), t["min_trades"], "int")
+        return _entries(rb, t)
     if i == "1.3":
         return _cost_net(rb, t, (*facts, "base_net"))
     if i == "1.4":
@@ -380,11 +462,11 @@ def _item(rb: dict, item: dict, other: int, trials_floor: int = 0, filter_requir
             return "FAIL", None, "basis stress x2 was not run (basis_stress 0 or too large)"
         return _cost_net(rb, t, ("cost_stress", "basis_stress_x2", "net"))
     if i == "1.6":
-        return _dsr(rb, t, other, trials_floor)
+        return _dsr(rb, t, other, trials_floor, ledger_trials)
     if i == "1.7":
         return _pbo(rb, t)
     if i == "1.8":
-        return _gt(rb, ("statistics", "bootstrap", "ci_lower"), t["lower_gt"], "num")
+        return _bootstrap(rb, t)
     if i == "1.9":
         return _neighbours(rb, t)
     if i == "1.10":
@@ -622,11 +704,14 @@ def pack_is_synthetic(pu: dict | None) -> bool:
 
 def evaluate(robustness: dict | None, protocol: dict, other_candidates: int = 0, trials_floor: int = 0, *,
              ir: dict | None = None, pack_universe: Any = _UNSET, filter_required_by_ir: bool | None = None,
-             ak_synthetic: bool | None = None) -> list[dict]:
+             ak_synthetic: bool | None = None, ledger_trials: int | None = None) -> list[dict]:
     """The research-side G1 items of ``protocol`` evaluated on ``robustness`` (``robustness.json``), in protocol order.
     ``other_candidates`` is the number of other registered candidates added to the DSR trial count (AlphaKeel's registry
     knows it; a research-side run has 0). ``trials_floor`` is the trial-count floor (IR provenance + battery candidates, or
-    the research-service ledger count): the DSR uses max(dsr_inputs.trials, trials_floor) + other_candidates."""
+    the research-service ledger count): the DSR uses max(dsr_inputs.trials, trials_floor) + other_candidates. Protocol 3.0:
+    ``ledger_trials`` (the research-service trial-ledger count for the lineage, which counts the ``trials_include`` sources
+    targets_strategy submissions and summary reads) is a further floor when the caller has it; without it the 1.6 note
+    says those sources are not in the local count."""
     out = []
     if ir is not None and isinstance(robustness, dict):  # AK derives these from the IR and the IS pack's data lock, not from the battery's own flags
         if filter_required_by_ir is None:
@@ -637,7 +722,8 @@ def evaluate(robustness: dict | None, protocol: dict, other_candidates: int = 0,
         if robustness is None:
             result, observed, note = "FAIL", None, "robustness.json missing"
         else:
-            result, observed, note = _item(robustness, item, int(other_candidates), int(trials_floor), bool(filter_required_by_ir), ak_synthetic)
+            result, observed, note = _item(robustness, item, int(other_candidates), int(trials_floor), bool(filter_required_by_ir), ak_synthetic,
+                                           None if ledger_trials is None else int(ledger_trials))
             if result == "FAIL" and not note:
                 note = f"observed {observed}, threshold {json.dumps(item['threshold'], sort_keys=True)}"
         out.append({"id": item["id"], "label": item["label"], "result": result, "observed": observed, "note": note})

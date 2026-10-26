@@ -52,8 +52,11 @@ judged), not variants nobody selected among on the IS window; they are listed in
 Statistics (base IS daily returns = UTC-daily equity change / one capital base shared by every variant, AlphaKeel
 convention, ``backtest.alphakeel_metrics``): Sharpe (x sqrt 365), PSR vs 0, DSR (honest trial count, variants' per-day
 Sharpe dispersion), PBO by CSCV over the candidate variants' daily returns (>= 4 variants, S = min(10, 2*floor(days/10))
-blocks, S >= 4), stationary-bootstrap 95% CI of the mean daily return (seeded, block = max(2, ceil(n^(1/3)))), effective
-sample size and the t-stat on it, trade count, per-coin concentration of closed-trade net, max drawdown, net decomposition
+blocks, S >= 4), stationary-bootstrap 95% CI of the mean daily return (seeded; protocol 3.0 mean block = max(ceil(Politis-White),
+median holding days of the counted entries), ``block_too_long`` instead of a bound when that exceeds ceil(min(3 sqrt(n), n/3))),
+effective sample size and the t-stat on it, trade count, distinct entries (protocol 3.0 ``entries_distinct``: one per round
+from open to close, the same pair opened twice is two; an entry still open at the IS window end counts only when held >= 7
+days -- its window-end valuation is in the net, as every open position's mark is), per-coin concentration of closed-trade net, max drawdown, net decomposition
 (price / funding / fees / open-position mark) from the run card amounts. Money is Decimal; floats only inside statistics.
 
 Rating rule table (``RULES``; written into robustness.json and robustness.md)
@@ -68,7 +71,7 @@ Caps -- each triggered cap is a ceiling on the grade:
   cost_x2_nonpositive          net with every taker fee x2 <= 0                                     D
   no_oos                       no OOS window was run                                                C
   coverage_partial             any run's pack was frozen with accept_partial (data gaps)            C
-  few_trades                   fewer than 30 closed trades in the base run                          C
+  few_trades                   fewer than 30 distinct entries (protocol 3.0) in the base run        C
   short_window                 fewer than 60 days in the base IS window                             C
   funding_unpriced             more than 1% of funding settlements on open legs could not be priced C
   walk_forward_unstable        walk-forward computable and fewer than 2/3 of its folds have positive test net C
@@ -156,7 +159,7 @@ RULES = {
         {"id": "cost_x2_nonpositive", "condition": "net with every taker fee x2 <= 0", "max_grade": "D"},
         {"id": "no_oos", "condition": "no OOS window was run", "max_grade": "C"},
         {"id": "coverage_partial", "condition": "any run's pack was frozen with accept_partial (data gaps)", "max_grade": "C"},
-        {"id": "few_trades", "condition": "fewer than 30 closed trades in the base run", "max_grade": "C"},
+        {"id": "few_trades", "condition": "fewer than 30 distinct entries (protocol 3.0) in the base run", "max_grade": "C"},
         {"id": "short_window", "condition": "fewer than 60 days in the base IS window", "max_grade": "C"},
         {"id": "funding_unpriced", "condition": "more than 1% of funding settlements on open legs could not be priced", "max_grade": "C"},
         {"id": "filter_not_better_than_random", "condition": "the graded IR contains the filter under test and its permutation p-value > 0.10", "max_grade": "C"},
@@ -389,7 +392,8 @@ def rate(f: dict) -> dict:
         "cost_x2_nonpositive": f.get("cost_x2_net") is not None and Decimal(f["cost_x2_net"]) <= 0,
         "no_oos": f.get("oos_net") is None,
         "coverage_partial": bool(f.get("coverage_partial")),
-        "few_trades": int(f.get("trades_closed") or 0) < 30,
+        # distinct entries (protocol 3.0); facts without them (an older battery) fall back to the closed-trade count (旧口径)
+        "few_trades": int((f.get("entries_distinct") if f.get("entries_distinct") is not None else f.get("trades_closed")) or 0) < 30,
         "short_window": int(f.get("days") or 0) < 60,
         "funding_unpriced": f.get("funding_unpriced_fraction") is not None and Decimal(str(f["funding_unpriced_fraction"])) > Decimal("0.01"),
         "filter_not_better_than_random": bool(f.get("filter_tested")) and (f.get("filter_p") is None or Decimal(str(f["filter_p"])) > Decimal("0.1")),
@@ -474,6 +478,32 @@ def _returns(days: list[str], eq: list[Decimal], capital: Decimal) -> list[float
 def _trades(run_dir: Path) -> list[dict]:
     with open(run_dir / "trades.jsonl", encoding="utf-8") as fh:
         return [json.loads(ln) for ln in fh if ln.strip()]
+
+
+def entry_rounds(trades: list[dict]) -> list[tuple[int, int | None]]:
+    """One ``(opened_ms, closed_ms or None)`` per ``trades.jsonl`` row: every row is one round of a pair (a pair opened
+    and closed twice is two rows), so rounds are counted, never deduplicated by pair (protocol 3.0 entry_rule)."""
+    return [(int(t["opened_ms"]), int(t["closed_ms"]) if t.get("status") == "closed" and t.get("closed_ms") is not None else None)
+            for t in trades]
+
+
+def protocol_bootstrap(rets: list[float], median_hold: int | None, *, seed: int, resamples: int = BOOTSTRAP_RESAMPLES) -> dict | None:
+    """1.8's stationary bootstrap with the protocol 3.0 block (``alphakeel_metrics.v3_block``). When the block exceeds the
+    cap the bound is not computed: ``ci_lower`` None and ``block_too_long`` = {median_hold_days, days, block_cap} (G1 1.8
+    FAILS, as AlphaKeel's "sample cannot cover the holding period"). None with fewer than 2 points."""
+    from backtest import alphakeel_metrics as M
+
+    if len(rets) < 2:
+        return None
+    pw = M.politis_white_block(rets)
+    rule = {"block_rule": "max_politis_white_median_hold", "politis_white": pw, "median_hold_days": median_hold,
+            "block_cap": M.block_cap(len(rets))}
+    block, too_long = M.v3_block(rets, median_hold)
+    if too_long is not None:
+        return {"method": "stationary_bootstrap/politis-romano", "statistic": "mean_daily_return", "mean": M._mean(rets),
+                "ci_lower": None, "ci_upper": None, "block_days": None, "block_too_long": too_long, "seed": seed, "resamples": resamples, **rule}
+    boot = M.stationary_bootstrap_mean_ci(rets, seed=seed, resamples=resamples, block=block)
+    return None if boot is None else {**boot, **rule}
 
 
 class _Runner:
@@ -937,14 +967,18 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     pbo, s_blocks = None, min(PBO_MAX_BLOCKS, 2 * (len(b_ret) // 10))
     if len(var_ret) >= 4 and s_blocks >= 4:
         pbo = M.pbo_cscv(list(var_ret.values()), s_blocks)
-    boot = M.stationary_bootstrap_mean_ci(b_ret, seed=seed, resamples=BOOTSTRAP_RESAMPLES)
+    base_trades = _trades(R.result(base)["run_dir"])
+    # protocol 3.0 distinct entries and median hold (AlphaKeel ``stats::counted_entries``; window end = the IS window end)
+    entries = entry_rounds(base_trades)
+    n_entries = M.entries_distinct(entries, windows["is"][1])
+    hold_days = M.median_hold_days_of_entries(entries, windows["is"][1])
+    boot = protocol_bootstrap(b_ret, hold_days, seed=seed, resamples=BOOTSTRAP_RESAMPLES)
     t_eff = None
     if len(b_ret) >= 2 and ak["effective_days"]:
         import statistics as st
 
         sd = st.stdev(b_ret)
         t_eff = None if sd == 0 else ak["mean_daily_return"] / (sd / math.sqrt(ak["effective_days"]))
-    base_trades = _trades(R.result(base)["run_dir"])
     by_coin: dict[str, Decimal] = {}
     for t in base_trades:
         if t["status"] == "closed":
@@ -1003,7 +1037,8 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     facts = {
         "base_net": _s(b_net), "oos_net": oos_doc["net"] if oos_doc else None, "cost_x2_net": cost_doc["2"]["net"],
         "coverage_partial": any(bool(c["data_audit"].get("coverage_partial", c["pack"].get("accept_partial"))) for c in all_cards),
-        "trades_closed": counts["closed"], "days": len(b_days), "funding_unpriced_fraction": fu_frac,
+        "trades_closed": counts["closed"], "entries_distinct": n_entries, "median_hold_days": hold_days,
+        "days": len(b_days), "funding_unpriced_fraction": fu_frac,
         # the filter counts toward the grade only when it is PART of the graded IR (its bases are in excluded_bases);
         # a candidate filter tested against an IR without it is decision support, not evidence about that IR
         "filter_tested": bases_f is not None and set(bases_f) <= set(filter_doc["universe"]["excluded_bases"]),
@@ -1011,7 +1046,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         "filter_required": bool(forced),
         "filter_p": (filt or {}).get("permutation", {}).get("p_value") if filt else None,
         "synthetic_view": base_card["view"] == ir_views.DATASET_VIEW, "dsr": ak["dsr"], "psr": ak["psr_vs_zero"], "pbo": pbo,
-        "bootstrap_lower": None if boot is None else boot["ci_lower"], "segments_positive_fraction": seg_frac,
+        "bootstrap_lower": None if boot is None else boot.get("ci_lower"), "segments_positive_fraction": seg_frac,
         "has_parameters": bool(base_doc["parameters"]), "neighbours_positive_fraction": params_doc["positive_fraction"],
         "walk_forward_computable": wf_doc["computable"], "walk_forward_folds": len(wf_doc.get("folds", [])),
         "walk_forward_positive_folds": wf_doc.get("positive_folds"), "walk_forward_efficiency": wf_doc.get("efficiency"),
@@ -1069,6 +1104,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         "statistics": {"alphakeel_metrics": ak, "dsr_inputs": dsr_in, "pbo": {"value": pbo, "variants": len(var_ret), "blocks": s_blocks if pbo is not None else None,
                                                         "note": None if pbo is not None else "needs >= 4 candidate variants and >= 20 days"},
                        "bootstrap": boot, "t_stat_effective": t_eff, "trades_closed": counts["closed"], "open_at_end": counts["open_at_end"],
+                       "entries_distinct": n_entries, "median_hold_days": hold_days,
                        "max_drawdown": base_card["max_drawdown"], "net_decomposition": decomposition,
                        "concentration": {"net_by_coin": {k2: _s(v) for k2, v in sorted(by_coin.items())}, "closed_net": _s(closed_net),
                                          "top_coin": top[0] if top else None, "top_coin_share": top_share},
@@ -1113,9 +1149,9 @@ def render_markdown(doc: dict) -> str:
     L += [f"- {x}" for x in r["reasons"]] or ["- every applicable component passed and no cap applies"]
     L += ["", "## Base run (IS window)", ""]
     d = st["net_decomposition"]
-    L += _table(["net", "price (closed)", "funding", "fees", "open positions mark", "closed trades", "days", "max drawdown"],
-                [[d["net"], d["price_closed"], d["funding"], d["fees"], d["open_positions_mark"], st["trades_closed"], ak["days"],
-                  st["max_drawdown"]["amount"]]])
+    L += _table(["net", "price (closed)", "funding", "fees", "open positions mark", "closed trades", "distinct entries", "days", "max drawdown"],
+                [[d["net"], d["price_closed"], d["funding"], d["fees"], d["open_positions_mark"], st["trades_closed"], st.get("entries_distinct"),
+                  ak["days"], st["max_drawdown"]["amount"]]])
     b = st["bootstrap"] or {}
     L += ["", "## Statistics (daily returns on capital " + doc["inputs"]["capital_base"] + ")", ""]
     L += _table(["statistic", "value", "note"], [
@@ -1123,7 +1159,8 @@ def render_markdown(doc: dict) -> str:
         ["PSR vs 0", ak["psr_vs_zero"], "probability the true Sharpe > 0"],
         ["DSR", ak["dsr"], f"trial count {doc['trials']['count']} (honest: variants actually run)"],
         ["PBO (CSCV)", st["pbo"]["value"], st["pbo"]["note"] or f"{st['pbo']['variants']} variants, {st['pbo']['blocks']} blocks"],
-        ["mean daily return 95% CI", f"[{_f(b.get('ci_lower'), 6)}, {_f(b.get('ci_upper'), 6)}]", f"stationary bootstrap, block {_f(b.get('block_days'))} days"],
+        ["mean daily return 95% CI", f"[{_f(b.get('ci_lower'), 6)}, {_f(b.get('ci_upper'), 6)}]", (f"stationary bootstrap, block {_f(b.get('block_days'))} days" if not b.get("block_too_long") else
+                                      "not computed: median hold {median_hold_days} days exceeds the block cap {block_cap} of {days} daily returns".format(**b["block_too_long"]))],
         ["effective days", ak["effective_days"], "Newey-West"], ["t-stat (effective n)", st["t_stat_effective"], ""],
         ["top coin share of closed net", st["concentration"]["top_coin_share"], str(st["concentration"]["top_coin"])],
     ])

@@ -133,7 +133,7 @@ def test_screen_labels_from_the_protocol_thresholds() -> None:
     protocol = copy.deepcopy(precheck.load_protocol())
     for item in protocol["stages"]["validated"]["items"]:
         if item["id"] == "1.2":
-            item["threshold"]["min_trades"] = "10"
+            item["threshold"]["min_entries"] = "10"
     assert screen(_screen_card("-138.19", 15, 180), protocol)["evidence_status"] == "failed_screen"
 
 
@@ -911,3 +911,17 @@ def test_summary_trials_and_tool_text() -> None:
     props = AlphakeelResearchTool.parameters["properties"]["args"]["properties"]
     assert props["unimplemented_rules"]["type"] == "array"
     assert "cannot be used in an AlphaKeel Strategy IR" in AlphaZooTool.description
+
+
+def test_screen_1_2_reads_entries_distinct_and_falls_back_to_closed_labelled_legacy() -> None:
+    # protocol 3.0 (min_entries): distinct entries; a card from before 3.0 falls back to counts.closed, labelled 旧口径
+    new = _screen_card("50", 40, 120)
+    new["counts"]["entries_distinct"] = 12
+    i12 = next(i for i in screen(new)["items"] if i["id"] == "1.2")
+    assert i12["result"] == "FAIL" and i12["observed"] == "12" and i12["basis"] == "entries_distinct" and i12["threshold"] == {"min_entries": "30"}
+    old = next(i for i in screen(_screen_card("50", 40, 120))["items"] if i["id"] == "1.2")
+    assert old["result"] == "PASS" and old["observed"] == "40" and old["basis"] == precheck.LEGACY_ENTRIES_BASIS and "旧口径" in old["note"]
+    # metrics.csv / review_report trade_count: entries, or the closed count for an old card
+    assert ir_backtest.trade_count_of({"counts": {"closed": 40, "entries_distinct": 12}}) == (12, "entries_distinct")
+    assert ir_backtest.trade_count_of({"counts": {"closed": 40}}) == (40, precheck.LEGACY_ENTRIES_BASIS)
+    assert precheck.entries_count({"closed": True}) == (None, precheck.LEGACY_ENTRIES_BASIS)
