@@ -66,7 +66,7 @@ def round_trip(server):
 def test_connection_check_negotiates_the_contract_and_never_shows_the_credential(server, client):
     info = client.check()
     assert info["contract"] == "alphakeel.research/1"
-    assert set(info["modes"]) == {"native_strategy", "ir_strategy", "fixed_intent_replay", "python_policy"}
+    assert set(info["modes"]) == {"native_strategy", "ir_strategy", "fixed_intent_replay", "python_policy", "targets_strategy"}
     assert server.token not in repr(client) and server.token not in json.dumps(info)
     bad = Client(server.url, "ak_rs_tok-000000000000.ffff")
     with pytest.raises(ApiError) as e:
