@@ -264,3 +264,19 @@ def test_export_with_a_battery_over_another_window_is_409_window_mismatch(env):
     r = env.client.post(f"/runs/{run.name}/alphakeel/export")
     assert r.status_code == 409 and r.json()["detail"]["code"] == "export.window_mismatch" and "window mismatch" in r.json()["detail"]["message"]
     assert not env.handoff.exists() or not any(env.handoff.iterdir())
+
+
+def test_the_ledger_count_of_the_backtest_registration_reaches_the_1_6_trials_floor(env, monkeypatch):
+    # protocol 3.0 trials_include: service_registration.ledger_trials_for_scope (AlphaKeel's 1.6 ledger count) is passed
+    # as ledger_trials; a card without it passes nothing
+    run = make_ir_run(env)
+    seen = []
+    real = precheck.evaluate
+    monkeypatch.setattr(precheck, "evaluate", lambda *a, **kw: seen.append(kw) or real(*a, **kw))
+    env.client.get(f"/runs/{run.name}/alphakeel")
+    assert "ledger_trials" not in seen[-1]
+    card = json.loads((run / "run_card.json").read_text())
+    card["service_registration"] = {"registered": True, "trial_id": "trial-x", "trial_key": "research:x", "ledger_trials_for_scope": 1234}
+    (run / "run_card.json").write_text(json.dumps(card))
+    env.client.get(f"/runs/{run.name}/alphakeel")
+    assert seen[-1]["ledger_trials"] == 1234

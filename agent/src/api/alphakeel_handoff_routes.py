@@ -136,7 +136,13 @@ def describe(run_dir: Path) -> dict:
             floor += len(fixed)
         # pass the IR so 1.12 (IR restrictions), 1.9 (IR widths), 1.13 and 1.19 are judged as AlphaKeel judges them; the IS pack's
         # data lock lives in the research service, so 1.18 stays with AlphaKeel (shown as N/A here instead of a false FAIL)
-        checks = precheck.evaluate(doc, protocol, 0, floor, ir=_doc)
+        # protocol 3.0 (1.6 trials_include): the research-service ledger count the backtest's POST /trials returned. It is
+        # AlphaKeel's 1.6 ledger floor (same trials_for_scope_of: kind, lineage, review credentials excluded, vault rows of the
+        # credential's chain root) taken at registration time, so it can only be <= AlphaKeel's current count; absent = not passed.
+        reg = card.get("service_registration")
+        n_scope = reg.get("ledger_trials_for_scope") if isinstance(reg, dict) else None
+        ledger = {"ledger_trials": n_scope} if isinstance(n_scope, int) and not isinstance(n_scope, bool) and n_scope >= 0 else {}
+        checks = precheck.evaluate(doc, protocol, 0, floor, ir=_doc, **ledger)
         for c in checks:
             if c["id"] == "1.18":
                 c.update(result="N/A", observed=None, note="AlphaKeel decides this from the IS pack's data lock in the research service; not checkable on the VT side")

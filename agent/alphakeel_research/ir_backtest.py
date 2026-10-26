@@ -1452,7 +1452,9 @@ def write_run_files(out: Path, ir_doc: dict, instruments: list[dict], card: dict
     row = metrics_row(out, card)
     sharpe = (card.get("alphakeel_metrics") or {}).get("sharpe_annualised")
     _write_json(out / "review_report.json", {"total_return": float(row["total_return"]), "sharpe": sharpe,
-                                             "max_drawdown": float(row["max_drawdown"]), "trade_count": int(row["trade_count"])})
+                                             "max_drawdown": float(row["max_drawdown"]), "trade_count": int(row["trade_count"]),
+                                             # protocol 3.0: what trade_count counts, and the closed count win_rate divides by
+                                             "trade_count_basis": trade_count_of(card)[1], "closed_trades": int(card["counts"]["closed"])})
     (out / "artifacts").mkdir(exist_ok=True)
     (out / "artifacts" / "metrics.csv").write_text(",".join(METRICS_COLUMNS) + "\n" + ",".join(row[c] for c in METRICS_COLUMNS) + "\n",
                                                     encoding="utf-8")

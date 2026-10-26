@@ -390,8 +390,10 @@ def record(session_id: str, run_dir: str | Path, result: dict, evidence_dir: str
         _append_durable(_session_dir(session_id) / LEDGER_FILE, row)
     hid = session_hypothesis(session_id, card.get("name") or "")
     scr = card.get("screen") or {}
+    from alphakeel_research.ir_backtest import trade_count_of  # the metrics.csv / review_report.json trade_count (protocol 3.0)
+
     metrics = {"strategy_id": card["strategy_id"], "name": card.get("name"), "window": card.get("window"),
-               "trade_count": card["counts"]["closed"], "net_usdt": card["amounts"]["equity_end"],
+               "trade_count": trade_count_of(card)[0], "net_usdt": card["amounts"]["equity_end"],
                "fees_usdt": card["amounts"]["fees"], "max_drawdown": card["max_drawdown"]["fraction_of_capital"],
                "evidence_status": scr.get("evidence_status"), "fees_source": card["assumptions"].get("fees_source")}
     reg = _registry()

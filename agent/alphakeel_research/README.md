@@ -247,9 +247,14 @@ from open to close (a pair opened and closed twice is two entries); an entry sti
 writes `counts.entries_distinct` / `counts.median_hold_days` into the run card (window end = the backtest window end) and
 `ir robustness` writes `rating.facts.entries_distinct` / `median_hold_days` (window end = the IS window end); the net already
 values every open position at the window end (`open_positions_mark`), counted entry or not, as AlphaKeel's net does. Readers of
-an entry count (`screen` 1.2, `metrics.csv` / `review_report.json` `trade_count`, the `few_trades` cap) use `entries_distinct`
-and fall back to `counts.closed` / `trades_closed` labelled 旧口径 (`precheck.LEGACY_ENTRIES_BASIS`, `trade_count_basis`) for a
-card from before 3.0; win rate and the per-run trade counts of the battery tables stay closed-trade counts. The 1.8 bootstrap
+an entry count (`screen` 1.2, `metrics.csv` / `review_report.json` `trade_count`, the hypothesis-registry `link_backtest` metrics
+`trade_count`, the `few_trades` cap) use `entries_distinct` and fall back to `counts.closed` / `trades_closed` labelled 旧口径
+for a card from before 3.0: `screen` 1.2 carries it as `basis` (`precheck.LEGACY_ENTRIES_BASIS`) and `review_report.json` as
+`trade_count_basis` (`entries_distinct` or that string); `metrics.csv` has no basis column (upstream's columns). `win_rate`
+(`metrics.csv`) is a share of CLOSED trades (denominator `counts.closed`, given as `review_report.json` `closed_trades`), and
+the per-run trade counts of the battery tables stay closed-trade counts. Since `metrics.csv` `trade_count` is distinct entries,
+the strategy-discovery hard gate (`evidence_harness`, `trade_count > 0`) now passes a run with 0 closed trades and one entry
+still open at the window end after >= 7 days (it has traded). The 1.8 bootstrap
 uses the 3.0 block (`statistics.bootstrap.block_rule = max_politis_white_median_hold`): mean block = max(ceil(Politis–White)
 (unavailable: max(2, ceil(cbrt n))), median holding days of the counted entries (>= 1)); above ceil(min(3 sqrt n, n/3)) the
 bound is not computed and `statistics.bootstrap.block_too_long` = {median_hold_days, days, block_cap} makes 1.8 FAIL with that
@@ -262,7 +267,13 @@ Known deviations from AlphaKeel (the verdict is AlphaKeel's recomputation; these
   cap, can differ. The Politis–White block itself matches AlphaKeel bit for bit (correctly rounded cbrt, left-fold sums).
 - 1.8 on an older battery: a `robustness.json` without `block_rule` (old block max(2, ceil(cbrt n))) still passes on its reported
   bound, with a note; re-run `ir robustness` to get the 3.0 block. The engine screen (`backtest.engine_screen`) keeps the old block
-  (it has no holding times) and counts round trips from `fills.jsonl` for `min_entries` (positions open at the end not counted).
+  (it has no holding times) and counts round trips from `fills.jsonl` for `min_entries` (positions open at the end not counted;
+  a pair whose legs open and close on the same bars is one entry); without a readable `fills.jsonl` a `min_entries` copy FAILS
+  1.2 ("缺 fills.jsonl，无法计不同入场") instead of falling back to `metrics.csv` `trade_count` (closed legs); 2.2 is not screened there.
+- 1.6 ledger floor: the hand-off route passes the run card's `service_registration.ledger_trials_for_scope` (the count the
+  backtest's `POST /trials` returned) as `ledger_trials`. AlphaKeel computes it with the same `trials_for_scope_of` (kind,
+  lineage, review credentials excluded) as its 1.6 `ledger_trials_for_kind`, but at registration time (later trials only add)
+  and with the vault rows of the registering credential's chain root (AlphaKeel: the IR's `provenance.research_credential`).
 - 1.6 `trials_include`: targets_strategy submissions (`POST /runs`, `POST /trials`) and summary reads are rows of the research-service
   trial ledger, which this client cannot read. They enter the local trial count only when the caller passes the ledger count
   (`precheck.evaluate(..., ledger_trials=)`); otherwise the 1.6 note says they were not counted, so the local DSR can only be

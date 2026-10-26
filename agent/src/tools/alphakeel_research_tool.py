@@ -565,6 +565,8 @@ def _copy_evidence(result: dict, run_dir: Any) -> str | None:
 
 _SCREEN_FAIL_TEXT = {"1.1": "1.1 window {o} d < {t}", "1.2": "1.2 {o} closed trades < {t}", "1.3": "1.3 net {o} USDT <= {t}",
                      "1.16": "1.16 coverage partial"}
+#: protocol 3.0: a 1.2 screen item whose basis is distinct entries (``screen`` ``basis``); any other basis is the closed count
+_SCREEN_FAIL_TEXT_ENTRIES = "1.2 {o} distinct entries < {t}"
 
 
 def _summary(result: dict) -> str:
@@ -575,11 +577,13 @@ def _summary(result: dict) -> str:
     for i in items.values():
         if i.get("result") == "FAIL":
             thr = next(iter((i.get("threshold") or {}).values()), "?")
-            parts.append(_SCREEN_FAIL_TEXT.get(i["id"], i["id"] + " FAIL").format(o="missing" if i.get("observed") is None else i["observed"], t=thr))
+            text = _SCREEN_FAIL_TEXT_ENTRIES if i["id"] == "1.2" and i.get("basis") == "entries_distinct" else _SCREEN_FAIL_TEXT.get(i["id"], i["id"] + " FAIL")
+            parts.append(text.format(o="missing" if i.get("observed") is None else i["observed"], t=thr))
     closed = (result.get("counts") or {}).get("closed")
     days = (items.get("1.1") or {}).get("observed")
     fees_source = (result.get("assumptions") or {}).get("fees_source")
-    parts += [f"{closed} closed trades", f"window {days} d", f"fees {fees_source}"]
+    # the closed-trade count (已平仓笔数), not the distinct-entry count 1.2 reads under protocol 3.0
+    parts += [f"{closed} closed trades (已平仓笔数)", f"window {days} d", f"fees {fees_source}"]
     diag = result.get("diagnostics")
     if closed == 0 and isinstance(diag, dict):
         rej = diag.get("rejections") or {}

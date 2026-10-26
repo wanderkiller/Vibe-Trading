@@ -223,7 +223,7 @@ def test_ir_backtest_envelope_carries_label_evidence_dir_and_ledger_trials(sessi
     assert out["status"] == "ok", out
     assert list(out["result"])[:2] == ["evidence_status", "summary"]
     assert out["result"]["evidence_status"] == "insufficient"
-    assert out["result"]["summary"] == ("insufficient: 1.2 15 closed trades < 30; 1.3 net -138.19 USDT <= 0; 15 closed trades; "
+    assert out["result"]["summary"] == ("insufficient: 1.2 15 closed trades < 30; 1.3 net -138.19 USDT <= 0; 15 closed trades (已平仓笔数); "
                                         "window 180 d; fees public base-tier taker (tool default, user decision 2026-10-14)")
     assert out["evidence_dir"] == "ir_runs/20261014_090950_ir"
     assert out["ignored_args"] == ["instruments", "trials"] and out["ignored_args_note"] == "computed from the IR and the trial ledger"
@@ -925,3 +925,24 @@ def test_screen_1_2_reads_entries_distinct_and_falls_back_to_closed_labelled_leg
     assert ir_backtest.trade_count_of({"counts": {"closed": 40, "entries_distinct": 12}}) == (12, "entries_distinct")
     assert ir_backtest.trade_count_of({"counts": {"closed": 40}}) == (40, precheck.LEGACY_ENTRIES_BASIS)
     assert precheck.entries_count({"closed": True}) == (None, precheck.LEGACY_ENTRIES_BASIS)
+
+
+def _v3_card(session) -> dict:
+    card = _card(session["sid"], "v3-entries", "-138.19", 15)
+    card["counts"]["entries_distinct"] = 12
+    card["screen"] = screen(card)
+    return card
+
+
+def test_protocol_3_summary_names_distinct_entries_and_marks_the_closed_count(session) -> None:
+    out = _run_tool(session, "20261014_090950_ir", _v3_card(session))
+    assert out["result"]["summary"].startswith("insufficient: 1.2 12 distinct entries < 30; 1.3 net -138.19 USDT <= 0; "
+                                               "15 closed trades (已平仓笔数); ")
+
+
+def test_protocol_3_registry_trade_count_is_the_entry_count(session) -> None:
+    from src.tools import alphakeel_research_ledger as L
+
+    _run_tool(session, "20261014_090950_ir", _v3_card(session))
+    links = [lk for h in L._registry().list() for lk in h.run_cards]
+    assert [lk["metrics"]["trade_count"] for lk in links] == [12]  # same basis as metrics.csv / review_report.json

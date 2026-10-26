@@ -26,6 +26,8 @@ from typing import Any, Sequence
 
 #: ``BaseEngine.__init__``: ``self.initial_capital = config.get("initial_cash", 1_000_000)``
 DEFAULT_INITIAL_CASH = 1_000_000
+#: protocol 3.0 1.2 (min_entries) without a readable artifacts/fills.jsonl
+NO_FILLS_NOTE = "缺 fills.jsonl，无法计不同入场 (artifacts/fills.jsonl missing or unreadable: distinct entries cannot be counted)"
 NEXT = ("engine results cannot go live: hand over a Strategy IR, pass ir_robustness, "
         "then AlphaKeel G1 (validated) and G2 (paper)")
 
@@ -330,6 +332,11 @@ def _screen(run_dir: Path, *, trials: int, variant_sharpes: Sequence[float], pro
                        "PASS" if str(coverage).lower() == thr("1.16", "coverage_partial") else "FAIL"))
     items = [{"id": i, "label": by_id[i]["label"], "result": result, "observed": observed, "threshold": {key: thr(i, key)}}
              for i, key, observed, result in checks]
+    if k12 == "min_entries" and trips_source != "fills":
+        # protocol 3.0: distinct entries need the fills; metrics.csv trade_count counts closed legs, never entries
+        for it in items:
+            if it["id"] == "1.2":
+                it.update(result="FAIL", observed=None, note=NO_FILLS_NOTE)
     res = {i["id"]: i["result"] for i in items}
     status = _status_of(res)
     not_evaluated = sorted((i for i in by_id if i not in res), key=_id_key)

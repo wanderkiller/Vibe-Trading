@@ -7,6 +7,7 @@ cutoff was read. Every value here is synthetic; nothing touches the network.
 
 from __future__ import annotations
 
+import copy
 import datetime
 import json
 import random
@@ -14,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from alphakeel_research import precheck
 from backtest.engine_screen import screen_engine_run
 
 pytestmark = pytest.mark.unit
@@ -27,7 +29,7 @@ CUTOFF_DAY_MS = CUTOFF_MS - CUTOFF_MS % DAY_MS
 def _make_run(root: Path, name: str = "run", *, trades: int = 40, drift: float = 0.002, days: int = 200, code: str = "# v1\n",
               seed: int = 1, source: str = "yfinance", end_date: str | None = None, weight: float = 0.5,
               final_override: float | None = None, codes: tuple[str, ...] = ("BTC-USDT",), config_extra: dict | None = None,
-              ohlcv: bool = True) -> Path:
+              ohlcv: bool = True, fills: bool = True) -> Path:
     rd = root / name
     (rd / "code").mkdir(parents=True, exist_ok=True)
     (rd / "artifacts").mkdir(parents=True, exist_ok=True)
@@ -53,6 +55,11 @@ def _make_run(root: Path, name: str = "run", *, trades: int = 40, drift: float =
     final = eq if final_override is None else final_override
     (rd / "artifacts" / "metrics.csv").write_text(
         f"final_value,trade_count,benchmark_return,excess_return,funding_paid\n{final},{trades},0.1,0.2,12.5\n")
+    if fills:  # protocol 3.0 counts distinct entries from fills.jsonl: `trades` single-symbol round trips
+        t0 = datetime.datetime(2024, 1, 1)
+        (rd / "artifacts" / "fills.jsonl").write_text("".join(
+            json.dumps({"symbol": codes[0], "timestamp": (t0 + datetime.timedelta(hours=2 * k + h)).isoformat(), "bar_idx": 0, "action": a}) + "\n"
+            for k in range(trades) for h, a in ((0, "open"), (1, "close"))))
     return rd
 
 
@@ -587,6 +594,9 @@ def _variant(rd: Path, drift: float, vol: float, seed: int, days: int = 400) -> 
     (rd / "artifacts" / "positions.csv").write_text("\n".join(pos) + "\n")
     (rd / "artifacts" / "ohlcv_AAPL.csv").write_text("\n".join(bars) + "\n")
     (rd / "artifacts" / "metrics.csv").write_text(f"final_value,trade_count\n{eq},50\n")
+    (rd / "artifacts" / "fills.jsonl").write_text("".join(  # 50 round trips: protocol 3.0 counts entries from the fills
+        json.dumps({"symbol": "AAPL", "timestamp": f"2024-03-{1 + k // 2:02d}T{10 + 2 * (k % 2) + h}:00:00", "bar_idx": 0, "action": a}) + "\n"
+        for k in range(50) for h, a in ((0, "open"), (1, "close"))))
 
 
 def test_a_record_time_failure_is_never_upgraded_at_render(tmp_path) -> None:
@@ -955,7 +965,7 @@ def test_scaling_and_a_liquidation_belong_to_one_lifecycle(tmp_path) -> None:
 
 
 def test_missing_or_unreadable_fills_fall_back_to_the_metrics_trade_count(tmp_path) -> None:
-    rd = _make_run(tmp_path, "nofills", trades=40)
+    rd = _make_run(tmp_path, "nofills", trades=40, fills=False)
     facts = screen_engine_run(rd, trials=1)["facts"]
     assert (facts["closed_legs"], facts["round_trips"], facts["round_trips_source"]) == (40, 40, "metrics_trade_count")
     (rd / "artifacts" / "fills.jsonl").write_text("{not json\n")
@@ -1204,3 +1214,19 @@ def test_engine_verdict_lists_failures_outside_the_primary_group() -> None:
     assert _engine_verdict(screen, _ENGINE_TEXT[False]) == "insufficient (1.2); also failed: 1.3"
     assert _engine_verdict({"evidence_status": "insufficient", "items": [{"id": "1.2", "result": "FAIL"}]},
                            _ENGINE_TEXT[True]) == "证据不足（1.2）"
+
+
+def test_protocol_3_without_fills_fails_1_2_instead_of_counting_closed_legs(tmp_path) -> None:
+    from backtest.engine_screen import NO_FILLS_NOTE
+
+    rd = _make_run(tmp_path, "v3nofills", trades=40, fills=False)
+    item = next(i for i in screen_engine_run(rd, trials=1)["items"] if i["id"] == "1.2")
+    assert item["threshold"] == {"min_entries": "30"} and item["result"] == "FAIL" and item["observed"] is None
+    assert item["note"] == NO_FILLS_NOTE and "缺 fills.jsonl" in item["note"]
+    # a 2.8-or-earlier copy (min_trades) keeps the metrics.csv fallback
+    protocol = copy.deepcopy(precheck.load_protocol())
+    for it in protocol["stages"]["validated"]["items"]:
+        if it["id"] == "1.2":
+            it["threshold"] = {"min_trades": "30"}
+    old = next(i for i in screen_engine_run(rd, trials=1, protocol=protocol)["items"] if i["id"] == "1.2")
+    assert old["result"] == "PASS" and old["observed"] == 40

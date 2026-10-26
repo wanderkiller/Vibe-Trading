@@ -1018,7 +1018,8 @@ def test_ir_backtest_without_out_creates_a_vt_run_with_the_list_files(tmp_path, 
     assert json.loads((run / "state.json").read_text()) == {"status": "success"}
     assert json.loads((run / "req.json").read_text()) == {"prompt": f"IR {golden_ir()['name']} 2023-01-01..2023-01-01", "kind": "alphakeel_ir"}
     rr = json.loads((run / "review_report.json").read_text())
-    assert set(rr) == {"total_return", "sharpe", "max_drawdown", "trade_count"}
+    assert set(rr) == {"total_return", "sharpe", "max_drawdown", "trade_count", "trade_count_basis", "closed_trades"}
+    assert rr["trade_count_basis"] == "entries_distinct" and rr["closed_trades"] == card["counts"]["closed"]  # win_rate's denominator
     assert rr["total_return"] == float(ir_backtest.q8(Decimal(card["amounts"]["equity_end"]) / Decimal(card["assumptions"]["capital_base"])))
     assert rr["sharpe"] == card["alphakeel_metrics"]["sharpe_annualised"]
     assert rr["trade_count"] == card["counts"]["entries_distinct"]  # protocol 3.0: distinct entries
