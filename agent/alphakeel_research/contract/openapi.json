@@ -2929,7 +2929,8 @@
           "native_strategy",
           "fixed_intent_replay",
           "python_policy",
-          "ir_strategy"
+          "ir_strategy",
+          "targets_strategy"
         ],
         "type": "string"
       },
@@ -3957,7 +3958,7 @@
             ]
           },
           "approximations": {
-            "description": "Optional (2026-10-11), `ir_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_with_conservative_feedback` (until 2026-10-13 `decisions_from_top_of_book_ledger`), `top_of_book_full_fill`;\nsince 2026-10-17 `maker_fill_model_M1` / `maker_fill_model_M2`, `maker_hedge_pricing` for an IR with a maker entry leg on a\nconservative run and `maker_not_modelled` on a one-level run of such an IR), each starting with its identifier and a colon.",
+            "description": "Optional (2026-10-11), `ir_strategy` / `targets_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_with_conservative_feedback` (until 2026-10-13 `decisions_from_top_of_book_ledger`), `top_of_book_full_fill`;\nsince 2026-10-17 `maker_fill_model_M1` / `maker_fill_model_M2`, `maker_hedge_pricing` for an IR with a maker entry leg on a\nconservative run and `maker_not_modelled` on a one-level run of such an IR), each starting with its identifier and a colon.",
             "items": {
               "$ref": "#/components/schemas/Text"
             },
@@ -4016,7 +4017,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ResultExecution",
-                "description": "Optional (2026-10-12), conservative `ir_strategy` runs only: decision grade and decision blockers of the execution\nmodel (the same judgement as the console's fidelity result). Server-only, like `run_assumptions`."
+                "description": "Optional (2026-10-12), conservative `ir_strategy` / `targets_strategy` runs only: decision grade and decision blockers of the execution\nmodel (the same judgement as the console's fidelity result). Server-only, like `run_assumptions`."
               },
               {
                 "type": "null"
@@ -4033,7 +4034,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ResultFillModel",
-                "description": "Optional (2026-10-11), `ir_strategy` only: the fill model the main figures use. `conservative` (default) = the\nfidelity square-root impact book, lot step / minimum notional, leg-failure unwind and (dataset view) a spread\nfloor; `top_of_book` = one-level full fills (explicit `profile.fill_model` only)."
+                "description": "Optional (2026-10-11), `ir_strategy` (since 2026-10-26 also `targets_strategy`) only: the fill model the main figures use. `conservative` (default) = the\nfidelity square-root impact book, lot step / minimum notional, leg-failure unwind and (dataset view) a spread\nfloor; `top_of_book` = one-level full fills (explicit `profile.fill_model` only)."
               },
               {
                 "type": "null"
@@ -4058,7 +4059,7 @@
             "type": "array"
           },
           "optimistic": {
-            "description": "Optional (2026-10-11), conservative `ir_strategy` runs only: the same run under one-level full fills\n(`fill_model`, `execution_ok`, `amounts_ok`, `amounts`, `by_currency`, `equity`, `drawdown`, `capital`,\n`counts`, `event_log`, `problems`, `events_sha256`). The main figures are the conservative ones.",
+            "description": "Optional (2026-10-11), conservative `ir_strategy` / `targets_strategy` runs only: the same run under one-level full fills\n(`fill_model`, `execution_ok`, `amounts_ok`, `amounts`, `by_currency`, `equity`, `drawdown`, `capital`,\n`counts`, `event_log`, `problems`, `events_sha256`). The main figures are the conservative ones.",
             "type": "object"
           },
           "problems": {
@@ -4069,7 +4070,7 @@
             "type": "array"
           },
           "run_assumptions": {
-            "description": "Optional (2026-10-11), `ir_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`, and since protocol 2.3 `fees_perp_taker` (venue ->\nperp taker the run actually used), `leverage_perp`, `funding_mode`; since 2026-10-12 `decision_grade_waivers`; since 2026-10-17\n`fees_spot_taker` (venue -> spot taker, spot_perp IRs only) and `maker` (conservative runs of an IR whose `execution` posts an\nentry leg maker: `{model, leg, timeout_s, participation, chase, exit, fees_maker: {venue: {perp|spot: rate}}, fills: {candidates,\nposted, posted_qty, maker_qty, chased, chased_qty}}`)). The AlphaKeel verdict reads it (items 1.14 and the\nbinding of the robustness evidence). Only runs of the service's own engine carry it: a registered external run\n(`POST /runs/external`) that includes `run_assumptions`, `fill_model`, `capital_cost`, `optimistic` or `execution` is refused.",
+            "description": "Optional (2026-10-11), `ir_strategy` and `targets_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`, and since protocol 2.3 `fees_perp_taker` (venue ->\nperp taker the run actually used), `leverage_perp`, `funding_mode`; since 2026-10-12 `decision_grade_waivers`; since 2026-10-17\n`fees_spot_taker` (venue -> spot taker, spot_perp IRs only) and `maker` (conservative runs of an IR whose `execution` posts an\nentry leg maker: `{model, leg, timeout_s, participation, chase, exit, fees_maker: {venue: {perp|spot: rate}}, fills: {candidates,\nposted, posted_qty, maker_qty, chased, chased_qty}}`)). The AlphaKeel verdict reads it (items 1.14 and the\nbinding of the robustness evidence). Only runs of the service's own engine carry it: a registered external run\n(`POST /runs/external`) that includes `run_assumptions`, `fill_model`, `capital_cost`, `optimistic` or `execution` is refused.",
             "type": "object"
           },
           "run_id": {
@@ -4085,7 +4086,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Id",
-                "description": "`ir_strategy` only: the IR's `strategy_id` (`ir-` + 24 hex of the canonical definition's SHA-256)."
+                "description": "`ir_strategy`: the IR's `strategy_id` (`ir-` + 24 hex of the canonical definition's SHA-256); `targets_strategy`:\nthe request's `targets.strategy_id`."
               },
               {
                 "type": "null"
@@ -4103,6 +4104,10 @@
               }
             ]
           },
+          "targets": {
+            "description": "Since 2026-10-26, `targets_strategy` only: `package_sha256`, `targets_sha256`, `documents` (lines of the sequence),\n`last_accepted_frame_seq`, `staleness` (`fresh` | `no_entries` | `exit`), `locks` and `backoff` (pair ids at the end of the\nrun) and `alerts` (`total`, `p1`, `list`: the decider's alerts, at most 200, each `{ts_ms, seq, level, code, pair_id?, detail}`).",
+            "type": "object"
+          },
           "verification": {
             "$ref": "#/components/schemas/Verification"
           },
@@ -4110,7 +4115,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ResultWindow",
-                "description": "`ir_strategy` only: the decision window (first decision instant, last + 1 ms)."
+                "description": "`ir_strategy` and `targets_strategy` only: the decision window (first decision instant, last + 1 ms)."
               },
               {
                 "type": "null"
@@ -4461,7 +4466,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/VerificationEndEquity",
-                "description": "Optional (protocol 2.5), scan-frame `ir_strategy` runs only: the IR decision ledger's last mark of the replay (input\nframe sequence number and equity; the replay starts flat at zero equity). AlphaKeel's G3 item 3.9 compares it with the\npaper journal's equity change over the same segment."
+                "description": "Optional (protocol 2.5), scan-frame `ir_strategy` (since 2026-10-26 also `targets_strategy`) runs only: the decision ledger's last mark of the replay (input\nframe sequence number and equity; the replay starts flat at zero equity). AlphaKeel's G3 item 3.9 compares it with the\npaper journal's equity change over the same segment."
               },
               {
                 "type": "null"
@@ -4472,7 +4477,7 @@
             "$ref": "#/components/schemas/Status"
           },
           "events": {
-            "description": "Optional (protocol 2.4), scan-frame `ir_strategy` runs only: the IR decision ledger's events of the replay\n(opens, closes, funding settlements), each keyed by the input frame it happened at. AlphaKeel's G3 item 3.9\ncompares them one by one with the events of the strategy's paper journal.",
+            "description": "Optional (protocol 2.4), scan-frame `ir_strategy` (since 2026-10-26 also `targets_strategy`) runs only: the decision ledger's events of the replay\n(opens, closes, funding settlements), each keyed by the input frame it happened at. AlphaKeel's G3 item 3.9\ncompares them one by one with the events of the strategy's paper journal.",
             "items": {
               "$ref": "#/components/schemas/VerificationEvent"
             },
@@ -4499,7 +4504,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/Status",
-                "description": "`ir_strategy` only: the IR decision ledger (the paper book the IR evaluator drove) recounted against the\nengine's execution and accounting (`native_rule_ledger` is `not_applicable` in that mode). Absent in other modes."
+                "description": "`ir_strategy` and `targets_strategy` only: the decision ledger (the paper book the IR evaluator or the targets decider drove) recounted against the\nengine's execution and accounting (`native_rule_ledger` is `not_applicable` in that mode). Absent in other modes."
               },
               {
                 "type": "null"
@@ -4507,7 +4512,7 @@
             ]
           },
           "ir_ledger_problems": {
-            "description": "`ir_strategy` with `ir_ledger = mismatch` only: why (the engine-vs-ledger audit: maximum differences and the\nfirst problems). Absent otherwise.",
+            "description": "`ir_strategy` / `targets_strategy` with `ir_ledger = mismatch` only: why (the engine-vs-ledger audit: maximum differences and the\nfirst problems). Absent otherwise.",
             "type": "object"
           },
           "native_rule_ledger": {
@@ -8081,7 +8086,7 @@
             "serviceCredential": []
           }
         ],
-        "summary": "Create a run: native_strategy, ir_strategy (body.ir = a Strategy IR document), fixed_intent_replay or python_policy; idempotent by key; a body field generated_by is refused (request.invalid); a review credential may only create ir_strategy runs (auth.scope); its purpose is oos_review (default; names family_id, a hypothesis family registered by the rotation chain of IR provenance.research_credential and bound to the IR's lineage; N distinct IRs per (chain root, lineage), 403 vault.budget; an IR whose earlier reviews all failed may be retried) or paper_replay (scan-frame packs only; no family, no budget, no verdict summary)",
+        "summary": "Create a run: native_strategy, ir_strategy (body.ir = a Strategy IR document), targets_strategy (body.targets = {strategy_id, package_sha256, targets_sha256 = an uploaded alphakeel.targets/1 JSONL sequence, scan_interval_ms, params?}; verdicts accept only runs submitted by the runner credential), fixed_intent_replay or python_policy; idempotent by key; a body field generated_by is refused (request.invalid); a review credential may only create ir_strategy runs (auth.scope); its purpose is oos_review (default; names family_id, a hypothesis family registered by the rotation chain of IR provenance.research_credential and bound to the IR's lineage; N distinct IRs per (chain root, lineage), 403 vault.budget; an IR whose earlier reviews all failed may be retried) or paper_replay (scan-frame packs only; no family, no budget, no verdict summary)",
         "tags": [
           "research"
         ]
@@ -10324,7 +10329,7 @@
             "serviceCredential": []
           }
         ],
-        "summary": "Register an ir_strategy trial in the global trial ledger without running it (same request body and validation as POST /runs; idempotent by request digest)",
+        "summary": "Register an ir_strategy or targets_strategy trial in the global trial ledger without running it (same request body and validation as POST /runs; idempotent by request digest)",
         "tags": [
           "research"
         ]
@@ -10532,7 +10537,7 @@
             "serviceCredential": []
           }
         ],
-        "summary": "Upload evidence (X-Content-SHA256 header required; verified by content)",
+        "summary": "Upload evidence (X-Content-SHA256 header required; verified by content); kind = intents, strategy-bundle, evidence or targets (a targets_strategy JSONL sequence)",
         "tags": [
           "research"
         ]

@@ -489,6 +489,7 @@ class Mode(StrEnum):
     fixed_intent_replay = "fixed_intent_replay"
     python_policy = "python_policy"
     ir_strategy = "ir_strategy"
+    targets_strategy = "targets_strategy"
 
 
 class Ns(RootModel[str]):
@@ -1739,7 +1740,7 @@ class Verification(BaseModel):
     events: Annotated[
         list[VerificationEvent] | None,
         Field(
-            description="Optional (protocol 2.4), scan-frame `ir_strategy` runs only: the IR decision ledger's events of the replay\n(opens, closes, funding settlements), each keyed by the input frame it happened at. AlphaKeel's G3 item 3.9\ncompares them one by one with the events of the strategy's paper journal."
+            description="Optional (protocol 2.4), scan-frame `ir_strategy` (since 2026-10-26 also `targets_strategy`) runs only: the decision ledger's events of the replay\n(opens, closes, funding settlements), each keyed by the input frame it happened at. AlphaKeel's G3 item 3.9\ncompares them one by one with the events of the strategy's paper journal."
         ),
     ] = None
     external_python: Status
@@ -1748,7 +1749,7 @@ class Verification(BaseModel):
     ir_ledger_problems: Annotated[
         dict[str, Any] | None,
         Field(
-            description="`ir_strategy` with `ir_ledger = mismatch` only: why (the engine-vs-ledger audit: maximum differences and the\nfirst problems). Absent otherwise."
+            description="`ir_strategy` / `targets_strategy` with `ir_ledger = mismatch` only: why (the engine-vs-ledger audit: maximum differences and the\nfirst problems). Absent otherwise."
         ),
     ] = None
     native_rule_ledger: Status
@@ -1812,7 +1813,7 @@ class RunResult(BaseModel):
     approximations: Annotated[
         list[Text] | None,
         Field(
-            description="Optional (2026-10-11), `ir_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_with_conservative_feedback` (until 2026-10-13 `decisions_from_top_of_book_ledger`), `top_of_book_full_fill`;\nsince 2026-10-17 `maker_fill_model_M1` / `maker_fill_model_M2`, `maker_hedge_pricing` for an IR with a maker entry leg on a\nconservative run and `maker_not_modelled` on a one-level run of such an IR), each starting with its identifier and a colon.",
+            description="Optional (2026-10-11), `ir_strategy` / `targets_strategy` only: the assumptions behind the fill model (`synthetic_spread_floor`,\n`sqrt_impact_modeled_depth`, `lot_step_inferred_from_archive` / `instrument_meta_rules`, `leg_failure_assumed`,\n`decisions_with_conservative_feedback` (until 2026-10-13 `decisions_from_top_of_book_ledger`), `top_of_book_full_fill`;\nsince 2026-10-17 `maker_fill_model_M1` / `maker_fill_model_M2`, `maker_hedge_pricing` for an IR with a maker entry leg on a\nconservative run and `maker_not_modelled` on a one-level run of such an IR), each starting with its identifier and a colon.",
             max_length=40,
         ),
     ] = None
@@ -1850,14 +1851,14 @@ class RunResult(BaseModel):
     optimistic: Annotated[
         dict[str, Any] | None,
         Field(
-            description="Optional (2026-10-11), conservative `ir_strategy` runs only: the same run under one-level full fills\n(`fill_model`, `execution_ok`, `amounts_ok`, `amounts`, `by_currency`, `equity`, `drawdown`, `capital`,\n`counts`, `event_log`, `problems`, `events_sha256`). The main figures are the conservative ones."
+            description="Optional (2026-10-11), conservative `ir_strategy` / `targets_strategy` runs only: the same run under one-level full fills\n(`fill_model`, `execution_ok`, `amounts_ok`, `amounts`, `by_currency`, `equity`, `drawdown`, `capital`,\n`counts`, `event_log`, `problems`, `events_sha256`). The main figures are the conservative ones."
         ),
     ] = None
     problems: Annotated[list[Text], Field(max_length=50)]
     run_assumptions: Annotated[
         dict[str, Any] | None,
         Field(
-            description="Optional (2026-10-11), `ir_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`, and since protocol 2.3 `fees_perp_taker` (venue ->\nperp taker the run actually used), `leverage_perp`, `funding_mode`; since 2026-10-12 `decision_grade_waivers`; since 2026-10-17\n`fees_spot_taker` (venue -> spot taker, spot_perp IRs only) and `maker` (conservative runs of an IR whose `execution` posts an\nentry leg maker: `{model, leg, timeout_s, participation, chase, exit, fees_maker: {venue: {perp|spot: rate}}, fills: {candidates,\nposted, posted_qty, maker_qty, chased, chased_qty}}`)). The AlphaKeel verdict reads it (items 1.14 and the\nbinding of the robustness evidence). Only runs of the service's own engine carry it: a registered external run\n(`POST /runs/external`) that includes `run_assumptions`, `fill_model`, `capital_cost`, `optimistic` or `execution` is refused."
+            description="Optional (2026-10-11), `ir_strategy` and `targets_strategy` runs: the assumptions the run was made under (`fill_model`, `spread_floor_bps`,\n`capital_cost_annual`, `realism`, `runtime_guards`, `margin_tiers`, and since protocol 2.3 `fees_perp_taker` (venue ->\nperp taker the run actually used), `leverage_perp`, `funding_mode`; since 2026-10-12 `decision_grade_waivers`; since 2026-10-17\n`fees_spot_taker` (venue -> spot taker, spot_perp IRs only) and `maker` (conservative runs of an IR whose `execution` posts an\nentry leg maker: `{model, leg, timeout_s, participation, chase, exit, fees_maker: {venue: {perp|spot: rate}}, fills: {candidates,\nposted, posted_qty, maker_qty, chased, chased_qty}}`)). The AlphaKeel verdict reads it (items 1.14 and the\nbinding of the robustness evidence). Only runs of the service's own engine carry it: a registered external run\n(`POST /runs/external`) that includes `run_assumptions`, `fill_model`, `capital_cost`, `optimistic` or `execution` is refused."
         ),
     ] = None
     run_id: Id
@@ -1865,5 +1866,11 @@ class RunResult(BaseModel):
     side: RunManifestSide
     strategy_id: Id | None = None
     strategy_sha256: Sha256 | None = None
+    targets: Annotated[
+        dict[str, Any] | None,
+        Field(
+            description="Since 2026-10-26, `targets_strategy` only: `package_sha256`, `targets_sha256`, `documents` (lines of the sequence),\n`last_accepted_frame_seq`, `staleness` (`fresh` | `no_entries` | `exit`), `locks` and `backoff` (pair ids at the end of the\nrun) and `alerts` (`total`, `p1`, `list`: the decider's alerts, at most 200, each `{ts_ms, seq, level, code, pair_id?, detail}`)."
+        ),
+    ] = None
     verification: Verification
     window: ResultWindow | None = None

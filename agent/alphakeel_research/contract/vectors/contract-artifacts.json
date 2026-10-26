@@ -6981,6 +6981,167 @@
   },
   {
    "doc": {
+    "amounts": {
+     "close_now": "-0.4",
+     "fees": "0.2",
+     "funding": "0",
+     "fx_revaluation": "0",
+     "open_value": "0",
+     "price_pnl": "-0.2",
+     "realized": "-0.4"
+    },
+    "amounts_ok": true,
+    "by_currency": {
+     "USDT": {
+      "cash_flow": "-0.2",
+      "fees": "0.2",
+      "funding": "0"
+     }
+    },
+    "capital": {
+     "peak_margin_usdt": "33.3333"
+    },
+    "counts": {
+     "fills": 4,
+     "intents": 4
+    },
+    "data_quality": {
+     "estimate_fallbacks": 0,
+     "stale_points": 0
+    },
+    "drawdown": {
+     "max": "0.4",
+     "points": 2
+    },
+    "equity": {
+     "end_by_ccy": {
+      "USDT": "9999.6"
+     },
+     "end_close_now_usdt": "-0.4",
+     "start_by_ccy": {
+      "USDT": "10000"
+     }
+    },
+    "event_log": {
+     "count": 5,
+     "name": "events.jsonl",
+     "sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "execution_ok": true,
+    "limitations": [
+     "scan snapshots only"
+    ],
+    "mode": "targets_strategy",
+    "not_applicable_metrics": [
+     "win_rate"
+    ],
+    "problems": [],
+    "run_id": "run-1",
+    "schema": "alphakeel.result/1",
+    "side": "alphakeel_engine",
+    "strategy_id": "pkg-carry-demo",
+    "targets": {
+     "alerts": {
+      "list": [],
+      "p1": 0,
+      "total": 0
+     },
+     "backoff": [],
+     "documents": 3,
+     "last_accepted_frame_seq": 2,
+     "locks": [],
+     "package_sha256": "abababababababababababababababababababababababababababababababab",
+     "staleness": "fresh",
+     "targets_sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "verification": {
+     "engine_recount": "matched",
+     "external_python": "not_applicable",
+     "native_rule_ledger": "not_applicable"
+    }
+   },
+   "kind": "result",
+   "name": "result: targets_strategy run with its targets summary (optional, 2026-10-26)",
+   "valid": true
+  },
+  {
+   "doc": {
+    "amounts": {
+     "close_now": "-0.4",
+     "fees": "0.2",
+     "funding": "0",
+     "fx_revaluation": "0",
+     "open_value": "0",
+     "price_pnl": "-0.2",
+     "realized": "-0.4"
+    },
+    "amounts_ok": true,
+    "by_currency": {
+     "USDT": {
+      "cash_flow": "-0.2",
+      "fees": "0.2",
+      "funding": "0"
+     }
+    },
+    "capital": {
+     "peak_margin_usdt": "33.3333"
+    },
+    "counts": {
+     "fills": 4,
+     "intents": 4
+    },
+    "data_quality": {
+     "estimate_fallbacks": 0,
+     "stale_points": 0
+    },
+    "drawdown": {
+     "max": "0.4",
+     "points": 2
+    },
+    "equity": {
+     "end_by_ccy": {
+      "USDT": "9999.6"
+     },
+     "end_close_now_usdt": "-0.4",
+     "start_by_ccy": {
+      "USDT": "10000"
+     }
+    },
+    "event_log": {
+     "count": 5,
+     "name": "events.jsonl",
+     "sha256": "abababababababababababababababababababababababababababababababab"
+    },
+    "execution_ok": true,
+    "limitations": [
+     "scan snapshots only"
+    ],
+    "mode": "targets_strategy",
+    "not_applicable_metrics": [
+     "win_rate"
+    ],
+    "problems": [],
+    "run_id": "run-1",
+    "schema": "alphakeel.result/1",
+    "side": "alphakeel_engine",
+    "strategy_id": "pkg-carry-demo",
+    "targets": "pkg",
+    "verification": {
+     "engine_recount": "matched",
+     "external_python": "not_applicable",
+     "native_rule_ledger": "not_applicable"
+    }
+   },
+   "errors": [
+    "schema.type"
+   ],
+   "kind": "result",
+   "name": "result: targets summary must be an object",
+   "path": "/targets",
+   "valid": false
+  },
+  {
+   "doc": {
     "account": {
      "currencies": [
       "USDT",
