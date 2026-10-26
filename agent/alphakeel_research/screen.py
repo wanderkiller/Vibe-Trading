@@ -5,7 +5,8 @@ and 1.16 read straight off the run card; their thresholds are the ``validated`` 
 the comparison is ``precheck``'s (``Decimal``, a missing or mistyped field is a FAIL). 1.4-1.13 need the robustness
 battery (``ir robustness``) and are listed as not evaluated: ``passed_screen`` is never a pass of G1.
 
-``evidence_status``: ``insufficient`` (1.1 or 1.2 fails: window too short or too few closed trades, 0 included),
+``evidence_status``: ``insufficient`` (1.1 or 1.2 fails: window too short or too few closed trades, 0 included; from
+protocol 3.0 (threshold key ``min_entries``) 1.2 reads ``counts.entries_distinct``, a card without it fails),
 ``failed_screen`` (1.1 and 1.2 pass, 1.3 or 1.16 fails; 1.3 is ``N/A`` when no position was ever opened: neither FAIL nor PASS), ``passed_screen`` (all four pass; 1.4-1.13 not evaluated).
 """
 
@@ -39,6 +40,8 @@ def screen(card: dict, protocol: dict | None = None) -> dict:
     for item_id, path, key, kind in SCREEN_ITEMS:
         p = by_id[item_id]
         extra: dict = {}
+        if item_id == "1.2" and "min_entries" in p["threshold"]:  # protocol 3.0 (WP14a): entries, not closed trades
+            path, key = ("counts", "entries_distinct"), "min_entries"
         thr = p["threshold"][key]
         if item_id == "1.16":
             result, observed = _coverage(card, thr)

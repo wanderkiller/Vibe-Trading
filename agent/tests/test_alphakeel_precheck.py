@@ -84,6 +84,8 @@ def test_battery_output_has_every_item_and_agrees_with_its_own_facts(tmp_path):
     f = doc["rating"]["facts"]
     assert got["1.1"]["result"] == "FAIL" and f["days"] < 90  # a 6-hour window
     assert got["1.2"]["result"] == "FAIL" and f["trades_closed"] < 30
+    st = doc["statistics"]["entries"]  # protocol 3.0 fact, from the same run's trades
+    assert f["entries_distinct"] == st["entries_distinct"] == st["closed"] + st["open_counted"] and st["closed"] == f["trades_closed"]
     assert got["1.3"]["result"] == ("PASS" if Decimal(f["base_net"]) > 0 else "FAIL")
     assert got["1.4"]["result"] == ("PASS" if Decimal(doc["cost_stress"]["1.5"]["net"]) > 0 else "FAIL")
     bs = doc["cost_stress"]["basis_stress_x2"]  # not_applicable (net null) when the IR reads neither stress feature: 1.5 fails
@@ -189,6 +191,28 @@ def test_evaluate_without_an_ir_is_unchanged_and_with_one_appends_1_18_and_1_19(
                              ir=ir_case["ir"], pack_universe=ir_case["pack_universe"])
     assert [g["id"] for g in full][-2:] == ["1.18", "1.19"]
     assert [g["id"] for g in full][:-2] == [g["id"] for g in plain]
+
+
+def _with_1_2(threshold: dict) -> dict:
+    p = copy.deepcopy(precheck.load_protocol())
+    for item in p["stages"]["validated"]["items"]:
+        if item["id"] == "1.2":
+            item["threshold"] = threshold
+    return p
+
+
+@pytest.mark.parametrize("facts,want", [
+    ({"trades_closed": 45, "entries_distinct": 30}, "PASS"),  # exactly 30
+    ({"trades_closed": 45, "entries_distinct": 29}, "FAIL"),
+    ({"trades_closed": 45}, "FAIL"),  # protocol 3.0: a missing entries_distinct fails, no fallback to trades_closed
+])
+def test_item_1_2_reads_entries_distinct_when_the_threshold_is_min_entries(facts, want):
+    rb = {"rating": {"facts": facts}}
+    got = {g["id"]: g for g in precheck.evaluate(rb, _with_1_2({"min_entries": "30"}))}["1.2"]
+    assert got["result"] == want and got["observed"] == (None if "entries_distinct" not in facts else str(facts["entries_distinct"]))
+    # the <= 2.8 key still reads trades_closed, whatever entries_distinct says
+    old = {g["id"]: g for g in precheck.evaluate(rb, _with_1_2({"min_trades": "30"}))}["1.2"]
+    assert old["result"] == "PASS" and old["observed"] == "45"
 
 
 @pytest.mark.parametrize("c", VECTOR["derivations"]["permutation_seed"], ids=lambda c: c["strategy_id"])

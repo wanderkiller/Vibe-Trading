@@ -84,6 +84,29 @@ def test_the_rule_table_is_in_the_docstring_and_in_the_output():
 
 # --- permutation p-value ---------------------------------------------------------------------------------------------------
 
+# --- AlphaKeel protocol 3.0 entry count (WP14a) -----------------------------------------------------------------------------
+
+END = START + 30 * DAY
+
+
+def _round(pair: str, opened_days_before_end: float, closed: bool) -> dict:
+    return {"pair_key": pair, "opened_ms": END - int(opened_days_before_end * DAY), "status": "closed" if closed else "open"}
+
+
+@pytest.mark.parametrize("trades,want", [
+    ([_round("X", 20, True), _round("X", 15, True), _round("X", 10, True)], 3),  # 3 rounds of one pair: 3, not deduplicated
+    ([_round("X", 20, True), _round("X", 8, False)], 2),  # open 8 days >= 7: counted
+    ([_round("X", 20, True), _round("X", 3, False)], 1),  # open 3 days < 7: not counted
+    ([_round("X", 7, False)], 1),  # exactly 7 days: counted
+    ([{**_round("X", 7, False), "opened_ms": END - 7 * DAY + 1}], 0),  # 1 ms short of 7 days: exact duration, not rounded
+    ([], 0),
+])
+def test_entry_count_counts_each_round_and_open_rounds_held_7_days(trades, want):
+    c = ir_backtest.entry_counts(trades, END)
+    assert c["entries_distinct"] == want and c["hold_min_days"] == 7
+    assert c["closed"] + c["open_counted"] == want and c["open_counted"] + c["open_not_counted"] == sum(t["status"] == "open" for t in trades)
+
+
 def test_permutation_p_value_is_add_one_and_counts_ties():
     D = Decimal
     assert robustness.permutation_p_value(D(5), [D(1), D(5), D(7), D(2)]) == D(3) / D(5)  # (1 + 2) / (1 + 4)

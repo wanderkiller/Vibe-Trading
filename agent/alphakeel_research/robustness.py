@@ -53,7 +53,7 @@ Statistics (base IS daily returns = UTC-daily equity change / one capital base s
 convention, ``backtest.alphakeel_metrics``): Sharpe (x sqrt 365), PSR vs 0, DSR (honest trial count, variants' per-day
 Sharpe dispersion), PBO by CSCV over the candidate variants' daily returns (>= 4 variants, S = min(10, 2*floor(days/10))
 blocks, S >= 4), stationary-bootstrap 95% CI of the mean daily return (seeded, block = max(2, ceil(n^(1/3)))), effective
-sample size and the t-stat on it, trade count, per-coin concentration of closed-trade net, max drawdown, net decomposition
+sample size and the t-stat on it, trade count and entry count (AlphaKeel protocol 3.0: ``ir_backtest.entry_counts``), per-coin concentration of closed-trade net, max drawdown, net decomposition
 (price / funding / fees / open-position mark) from the run card amounts. Money is Decimal; floats only inside statistics.
 
 Rating rule table (``RULES``; written into robustness.json and robustness.md)
@@ -952,6 +952,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     closed_net = sum(by_coin.values(), Decimal(0))
     top = max(by_coin.items(), key=lambda kv: (kv[1], kv[0])) if by_coin else None
     top_share = _ratio(top[1], closed_net) if top and closed_net > 0 else None
+    entries = ir_backtest.entry_counts(base_trades, windows["is"][1])
     am = base_card["amounts"]
     b_net = Decimal(am["equity_end"])
     decomposition = {"net": am["equity_end"], "price_closed": am["price_pnl_closed"], "funding": am["funding"], "fees": _s(-Decimal(am["fees"])),
@@ -1003,7 +1004,8 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
     facts = {
         "base_net": _s(b_net), "oos_net": oos_doc["net"] if oos_doc else None, "cost_x2_net": cost_doc["2"]["net"],
         "coverage_partial": any(bool(c["data_audit"].get("coverage_partial", c["pack"].get("accept_partial"))) for c in all_cards),
-        "trades_closed": counts["closed"], "days": len(b_days), "funding_unpriced_fraction": fu_frac,
+        # trades_closed keeps its meaning (older registrations and vectors); AlphaKeel protocol 3.0 1.2 / 2.2 read entries_distinct
+        "trades_closed": counts["closed"], "entries_distinct": entries["entries_distinct"], "days": len(b_days), "funding_unpriced_fraction": fu_frac,
         # the filter counts toward the grade only when it is PART of the graded IR (its bases are in excluded_bases);
         # a candidate filter tested against an IR without it is decision support, not evidence about that IR
         "filter_tested": bases_f is not None and set(bases_f) <= set(filter_doc["universe"]["excluded_bases"]),
@@ -1069,6 +1071,7 @@ def battery(ir_doc: dict, pack: Pack, instruments: list[dict], *, is_window, oos
         "statistics": {"alphakeel_metrics": ak, "dsr_inputs": dsr_in, "pbo": {"value": pbo, "variants": len(var_ret), "blocks": s_blocks if pbo is not None else None,
                                                         "note": None if pbo is not None else "needs >= 4 candidate variants and >= 20 days"},
                        "bootstrap": boot, "t_stat_effective": t_eff, "trades_closed": counts["closed"], "open_at_end": counts["open_at_end"],
+                       "entries": entries,
                        "max_drawdown": base_card["max_drawdown"], "net_decomposition": decomposition,
                        "concentration": {"net_by_coin": {k2: _s(v) for k2, v in sorted(by_coin.items())}, "closed_net": _s(closed_net),
                                          "top_coin": top[0] if top else None, "top_coin_share": top_share},
@@ -1120,6 +1123,9 @@ def render_markdown(doc: dict) -> str:
     L += ["", "## Statistics (daily returns on capital " + doc["inputs"]["capital_base"] + ")", ""]
     L += _table(["statistic", "value", "note"], [
         ["Sharpe (annualised, 365)", ak["sharpe_annualised"], ""],
+        *([["entries (AlphaKeel protocol 3.0)", st["entries"]["entries_distinct"],
+            f"{st['entries']['closed']} closed + {st['entries']['open_counted']} open >= {st['entries']['hold_min_days']} days "
+            f"({st['entries']['open_not_counted']} open shorter not counted)"]] if st.get("entries") else []),
         ["PSR vs 0", ak["psr_vs_zero"], "probability the true Sharpe > 0"],
         ["DSR", ak["dsr"], f"trial count {doc['trials']['count']} (honest: variants actually run)"],
         ["PBO (CSCV)", st["pbo"]["value"], st["pbo"]["note"] or f"{st['pbo']['variants']} variants, {st['pbo']['blocks']} blocks"],

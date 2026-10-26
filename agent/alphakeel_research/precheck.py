@@ -370,6 +370,10 @@ def _item(rb: dict, item: dict, other: int, trials_floor: int = 0, filter_requir
     if i == "1.1":
         return _ge(rb, (*facts, "days"), t["min_days"], "int")
     if i == "1.2":
+        # dispatch on the threshold key, not on the protocol version string: protocol 3.0 (WP14a) ``min_entries`` reads
+        # entries_distinct (missing = FAIL, no fallback to trades_closed); <= 2.8 ``min_trades`` reads trades_closed
+        if "min_entries" in t:
+            return _ge(rb, (*facts, "entries_distinct"), t["min_entries"], "int")
         return _ge(rb, (*facts, "trades_closed"), t["min_trades"], "int")
     if i == "1.3":
         return _cost_net(rb, t, (*facts, "base_net"))

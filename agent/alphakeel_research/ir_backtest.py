@@ -129,6 +129,25 @@ SIM_CONVENTIONS = {
 }
 
 
+#: AlphaKeel protocol 3.0 (WP14a), G1 1.2 / P 2.2: a round still open at the window end counts as an entry once it has been
+#: held this long (exact duration ``end_ms - opened_ms``, not rounded to days)
+ENTRY_HOLD_MIN_DAYS = 7
+
+
+def entry_counts(trades: list[dict], end_ms: int) -> dict:
+    """AlphaKeel protocol 3.0 entry count over ``trades.jsonl`` records of one run whose window ends at ``end_ms``.
+
+    "distinct" means each round (open -> close of one pair) is counted once: three rounds of the same pair are 3 entries,
+    never ``len(set(pairs))``. A round closed in the window counts; a round open at the window end counts when it has been
+    held >= ``ENTRY_HOLD_MIN_DAYS`` days. Rounds never start before the window (the simulation starts flat at ``start_ms``).
+    """
+    closed = sum(1 for t in trades if t["status"] == "closed")
+    held = [end_ms - int(t["opened_ms"]) for t in trades if t["status"] != "closed"]
+    counted = sum(1 for h in held if h >= ENTRY_HOLD_MIN_DAYS * DAY_MS)
+    return {"entries_distinct": closed + counted, "closed": closed, "open_counted": counted, "open_not_counted": len(held) - counted,
+            "hold_min_days": ENTRY_HOLD_MIN_DAYS}
+
+
 def q8(x: Decimal) -> Decimal:
     return x.quantize(UNIT, rounding=ROUND_HALF_EVEN)
 
@@ -1248,8 +1267,10 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
         # the whole equity series
         sim.apply_engine_qty()
         final_eq = write_equity()
-        for tr in sim.closed_trades + sorted(sim.open.values(), key=lambda x: x.trade):
-            _jsonl(ftr, tr.record())
+        records = [tr.record() for tr in sim.closed_trades + sorted(sim.open.values(), key=lambda x: x.trade)]
+        for rec in records:
+            _jsonl(ftr, rec)
+        entries = entry_counts(records, end_ms)["entries_distinct"]
     finally:
         ftr.close()
         feq.close()
@@ -1311,7 +1332,7 @@ def run(ir_doc: dict, pack: Pack, instruments: list[dict], *, start_ms: int, end
                                                                        "datasets": psum["datasets"], "verified": True}},
                        "non_auditable_sources": []},
         "inputs": cursor.inputs(pack),
-        "counts": {**counts, "opened": sim.opened, "closed": sim.closed, "open_at_end": len(sim.open), "funding_events": sim.funding_events,
+        "counts": {**counts, "opened": sim.opened, "closed": sim.closed, "open_at_end": len(sim.open), "entries_distinct": entries, "funding_events": sim.funding_events,
                    "funding_unpriced": sim.funding_unpriced, "legs_engine_qty_adjusted": sim.qty_adjusted},
         "amounts": {"realized": _s(sim.realized), "price_pnl_closed": _s(sim.price_pnl), "funding": _s(sim.funding), "fees": _s(sim.fees),
                     "equity_end": _s(final_eq), "unrealized_end": _s(final_eq - sim.realized), "ccy": "USDT"},

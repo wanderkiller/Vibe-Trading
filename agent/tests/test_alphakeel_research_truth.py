@@ -135,6 +135,15 @@ def test_screen_labels_from_the_protocol_thresholds() -> None:
         if item["id"] == "1.2":
             item["threshold"]["min_trades"] = "10"
     assert screen(_screen_card("-138.19", 15, 180), protocol)["evidence_status"] == "failed_screen"
+    # protocol 3.0 (WP14a): 1.2 reads counts.entries_distinct; a card without it fails
+    for item in protocol["stages"]["validated"]["items"]:
+        if item["id"] == "1.2":
+            item["threshold"] = {"min_entries": "30"}
+    v3 = _screen_card("50", 40, 120)
+    assert screen(v3, protocol)["evidence_status"] == "insufficient"
+    v3["counts"]["entries_distinct"] = 30
+    got = screen(v3, protocol)
+    assert got["evidence_status"] == "passed_screen" and got["items"][1]["threshold"] == {"min_entries": "30"}
 
 
 # --- B1 + B3 + B4 through the tool, then grounding ---------------------------------------------------------------------
