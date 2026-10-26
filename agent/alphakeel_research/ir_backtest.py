@@ -130,7 +130,8 @@ SIM_CONVENTIONS = {
 
 
 #: AlphaKeel protocol 3.0 (WP14a), G1 1.2 / P 2.2: a round still open at the window end counts as an entry once it has been
-#: held this long (exact duration ``end_ms - opened_ms``, not rounded to days)
+#: held this long (exact duration ``end_ms - opened_ms``, not rounded to days). "Window end" is taken as ``end_ms`` (the
+#: exclusive bound), not the last valuation instant ``end_ms - 1``: an assumption until AlphaKeel's 3.0 vectors pin it
 ENTRY_HOLD_MIN_DAYS = 7
 
 

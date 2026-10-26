@@ -7,6 +7,7 @@ cutoff was read. Every value here is synthetic; nothing touches the network.
 
 from __future__ import annotations
 
+import copy
 import datetime
 import json
 import random
@@ -914,6 +915,26 @@ def _set_trades(rd: Path, trades: int) -> None:
     head, vals = text[0], text[1].split(",")
     vals[head.split(",").index("trade_count")] = str(trades)
     (rd / "artifacts" / "metrics.csv").write_text(head + "\n" + ",".join(vals) + "\n")
+
+
+def test_protocol_3_min_entries_uses_closed_round_trips_as_a_lower_bound(tmp_path) -> None:
+    from alphakeel_research import precheck
+
+    protocol = copy.deepcopy(precheck.load_protocol())
+    for item in protocol["stages"]["validated"]["items"]:
+        if item["id"] == "1.2":
+            item["threshold"] = {"min_entries": "30"}  # AlphaKeel protocol 3.0 (WP14a): no KeyError on the new key
+
+    def item_1_2(name: str, trips: int | None) -> dict:
+        rd = _make_run(tmp_path, name, trades=40)
+        if trips is not None:
+            _fills(rd, [x for k in range(trips) for x in (("BTC-USDT", f"t{k}a", "open"), ("BTC-USDT", f"t{k}b", "close"))])
+        return {i["id"]: i for i in screen_engine_run(rd, trials=1, protocol=protocol)["items"]}["1.2"]
+
+    many, few, legs = item_1_2("many", 30), item_1_2("few", 29), item_1_2("legs", None)
+    assert many["result"] == "PASS" and many["threshold"] == {"min_entries": "30"} and "note" not in many
+    assert few["result"] == "FAIL" and "lower bound" in few["note"]
+    assert legs["result"] == "FAIL" and "not an entry count" in legs["note"]  # 40 closed legs from metrics.csv are not used
 
 
 def test_a_pair_trade_counts_one_round_trip_for_its_two_legs(tmp_path) -> None:

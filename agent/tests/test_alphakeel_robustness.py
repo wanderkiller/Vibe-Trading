@@ -82,8 +82,6 @@ def test_the_rule_table_is_in_the_docstring_and_in_the_output():
     assert r["rules"] == robustness.RULES and r["facts"] == GOOD
 
 
-# --- permutation p-value ---------------------------------------------------------------------------------------------------
-
 # --- AlphaKeel protocol 3.0 entry count (WP14a) -----------------------------------------------------------------------------
 
 END = START + 30 * DAY
@@ -106,6 +104,8 @@ def test_entry_count_counts_each_round_and_open_rounds_held_7_days(trades, want)
     assert c["entries_distinct"] == want and c["hold_min_days"] == 7
     assert c["closed"] + c["open_counted"] == want and c["open_counted"] + c["open_not_counted"] == sum(t["status"] == "open" for t in trades)
 
+
+# --- permutation p-value ---------------------------------------------------------------------------------------------------
 
 def test_permutation_p_value_is_add_one_and_counts_ties():
     D = Decimal

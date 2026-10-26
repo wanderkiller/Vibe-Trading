@@ -85,6 +85,8 @@ def test_battery_output_has_every_item_and_agrees_with_its_own_facts(tmp_path):
     assert got["1.1"]["result"] == "FAIL" and f["days"] < 90  # a 6-hour window
     assert got["1.2"]["result"] == "FAIL" and f["trades_closed"] < 30
     st = doc["statistics"]["entries"]  # protocol 3.0 fact, from the same run's trades
+    base_card = json.loads((tmp_path / "rb" / next(r["run_dir"] for r in doc["runs"] if r["role"] == "base") / "run_card.json").read_text())
+    assert base_card["counts"]["entries_distinct"] == f["entries_distinct"]  # the run card's own count (ir_backtest.run) agrees
     assert f["entries_distinct"] == st["entries_distinct"] == st["closed"] + st["open_counted"] and st["closed"] == f["trades_closed"]
     assert got["1.3"]["result"] == ("PASS" if Decimal(f["base_net"]) > 0 else "FAIL")
     assert got["1.4"]["result"] == ("PASS" if Decimal(doc["cost_stress"]["1.5"]["net"]) > 0 else "FAIL")
