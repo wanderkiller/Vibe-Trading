@@ -110,18 +110,14 @@ The `langchain-core==1.6.1` anchor fails when upstream moves that pin; then the 
 - upstream `docker-compose.yml`: `  vibe-trading:`
 - upstream `docker-compose.yml`: `  vibe-home:` — DEPLOYMENT.local.md relies on the vibe-home volume
 - hook `docker-compose.override.yml`: `dockerfile: Dockerfile.local`
-- hook `docker-compose.override.yml`: `ALPHAKEEL_HANDOFF_DIR: /home/vibe/handoff` — the hand-off bind mount and its two variables
+- hook `docker-compose.override.yml`: `ALPHAKEEL_RESEARCH_URL: ""` — standalone deployment disables the retired integration
 - hook `docker-compose.override.yml`: `init: true` — grandchildren of a timed-out alphakeel_research child (killpg) are reaped by init
 - upstream `requirements-lock.txt`: `langchain-core==1.6.6 \` — the base pin must stay >= 1.6.2 (langchain-anthropic 1.7.2 in the overlay); the overlay carries no langchain-core pin since 0.1.18
 - hook `requirements-local-providers-lock.txt`: `langchain-anthropic==1.7.2`
-- hook `tools/deploy-vt.sh`: `refuse pairing "contract/PIN differs from $AK_PIN"` — the release gate (audit 2026-10-12 D6-1): "Deploy gate" workflow success on the exact commit, commit = AlphaKeel `ci/vibe-trading.ref`, PIN = `ci/vibe-trading.pin`, backup, health + `contract_pin: matched`, rollback; log in `deploy-log.jsonl`
 - hook `tools/deploy-vt.sh`: `--workflow "Deploy gate"` — the gate waits for `.github/workflows/deploy-gate.yml`, not upstream's "CI"
 - hook `tools/deploy-vt.sh`: `docker builder prune -f --filter` — post-success prune of old `vibe-trading-rollback:*` tags (keep `VT_ROLLBACK_KEEP`=3 and the current one) and builder cache older than `VT_BUILDER_MAX_AGE`=72h; warn-only
-- hook `DEPLOYMENT.local.md`: `tools/deploy-vt.sh   # pair = AlphaKeel origin/main:ci/vibe-trading.{ref,pin}`
 - hook `tools/deploy-vt.sh`: `refuse checkout "the checkout has modified or untracked files` — wave 2 (R2-D-7): untracked files refuse; a refusal after the build restores the image tag; backup dir mode 700; tests agent/tests/test_deploy_vt.py
 - hook `tools/deploy-vt.sh`: `docker tag "$OLD_IMAGE_ID" "$IMAGE"`
-- hook `tools/deploy-vt.sh`: `git -C "$AK_REPO" fetch --quiet origin main` — wave 2 (R2-D-1): the pair is read from AlphaKeel origin/main, not its working tree
-- hook `tools/deploy-vt.sh`: `--allow-pair-override) ALLOW_PAIR_OVERRIDE=1; shift ;;` — `--ak-ref`/`--ak-pin` are refused at pairing without `--allow-pair-override` (round-3 review P2)
 - hook `tools/deploy-vt.sh`: `|| refuse backup "cannot write $BACKUP/image.json"` — every failure after the build goes through refuse(): log line + image tag restored (round-3 review P2)
 
 ## `leaf-package` — AlphaKeel research client

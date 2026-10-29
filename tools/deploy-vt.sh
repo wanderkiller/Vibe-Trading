@@ -1,58 +1,21 @@
 #!/usr/bin/env bash
-# deploy-vt.sh — the only way the production Vibe-Trading container is rebuilt (local patch layer, group `local-deploy`).
-#
-# Run it from the production checkout (the directory holding docker-compose.yml) after checking out the commit to
-# deploy. It refuses unless every gate holds, in this order:
-#   1. the checkout is clean -- no modified and no untracked files (an untracked module under agent/ would be copied into
-#      the image, which must be exactly the commit CI tested) -- and HEAD is a full commit;
-#   2. GitHub Actions workflow "Deploy gate" (.github/workflows/deploy-gate.yml: Linux, Python 3.11 + frontend, the
-#      production target; upstream's "CI" matrix no longer gates) has a completed run on exactly that commit with conclusion `success`
-#      (`gh run list --commit`); a red, cancelled, pending or missing run refuses;
-#   3. HEAD equals AlphaKeel's `ci/vibe-trading.ref` and this checkout's `agent/alphakeel_research/contract/PIN` is
-#      byte-identical to AlphaKeel's `ci/vibe-trading.pin`, both read from AlphaKeel's PUBLISHED main: `git fetch origin
-#      main` in the AlphaKeel checkout (--ak-repo, default /home/ubuntu/alphakeel), then `git show origin/main:ci/...`
-#      (never its working tree, which may be ahead of or behind what is released; audit 2026-10-12 R2-D-1). --ak-ref /
-#      --ak-pin override that with files (diagnosis only; --ak-pin defaults to next to --ak-ref) and are refused unless
-#      --allow-pair-override is also given (round-3 review: an override must be a deliberate act, not a leftover
-#      argument); the log line records `pair_source` (`origin/main@<sha>` or `override:<paths>`);
-#   4. the new image builds (`docker compose build`) while the old container still serves; a refusal after the build
-#      points the compose image tag back at the old image (a later manual `compose up` must not start an unverified one);
-#   5. backup to ~/vibe-trading-backups/<ts>/ (mode 700: the volumes may hold credentials): the old image is kept under the tag `vibe-trading-rollback:<ts>`
-#      (image id recorded in image.json), `agent/.env` is copied (never printed), and every named volume of the running
-#      container is archived with the service stopped (consistent session database);
-#   6. `up -d --no-build --no-deps`, then `/health` on 127.0.0.1:8899 and `python -m alphakeel_research check` inside
-#      the container must report `contract_pin: matched` (deploy AlphaKeel first when the pin changed);
-#      any failure here retags the rollback image and recreates the old container. Volumes are NOT restored
-#      automatically (the new container may already have written to them); DEPLOYMENT.local.md has the manual restore.
-#   7. after a successful deploy only: prune old `vibe-trading-rollback:*` tags (keep the newest VT_ROLLBACK_KEEP,
-#      default 3, and always this run's tag), then `docker builder prune --filter until=${VT_BUILDER_MAX_AGE:-72h}` (by age: works on BuildKit and the legacy builder, which ignores --keep-storage);
-#      failures only warn and never change the exit status (log step `prune`).
-# Every attempt (refused, rolled back or deployed) appends one JSON line to deploy-log.jsonl next to
-# DEPLOYMENT.local.md: ts, sha, step, status, image ids, pin digest. Exit status is non-zero unless deployed.
-#
-# Usage:
-#   tools/deploy-vt.sh [--ak-repo /home/ubuntu/alphakeel] [--allow-pair-override --ak-ref PATH [--ak-pin PATH]] [--repo OWNER/NAME]
-#
-# This script changes production; run it only with the user's explicit go-ahead (AGENTS.md rule 14).
+# Standalone production deploy: requires a clean checkout and a successful
+# Deploy gate for HEAD, backs up the running image, environment and volumes,
+# checks /health, and rolls back the image if startup fails. Run only with
+# explicit user authorization. Bootstrap from retirement is documented in
+# DEPLOYMENT.local.md; this script requires an existing running container.
 set -euo pipefail
 
-AK_REPO="/home/ubuntu/alphakeel" AK_REF="" AK_PIN="" GH_REPO="wanderkiller/Vibe-Trading" ALLOW_PAIR_OVERRIDE=0
+GH_REPO="wanderkiller/Vibe-Trading"
 SERVICE="vibe-trading" HEALTH_URL="http://127.0.0.1:8899/health" HEALTH_WAIT_S=180
 while [ $# -gt 0 ]; do
     case "$1" in
-        --ak-repo) AK_REPO="$2"; shift 2 ;;
-        --ak-ref) AK_REF="$2"; shift 2 ;;
-        --ak-pin) AK_PIN="$2"; shift 2 ;;
-        --allow-pair-override) ALLOW_PAIR_OVERRIDE=1; shift ;;
         --repo) GH_REPO="$2"; shift 2 ;;
         -h|--help) sed -n '2,/^set -euo/{/^#/p}' "$0"; exit 0 ;;
         *) echo "deploy-vt: unknown argument $1" >&2; exit 2 ;;
     esac
 done
-PAIR_OVERRIDE=0
-{ [ -n "$AK_REF" ] || [ -n "$AK_PIN" ]; } && PAIR_OVERRIDE=1
-[ -n "$AK_REF" ] && [ -z "$AK_PIN" ] && AK_PIN="$(dirname "$AK_REF")/vibe-trading.pin"
-PAIR_SOURCE=""
+PAIR_SOURCE="standalone"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
@@ -136,32 +99,6 @@ sha=sys.argv[1]; runs=[r for r in json.load(sys.stdin) if r.get("headSha")==sha 
 print("success" if runs and runs[0].get("conclusion")=="success" else (runs[0].get("conclusion") if runs else "none"))' "$SHA")"
 [ "$CI_OK" = success ] || refuse ci "latest completed Deploy gate run on $SHA: $CI_OK"
 
-# 3. pairing with AlphaKeel: its published main, unless overridden by files -- and only on purpose
-[ "$PAIR_OVERRIDE" = 0 ] || [ "$ALLOW_PAIR_OVERRIDE" = 1 ] \
-    || refuse pairing "--ak-ref/--ak-pin override AlphaKeel's published pair; pass --allow-pair-override to use them (diagnosis only)"
-if [ -z "$AK_REF" ] || [ -z "$AK_PIN" ]; then
-    PAIR_TMP="$(mktemp -d)"
-    trap 'rm -rf "$PAIR_TMP"' EXIT
-    git -C "$AK_REPO" fetch --quiet origin main || refuse pairing "git fetch origin main failed in $AK_REPO"
-    AK_MAIN="$(git -C "$AK_REPO" rev-parse --verify --quiet 'origin/main^{commit}')" || refuse pairing "no origin/main in $AK_REPO"
-    PAIR_SOURCE="origin/main@$AK_MAIN"
-    if [ -z "$AK_REF" ]; then
-        AK_REF="$PAIR_TMP/vibe-trading.ref"
-        git -C "$AK_REPO" show "$AK_MAIN:ci/vibe-trading.ref" >"$AK_REF" || refuse pairing "no ci/vibe-trading.ref on AlphaKeel origin/main"
-    fi
-    if [ -z "$AK_PIN" ]; then
-        AK_PIN="$PAIR_TMP/vibe-trading.pin"
-        git -C "$AK_REPO" show "$AK_MAIN:ci/vibe-trading.pin" >"$AK_PIN" || refuse pairing "no ci/vibe-trading.pin on AlphaKeel origin/main"
-    fi
-fi
-case "$AK_REF" in "${PAIR_TMP:-//}"/*) ;; *) PAIR_SOURCE="${PAIR_SOURCE:+$PAIR_SOURCE }override:ref=$AK_REF" ;; esac
-case "$AK_PIN" in "${PAIR_TMP:-//}"/*) ;; *) PAIR_SOURCE="${PAIR_SOURCE:+$PAIR_SOURCE }override:pin=$AK_PIN" ;; esac
-[ -f "$AK_REF" ] || refuse pairing "no ref file $AK_REF"
-[ -f "$AK_PIN" ] || refuse pairing "no pin file $AK_PIN"
-WANT="$(grep -Ev '^[[:space:]]*(#|$)' "$AK_REF" | head -1 | tr -d '[:space:]')"
-[ "$WANT" = "$SHA" ] || refuse pairing "HEAD $SHA != AlphaKeel ref $WANT"
-cmp -s agent/alphakeel_research/contract/PIN "$AK_PIN" || refuse pairing "contract/PIN differs from $AK_PIN"
-
 # 4. build the new image while the old container serves
 # every command from here on that can fail ends in `|| refuse ...` (or `|| rollback ...` once the new container is up):
 # under `set -e` a bare failure would exit without restoring the image tag or writing the log line
@@ -205,10 +142,6 @@ until curl -fsS -o /dev/null "$HEALTH_URL"; do
     [ "$(date +%s)" -lt "$deadline" ] || rollback health "$HEALTH_URL not healthy within ${HEALTH_WAIT_S}s"
     sleep 3
 done
-CHECK="$(docker compose exec -T "$SERVICE" python -m alphakeel_research check 2>&1)" \
-    || rollback contract "alphakeel_research check failed: $(printf '%s' "$CHECK" | tail -1)"
-printf '%s' "$CHECK" | grep -q '"contract_pin": *"matched"' || rollback contract "contract_pin is not matched"
-
 log_line deploy deployed ""
 echo "deploy-vt: deployed $SHA (image $NEW_IMAGE_ID; rollback tag $ROLLBACK_TAG; backup $BACKUP)"
 

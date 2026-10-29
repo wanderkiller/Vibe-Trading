@@ -22,31 +22,20 @@ The Docker user home and its configuration are retained by the vibe-home
 volume. Environment files, credentials, transcripts, and runtime data are not
 included in the repository.
 
-Build and start the configured service only through `tools/deploy-vt.sh` (and only with the user's explicit
-go-ahead), from this checkout with the commit to deploy checked out:
+## Standalone deployment
 
-```bash
-tools/deploy-vt.sh   # pair = AlphaKeel origin/main:ci/vibe-trading.{ref,pin} (--ak-repo, default /home/ubuntu/alphakeel)
-```
+Vibe-Trading runs independently of AlphaKeel. The Compose override disables the
+retired research service and removes its handoff mount. The existing fork still
+contains legacy AlphaKeel code; those features are not supported in this mode.
 
-It refuses (exit 1, one `deploy-log.jsonl` line; a refusal after the build, including a failed inspect, backup directory,
-`image.json` or `agent.env` copy, points the compose image tag back at the old image) unless the checkout is
-clean (no modified and no untracked files), GitHub workflow `Deploy gate` (`.github/workflows/deploy-gate.yml`) succeeded on exactly this commit,
-the commit equals AlphaKeel's `ci/vibe-trading.ref` and `agent/alphakeel_research/contract/PIN` equals AlphaKeel's
-`ci/vibe-trading.pin`, both read from AlphaKeel's published main (`git fetch origin main`, `git show origin/main:...`),
-not from its working tree; `--ak-ref`/`--ak-pin` files override that for diagnosis only, are refused unless
-`--allow-pair-override` is passed as well (`tools/deploy-vt.sh --allow-pair-override --ak-ref PATH [--ak-pin PATH]`),
-and are recorded as `override` in the log's `pair_source`. Do not use an override for a release: the pair to deploy is
-the one AlphaKeel published. It then builds the new image while the old container serves, keeps the old image as
-`vibe-trading-rollback:<ts>`, copies `agent/.env` and archives every named volume (service stopped) into
-`~/vibe-trading-backups/<ts>/` (mode 700: the volumes may hold credentials), starts the new image, and requires `/health` plus `python -m alphakeel_research check`
-in the container to report `contract_pin: matched`; on failure it re-tags the rollback image and recreates the old
-container. Every attempt appends one JSON line (sha, step, status, old/new image id, PIN digest, backup dir) to
-`deploy-log.jsonl` next to this file (git-ignored). When the contract PIN changed, deploy AlphaKeel first: the
-in-container check talks to the running research service. Manual rollback to an earlier deployment:
-`docker tag vibe-trading-rollback:<ts> "$(docker compose config --images vibe-trading)"` then
-`docker compose up -d --no-build --no-deps vibe-trading`.
-After a successful deploy only the most recent `VT_ROLLBACK_KEEP` (default 3) rollback images are kept, including this one; the volume backups under `~/vibe-trading-backups/<ts>` are all kept, so the image for an older backup may no longer exist - then restore from the current image plus the volume backup. Builds go through BuildKit via the `docker-buildx` package (installed on the host 2026-10-16; without it `docker builder prune` falls back to the legacy path and ignores `--keep-storage`); the post-deploy prune drops builder cache older than `VT_BUILDER_MAX_AGE` (default 72h).
+For subsequent releases, with explicit user approval, run `tools/deploy-vt.sh`
+from a clean checkout. It requires a successful Deploy gate on exactly HEAD,
+backs up the running image, environment and named volumes, checks `/health`,
+and rolls the image back if startup fails. It does not require an AlphaKeel
+pair or contract check. It requires an existing container; restoring a retired
+installation is a separate bootstrap operation. See deploy-log.jsonl for results.
+The original retirement backup is in `~/vibe-trading-backups/final-retired-20261026/`.
+Only the user home volume was retained there; the other retired volumes are unavailable.
 
 The automatic rollback swaps the image only, not the volumes. When the new image migrated a volume (session database,
 user home) the old image may not read it: restore that volume from the same backup, with the service stopped, after
@@ -80,12 +69,6 @@ answer, both before and after deployment. Other providers were not exercised
 with live generation requests. Health/readiness, session database integrity,
 configuration hashes, user-skill hashes, and persistent mounts were checked
 after deployment.
-
-AlphaKeel research client: `agent/alphakeel_research/` (installed with the project, httpx/pydantic/zstandard/duckdb are
-already in the locks) reaches AlphaKeel's research service at http://127.0.0.1:8731 over the host network. Put the service
-credential in a file readable by the container user and set `ALPHAKEEL_RESEARCH_TOKEN_FILE` (see agent/.env.example); the
-credential is created on the AlphaKeel host with `arb research-service token create`. To turn the integration off, run
-`arb research-service disable` on the AlphaKeel host or remove the variables; no Vibe-Trading data is touched.
 
 Patch layer: every local change over upstream (this overlay, the mobile patches, the AlphaKeel client and its hooks in
 upstream files) is listed by group in `patches/MANIFEST.md`, with the upstream base in `patches/BASE`. Before merging

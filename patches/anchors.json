@@ -125,18 +125,8 @@
     {
      "file": "docker-compose.override.yml",
      "kind": "hook",
-     "literal": "ALPHAKEEL_HANDOFF_DIR: /home/vibe/handoff"
-    },
-    {
-     "file": "docker-compose.override.yml",
-     "kind": "hook",
      "literal": "init: true",
      "note": "grandchildren of a timed-out alphakeel_research child (killpg) are reaped by init"
-    },
-    {
-     "file": "tools/deploy-vt.sh",
-     "kind": "hook",
-     "literal": "refuse pairing \"contract/PIN differs from $AK_PIN\""
     },
     {
      "file": "tools/deploy-vt.sh",
@@ -147,11 +137,6 @@
      "file": "tools/deploy-vt.sh",
      "kind": "hook",
      "literal": "docker builder prune -f --filter"
-    },
-    {
-     "file": "DEPLOYMENT.local.md",
-     "kind": "hook",
-     "literal": "tools/deploy-vt.sh   # pair = AlphaKeel origin/main:ci/vibe-trading.{ref,pin}"
     },
     {
      "file": "tools/deploy-vt.sh",
@@ -167,20 +152,13 @@
     {
      "file": "tools/deploy-vt.sh",
      "kind": "hook",
-     "literal": "git -C \"$AK_REPO\" fetch --quiet origin main",
-     "note": "wave 2 (R2-D-1): the pair is read from AlphaKeel origin/main, not its working tree"
-    },
-    {
-     "file": "tools/deploy-vt.sh",
-     "kind": "hook",
-     "literal": "--allow-pair-override) ALLOW_PAIR_OVERRIDE=1; shift ;;",
-     "note": "--ak-ref/--ak-pin are refused at pairing without --allow-pair-override (round-3 review P2)"
-    },
-    {
-     "file": "tools/deploy-vt.sh",
-     "kind": "hook",
      "literal": "|| refuse backup \"cannot write $BACKUP/image.json\"",
      "note": "every failure after the build goes through refuse(): log line + image tag restored (round-3 review P2)"
+    },
+    {
+     "file": "docker-compose.override.yml",
+     "kind": "hook",
+     "literal": "ALPHAKEEL_RESEARCH_URL: \"\""
     }
    ]
   },

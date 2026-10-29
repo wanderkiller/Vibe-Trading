@@ -20,12 +20,17 @@ services:
     network_mode: host
     ports: !reset []
     command: ["vibe-trading", "serve", "--host", "127.0.0.1", "--port", "8899"]
-    # Hand-off directory to AlphaKeel (docs/45 section 7): the "Hand off to AlphaKeel" button on the run page exports an IR
-    # package to /home/vibe/handoff/<strategy_id>/; AlphaKeel's console on the host reads /home/ubuntu/handoff read-only.
-    # Create the host directory before the first start, owned by the container user and setgid so both sides can read:
-    #   install -d -o 1000 -g 1001 -m 2775 /home/ubuntu/handoff
-    volumes:
-      - /home/ubuntu/handoff:/home/vibe/handoff
+    # Disable the retired AlphaKeel integration for standalone operation.
     environment:
-      ALPHAKEEL_HANDOFF_DIR: /home/vibe/handoff
-      ALPHAKEEL_HANDOFF_HOST_DIR: /home/ubuntu/handoff
+      ALPHAKEEL_RESEARCH_URL: ""
+      ALPHAKEEL_RESEARCH_TOKEN: ""
+      ALPHAKEEL_RESEARCH_TOKEN_FILE: ""
+      ALPHAKEEL_HANDOFF_DIR: ""
+      ALPHAKEEL_HANDOFF_HOST_DIR: ""
+
+# The restored home volume is managed independently and must never be replaced
+# by an empty volume if it is missing.
+volumes:
+  vibe-home:
+    external: true
+    name: vibe-trading_vibe-home
