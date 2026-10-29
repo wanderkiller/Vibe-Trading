@@ -24,24 +24,7 @@ included in the repository.
 
 ## Standalone deployment
 
-For subsequent releases, with explicit user approval, run `tools/deploy-vt.sh`
-from a clean checkout. It requires a successful Deploy gate on exactly HEAD,
-backs up the running image, environment and named volumes, checks `/health`,
-and rolls the image back if startup fails. It requires an existing container; restoring a retired
-installation is a separate bootstrap operation. See deploy-log.jsonl for results.
-The original retirement backup is in `~/vibe-trading-backups/final-retired-20261026/`.
-Only the user home volume was retained there; the other retired volumes are unavailable.
-
-The automatic rollback swaps the image only, not the volumes. When the new image migrated a volume (session database,
-user home) the old image may not read it: restore that volume from the same backup, with the service stopped, after
-saving anything newer you want to keep (`<vol>` = the volume name, `<ts>` = the backup directory):
-
-```bash
-docker compose stop vibe-trading
-docker run --rm --user 0 --entrypoint sh -v <vol>:/data -v ~/vibe-trading-backups/<ts>:/backup:ro vibe-trading-rollback:<ts> \
-    -c 'find /data -mindepth 1 -delete && tar xzf /backup/<vol>.tgz -C /data'
-docker compose up -d --no-build --no-deps vibe-trading
-```
+Deploy with `docker compose build && docker compose up -d` after backing up the image and the named volumes.
 
 Back up the existing image, environment files, and named volumes before
 upgrading. Stop the service while archiving its volumes to preserve a consistent
@@ -52,7 +35,7 @@ any newer sessions.
 
 When merging another upstream release, refresh Dockerfile.local from the new
 Dockerfile, retain the provider-overlay installation, and review both upstream
-dependency locks against the overlay. 
+dependency locks against the overlay.
 
 Validation for this update: 494 targeted backend tests and all 672 frontend
 tests passed, the production image built successfully, and pip check passed.
@@ -63,5 +46,3 @@ answer, both before and after deployment. Other providers were not exercised
 with live generation requests. Health/readiness, session database integrity,
 configuration hashes, user-skill hashes, and persistent mounts were checked
 after deployment.
-
-AlphaKeel integration code and the mobile/research patch series live on the `alphakeel` branch; `main` is upstream plus this deployment overlay.
