@@ -25,7 +25,7 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP="$HOME/vibe-trading-backups/$TS"
 SHA="$(git rev-parse HEAD)"
 OLD_IMAGE_ID="" NEW_IMAGE_ID="" ROLLBACK_TAG="vibe-trading-rollback:$TS" IMAGE="" BUILT=0
-PIN_SHA="$(sha256sum agent/alphakeel_research/contract/PIN 2>/dev/null | cut -d' ' -f1 || true)"
+PIN_SHA=""
 
 log_line() {  # step status [detail]
     python3 -I -c 'import json,sys
